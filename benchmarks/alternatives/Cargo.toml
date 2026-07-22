@@ -1,0 +1,20 @@
+[package]
+name = "ferricml-alternative-benchmarks"
+version = "0.0.0"
+edition = "2024"
+publish = false
+
+# Keep this package independent from FerricML's feature graph. Root
+# `--all-features` and `--all-targets` gates must never build competitors.
+[workspace]
+
+[dependencies]
+ferricml = { path = "../.." }
+rafor = "0.3"
+
+[dev-dependencies]
+criterion = { version = "0.7", default-features = false }
+
+[[bench]]
+name = "forest_contract"
+harness = false

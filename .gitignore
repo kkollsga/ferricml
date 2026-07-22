@@ -1,0 +1,11 @@
+/target
+/benchmarks/alternatives/target/
+.DS_Store
+/dev-docs/
+/inbox/
+/.claude/
+/.agents/
+/AGENTS.md
+
+# Local experiment inputs and generated artifacts
+/research/

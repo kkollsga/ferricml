@@ -1,0 +1,39 @@
+[package]
+name = "ferricml"
+version = "0.1.0"
+edition = "2024"
+description = "A lean, pure-Rust toolkit for classical machine learning"
+license = "MIT"
+repository = "https://github.com/kkollsga/ferricml"
+homepage = "https://github.com/kkollsga/ferricml"
+documentation = "https://docs.rs/ferricml"
+readme = "README.md"
+keywords = ["machine-learning", "random-forest", "classification", "regression"]
+categories = ["algorithms", "science"]
+exclude = [
+    "/.github",
+    "/CLAUDE.md",
+    "/Makefile",
+    "/RELEASING.md",
+    "/benches",
+    "/benchmarks",
+    "/dev-docs",
+    "/research",
+    "/requirements",
+    "/scripts",
+    "/tests",
+]
+
+[features]
+default = []
+
+[dependencies]
+sha2 = "0.10"
+
+[dev-dependencies]
+criterion = { version = "0.7", default-features = false }
+tempfile = "3"
+
+[[bench]]
+name = "forest"
+harness = false

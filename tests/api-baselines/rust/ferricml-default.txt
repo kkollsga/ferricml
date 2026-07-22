@@ -1,0 +1,393 @@
+pub mod ferricml
+pub mod ferricml::api
+#[non_exhaustive] pub enum ferricml::api::AnyClassifier
+pub ferricml::api::AnyClassifier::LogisticRegression(ferricml::linear_model::LogisticRegression)
+pub ferricml::api::AnyClassifier::RandomForest(ferricml::ensemble::RandomForestClassifier)
+impl ferricml::api::AnyClassifier
+pub fn ferricml::api::AnyClassifier::classes(&self) -> &[u8]
+pub fn ferricml::api::AnyClassifier::get_params(&self) -> ferricml::api::AnyClassifierParams<'_>
+pub fn ferricml::api::AnyClassifier::n_features_in(&self) -> usize
+pub fn ferricml::api::AnyClassifier::predict(&self, &ferricml::data::MatrixView<'_>) -> core::result::Result<alloc::vec::Vec<u8>, ferricml::api::ModelError>
+pub fn ferricml::api::AnyClassifier::predict_class_proba(&self, &ferricml::data::MatrixView<'_>, u8) -> core::result::Result<alloc::vec::Vec<f32>, ferricml::api::ModelError>
+pub fn ferricml::api::AnyClassifier::predict_class_proba_into(&self, &ferricml::data::MatrixView<'_>, u8, &mut [f32]) -> core::result::Result<(), ferricml::api::ModelError>
+pub fn ferricml::api::AnyClassifier::predict_into(&self, &ferricml::data::MatrixView<'_>, &mut [u8]) -> core::result::Result<(), ferricml::api::ModelError>
+pub fn ferricml::api::AnyClassifier::predict_proba(&self, &ferricml::data::MatrixView<'_>) -> core::result::Result<alloc::vec::Vec<f32>, ferricml::api::ModelError>
+pub fn ferricml::api::AnyClassifier::predict_proba_into(&self, &ferricml::data::MatrixView<'_>, &mut [f32]) -> core::result::Result<(), ferricml::api::ModelError>
+impl core::convert::From<ferricml::ensemble::RandomForestClassifier> for ferricml::api::AnyClassifier
+pub fn ferricml::api::AnyClassifier::from(ferricml::ensemble::RandomForestClassifier) -> Self
+impl core::convert::From<ferricml::linear_model::LogisticRegression> for ferricml::api::AnyClassifier
+pub fn ferricml::api::AnyClassifier::from(ferricml::linear_model::LogisticRegression) -> Self
+impl ferricml::api::Classifier for ferricml::api::AnyClassifier
+pub fn ferricml::api::AnyClassifier::classes(&self) -> &[u8]
+pub fn ferricml::api::AnyClassifier::predict(&self, &ferricml::data::MatrixView<'_>) -> core::result::Result<alloc::vec::Vec<u8>, ferricml::api::ModelError>
+pub fn ferricml::api::AnyClassifier::predict_class_proba(&self, &ferricml::data::MatrixView<'_>, u8) -> core::result::Result<alloc::vec::Vec<f32>, ferricml::api::ModelError>
+pub fn ferricml::api::AnyClassifier::predict_class_proba_into(&self, &ferricml::data::MatrixView<'_>, u8, &mut [f32]) -> core::result::Result<(), ferricml::api::ModelError>
+pub fn ferricml::api::AnyClassifier::predict_into(&self, &ferricml::data::MatrixView<'_>, &mut [u8]) -> core::result::Result<(), ferricml::api::ModelError>
+pub fn ferricml::api::AnyClassifier::predict_proba(&self, &ferricml::data::MatrixView<'_>) -> core::result::Result<alloc::vec::Vec<f32>, ferricml::api::ModelError>
+pub fn ferricml::api::AnyClassifier::predict_proba_into(&self, &ferricml::data::MatrixView<'_>, &mut [f32]) -> core::result::Result<(), ferricml::api::ModelError>
+impl ferricml::api::Estimator for ferricml::api::AnyClassifier
+pub fn ferricml::api::AnyClassifier::n_features_in(&self) -> usize
+#[non_exhaustive] pub enum ferricml::api::AnyClassifierParams<'a>
+pub ferricml::api::AnyClassifierParams::LogisticRegression(&'a ferricml::linear_model::LogisticRegressionParams)
+pub ferricml::api::AnyClassifierParams::RandomForest(&'a ferricml::ensemble::RandomForestClassifierParams)
+#[non_exhaustive] pub enum ferricml::api::AnyRegressor
+pub ferricml::api::AnyRegressor::RandomForest(ferricml::ensemble::RandomForestRegressor)
+impl ferricml::api::AnyRegressor
+pub fn ferricml::api::AnyRegressor::get_params(&self) -> ferricml::api::AnyRegressorParams<'_>
+pub fn ferricml::api::AnyRegressor::n_features_in(&self) -> usize
+pub fn ferricml::api::AnyRegressor::predict(&self, &ferricml::data::MatrixView<'_>) -> core::result::Result<alloc::vec::Vec<f32>, ferricml::api::ModelError>
+pub fn ferricml::api::AnyRegressor::predict_into(&self, &ferricml::data::MatrixView<'_>, &mut [f32]) -> core::result::Result<(), ferricml::api::ModelError>
+impl core::convert::From<ferricml::ensemble::RandomForestRegressor> for ferricml::api::AnyRegressor
+pub fn ferricml::api::AnyRegressor::from(ferricml::ensemble::RandomForestRegressor) -> Self
+impl ferricml::api::Estimator for ferricml::api::AnyRegressor
+pub fn ferricml::api::AnyRegressor::n_features_in(&self) -> usize
+impl ferricml::api::Regressor for ferricml::api::AnyRegressor
+pub fn ferricml::api::AnyRegressor::predict(&self, &ferricml::data::MatrixView<'_>) -> core::result::Result<alloc::vec::Vec<f32>, ferricml::api::ModelError>
+pub fn ferricml::api::AnyRegressor::predict_into(&self, &ferricml::data::MatrixView<'_>, &mut [f32]) -> core::result::Result<(), ferricml::api::ModelError>
+#[non_exhaustive] pub enum ferricml::api::AnyRegressorParams<'a>
+pub ferricml::api::AnyRegressorParams::RandomForest(&'a ferricml::ensemble::RandomForestRegressorParams)
+#[non_exhaustive] pub enum ferricml::api::ModelError
+pub ferricml::api::ModelError::EmptyData
+pub ferricml::api::ModelError::EmptyTargets
+pub ferricml::api::ModelError::FeatureDimension
+pub ferricml::api::ModelError::FeatureDimension::actual: usize
+pub ferricml::api::ModelError::FeatureDimension::expected: usize
+pub ferricml::api::ModelError::InvalidBinaryTarget
+pub ferricml::api::ModelError::InvalidBinaryTarget::index: usize
+pub ferricml::api::ModelError::InvalidBinaryTarget::value: u8
+pub ferricml::api::ModelError::InvalidEstimatorCount
+pub ferricml::api::ModelError::InvalidIterationCount
+pub ferricml::api::ModelError::InvalidJobCount
+pub ferricml::api::ModelError::InvalidMaxDepth
+pub ferricml::api::ModelError::InvalidMaxFeatures
+pub ferricml::api::ModelError::InvalidMaxFeatures::available: usize
+pub ferricml::api::ModelError::InvalidMaxFeatures::requested: usize
+pub ferricml::api::ModelError::InvalidMinSamplesLeaf
+pub ferricml::api::ModelError::InvalidMinSamplesSplit
+pub ferricml::api::ModelError::InvalidRegularization
+pub ferricml::api::ModelError::InvalidTolerance
+pub ferricml::api::ModelError::LinearSolveFailed
+pub ferricml::api::ModelError::NonFiniteFeature
+pub ferricml::api::ModelError::NonFiniteFeature::column: usize
+pub ferricml::api::ModelError::NonFiniteFeature::row: usize
+pub ferricml::api::ModelError::NonFiniteTarget
+pub ferricml::api::ModelError::NonFiniteTarget::index: usize
+pub ferricml::api::ModelError::OutputLength
+pub ferricml::api::ModelError::OutputLength::actual: usize
+pub ferricml::api::ModelError::OutputLength::expected: usize
+pub ferricml::api::ModelError::OutputShapeOverflow
+pub ferricml::api::ModelError::OutputShapeOverflow::columns: usize
+pub ferricml::api::ModelError::OutputShapeOverflow::rows: usize
+pub ferricml::api::ModelError::RequiresTwoClasses
+pub ferricml::api::ModelError::TargetLength
+pub ferricml::api::ModelError::TargetLength::rows: usize
+pub ferricml::api::ModelError::TargetLength::targets: usize
+pub ferricml::api::ModelError::TooManyFeatures
+pub ferricml::api::ModelError::TooManyRows
+pub ferricml::api::ModelError::TreeTooLarge
+pub ferricml::api::ModelError::UnknownClass
+pub ferricml::api::ModelError::UnknownClass::class: u8
+pub ferricml::api::ModelError::WorkerPanicked
+impl core::error::Error for ferricml::api::ModelError
+impl core::fmt::Display for ferricml::api::ModelError
+pub fn ferricml::api::ModelError::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+pub trait ferricml::api::Classifier: ferricml::api::Estimator
+pub fn ferricml::api::Classifier::classes(&self) -> &[u8]
+pub fn ferricml::api::Classifier::predict(&self, &ferricml::data::MatrixView<'_>) -> core::result::Result<alloc::vec::Vec<u8>, ferricml::api::ModelError>
+pub fn ferricml::api::Classifier::predict_class_proba(&self, &ferricml::data::MatrixView<'_>, u8) -> core::result::Result<alloc::vec::Vec<f32>, ferricml::api::ModelError>
+pub fn ferricml::api::Classifier::predict_class_proba_into(&self, &ferricml::data::MatrixView<'_>, u8, &mut [f32]) -> core::result::Result<(), ferricml::api::ModelError>
+pub fn ferricml::api::Classifier::predict_into(&self, &ferricml::data::MatrixView<'_>, &mut [u8]) -> core::result::Result<(), ferricml::api::ModelError>
+pub fn ferricml::api::Classifier::predict_proba(&self, &ferricml::data::MatrixView<'_>) -> core::result::Result<alloc::vec::Vec<f32>, ferricml::api::ModelError>
+pub fn ferricml::api::Classifier::predict_proba_into(&self, &ferricml::data::MatrixView<'_>, &mut [f32]) -> core::result::Result<(), ferricml::api::ModelError>
+impl ferricml::api::Classifier for ferricml::api::AnyClassifier
+pub fn ferricml::api::AnyClassifier::classes(&self) -> &[u8]
+pub fn ferricml::api::AnyClassifier::predict(&self, &ferricml::data::MatrixView<'_>) -> core::result::Result<alloc::vec::Vec<u8>, ferricml::api::ModelError>
+pub fn ferricml::api::AnyClassifier::predict_class_proba(&self, &ferricml::data::MatrixView<'_>, u8) -> core::result::Result<alloc::vec::Vec<f32>, ferricml::api::ModelError>
+pub fn ferricml::api::AnyClassifier::predict_class_proba_into(&self, &ferricml::data::MatrixView<'_>, u8, &mut [f32]) -> core::result::Result<(), ferricml::api::ModelError>
+pub fn ferricml::api::AnyClassifier::predict_into(&self, &ferricml::data::MatrixView<'_>, &mut [u8]) -> core::result::Result<(), ferricml::api::ModelError>
+pub fn ferricml::api::AnyClassifier::predict_proba(&self, &ferricml::data::MatrixView<'_>) -> core::result::Result<alloc::vec::Vec<f32>, ferricml::api::ModelError>
+pub fn ferricml::api::AnyClassifier::predict_proba_into(&self, &ferricml::data::MatrixView<'_>, &mut [f32]) -> core::result::Result<(), ferricml::api::ModelError>
+impl ferricml::api::Classifier for ferricml::ensemble::RandomForestClassifier
+pub fn ferricml::ensemble::RandomForestClassifier::classes(&self) -> &[u8]
+pub fn ferricml::ensemble::RandomForestClassifier::predict(&self, &ferricml::data::MatrixView<'_>) -> core::result::Result<alloc::vec::Vec<u8>, ferricml::api::ModelError>
+pub fn ferricml::ensemble::RandomForestClassifier::predict_class_proba(&self, &ferricml::data::MatrixView<'_>, u8) -> core::result::Result<alloc::vec::Vec<f32>, ferricml::api::ModelError>
+pub fn ferricml::ensemble::RandomForestClassifier::predict_class_proba_into(&self, &ferricml::data::MatrixView<'_>, u8, &mut [f32]) -> core::result::Result<(), ferricml::api::ModelError>
+pub fn ferricml::ensemble::RandomForestClassifier::predict_into(&self, &ferricml::data::MatrixView<'_>, &mut [u8]) -> core::result::Result<(), ferricml::api::ModelError>
+pub fn ferricml::ensemble::RandomForestClassifier::predict_proba(&self, &ferricml::data::MatrixView<'_>) -> core::result::Result<alloc::vec::Vec<f32>, ferricml::api::ModelError>
+pub fn ferricml::ensemble::RandomForestClassifier::predict_proba_into(&self, &ferricml::data::MatrixView<'_>, &mut [f32]) -> core::result::Result<(), ferricml::api::ModelError>
+impl ferricml::api::Classifier for ferricml::linear_model::LogisticRegression
+pub fn ferricml::linear_model::LogisticRegression::classes(&self) -> &[u8]
+pub fn ferricml::linear_model::LogisticRegression::predict(&self, &ferricml::data::MatrixView<'_>) -> core::result::Result<alloc::vec::Vec<u8>, ferricml::api::ModelError>
+pub fn ferricml::linear_model::LogisticRegression::predict_class_proba(&self, &ferricml::data::MatrixView<'_>, u8) -> core::result::Result<alloc::vec::Vec<f32>, ferricml::api::ModelError>
+pub fn ferricml::linear_model::LogisticRegression::predict_class_proba_into(&self, &ferricml::data::MatrixView<'_>, u8, &mut [f32]) -> core::result::Result<(), ferricml::api::ModelError>
+pub fn ferricml::linear_model::LogisticRegression::predict_into(&self, &ferricml::data::MatrixView<'_>, &mut [u8]) -> core::result::Result<(), ferricml::api::ModelError>
+pub fn ferricml::linear_model::LogisticRegression::predict_proba(&self, &ferricml::data::MatrixView<'_>) -> core::result::Result<alloc::vec::Vec<f32>, ferricml::api::ModelError>
+pub fn ferricml::linear_model::LogisticRegression::predict_proba_into(&self, &ferricml::data::MatrixView<'_>, &mut [f32]) -> core::result::Result<(), ferricml::api::ModelError>
+pub trait ferricml::api::Estimator
+pub fn ferricml::api::Estimator::n_features_in(&self) -> usize
+impl ferricml::api::Estimator for ferricml::api::AnyClassifier
+pub fn ferricml::api::AnyClassifier::n_features_in(&self) -> usize
+impl ferricml::api::Estimator for ferricml::api::AnyRegressor
+pub fn ferricml::api::AnyRegressor::n_features_in(&self) -> usize
+impl ferricml::api::Estimator for ferricml::ensemble::RandomForestClassifier
+pub fn ferricml::ensemble::RandomForestClassifier::n_features_in(&self) -> usize
+impl ferricml::api::Estimator for ferricml::ensemble::RandomForestRegressor
+pub fn ferricml::ensemble::RandomForestRegressor::n_features_in(&self) -> usize
+impl ferricml::api::Estimator for ferricml::linear_model::LogisticRegression
+pub fn ferricml::linear_model::LogisticRegression::n_features_in(&self) -> usize
+impl<T, E> ferricml::api::Estimator for ferricml::pipeline::Pipeline<T, E> where T: ferricml::api::Transformer, E: ferricml::api::Estimator
+pub fn ferricml::pipeline::Pipeline<T, E>::n_features_in(&self) -> usize
+pub trait ferricml::api::HasParams
+pub type ferricml::api::HasParams::Params
+pub fn ferricml::api::HasParams::get_params(&self) -> &Self::Params
+impl ferricml::api::HasParams for ferricml::ensemble::RandomForestClassifier
+pub type ferricml::ensemble::RandomForestClassifier::Params = ferricml::ensemble::RandomForestClassifierParams
+pub fn ferricml::ensemble::RandomForestClassifier::get_params(&self) -> &Self::Params
+impl ferricml::api::HasParams for ferricml::ensemble::RandomForestRegressor
+pub type ferricml::ensemble::RandomForestRegressor::Params = ferricml::ensemble::RandomForestRegressorParams
+pub fn ferricml::ensemble::RandomForestRegressor::get_params(&self) -> &Self::Params
+impl ferricml::api::HasParams for ferricml::linear_model::LogisticRegression
+pub type ferricml::linear_model::LogisticRegression::Params = ferricml::linear_model::LogisticRegressionParams
+pub fn ferricml::linear_model::LogisticRegression::get_params(&self) -> &Self::Params
+pub trait ferricml::api::Regressor: ferricml::api::Estimator
+pub fn ferricml::api::Regressor::predict(&self, &ferricml::data::MatrixView<'_>) -> core::result::Result<alloc::vec::Vec<f32>, ferricml::api::ModelError>
+pub fn ferricml::api::Regressor::predict_into(&self, &ferricml::data::MatrixView<'_>, &mut [f32]) -> core::result::Result<(), ferricml::api::ModelError>
+impl ferricml::api::Regressor for ferricml::api::AnyRegressor
+pub fn ferricml::api::AnyRegressor::predict(&self, &ferricml::data::MatrixView<'_>) -> core::result::Result<alloc::vec::Vec<f32>, ferricml::api::ModelError>
+pub fn ferricml::api::AnyRegressor::predict_into(&self, &ferricml::data::MatrixView<'_>, &mut [f32]) -> core::result::Result<(), ferricml::api::ModelError>
+impl ferricml::api::Regressor for ferricml::ensemble::RandomForestRegressor
+pub fn ferricml::ensemble::RandomForestRegressor::predict(&self, &ferricml::data::MatrixView<'_>) -> core::result::Result<alloc::vec::Vec<f32>, ferricml::api::ModelError>
+pub fn ferricml::ensemble::RandomForestRegressor::predict_into(&self, &ferricml::data::MatrixView<'_>, &mut [f32]) -> core::result::Result<(), ferricml::api::ModelError>
+pub trait ferricml::api::Transformer: ferricml::api::Estimator
+pub fn ferricml::api::Transformer::n_features_out(&self) -> usize
+pub fn ferricml::api::Transformer::transform(&self, &ferricml::data::MatrixView<'_>) -> core::result::Result<ferricml::data::DenseMatrix, ferricml::api::ModelError>
+pub fn ferricml::api::Transformer::transform_into<'output>(&self, &ferricml::data::MatrixView<'_>, &'output mut [f32]) -> core::result::Result<ferricml::data::MatrixView<'output>, ferricml::api::ModelError>
+pub mod ferricml::artifact
+#[non_exhaustive] pub enum ferricml::artifact::ArtifactError
+pub ferricml::artifact::ArtifactError::ChecksumMismatch
+pub ferricml::artifact::ArtifactError::FeatureSchemaMismatch
+pub ferricml::artifact::ArtifactError::InvalidMagic
+pub ferricml::artifact::ArtifactError::InvalidPayload
+pub ferricml::artifact::ArtifactError::TrailingBytes
+pub ferricml::artifact::ArtifactError::Truncated
+pub ferricml::artifact::ArtifactError::UnsupportedModelKind
+pub ferricml::artifact::ArtifactError::UnsupportedModelKind::found: u16
+pub ferricml::artifact::ArtifactError::UnsupportedVersion
+pub ferricml::artifact::ArtifactError::UnsupportedVersion::found: u16
+impl core::error::Error for ferricml::artifact::ArtifactError
+impl core::fmt::Display for ferricml::artifact::ArtifactError
+pub fn ferricml::artifact::ArtifactError::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+pub const ferricml::artifact::MODEL_ARTIFACT_VERSION: u16
+pub mod ferricml::data
+pub enum ferricml::data::DataError
+pub ferricml::data::DataError::DimensionOverflow
+pub ferricml::data::DataError::DimensionOverflow::columns: usize
+pub ferricml::data::DataError::DimensionOverflow::rows: usize
+pub ferricml::data::DataError::EmptyTargets
+pub ferricml::data::DataError::InvalidBinaryTarget
+pub ferricml::data::DataError::InvalidBinaryTarget::index: usize
+pub ferricml::data::DataError::InvalidBinaryTarget::value: u8
+pub ferricml::data::DataError::LengthMismatch
+pub ferricml::data::DataError::LengthMismatch::actual: usize
+pub ferricml::data::DataError::LengthMismatch::expected: usize
+pub ferricml::data::DataError::NonFiniteValue
+pub ferricml::data::DataError::NonFiniteValue::index: usize
+pub ferricml::data::DataError::ZeroColumns
+pub ferricml::data::DataError::ZeroRows
+impl core::error::Error for ferricml::data::DataError
+impl core::fmt::Display for ferricml::data::DataError
+pub fn ferricml::data::DataError::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+pub struct ferricml::data::BinaryTargets
+impl ferricml::data::BinaryTargets
+pub fn ferricml::data::BinaryTargets::as_slice(&self) -> &[u8]
+pub fn ferricml::data::BinaryTargets::get(&self, usize) -> core::option::Option<u8>
+pub fn ferricml::data::BinaryTargets::into_values(self) -> alloc::vec::Vec<u8>
+pub fn ferricml::data::BinaryTargets::is_empty(&self) -> bool
+pub fn ferricml::data::BinaryTargets::len(&self) -> usize
+pub fn ferricml::data::BinaryTargets::new(alloc::vec::Vec<u8>) -> core::result::Result<Self, ferricml::data::DataError>
+pub struct ferricml::data::DenseMatrix
+impl ferricml::data::DenseMatrix
+pub fn ferricml::data::DenseMatrix::as_slice(&self) -> &[f32]
+pub fn ferricml::data::DenseMatrix::as_view(&self) -> ferricml::data::MatrixView<'_>
+pub const fn ferricml::data::DenseMatrix::columns(&self) -> usize
+pub fn ferricml::data::DenseMatrix::get(&self, usize, usize) -> core::option::Option<f32>
+pub fn ferricml::data::DenseMatrix::into_values(self) -> alloc::vec::Vec<f32>
+pub fn ferricml::data::DenseMatrix::iter_rows(&self) -> core::slice::iter::ChunksExact<'_, f32>
+pub fn ferricml::data::DenseMatrix::new(alloc::vec::Vec<f32>, usize, usize) -> core::result::Result<Self, ferricml::data::DataError>
+pub fn ferricml::data::DenseMatrix::row(&self, usize) -> core::option::Option<&[f32]>
+pub const fn ferricml::data::DenseMatrix::rows(&self) -> usize
+pub struct ferricml::data::MatrixView<'a>
+impl<'a> ferricml::data::MatrixView<'a>
+pub const fn ferricml::data::MatrixView<'a>::as_slice(&self) -> &'a [f32]
+pub const fn ferricml::data::MatrixView<'a>::columns(&self) -> usize
+pub fn ferricml::data::MatrixView<'a>::get(&self, usize, usize) -> core::option::Option<f32>
+pub fn ferricml::data::MatrixView<'a>::iter_rows(&self) -> core::slice::iter::ChunksExact<'a, f32>
+pub fn ferricml::data::MatrixView<'a>::new(&'a [f32], usize, usize) -> core::result::Result<Self, ferricml::data::DataError>
+pub fn ferricml::data::MatrixView<'a>::row(&self, usize) -> core::option::Option<&'a [f32]>
+pub const fn ferricml::data::MatrixView<'a>::rows(&self) -> usize
+pub struct ferricml::data::RegressionTargets
+impl ferricml::data::RegressionTargets
+pub fn ferricml::data::RegressionTargets::as_slice(&self) -> &[f32]
+pub fn ferricml::data::RegressionTargets::get(&self, usize) -> core::option::Option<f32>
+pub fn ferricml::data::RegressionTargets::into_values(self) -> alloc::vec::Vec<f32>
+pub fn ferricml::data::RegressionTargets::is_empty(&self) -> bool
+pub fn ferricml::data::RegressionTargets::len(&self) -> usize
+pub fn ferricml::data::RegressionTargets::new(alloc::vec::Vec<f32>) -> core::result::Result<Self, ferricml::data::DataError>
+pub mod ferricml::ensemble
+pub enum ferricml::ensemble::MaxFeatures
+pub ferricml::ensemble::MaxFeatures::All
+pub ferricml::ensemble::MaxFeatures::Count(usize)
+pub ferricml::ensemble::MaxFeatures::Sqrt
+pub enum ferricml::ensemble::NJobs
+pub ferricml::ensemble::NJobs::All
+pub ferricml::ensemble::NJobs::Count(usize)
+pub ferricml::ensemble::NJobs::Serial
+pub struct ferricml::ensemble::RandomForestClassifier
+impl ferricml::ensemble::RandomForestClassifier
+pub fn ferricml::ensemble::RandomForestClassifier::classes(&self) -> &[u8]
+pub fn ferricml::ensemble::RandomForestClassifier::fit(&ferricml::data::MatrixView<'_>, &ferricml::data::BinaryTargets, ferricml::ensemble::RandomForestClassifierParams) -> core::result::Result<Self, ferricml::api::ModelError>
+pub fn ferricml::ensemble::RandomForestClassifier::get_params(&self) -> &ferricml::ensemble::RandomForestClassifierParams
+pub fn ferricml::ensemble::RandomForestClassifier::n_features_in(&self) -> usize
+pub fn ferricml::ensemble::RandomForestClassifier::predict(&self, &ferricml::data::MatrixView<'_>) -> core::result::Result<alloc::vec::Vec<u8>, ferricml::api::ModelError>
+pub fn ferricml::ensemble::RandomForestClassifier::predict_class_proba(&self, &ferricml::data::MatrixView<'_>, u8) -> core::result::Result<alloc::vec::Vec<f32>, ferricml::api::ModelError>
+pub fn ferricml::ensemble::RandomForestClassifier::predict_class_proba_into(&self, &ferricml::data::MatrixView<'_>, u8, &mut [f32]) -> core::result::Result<(), ferricml::api::ModelError>
+pub fn ferricml::ensemble::RandomForestClassifier::predict_class_proba_one(&self, &[f32], u8) -> core::result::Result<f32, ferricml::api::ModelError>
+pub fn ferricml::ensemble::RandomForestClassifier::predict_into(&self, &ferricml::data::MatrixView<'_>, &mut [u8]) -> core::result::Result<(), ferricml::api::ModelError>
+pub fn ferricml::ensemble::RandomForestClassifier::predict_one(&self, &[f32]) -> core::result::Result<u8, ferricml::api::ModelError>
+pub fn ferricml::ensemble::RandomForestClassifier::predict_positive_proba(&self, &[f32]) -> core::result::Result<f32, ferricml::api::ModelError>
+pub fn ferricml::ensemble::RandomForestClassifier::predict_positive_proba_into(&self, &ferricml::data::MatrixView<'_>, &mut [f32]) -> core::result::Result<(), ferricml::api::ModelError>
+pub fn ferricml::ensemble::RandomForestClassifier::predict_proba(&self, &ferricml::data::MatrixView<'_>) -> core::result::Result<alloc::vec::Vec<f32>, ferricml::api::ModelError>
+pub fn ferricml::ensemble::RandomForestClassifier::predict_proba_into(&self, &ferricml::data::MatrixView<'_>, &mut [f32]) -> core::result::Result<(), ferricml::api::ModelError>
+pub fn ferricml::ensemble::RandomForestClassifier::predict_proba_one(&self, &[f32]) -> core::result::Result<alloc::vec::Vec<f32>, ferricml::api::ModelError>
+pub fn ferricml::ensemble::RandomForestClassifier::predict_proba_one_into(&self, &[f32], &mut [f32]) -> core::result::Result<(), ferricml::api::ModelError>
+impl core::convert::From<ferricml::ensemble::RandomForestClassifier> for ferricml::api::AnyClassifier
+pub fn ferricml::api::AnyClassifier::from(ferricml::ensemble::RandomForestClassifier) -> Self
+impl ferricml::api::Classifier for ferricml::ensemble::RandomForestClassifier
+pub fn ferricml::ensemble::RandomForestClassifier::classes(&self) -> &[u8]
+pub fn ferricml::ensemble::RandomForestClassifier::predict(&self, &ferricml::data::MatrixView<'_>) -> core::result::Result<alloc::vec::Vec<u8>, ferricml::api::ModelError>
+pub fn ferricml::ensemble::RandomForestClassifier::predict_class_proba(&self, &ferricml::data::MatrixView<'_>, u8) -> core::result::Result<alloc::vec::Vec<f32>, ferricml::api::ModelError>
+pub fn ferricml::ensemble::RandomForestClassifier::predict_class_proba_into(&self, &ferricml::data::MatrixView<'_>, u8, &mut [f32]) -> core::result::Result<(), ferricml::api::ModelError>
+pub fn ferricml::ensemble::RandomForestClassifier::predict_into(&self, &ferricml::data::MatrixView<'_>, &mut [u8]) -> core::result::Result<(), ferricml::api::ModelError>
+pub fn ferricml::ensemble::RandomForestClassifier::predict_proba(&self, &ferricml::data::MatrixView<'_>) -> core::result::Result<alloc::vec::Vec<f32>, ferricml::api::ModelError>
+pub fn ferricml::ensemble::RandomForestClassifier::predict_proba_into(&self, &ferricml::data::MatrixView<'_>, &mut [f32]) -> core::result::Result<(), ferricml::api::ModelError>
+impl ferricml::api::Estimator for ferricml::ensemble::RandomForestClassifier
+pub fn ferricml::ensemble::RandomForestClassifier::n_features_in(&self) -> usize
+impl ferricml::api::HasParams for ferricml::ensemble::RandomForestClassifier
+pub type ferricml::ensemble::RandomForestClassifier::Params = ferricml::ensemble::RandomForestClassifierParams
+pub fn ferricml::ensemble::RandomForestClassifier::get_params(&self) -> &Self::Params
+pub struct ferricml::ensemble::RandomForestClassifierParams
+impl ferricml::ensemble::RandomForestClassifierParams
+pub const fn ferricml::ensemble::RandomForestClassifierParams::bootstrap(&self) -> bool
+pub const fn ferricml::ensemble::RandomForestClassifierParams::max_depth(&self) -> core::option::Option<usize>
+pub const fn ferricml::ensemble::RandomForestClassifierParams::max_features(&self) -> ferricml::ensemble::MaxFeatures
+pub const fn ferricml::ensemble::RandomForestClassifierParams::min_samples_leaf(&self) -> usize
+pub const fn ferricml::ensemble::RandomForestClassifierParams::min_samples_split(&self) -> usize
+pub const fn ferricml::ensemble::RandomForestClassifierParams::n_estimators(&self) -> usize
+pub const fn ferricml::ensemble::RandomForestClassifierParams::n_jobs(&self) -> ferricml::ensemble::NJobs
+pub const fn ferricml::ensemble::RandomForestClassifierParams::random_state(&self) -> u64
+pub fn ferricml::ensemble::RandomForestClassifierParams::with_bootstrap(self, bool) -> Self
+pub fn ferricml::ensemble::RandomForestClassifierParams::with_max_depth(self, core::option::Option<usize>) -> Self
+pub fn ferricml::ensemble::RandomForestClassifierParams::with_max_features(self, ferricml::ensemble::MaxFeatures) -> Self
+pub fn ferricml::ensemble::RandomForestClassifierParams::with_min_samples_leaf(self, usize) -> Self
+pub fn ferricml::ensemble::RandomForestClassifierParams::with_min_samples_split(self, usize) -> Self
+pub fn ferricml::ensemble::RandomForestClassifierParams::with_n_estimators(self, usize) -> Self
+pub fn ferricml::ensemble::RandomForestClassifierParams::with_n_jobs(self, ferricml::ensemble::NJobs) -> Self
+pub fn ferricml::ensemble::RandomForestClassifierParams::with_random_state(self, u64) -> Self
+impl core::default::Default for ferricml::ensemble::RandomForestClassifierParams
+pub fn ferricml::ensemble::RandomForestClassifierParams::default() -> Self
+pub struct ferricml::ensemble::RandomForestRegressor
+impl ferricml::ensemble::RandomForestRegressor
+pub fn ferricml::ensemble::RandomForestRegressor::fit(&ferricml::data::MatrixView<'_>, &ferricml::data::RegressionTargets, ferricml::ensemble::RandomForestRegressorParams) -> core::result::Result<Self, ferricml::api::ModelError>
+pub fn ferricml::ensemble::RandomForestRegressor::get_params(&self) -> &ferricml::ensemble::RandomForestRegressorParams
+pub fn ferricml::ensemble::RandomForestRegressor::n_features_in(&self) -> usize
+pub fn ferricml::ensemble::RandomForestRegressor::predict(&self, &ferricml::data::MatrixView<'_>) -> core::result::Result<alloc::vec::Vec<f32>, ferricml::api::ModelError>
+pub fn ferricml::ensemble::RandomForestRegressor::predict_into(&self, &ferricml::data::MatrixView<'_>, &mut [f32]) -> core::result::Result<(), ferricml::api::ModelError>
+pub fn ferricml::ensemble::RandomForestRegressor::predict_one(&self, &[f32]) -> core::result::Result<f32, ferricml::api::ModelError>
+impl core::convert::From<ferricml::ensemble::RandomForestRegressor> for ferricml::api::AnyRegressor
+pub fn ferricml::api::AnyRegressor::from(ferricml::ensemble::RandomForestRegressor) -> Self
+impl ferricml::api::Estimator for ferricml::ensemble::RandomForestRegressor
+pub fn ferricml::ensemble::RandomForestRegressor::n_features_in(&self) -> usize
+impl ferricml::api::HasParams for ferricml::ensemble::RandomForestRegressor
+pub type ferricml::ensemble::RandomForestRegressor::Params = ferricml::ensemble::RandomForestRegressorParams
+pub fn ferricml::ensemble::RandomForestRegressor::get_params(&self) -> &Self::Params
+impl ferricml::api::Regressor for ferricml::ensemble::RandomForestRegressor
+pub fn ferricml::ensemble::RandomForestRegressor::predict(&self, &ferricml::data::MatrixView<'_>) -> core::result::Result<alloc::vec::Vec<f32>, ferricml::api::ModelError>
+pub fn ferricml::ensemble::RandomForestRegressor::predict_into(&self, &ferricml::data::MatrixView<'_>, &mut [f32]) -> core::result::Result<(), ferricml::api::ModelError>
+pub struct ferricml::ensemble::RandomForestRegressorParams
+impl ferricml::ensemble::RandomForestRegressorParams
+pub const fn ferricml::ensemble::RandomForestRegressorParams::bootstrap(&self) -> bool
+pub const fn ferricml::ensemble::RandomForestRegressorParams::max_depth(&self) -> core::option::Option<usize>
+pub const fn ferricml::ensemble::RandomForestRegressorParams::max_features(&self) -> ferricml::ensemble::MaxFeatures
+pub const fn ferricml::ensemble::RandomForestRegressorParams::min_samples_leaf(&self) -> usize
+pub const fn ferricml::ensemble::RandomForestRegressorParams::min_samples_split(&self) -> usize
+pub const fn ferricml::ensemble::RandomForestRegressorParams::n_estimators(&self) -> usize
+pub const fn ferricml::ensemble::RandomForestRegressorParams::n_jobs(&self) -> ferricml::ensemble::NJobs
+pub const fn ferricml::ensemble::RandomForestRegressorParams::random_state(&self) -> u64
+pub fn ferricml::ensemble::RandomForestRegressorParams::with_bootstrap(self, bool) -> Self
+pub fn ferricml::ensemble::RandomForestRegressorParams::with_max_depth(self, core::option::Option<usize>) -> Self
+pub fn ferricml::ensemble::RandomForestRegressorParams::with_max_features(self, ferricml::ensemble::MaxFeatures) -> Self
+pub fn ferricml::ensemble::RandomForestRegressorParams::with_min_samples_leaf(self, usize) -> Self
+pub fn ferricml::ensemble::RandomForestRegressorParams::with_min_samples_split(self, usize) -> Self
+pub fn ferricml::ensemble::RandomForestRegressorParams::with_n_estimators(self, usize) -> Self
+pub fn ferricml::ensemble::RandomForestRegressorParams::with_n_jobs(self, ferricml::ensemble::NJobs) -> Self
+pub fn ferricml::ensemble::RandomForestRegressorParams::with_random_state(self, u64) -> Self
+impl core::default::Default for ferricml::ensemble::RandomForestRegressorParams
+pub fn ferricml::ensemble::RandomForestRegressorParams::default() -> Self
+pub mod ferricml::linear_model
+pub struct ferricml::linear_model::LogisticRegression
+impl ferricml::linear_model::LogisticRegression
+pub fn ferricml::linear_model::LogisticRegression::coefficients(&self) -> &[f32]
+pub fn ferricml::linear_model::LogisticRegression::fit(&ferricml::data::MatrixView<'_>, &ferricml::data::BinaryTargets, ferricml::linear_model::LogisticRegressionParams) -> core::result::Result<Self, ferricml::api::ModelError>
+pub fn ferricml::linear_model::LogisticRegression::from_artifact(&[u8], [u8; 32]) -> core::result::Result<Self, ferricml::artifact::ArtifactError>
+pub const fn ferricml::linear_model::LogisticRegression::get_params(&self) -> &ferricml::linear_model::LogisticRegressionParams
+pub const fn ferricml::linear_model::LogisticRegression::intercept(&self) -> f32
+pub const fn ferricml::linear_model::LogisticRegression::n_features_in(&self) -> usize
+pub const fn ferricml::linear_model::LogisticRegression::n_iter(&self) -> usize
+pub fn ferricml::linear_model::LogisticRegression::predict(&self, &ferricml::data::MatrixView<'_>) -> core::result::Result<alloc::vec::Vec<u8>, ferricml::api::ModelError>
+pub fn ferricml::linear_model::LogisticRegression::predict_class_proba(&self, &ferricml::data::MatrixView<'_>, u8) -> core::result::Result<alloc::vec::Vec<f32>, ferricml::api::ModelError>
+pub fn ferricml::linear_model::LogisticRegression::predict_into(&self, &ferricml::data::MatrixView<'_>, &mut [u8]) -> core::result::Result<(), ferricml::api::ModelError>
+pub fn ferricml::linear_model::LogisticRegression::predict_one(&self, &[f32]) -> core::result::Result<u8, ferricml::api::ModelError>
+pub fn ferricml::linear_model::LogisticRegression::predict_positive_proba(&self, &[f32]) -> core::result::Result<f32, ferricml::api::ModelError>
+pub fn ferricml::linear_model::LogisticRegression::predict_proba(&self, &ferricml::data::MatrixView<'_>) -> core::result::Result<alloc::vec::Vec<f32>, ferricml::api::ModelError>
+pub fn ferricml::linear_model::LogisticRegression::predict_proba_into(&self, &ferricml::data::MatrixView<'_>, &mut [f32]) -> core::result::Result<(), ferricml::api::ModelError>
+pub fn ferricml::linear_model::LogisticRegression::to_artifact(&self, [u8; 32]) -> core::result::Result<alloc::vec::Vec<u8>, ferricml::artifact::ArtifactError>
+impl core::convert::From<ferricml::linear_model::LogisticRegression> for ferricml::api::AnyClassifier
+pub fn ferricml::api::AnyClassifier::from(ferricml::linear_model::LogisticRegression) -> Self
+impl ferricml::api::Classifier for ferricml::linear_model::LogisticRegression
+pub fn ferricml::linear_model::LogisticRegression::classes(&self) -> &[u8]
+pub fn ferricml::linear_model::LogisticRegression::predict(&self, &ferricml::data::MatrixView<'_>) -> core::result::Result<alloc::vec::Vec<u8>, ferricml::api::ModelError>
+pub fn ferricml::linear_model::LogisticRegression::predict_class_proba(&self, &ferricml::data::MatrixView<'_>, u8) -> core::result::Result<alloc::vec::Vec<f32>, ferricml::api::ModelError>
+pub fn ferricml::linear_model::LogisticRegression::predict_class_proba_into(&self, &ferricml::data::MatrixView<'_>, u8, &mut [f32]) -> core::result::Result<(), ferricml::api::ModelError>
+pub fn ferricml::linear_model::LogisticRegression::predict_into(&self, &ferricml::data::MatrixView<'_>, &mut [u8]) -> core::result::Result<(), ferricml::api::ModelError>
+pub fn ferricml::linear_model::LogisticRegression::predict_proba(&self, &ferricml::data::MatrixView<'_>) -> core::result::Result<alloc::vec::Vec<f32>, ferricml::api::ModelError>
+pub fn ferricml::linear_model::LogisticRegression::predict_proba_into(&self, &ferricml::data::MatrixView<'_>, &mut [f32]) -> core::result::Result<(), ferricml::api::ModelError>
+impl ferricml::api::Estimator for ferricml::linear_model::LogisticRegression
+pub fn ferricml::linear_model::LogisticRegression::n_features_in(&self) -> usize
+impl ferricml::api::HasParams for ferricml::linear_model::LogisticRegression
+pub type ferricml::linear_model::LogisticRegression::Params = ferricml::linear_model::LogisticRegressionParams
+pub fn ferricml::linear_model::LogisticRegression::get_params(&self) -> &Self::Params
+pub struct ferricml::linear_model::LogisticRegressionParams
+impl ferricml::linear_model::LogisticRegressionParams
+pub const fn ferricml::linear_model::LogisticRegressionParams::c(&self) -> f32
+pub const fn ferricml::linear_model::LogisticRegressionParams::fit_intercept(&self) -> bool
+pub const fn ferricml::linear_model::LogisticRegressionParams::max_iter(&self) -> usize
+pub const fn ferricml::linear_model::LogisticRegressionParams::tol(&self) -> f32
+pub fn ferricml::linear_model::LogisticRegressionParams::with_c(self, f32) -> Self
+pub fn ferricml::linear_model::LogisticRegressionParams::with_fit_intercept(self, bool) -> Self
+pub fn ferricml::linear_model::LogisticRegressionParams::with_max_iter(self, usize) -> Self
+pub fn ferricml::linear_model::LogisticRegressionParams::with_tol(self, f32) -> Self
+impl core::default::Default for ferricml::linear_model::LogisticRegressionParams
+pub fn ferricml::linear_model::LogisticRegressionParams::default() -> Self
+pub mod ferricml::pipeline
+pub struct ferricml::pipeline::Pipeline<T, E>
+impl<T, E> ferricml::pipeline::Pipeline<T, E> where T: ferricml::api::Transformer, E: ferricml::api::Estimator
+pub const fn ferricml::pipeline::Pipeline<T, E>::estimator(&self) -> &E
+pub fn ferricml::pipeline::Pipeline<T, E>::into_parts(self) -> (T, E)
+pub fn ferricml::pipeline::Pipeline<T, E>::new(T, E) -> core::result::Result<Self, ferricml::api::ModelError>
+pub fn ferricml::pipeline::Pipeline<T, E>::transform(&self, &ferricml::data::MatrixView<'_>) -> core::result::Result<ferricml::data::DenseMatrix, ferricml::api::ModelError>
+pub fn ferricml::pipeline::Pipeline<T, E>::transform_into<'output>(&self, &ferricml::data::MatrixView<'_>, &'output mut [f32]) -> core::result::Result<ferricml::data::MatrixView<'output>, ferricml::api::ModelError>
+pub const fn ferricml::pipeline::Pipeline<T, E>::transformer(&self) -> &T
+pub fn ferricml::pipeline::Pipeline<T, E>::with_transformed<R>(&self, &ferricml::data::MatrixView<'_>, &mut [f32], impl core::ops::function::FnOnce(&E, &ferricml::data::MatrixView<'_>) -> core::result::Result<R, ferricml::api::ModelError>) -> core::result::Result<R, ferricml::api::ModelError>
+pub fn ferricml::pipeline::Pipeline<T, E>::workspace_len(&self, usize) -> core::result::Result<usize, ferricml::api::ModelError>
+impl<T, E> ferricml::api::Estimator for ferricml::pipeline::Pipeline<T, E> where T: ferricml::api::Transformer, E: ferricml::api::Estimator
+pub fn ferricml::pipeline::Pipeline<T, E>::n_features_in(&self) -> usize

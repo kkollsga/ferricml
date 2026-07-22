@@ -1,0 +1,16 @@
+{
+  "schema_version": 1,
+  "package": "ferricml",
+  "nightly": "nightly-2026-07-01",
+  "cargo_public_api_version": "0.52.0",
+  "feature_classifications": {
+    "default": "profile-root"
+  },
+  "profiles": [
+    {
+      "name": "default",
+      "features": [],
+      "baseline": "tests/api-baselines/rust/ferricml-default.txt"
+    }
+  ]
+}

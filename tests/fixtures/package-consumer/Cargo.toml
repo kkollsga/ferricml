@@ -1,0 +1,10 @@
+[package]
+name = "ferricml-package-consumer"
+version = "0.0.0"
+edition = "2024"
+publish = false
+
+[workspace]
+
+[dependencies]
+ferricml = { path = "../ferricml" }
