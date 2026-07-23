@@ -59,6 +59,8 @@ pub enum ModelError {
     InvalidIterationCount,
     /// The convergence tolerance is not finite and positive.
     InvalidTolerance,
+    /// A least-squares tolerance is not finite and non-negative.
+    InvalidLeastSquaresTolerance,
     /// The linear solver encountered a non-positive-definite system.
     LinearSolveFailed,
 }
@@ -121,6 +123,9 @@ impl fmt::Display for ModelError {
             }
             Self::InvalidIterationCount => f.write_str("max_iter must be at least one"),
             Self::InvalidTolerance => f.write_str("tolerance must be finite and positive"),
+            Self::InvalidLeastSquaresTolerance => {
+                f.write_str("least-squares tolerance must be finite and non-negative")
+            }
             Self::LinearSolveFailed => f.write_str("linear solve failed during optimization"),
         }
     }

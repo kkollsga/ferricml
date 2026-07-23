@@ -4,7 +4,9 @@ use ferricml::ensemble::{
     MaxFeatures, NJobs, RandomForestClassifier, RandomForestClassifierParams,
     RandomForestRegressor, RandomForestRegressorParams,
 };
-use ferricml::linear_model::{LogisticRegression, LogisticRegressionParams};
+use ferricml::linear_model::{
+    LinearRegression, LinearRegressionParams, LogisticRegression, LogisticRegressionParams,
+};
 use ferricml::pipeline::Pipeline;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -198,6 +200,42 @@ fn regressor_paths_builders_traits_and_retained_params_are_stable() {
         .unwrap();
     assert!(predictions.iter().all(|prediction| prediction.is_finite()));
     assert_eq!(model.predict(&matrix.as_view()).unwrap(), predictions);
+}
+
+#[test]
+fn linear_regression_paths_builders_traits_and_retained_params_are_stable() {
+    let matrix = training_matrix();
+    let targets = RegressionTargets::new(vec![0.0, 1.0, 4.0, 9.0]).unwrap();
+    let params = LinearRegressionParams::default()
+        .with_fit_intercept(true)
+        .with_tol(1.0e-6);
+    let model = LinearRegression::fit(&matrix.as_view(), &targets, params.clone()).unwrap();
+
+    assert_eq!(estimator_width(&model), 2);
+    assert_eq!(regressor_width(&model), 2);
+    assert_eq!(
+        retained_params::<_, LinearRegressionParams>(&model),
+        &params
+    );
+    assert!(params.fit_intercept());
+    assert_eq!(params.tol(), 1.0e-6);
+    assert_eq!(model.coefficients().len(), 2);
+    assert!(model.intercept().is_finite());
+    assert!(model.rank() <= 2);
+    let batch = model.predict(&matrix.as_view()).unwrap();
+    let mut output = [0.0; 4];
+    model.predict_into(&matrix.as_view(), &mut output).unwrap();
+    assert_eq!(batch, output);
+    assert_eq!(model.predict_one(matrix.row(0).unwrap()).unwrap(), batch[0]);
+
+    let weighted = LinearRegression::fit_weighted(
+        &matrix.as_view(),
+        &targets,
+        &SampleWeights::new(vec![1.0, 2.0, 1.0, 2.0]).unwrap(),
+        params,
+    )
+    .unwrap();
+    assert_eq!(weighted.n_features_in(), 2);
 }
 
 #[test]

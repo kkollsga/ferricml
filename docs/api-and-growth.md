@@ -25,9 +25,10 @@ reference contract.
   `with_transformed` path uses caller-owned workspace and static dispatch, so a
   future `StandardScaler` can feed logistic or ridge estimators without a
   virtual call or intermediate allocation per batch.
-- Future `preprocessing` and `linear_model` modules land only with their first
-  concrete estimators. Training-time pipeline composition and more than one
-  transform step are deliberately deferred until those use cases are real.
+- `linear_model` separates estimator facades from private numerical seams.
+  A future `preprocessing` namespace lands with its first fitted transformer.
+  Training-time pipeline composition and more than one transform step are
+  deliberately deferred until those use cases are real.
 - `artifact` owns stable envelope identity, bounded decoding primitives, and
   artifact errors. It does not expose backend tree layouts.
 

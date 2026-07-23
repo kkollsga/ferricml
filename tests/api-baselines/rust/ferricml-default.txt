@@ -58,6 +58,7 @@ pub ferricml::api::ModelError::InvalidBinaryTarget::value: u8
 pub ferricml::api::ModelError::InvalidEstimatorCount
 pub ferricml::api::ModelError::InvalidIterationCount
 pub ferricml::api::ModelError::InvalidJobCount
+pub ferricml::api::ModelError::InvalidLeastSquaresTolerance
 pub ferricml::api::ModelError::InvalidMaxDepth
 pub ferricml::api::ModelError::InvalidMaxFeatures
 pub ferricml::api::ModelError::InvalidMaxFeatures::available: usize
@@ -136,6 +137,8 @@ impl ferricml::api::Estimator for ferricml::ensemble::RandomForestClassifier
 pub fn ferricml::ensemble::RandomForestClassifier::n_features_in(&self) -> usize
 impl ferricml::api::Estimator for ferricml::ensemble::RandomForestRegressor
 pub fn ferricml::ensemble::RandomForestRegressor::n_features_in(&self) -> usize
+impl ferricml::api::Estimator for ferricml::linear_model::LinearRegression
+pub fn ferricml::linear_model::LinearRegression::n_features_in(&self) -> usize
 impl ferricml::api::Estimator for ferricml::linear_model::LogisticRegression
 pub fn ferricml::linear_model::LogisticRegression::n_features_in(&self) -> usize
 impl<T, E> ferricml::api::Estimator for ferricml::pipeline::Pipeline<T, E> where T: ferricml::api::Transformer, E: ferricml::api::Estimator
@@ -149,6 +152,9 @@ pub fn ferricml::ensemble::RandomForestClassifier::get_params(&self) -> &Self::P
 impl ferricml::api::HasParams for ferricml::ensemble::RandomForestRegressor
 pub type ferricml::ensemble::RandomForestRegressor::Params = ferricml::ensemble::RandomForestRegressorParams
 pub fn ferricml::ensemble::RandomForestRegressor::get_params(&self) -> &Self::Params
+impl ferricml::api::HasParams for ferricml::linear_model::LinearRegression
+pub type ferricml::linear_model::LinearRegression::Params = ferricml::linear_model::LinearRegressionParams
+pub fn ferricml::linear_model::LinearRegression::get_params(&self) -> &Self::Params
 impl ferricml::api::HasParams for ferricml::linear_model::LogisticRegression
 pub type ferricml::linear_model::LogisticRegression::Params = ferricml::linear_model::LogisticRegressionParams
 pub fn ferricml::linear_model::LogisticRegression::get_params(&self) -> &Self::Params
@@ -161,6 +167,9 @@ pub fn ferricml::api::AnyRegressor::predict_into(&self, &ferricml::data::MatrixV
 impl ferricml::api::Regressor for ferricml::ensemble::RandomForestRegressor
 pub fn ferricml::ensemble::RandomForestRegressor::predict(&self, &ferricml::data::MatrixView<'_>) -> core::result::Result<alloc::vec::Vec<f32>, ferricml::api::ModelError>
 pub fn ferricml::ensemble::RandomForestRegressor::predict_into(&self, &ferricml::data::MatrixView<'_>, &mut [f32]) -> core::result::Result<(), ferricml::api::ModelError>
+impl ferricml::api::Regressor for ferricml::linear_model::LinearRegression
+pub fn ferricml::linear_model::LinearRegression::predict(&self, &ferricml::data::MatrixView<'_>) -> core::result::Result<alloc::vec::Vec<f32>, ferricml::api::ModelError>
+pub fn ferricml::linear_model::LinearRegression::predict_into(&self, &ferricml::data::MatrixView<'_>, &mut [f32]) -> core::result::Result<(), ferricml::api::ModelError>
 pub trait ferricml::api::Transformer: ferricml::api::Estimator
 pub fn ferricml::api::Transformer::n_features_out(&self) -> usize
 pub fn ferricml::api::Transformer::transform(&self, &ferricml::data::MatrixView<'_>) -> core::result::Result<ferricml::data::DenseMatrix, ferricml::api::ModelError>
@@ -360,6 +369,36 @@ pub fn ferricml::ensemble::RandomForestRegressorParams::with_random_state(self, 
 impl core::default::Default for ferricml::ensemble::RandomForestRegressorParams
 pub fn ferricml::ensemble::RandomForestRegressorParams::default() -> Self
 pub mod ferricml::linear_model
+pub struct ferricml::linear_model::LinearRegression
+impl ferricml::linear_model::LinearRegression
+pub fn ferricml::linear_model::LinearRegression::coefficients(&self) -> &[f32]
+pub fn ferricml::linear_model::LinearRegression::fit(&ferricml::data::MatrixView<'_>, &ferricml::data::RegressionTargets, ferricml::linear_model::LinearRegressionParams) -> core::result::Result<Self, ferricml::api::ModelError>
+pub fn ferricml::linear_model::LinearRegression::fit_weighted(&ferricml::data::MatrixView<'_>, &ferricml::data::RegressionTargets, &ferricml::data::SampleWeights, ferricml::linear_model::LinearRegressionParams) -> core::result::Result<Self, ferricml::api::ModelError>
+pub fn ferricml::linear_model::LinearRegression::from_artifact(&[u8], [u8; 32]) -> core::result::Result<Self, ferricml::artifact::ArtifactError>
+pub const fn ferricml::linear_model::LinearRegression::get_params(&self) -> &ferricml::linear_model::LinearRegressionParams
+pub const fn ferricml::linear_model::LinearRegression::intercept(&self) -> f32
+pub const fn ferricml::linear_model::LinearRegression::n_features_in(&self) -> usize
+pub fn ferricml::linear_model::LinearRegression::predict(&self, &ferricml::data::MatrixView<'_>) -> core::result::Result<alloc::vec::Vec<f32>, ferricml::api::ModelError>
+pub fn ferricml::linear_model::LinearRegression::predict_into(&self, &ferricml::data::MatrixView<'_>, &mut [f32]) -> core::result::Result<(), ferricml::api::ModelError>
+pub fn ferricml::linear_model::LinearRegression::predict_one(&self, &[f32]) -> core::result::Result<f32, ferricml::api::ModelError>
+pub const fn ferricml::linear_model::LinearRegression::rank(&self) -> usize
+pub fn ferricml::linear_model::LinearRegression::to_artifact(&self, [u8; 32]) -> core::result::Result<alloc::vec::Vec<u8>, ferricml::artifact::ArtifactError>
+impl ferricml::api::Estimator for ferricml::linear_model::LinearRegression
+pub fn ferricml::linear_model::LinearRegression::n_features_in(&self) -> usize
+impl ferricml::api::HasParams for ferricml::linear_model::LinearRegression
+pub type ferricml::linear_model::LinearRegression::Params = ferricml::linear_model::LinearRegressionParams
+pub fn ferricml::linear_model::LinearRegression::get_params(&self) -> &Self::Params
+impl ferricml::api::Regressor for ferricml::linear_model::LinearRegression
+pub fn ferricml::linear_model::LinearRegression::predict(&self, &ferricml::data::MatrixView<'_>) -> core::result::Result<alloc::vec::Vec<f32>, ferricml::api::ModelError>
+pub fn ferricml::linear_model::LinearRegression::predict_into(&self, &ferricml::data::MatrixView<'_>, &mut [f32]) -> core::result::Result<(), ferricml::api::ModelError>
+pub struct ferricml::linear_model::LinearRegressionParams
+impl ferricml::linear_model::LinearRegressionParams
+pub const fn ferricml::linear_model::LinearRegressionParams::fit_intercept(&self) -> bool
+pub const fn ferricml::linear_model::LinearRegressionParams::tol(&self) -> f32
+pub fn ferricml::linear_model::LinearRegressionParams::with_fit_intercept(self, bool) -> Self
+pub fn ferricml::linear_model::LinearRegressionParams::with_tol(self, f32) -> Self
+impl core::default::Default for ferricml::linear_model::LinearRegressionParams
+pub fn ferricml::linear_model::LinearRegressionParams::default() -> Self
 pub struct ferricml::linear_model::LogisticRegression
 impl ferricml::linear_model::LogisticRegression
 pub fn ferricml::linear_model::LogisticRegression::coefficients(&self) -> &[f32]

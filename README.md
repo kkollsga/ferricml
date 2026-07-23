@@ -15,7 +15,7 @@ validation gate passes.
 ## Current foundation
 
 The core crate provides validated dense data and sample weights, weighted
-logistic regression with raw decision scores,
+logistic regression with raw decision scores, minimum-norm linear regression,
 deterministic random-forest classification and regression, private packed
 trees, bounded parallel training, allocation-free batch prediction, and a
 generic fitted pipeline seam.
@@ -24,8 +24,9 @@ of scikit-learn; typed Rust parameters and caller-owned `_into` methods preserve
 validation and performance. See [API and growth](docs/api-and-growth.md) and
 [the conformance contract](docs/sklearn-conformance.md).
 
-Logistic models support a bounded, versioned, checksummed binary artifact with
-strict feature-schema verification and legacy-v1 decoding. The logical
+Logistic and linear models support bounded, versioned, checksummed binary
+artifacts with strict feature-schema verification; logistic retains legacy-v1
+decoding. The logical
 envelope documented in [artifact-envelope.md](docs/artifact-envelope.md)
 deliberately excludes private tree layouts.
 

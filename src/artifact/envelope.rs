@@ -10,6 +10,7 @@ const SCHEMA_RECORD_BYTES: usize = 2 + 2 + 32;
 const COMPONENT_HEADER_BYTES: usize = 2 + 2 + 4;
 
 pub(crate) const LOGISTIC_ARTIFACT_KIND: u16 = 1;
+pub(crate) const LINEAR_REGRESSION_ARTIFACT_KIND: u16 = 2;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum SchemaRole {

@@ -28,6 +28,7 @@ exclude = [
 default = []
 
 [dependencies]
+nalgebra = { version = "0.34", default-features = false, features = ["std"] }
 sha2 = "0.10"
 
 [dev-dependencies]

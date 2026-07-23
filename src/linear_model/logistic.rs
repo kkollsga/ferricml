@@ -1,4 +1,4 @@
-//! Linear estimators with scikit-style fit and prediction semantics.
+//! Binary logistic regression.
 
 use crate::api::{Classifier, Estimator, HasParams, ModelError};
 use crate::artifact::{

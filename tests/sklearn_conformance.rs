@@ -6,7 +6,9 @@ use ferricml::ensemble::{
     MaxFeatures, NJobs, RandomForestClassifier, RandomForestClassifierParams,
     RandomForestRegressor, RandomForestRegressorParams,
 };
-use ferricml::linear_model::{LogisticRegression, LogisticRegressionParams};
+use ferricml::linear_model::{
+    LinearRegression, LinearRegressionParams, LogisticRegression, LogisticRegressionParams,
+};
 
 #[allow(dead_code, clippy::excessive_precision)]
 mod reference {
@@ -197,6 +199,73 @@ fn weighted_logistic_matches_public_scikit_outputs() {
     assert_close_with_tolerance(
         &model.predict_proba(&test.as_view()).unwrap(),
         reference::LOGISTIC_WEIGHTED_PROBABILITIES,
+        LOGISTIC_TOLERANCE,
+    );
+}
+
+#[test]
+fn linear_regression_matches_public_scikit_outputs() {
+    let full_x = matrix(reference::LINEAR_FULL_X, 4, 2);
+    let full_y = RegressionTargets::new(reference::LINEAR_FULL_Y.to_vec()).unwrap();
+    let test_x = matrix(reference::LINEAR_TEST_X, 3, 2);
+    let full = LinearRegression::fit(
+        &full_x.as_view(),
+        &full_y,
+        LinearRegressionParams::default(),
+    )
+    .unwrap();
+    assert_eq!(full.rank(), 2);
+    assert_close_with_tolerance(
+        full.coefficients(),
+        reference::LINEAR_FULL_COEFFICIENTS,
+        LOGISTIC_TOLERANCE,
+    );
+    assert_close_with_tolerance(
+        &[full.intercept()],
+        reference::LINEAR_FULL_INTERCEPT,
+        LOGISTIC_TOLERANCE,
+    );
+    assert_close_with_tolerance(
+        &full.predict(&test_x.as_view()).unwrap(),
+        reference::LINEAR_FULL_PREDICTIONS,
+        LOGISTIC_TOLERANCE,
+    );
+
+    let rank_x = matrix(reference::LINEAR_RANK_DEFICIENT_X, 3, 2);
+    let rank_y = RegressionTargets::new(reference::LINEAR_RANK_DEFICIENT_Y.to_vec()).unwrap();
+    let rank_deficient = LinearRegression::fit(
+        &rank_x.as_view(),
+        &rank_y,
+        LinearRegressionParams::default()
+            .with_fit_intercept(false)
+            .with_tol(0.0),
+    )
+    .unwrap();
+    assert_eq!(rank_deficient.rank(), 1);
+    assert_close_with_tolerance(
+        rank_deficient.coefficients(),
+        reference::LINEAR_RANK_DEFICIENT_COEFFICIENTS,
+        LOGISTIC_TOLERANCE,
+    );
+
+    let weighted_x = matrix(reference::LINEAR_WEIGHTED_X, 4, 1);
+    let weighted_y = RegressionTargets::new(reference::LINEAR_WEIGHTED_Y.to_vec()).unwrap();
+    let weights = SampleWeights::new(reference::LINEAR_WEIGHTS.to_vec()).unwrap();
+    let weighted = LinearRegression::fit_weighted(
+        &weighted_x.as_view(),
+        &weighted_y,
+        &weights,
+        LinearRegressionParams::default(),
+    )
+    .unwrap();
+    assert_close_with_tolerance(
+        weighted.coefficients(),
+        reference::LINEAR_WEIGHTED_COEFFICIENTS,
+        LOGISTIC_TOLERANCE,
+    );
+    assert_close_with_tolerance(
+        &[weighted.intercept()],
+        reference::LINEAR_WEIGHTED_INTERCEPT,
         LOGISTIC_TOLERANCE,
     );
 }

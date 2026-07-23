@@ -32,10 +32,11 @@ The contract covers the scikit parameter names `n_estimators`, `max_depth`,
 `random_state`, and `n_jobs`; sorted `classes_`; `n_features_in_`; label and
 row-major probability outputs; one-column single-class probability shape;
 regression output; logistic sample weights, raw decision scores, and exact-zero
-no-intercept semantics; first-class tie selection; and common parameter/shape
-validation. Exact forest fixtures use one tree, all features, and no bootstrap,
-and must match within `1e-6`; iterative logistic outputs use a reviewed
-`2e-5` tolerance.
+no-intercept semantics; weighted dense ordinary least squares with
+minimum-norm rank-deficient behavior; first-class tie selection; and common
+parameter/shape validation. Exact forest fixtures use one tree, all features,
+and no bootstrap, and must match within `1e-6`; iterative or decomposition-
+based linear outputs use a reviewed `2e-5` tolerance.
 
 Quality is an implementation-level comparison rather than tree identity. Five
 fixed seeds cover nonlinear, separable, imbalanced, noisy classification and

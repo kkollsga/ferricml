@@ -4,7 +4,9 @@ use ferricml::ensemble::{
     RandomForestClassifier, RandomForestClassifierParams, RandomForestRegressor,
     RandomForestRegressorParams,
 };
-use ferricml::linear_model::{LogisticRegression, LogisticRegressionParams};
+use ferricml::linear_model::{
+    LinearRegression, LinearRegressionParams, LogisticRegression, LogisticRegressionParams,
+};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let features = DenseMatrix::new(vec![0.0, 0.0, 1.0, 1.0, 2.0, 4.0, 3.0, 9.0], 4, 2)?;
@@ -36,6 +38,19 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     assert_eq!(
         decoded.predict_proba(&features.as_view())?,
         logistic.predict_proba(&features.as_view())?
+    );
+
+    let linear = LinearRegression::fit_weighted(
+        &features.as_view(),
+        &RegressionTargets::new(vec![0.0, 1.0, 4.0, 9.0])?,
+        &SampleWeights::new(vec![1.0, 2.0, 1.0, 2.0])?,
+        LinearRegressionParams::default(),
+    )?;
+    let linear_encoded = linear.to_artifact(schema)?;
+    let linear_decoded = LinearRegression::from_artifact(&linear_encoded, schema)?;
+    assert_eq!(
+        linear_decoded.predict(&features.as_view())?,
+        linear.predict(&features.as_view())?
     );
 
     let regressor = RandomForestRegressor::fit(

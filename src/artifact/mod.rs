@@ -8,8 +8,9 @@ use std::fmt;
 
 pub(crate) use cursor::ArtifactCursor;
 pub(crate) use envelope::{
-    ArtifactPayloadWriter, LOGISTIC_ARTIFACT_KIND, SchemaRole, artifact_version, decode_component,
-    decode_legacy_envelope, decode_v2_envelope, encode_component, encode_v2_envelope,
+    ArtifactPayloadWriter, LINEAR_REGRESSION_ARTIFACT_KIND, LOGISTIC_ARTIFACT_KIND, SchemaRole,
+    artifact_version, decode_component, decode_legacy_envelope, decode_v2_envelope,
+    encode_component, encode_v2_envelope,
 };
 
 /// Current FerricML binary model artifact version.
