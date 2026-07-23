@@ -61,6 +61,8 @@ pub enum ModelError {
     InvalidTolerance,
     /// A least-squares tolerance is not finite and non-negative.
     InvalidLeastSquaresTolerance,
+    /// A ridge penalty is not finite and non-negative.
+    InvalidRidgeAlpha,
     /// The linear solver encountered a non-positive-definite system.
     LinearSolveFailed,
 }
@@ -126,6 +128,7 @@ impl fmt::Display for ModelError {
             Self::InvalidLeastSquaresTolerance => {
                 f.write_str("least-squares tolerance must be finite and non-negative")
             }
+            Self::InvalidRidgeAlpha => f.write_str("ridge alpha must be finite and non-negative"),
             Self::LinearSolveFailed => f.write_str("linear solve failed during optimization"),
         }
     }

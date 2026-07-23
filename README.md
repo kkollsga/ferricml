@@ -15,7 +15,7 @@ validation gate passes.
 ## Current foundation
 
 The core crate provides validated dense data and sample weights, weighted
-logistic regression with raw decision scores, minimum-norm linear regression,
+logistic regression with raw decision scores, minimum-norm linear and ridge regression,
 deterministic random-forest classification and regression, private packed
 trees, bounded parallel training, allocation-free batch prediction, and a
 generic fitted pipeline seam.

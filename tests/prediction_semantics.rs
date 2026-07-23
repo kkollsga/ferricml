@@ -7,6 +7,7 @@ use ferricml::ensemble::{
     MaxFeatures, NJobs, RandomForestClassifier, RandomForestClassifierParams,
     RandomForestRegressor, RandomForestRegressorParams,
 };
+use ferricml::linear_model::{LinearRegression, LinearRegressionParams, Ridge, RidgeParams};
 use ferricml::linear_model::{LogisticRegression, LogisticRegressionParams};
 
 fn matrix(values: &[f32], rows: usize, columns: usize) -> DenseMatrix {
@@ -243,6 +244,23 @@ fn object_safe_traits_and_owned_enums_dispatch_by_batch() {
         AnyRegressorParams::RandomForest(_)
     ));
     assert_eq!(classifier.n_features_in(), regressor.n_features_in());
+
+    let linear =
+        LinearRegression::fit(&data.as_view(), &targets, LinearRegressionParams::default())
+            .unwrap();
+    let expected = linear.predict(&data.as_view()).unwrap();
+    let linear: AnyRegressor = linear.into();
+    assert_eq!(linear.predict(&data.as_view()).unwrap(), expected);
+    assert!(matches!(
+        linear.get_params(),
+        AnyRegressorParams::LinearRegression(_)
+    ));
+
+    let ridge = Ridge::fit(&data.as_view(), &targets, RidgeParams::default()).unwrap();
+    let expected = ridge.predict(&data.as_view()).unwrap();
+    let ridge: AnyRegressor = ridge.into();
+    assert_eq!(ridge.predict(&data.as_view()).unwrap(), expected);
+    assert!(matches!(ridge.get_params(), AnyRegressorParams::Ridge(_)));
 }
 
 #[test]

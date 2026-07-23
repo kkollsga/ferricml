@@ -1,7 +1,7 @@
 # Model artifact envelope
 
-FerricML writes artifact envelope version 2 for fitted logistic- and linear-
-regression models and continues to read the legacy version-1 logistic format. The private
+FerricML writes artifact envelope version 2 for fitted logistic, linear, and
+ridge models and continues to read the legacy version-1 logistic format. The private
 forest representation remains outside the persistence contract; no byte
 sequence produced from packed trees is a compatibility promise.
 

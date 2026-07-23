@@ -5,7 +5,8 @@ use ferricml::ensemble::{
     RandomForestRegressorParams,
 };
 use ferricml::linear_model::{
-    LinearRegression, LinearRegressionParams, LogisticRegression, LogisticRegressionParams,
+    LinearRegression, LinearRegressionParams, LogisticRegression, LogisticRegressionParams, Ridge,
+    RidgeParams,
 };
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -51,6 +52,16 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     assert_eq!(
         linear_decoded.predict(&features.as_view())?,
         linear.predict(&features.as_view())?
+    );
+    let ridge = Ridge::fit(
+        &features.as_view(),
+        &RegressionTargets::new(vec![0.0, 1.0, 4.0, 9.0])?,
+        RidgeParams::default(),
+    )?;
+    let ridge_encoded = ridge.to_artifact(schema)?;
+    assert_eq!(
+        Ridge::from_artifact(&ridge_encoded, schema)?.predict(&features.as_view())?,
+        ridge.predict(&features.as_view())?
     );
 
     let regressor = RandomForestRegressor::fit(

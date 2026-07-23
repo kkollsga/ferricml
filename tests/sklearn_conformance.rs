@@ -7,7 +7,8 @@ use ferricml::ensemble::{
     RandomForestRegressor, RandomForestRegressorParams,
 };
 use ferricml::linear_model::{
-    LinearRegression, LinearRegressionParams, LogisticRegression, LogisticRegressionParams,
+    LinearRegression, LinearRegressionParams, LogisticRegression, LogisticRegressionParams, Ridge,
+    RidgeParams,
 };
 
 #[allow(dead_code, clippy::excessive_precision)]
@@ -266,6 +267,66 @@ fn linear_regression_matches_public_scikit_outputs() {
     assert_close_with_tolerance(
         &[weighted.intercept()],
         reference::LINEAR_WEIGHTED_INTERCEPT,
+        LOGISTIC_TOLERANCE,
+    );
+}
+
+#[test]
+fn ridge_matches_public_scikit_outputs() {
+    let full_x = matrix(reference::LINEAR_FULL_X, 4, 2);
+    let full_y = RegressionTargets::new(reference::LINEAR_FULL_Y.to_vec()).unwrap();
+    let test_x = matrix(reference::LINEAR_TEST_X, 3, 2);
+    let full = Ridge::fit(&full_x.as_view(), &full_y, RidgeParams::default()).unwrap();
+    assert_close_with_tolerance(
+        full.coefficients(),
+        reference::RIDGE_FULL_COEFFICIENTS,
+        LOGISTIC_TOLERANCE,
+    );
+    assert_close_with_tolerance(
+        &[full.intercept()],
+        reference::RIDGE_FULL_INTERCEPT,
+        LOGISTIC_TOLERANCE,
+    );
+    assert_close_with_tolerance(
+        &full.predict(&test_x.as_view()).unwrap(),
+        reference::RIDGE_FULL_PREDICTIONS,
+        LOGISTIC_TOLERANCE,
+    );
+
+    let rank_x = matrix(reference::LINEAR_RANK_DEFICIENT_X, 3, 2);
+    let rank_y = RegressionTargets::new(reference::LINEAR_RANK_DEFICIENT_Y.to_vec()).unwrap();
+    let alpha_zero = Ridge::fit(
+        &rank_x.as_view(),
+        &rank_y,
+        RidgeParams::default()
+            .with_alpha(0.0)
+            .with_fit_intercept(false),
+    )
+    .unwrap();
+    assert_close_with_tolerance(
+        alpha_zero.coefficients(),
+        reference::RIDGE_ALPHA_ZERO_COEFFICIENTS,
+        LOGISTIC_TOLERANCE,
+    );
+
+    let weighted_x = matrix(reference::LINEAR_WEIGHTED_X, 4, 1);
+    let weighted_y = RegressionTargets::new(reference::LINEAR_WEIGHTED_Y.to_vec()).unwrap();
+    let weights = SampleWeights::new(reference::LINEAR_WEIGHTS.to_vec()).unwrap();
+    let weighted = Ridge::fit_weighted(
+        &weighted_x.as_view(),
+        &weighted_y,
+        &weights,
+        RidgeParams::default(),
+    )
+    .unwrap();
+    assert_close_with_tolerance(
+        weighted.coefficients(),
+        reference::RIDGE_WEIGHTED_COEFFICIENTS,
+        LOGISTIC_TOLERANCE,
+    );
+    assert_close_with_tolerance(
+        &[weighted.intercept()],
+        reference::RIDGE_WEIGHTED_INTERCEPT,
         LOGISTIC_TOLERANCE,
     );
 }

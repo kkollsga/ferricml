@@ -15,6 +15,8 @@ and releases use [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   versions while retaining strict legacy logistic decoding.
 - Dense weighted ordinary least-squares regression with deterministic
   minimum-norm SVD solutions and schema-bound artifacts.
+- Dense weighted ridge regression plus runtime switching across forest, linear,
+  and ridge regressors.
 
 ### Fixed
 

@@ -34,7 +34,8 @@ row-major probability outputs; one-column single-class probability shape;
 regression output; logistic sample weights, raw decision scores, and exact-zero
 no-intercept semantics; weighted dense ordinary least squares with
 minimum-norm rank-deficient behavior; first-class tie selection; and common
-parameter/shape validation. Exact forest fixtures use one tree, all features,
+parameter/shape validation; and dense scalar-alpha ridge regression whose
+`alpha = 0` path uses the SVD minimum-norm contract. Exact forest fixtures use one tree, all features,
 and no bootstrap, and must match within `1e-6`; iterative or decomposition-
 based linear outputs use a reviewed `2e-5` tolerance.
 

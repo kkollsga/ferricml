@@ -8,6 +8,11 @@ pub(super) struct LeastSquaresFit {
     pub(super) rank: usize,
 }
 
+pub(super) struct DenseLinearFit {
+    pub(super) coefficients: Vec<f64>,
+    pub(super) intercept: f64,
+}
+
 pub(super) fn fit_dense(
     data: &MatrixView<'_>,
     targets: &[f32],
@@ -18,6 +23,104 @@ pub(super) fn fit_dense(
     debug_assert_eq!(data.rows(), targets.len());
     debug_assert!(sample_weights.is_none_or(|weights| weights.len() == data.rows()));
 
+    let preprocessed = preprocess(data, targets, sample_weights, fit_intercept);
+    let rows = data.rows();
+    let columns = data.columns();
+    let svd = preprocessed.matrix.svd(true, true);
+    let largest_singular = svd.singular_values.iter().copied().fold(0.0_f64, f64::max);
+    if !largest_singular.is_finite() {
+        return Err(ModelError::LinearSolveFailed);
+    }
+    let numerical_floor = f64::EPSILON * rows.max(columns) as f64 * largest_singular;
+    let cutoff = (f64::from(tolerance) * largest_singular).max(numerical_floor);
+    let rank = svd
+        .singular_values
+        .iter()
+        .filter(|&&value| value > cutoff)
+        .count();
+    let coefficients = if rank == 0 {
+        vec![0.0; columns]
+    } else {
+        svd.solve(&preprocessed.targets, cutoff)
+            .map_err(|_| ModelError::LinearSolveFailed)?
+            .iter()
+            .copied()
+            .collect::<Vec<_>>()
+    };
+    let intercept = preprocessed.target_mean
+        - preprocessed
+            .feature_means
+            .iter()
+            .zip(&coefficients)
+            .map(|(&mean, &coefficient)| mean * coefficient)
+            .sum::<f64>();
+    if coefficients.iter().any(|value| !value.is_finite()) || !intercept.is_finite() {
+        return Err(ModelError::LinearSolveFailed);
+    }
+    Ok(LeastSquaresFit {
+        coefficients,
+        intercept,
+        rank,
+    })
+}
+
+pub(super) fn fit_ridge_dense(
+    data: &MatrixView<'_>,
+    targets: &[f32],
+    sample_weights: Option<&SampleWeights>,
+    fit_intercept: bool,
+    alpha: f32,
+) -> Result<DenseLinearFit, ModelError> {
+    if alpha == 0.0 {
+        let fit = fit_dense(data, targets, sample_weights, fit_intercept, 0.0)?;
+        return Ok(DenseLinearFit {
+            coefficients: fit.coefficients,
+            intercept: fit.intercept,
+        });
+    }
+    let preprocessed = preprocess(data, targets, sample_weights, fit_intercept);
+    let transpose = preprocessed.matrix.transpose();
+    let mut gram = &transpose * &preprocessed.matrix;
+    for index in 0..gram.nrows() {
+        gram[(index, index)] += f64::from(alpha);
+    }
+    let right = transpose * preprocessed.targets;
+    let coefficients = gram
+        .cholesky()
+        .ok_or(ModelError::LinearSolveFailed)?
+        .solve(&right)
+        .iter()
+        .copied()
+        .collect::<Vec<_>>();
+    let intercept = preprocessed.target_mean
+        - preprocessed
+            .feature_means
+            .iter()
+            .zip(&coefficients)
+            .map(|(&mean, &coefficient)| mean * coefficient)
+            .sum::<f64>();
+    if coefficients.iter().any(|value| !value.is_finite()) || !intercept.is_finite() {
+        return Err(ModelError::LinearSolveFailed);
+    }
+    Ok(DenseLinearFit {
+        coefficients,
+        intercept,
+    })
+}
+
+struct PreprocessedDense {
+    matrix: DMatrix<f64>,
+    targets: DVector<f64>,
+    feature_means: Vec<f64>,
+    target_mean: f64,
+}
+
+fn preprocess(
+    data: &MatrixView<'_>,
+    targets: &[f32],
+    sample_weights: Option<&SampleWeights>,
+    fit_intercept: bool,
+) -> PreprocessedDense {
     let rows = data.rows();
     let columns = data.columns();
     let total_weight = sample_weights.map_or(rows as f64, SampleWeights::total);
@@ -36,7 +139,6 @@ pub(super) fn fit_dense(
         }
         target_mean /= total_weight;
     }
-
     let mut matrix_values = Vec::with_capacity(rows * columns);
     let mut target_values = Vec::with_capacity(rows);
     for (row_index, (row, &target)) in data.iter_rows().zip(targets).enumerate() {
@@ -46,43 +148,12 @@ pub(super) fn fit_dense(
         }
         target_values.push(weight_sqrt * (f64::from(target) - target_mean));
     }
-
-    let matrix = DMatrix::from_row_slice(rows, columns, &matrix_values);
-    let svd = matrix.svd(true, true);
-    let largest_singular = svd.singular_values.iter().copied().fold(0.0_f64, f64::max);
-    if !largest_singular.is_finite() {
-        return Err(ModelError::LinearSolveFailed);
+    PreprocessedDense {
+        matrix: DMatrix::from_row_slice(rows, columns, &matrix_values),
+        targets: DVector::from_vec(target_values),
+        feature_means,
+        target_mean,
     }
-    let numerical_floor = f64::EPSILON * rows.max(columns) as f64 * largest_singular;
-    let cutoff = (f64::from(tolerance) * largest_singular).max(numerical_floor);
-    let rank = svd
-        .singular_values
-        .iter()
-        .filter(|&&value| value > cutoff)
-        .count();
-    let coefficients = if rank == 0 {
-        vec![0.0; columns]
-    } else {
-        svd.solve(&DVector::from_vec(target_values), cutoff)
-            .map_err(|_| ModelError::LinearSolveFailed)?
-            .iter()
-            .copied()
-            .collect::<Vec<_>>()
-    };
-    let intercept = target_mean
-        - feature_means
-            .iter()
-            .zip(&coefficients)
-            .map(|(&mean, &coefficient)| mean * coefficient)
-            .sum::<f64>();
-    if coefficients.iter().any(|value| !value.is_finite()) || !intercept.is_finite() {
-        return Err(ModelError::LinearSolveFailed);
-    }
-    Ok(LeastSquaresFit {
-        coefficients,
-        intercept,
-        rank,
-    })
 }
 
 fn sample_weight(sample_weights: Option<&SampleWeights>, row: usize) -> f64 {

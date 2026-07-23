@@ -19,6 +19,7 @@ import sklearn
 from sklearn.ensemble import RandomForestClassifier, RandomForestRegressor
 from sklearn.linear_model import LinearRegression as SklearnLinearRegression
 from sklearn.linear_model import LogisticRegression
+from sklearn.linear_model import Ridge as SklearnRidge
 
 REFERENCE_SKLEARN = "1.9.0"
 REFERENCE_NUMPY = "2.4.1"
@@ -323,6 +324,17 @@ def exact_fixture() -> str:
         linear_weighted_y,
         sample_weight=linear_weights,
     )
+    ridge_full = SklearnRidge(alpha=1.0, fit_intercept=True).fit(
+        linear_full_x, linear_full_y
+    )
+    ridge_alpha_zero = SklearnRidge(alpha=0.0, fit_intercept=False, solver="svd").fit(
+        linear_rank_deficient_x, linear_rank_deficient_y
+    )
+    ridge_weighted = SklearnRidge(alpha=1.0, fit_intercept=True).fit(
+        linear_weighted_x,
+        linear_weighted_y,
+        sample_weight=linear_weights,
+    )
 
     assert classifier.n_features_in_ == 2
     assert classifier.classes_.tolist() == [0, 1]
@@ -414,6 +426,14 @@ def exact_fixture() -> str:
     result += rust_array("LINEAR_WEIGHTED_COEFFICIENTS", linear_weighted.coef_, "f32")
     result += rust_array(
         "LINEAR_WEIGHTED_INTERCEPT", np.atleast_1d(linear_weighted.intercept_), "f32"
+    )
+    result += rust_array("RIDGE_FULL_COEFFICIENTS", ridge_full.coef_, "f32")
+    result += rust_array("RIDGE_FULL_INTERCEPT", np.atleast_1d(ridge_full.intercept_), "f32")
+    result += rust_array("RIDGE_FULL_PREDICTIONS", ridge_full.predict(linear_test_x), "f32")
+    result += rust_array("RIDGE_ALPHA_ZERO_COEFFICIENTS", ridge_alpha_zero.coef_, "f32")
+    result += rust_array("RIDGE_WEIGHTED_COEFFICIENTS", ridge_weighted.coef_, "f32")
+    result += rust_array(
+        "RIDGE_WEIGHTED_INTERCEPT", np.atleast_1d(ridge_weighted.intercept_), "f32"
     )
     return result
 

@@ -5,7 +5,10 @@ use crate::ensemble::{
     RandomForestClassifier, RandomForestClassifierParams, RandomForestRegressor,
     RandomForestRegressorParams,
 };
-use crate::linear_model::{LogisticRegression, LogisticRegressionParams};
+use crate::linear_model::{
+    LinearRegression, LinearRegressionParams, LogisticRegression, LogisticRegressionParams, Ridge,
+    RidgeParams,
+};
 
 use super::{Classifier, Estimator, ModelError, Regressor};
 
@@ -20,11 +23,15 @@ pub enum AnyClassifierParams<'a> {
 }
 
 /// Parameters retained by a fitted [`AnyRegressor`].
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 #[non_exhaustive]
 pub enum AnyRegressorParams<'a> {
     /// Random-forest regressor parameters.
     RandomForest(&'a RandomForestRegressorParams),
+    /// Ordinary least-squares regressor parameters.
+    LinearRegression(&'a LinearRegressionParams),
+    /// Ridge-regression parameters.
+    Ridge(&'a RidgeParams),
 }
 
 /// An owned fitted classifier selected at runtime.
@@ -171,6 +178,10 @@ impl Classifier for AnyClassifier {
 pub enum AnyRegressor {
     /// A fitted random-forest regressor.
     RandomForest(RandomForestRegressor),
+    /// A fitted ordinary least-squares regressor.
+    LinearRegression(LinearRegression),
+    /// A fitted ridge regressor.
+    Ridge(Ridge),
 }
 
 impl AnyRegressor {
@@ -183,6 +194,10 @@ impl AnyRegressor {
     pub fn get_params(&self) -> AnyRegressorParams<'_> {
         match self {
             Self::RandomForest(model) => AnyRegressorParams::RandomForest(model.get_params()),
+            Self::LinearRegression(model) => {
+                AnyRegressorParams::LinearRegression(model.get_params())
+            }
+            Self::Ridge(model) => AnyRegressorParams::Ridge(model.get_params()),
         }
     }
 
@@ -207,10 +222,24 @@ impl From<RandomForestRegressor> for AnyRegressor {
     }
 }
 
+impl From<LinearRegression> for AnyRegressor {
+    fn from(model: LinearRegression) -> Self {
+        Self::LinearRegression(model)
+    }
+}
+
+impl From<Ridge> for AnyRegressor {
+    fn from(model: Ridge) -> Self {
+        Self::Ridge(model)
+    }
+}
+
 impl Estimator for AnyRegressor {
     fn n_features_in(&self) -> usize {
         match self {
             Self::RandomForest(model) => model.n_features_in(),
+            Self::LinearRegression(model) => model.n_features_in(),
+            Self::Ridge(model) => model.n_features_in(),
         }
     }
 }
@@ -219,6 +248,8 @@ impl Regressor for AnyRegressor {
     fn predict_into(&self, data: &MatrixView<'_>, output: &mut [f32]) -> Result<(), ModelError> {
         match self {
             Self::RandomForest(model) => model.predict_into(data, output),
+            Self::LinearRegression(model) => model.predict_into(data, output),
+            Self::Ridge(model) => model.predict_into(data, output),
         }
     }
 }

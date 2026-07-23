@@ -5,7 +5,8 @@ use ferricml::ensemble::{
     RandomForestRegressor, RandomForestRegressorParams,
 };
 use ferricml::linear_model::{
-    LinearRegression, LinearRegressionParams, LogisticRegression, LogisticRegressionParams,
+    LinearRegression, LinearRegressionParams, LogisticRegression, LogisticRegressionParams, Ridge,
+    RidgeParams,
 };
 use ferricml::pipeline::Pipeline;
 
@@ -236,6 +237,25 @@ fn linear_regression_paths_builders_traits_and_retained_params_are_stable() {
     )
     .unwrap();
     assert_eq!(weighted.n_features_in(), 2);
+}
+
+#[test]
+fn ridge_paths_builders_traits_and_retained_params_are_stable() {
+    let matrix = training_matrix();
+    let targets = RegressionTargets::new(vec![0.0, 1.0, 4.0, 9.0]).unwrap();
+    let params = RidgeParams::default()
+        .with_alpha(0.75)
+        .with_fit_intercept(true);
+    let model = Ridge::fit(&matrix.as_view(), &targets, params.clone()).unwrap();
+    assert_eq!(estimator_width(&model), 2);
+    assert_eq!(regressor_width(&model), 2);
+    assert_eq!(retained_params::<_, RidgeParams>(&model), &params);
+    assert_eq!(params.alpha(), 0.75);
+    assert!(params.fit_intercept());
+    assert_eq!(
+        model.predict(&matrix.as_view()).unwrap().len(),
+        matrix.rows()
+    );
 }
 
 #[test]
