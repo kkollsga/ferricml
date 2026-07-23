@@ -1,9 +1,10 @@
 # Model artifact envelope
 
-FerricML writes artifact envelope version 2 for fitted logistic, linear, and
-ridge models and continues to read the legacy version-1 logistic format. The private
-forest representation remains outside the persistence contract; no byte
-sequence produced from packed trees is a compatibility promise.
+FerricML writes artifact envelope version 2 for fitted logistic, linear, ridge,
+standard-scaler, and supported typed pipeline models. It continues to read the
+legacy version-1 logistic format. The private forest representation remains
+outside the persistence contract; no byte sequence produced from packed trees
+is a compatibility promise.
 
 `LogisticRegression::to_artifact` writes, in little-endian order:
 
@@ -27,6 +28,15 @@ all declared lengths before borrowing component payloads, bounds feature
 allocation, rejects non-finite or inconsistent values, and rejects trailing
 bytes. SHA-256 provides corruption detection only; artifacts are not signed or
 authenticated.
+
+Standalone `StandardScaler` artifacts carry ordered input and transformed
+schema records plus fitted `f64` mean, population variance, and scale values.
+The three supported typed pipeline artifacts retain those same schema roles
+and contain length-delimited complete scaler and estimator artifacts. Nested
+checks make every component independently typed and schema-bound; decode also
+validates the fitted feature-width handoff before constructing the pipeline.
+This is intentionally not a generic serialization trait: unsupported pipeline
+shapes have no persistence API.
 
 Additional estimator payloads must carry:
 

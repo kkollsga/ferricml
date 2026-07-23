@@ -45,6 +45,8 @@ pub enum ModelError {
     FeatureDimension { expected: usize, actual: usize },
     /// A caller-provided output buffer has the wrong length.
     OutputLength { expected: usize, actual: usize },
+    /// Scaling a finite feature produced a non-finite `f32` output.
+    NonFiniteTransform { row: usize, column: usize },
     /// The requested output matrix dimensions cannot be represented.
     OutputShapeOverflow { rows: usize, columns: usize },
     /// A requested class was not observed during fitting.
@@ -111,6 +113,12 @@ impl fmt::Display for ModelError {
             }
             Self::OutputLength { expected, actual } => {
                 write!(f, "expected output length {expected}, got {actual}")
+            }
+            Self::NonFiniteTransform { row, column } => {
+                write!(
+                    f,
+                    "transformed value at row {row}, column {column} is not finite"
+                )
             }
             Self::OutputShapeOverflow { rows, columns } => {
                 write!(f, "output shape overflows usize: {rows} x {columns}")

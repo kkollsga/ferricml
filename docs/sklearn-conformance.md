@@ -35,9 +35,12 @@ regression output; logistic sample weights, raw decision scores, and exact-zero
 no-intercept semantics; weighted dense ordinary least squares with
 minimum-norm rank-deficient behavior; first-class tie selection; and common
 parameter/shape validation; and dense scalar-alpha ridge regression whose
-`alpha = 0` path uses the SVD minimum-norm contract. Exact forest fixtures use one tree, all features,
-and no bootstrap, and must match within `1e-6`; iterative or decomposition-
-based linear outputs use a reviewed `2e-5` tolerance.
+`alpha = 0` path uses the SVD minimum-norm contract. It also covers dense
+`StandardScaler` population statistics, parameter toggles, sample weights,
+constant-column scaling, and transformed outputs. Exact forest fixtures use
+one tree, all features, and no bootstrap, and must match within `1e-6`;
+iterative or decomposition-based linear outputs use a reviewed `2e-5`
+tolerance.
 
 Quality is an implementation-level comparison rather than tree identity. Five
 fixed seeds cover nonlinear, separable, imbalanced, noisy classification and
@@ -54,6 +57,9 @@ RMSE.
 - Logistic regression accepts validated sample weights. Forest sample weights,
   class weights, OOB estimates, pruning, monotonic constraints, warm starts,
   and impurity-based inspection attributes are not implemented.
+- Standard scaling uses fixed-order two-pass `f64` statistics over finite dense
+  input. Partial fitting, sparse centering, and scikit-learn's array/container
+  mutation options are outside scope.
 - Typed `MaxFeatures` and `NJobs` replace magic strings and integer sentinels.
   FerricML defaults to deterministic `random_state = 0` and serial execution;
   scikit defaults both settings to `None`. These are deliberate reproducibility

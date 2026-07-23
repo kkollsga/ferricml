@@ -17,6 +17,9 @@ and releases use [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   minimum-norm SVD solutions and schema-bound artifacts.
 - Dense weighted ridge regression plus runtime switching across forest, linear,
   and ridge regressors.
+- Deterministic weighted standard scaling and schema-bound serialized
+  scaler-to-logistic, scaler-to-linear, and scaler-to-ridge pipelines with
+  caller-owned inference workspace.
 
 ### Fixed
 

@@ -10,6 +10,7 @@ use ferricml::linear_model::{
     LinearRegression, LinearRegressionParams, LogisticRegression, LogisticRegressionParams, Ridge,
     RidgeParams,
 };
+use ferricml::preprocessing::{StandardScaler, StandardScalerParams};
 
 #[allow(dead_code, clippy::excessive_precision)]
 mod reference {
@@ -57,6 +58,16 @@ fn assert_close_with_tolerance(actual: &[f32], expected: &[f32], tolerance: f32)
     for (index, (&actual, &expected)) in actual.iter().zip(expected).enumerate() {
         assert!(
             (actual - expected).abs() <= tolerance,
+            "value {index}: expected {expected}, got {actual}"
+        );
+    }
+}
+
+fn assert_close_f64(actual: &[f64], expected: &[f64]) {
+    assert_eq!(actual.len(), expected.len());
+    for (index, (&actual, &expected)) in actual.iter().zip(expected).enumerate() {
+        assert!(
+            (actual - expected).abs() <= 1.0e-12,
             "value {index}: expected {expected}, got {actual}"
         );
     }
@@ -328,6 +339,51 @@ fn ridge_matches_public_scikit_outputs() {
         &[weighted.intercept()],
         reference::RIDGE_WEIGHTED_INTERCEPT,
         LOGISTIC_TOLERANCE,
+    );
+}
+
+#[test]
+fn standard_scaler_matches_public_scikit_outputs() {
+    let data = matrix(reference::SCALER_TRAIN_X, 4, 3);
+    let default = StandardScaler::fit(&data.as_view(), StandardScalerParams::default()).unwrap();
+    assert_close_f64(default.means(), reference::SCALER_DEFAULT_MEAN);
+    assert_close_f64(default.variances(), reference::SCALER_DEFAULT_VARIANCE);
+    assert_close_f64(default.scales(), reference::SCALER_DEFAULT_SCALE);
+    assert_close(
+        default.transform(&data.as_view()).unwrap().as_slice(),
+        reference::SCALER_DEFAULT_TRANSFORMED,
+    );
+
+    let no_mean = StandardScaler::fit(
+        &data.as_view(),
+        StandardScalerParams::default().with_mean(false),
+    )
+    .unwrap();
+    assert_close(
+        no_mean.transform(&data.as_view()).unwrap().as_slice(),
+        reference::SCALER_NO_MEAN_TRANSFORMED,
+    );
+
+    let no_std = StandardScaler::fit(
+        &data.as_view(),
+        StandardScalerParams::default().with_std(false),
+    )
+    .unwrap();
+    assert_close(
+        no_std.transform(&data.as_view()).unwrap().as_slice(),
+        reference::SCALER_NO_STD_TRANSFORMED,
+    );
+
+    let weights = SampleWeights::new(reference::SCALER_WEIGHTS.to_vec()).unwrap();
+    let weighted =
+        StandardScaler::fit_weighted(&data.as_view(), &weights, StandardScalerParams::default())
+            .unwrap();
+    assert_close_f64(weighted.means(), reference::SCALER_WEIGHTED_MEAN);
+    assert_close_f64(weighted.variances(), reference::SCALER_WEIGHTED_VARIANCE);
+    assert_close_f64(weighted.scales(), reference::SCALER_WEIGHTED_SCALE);
+    assert_close(
+        weighted.transform(&data.as_view()).unwrap().as_slice(),
+        reference::SCALER_WEIGHTED_TRANSFORMED,
     );
 }
 

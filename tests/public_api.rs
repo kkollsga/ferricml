@@ -9,6 +9,7 @@ use ferricml::linear_model::{
     RidgeParams,
 };
 use ferricml::pipeline::Pipeline;
+use ferricml::preprocessing::{StandardScaler, StandardScalerParams};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 struct IdentityTransformer {
@@ -328,4 +329,43 @@ fn pipeline_rejects_an_incompatible_feature_handoff() {
             actual: 3,
         }
     );
+}
+
+#[test]
+fn standard_scaler_and_typed_pipeline_paths_are_stable() {
+    let matrix = training_matrix();
+    let params = StandardScalerParams::default()
+        .with_mean(true)
+        .with_std(true);
+    let scaler = StandardScaler::fit(&matrix.as_view(), params.clone()).unwrap();
+    assert_eq!(transformer_width(&scaler), (2, 2));
+    assert_eq!(retained_params::<_, StandardScalerParams>(&scaler), &params);
+    assert!(params.mean_enabled());
+    assert!(params.std_enabled());
+    assert_eq!(scaler.means().len(), 2);
+    assert_eq!(scaler.variances().len(), 2);
+    assert_eq!(scaler.scales().len(), 2);
+
+    let transformed = scaler.transform(&matrix.as_view()).unwrap();
+    let model = LogisticRegression::fit(
+        &transformed.as_view(),
+        &BinaryTargets::new(vec![0, 0, 1, 1]).unwrap(),
+        LogisticRegressionParams::default(),
+    )
+    .unwrap();
+    let pipeline = Pipeline::new(scaler, model).unwrap();
+    let mut workspace = vec![0.0; pipeline.workspace_len(matrix.rows()).unwrap()];
+    let mut labels = vec![0; matrix.rows()];
+    pipeline
+        .predict_into(&matrix.as_view(), &mut workspace, &mut labels)
+        .unwrap();
+    let artifact = pipeline.to_artifact([1; 32], [2; 32]).unwrap();
+    let decoded =
+        Pipeline::<StandardScaler, LogisticRegression>::from_artifact(&artifact, [1; 32], [2; 32])
+            .unwrap();
+    let mut decisions = vec![0.0; matrix.rows()];
+    decoded
+        .decision_function_into(&matrix.as_view(), &mut workspace, &mut decisions)
+        .unwrap();
+    assert!(decisions.iter().all(|value| value.is_finite()));
 }

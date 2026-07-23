@@ -9,5 +9,6 @@ pub mod data;
 pub mod ensemble;
 pub mod linear_model;
 pub mod pipeline;
+pub mod preprocessing;
 
 mod forest;

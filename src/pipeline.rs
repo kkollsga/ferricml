@@ -6,8 +6,21 @@
 //! composition and multi-step pipelines will be added with the first concrete
 //! preprocessing estimator rather than guessed in advance.
 
+use crate::api::Classifier;
 use crate::api::{Estimator, ModelError, Transformer, validate_transformed_shape};
+use crate::artifact::{
+    ArtifactError, STANDARD_SCALER_LINEAR_PIPELINE_ARTIFACT_KIND,
+    STANDARD_SCALER_LOGISTIC_PIPELINE_ARTIFACT_KIND, STANDARD_SCALER_RIDGE_PIPELINE_ARTIFACT_KIND,
+    SchemaRole, decode_component, decode_v2_envelope, encode_component, encode_v2_envelope,
+};
 use crate::data::{DenseMatrix, MatrixView};
+use crate::linear_model::{LinearRegression, LogisticRegression, Ridge};
+use crate::preprocessing::StandardScaler;
+
+const PIPELINE_PAYLOAD_VERSION: u16 = 1;
+const TRANSFORMER_COMPONENT_KIND: u16 = 1;
+const ESTIMATOR_COMPONENT_KIND: u16 = 2;
+const COMPONENT_VERSION: u16 = 1;
 
 /// One fitted transformer followed by one fitted estimator.
 ///
@@ -105,5 +118,362 @@ where
 {
     fn n_features_in(&self) -> usize {
         self.transformer.n_features_in()
+    }
+}
+
+fn encode_pipeline_artifact(
+    kind: u16,
+    input_schema: [u8; 32],
+    transformed_schema: [u8; 32],
+    transformer_artifact: &[u8],
+    estimator_artifact: &[u8],
+) -> Result<Vec<u8>, ArtifactError> {
+    let transformer = encode_component(
+        TRANSFORMER_COMPONENT_KIND,
+        COMPONENT_VERSION,
+        transformer_artifact,
+    )?;
+    let estimator = encode_component(
+        ESTIMATOR_COMPONENT_KIND,
+        COMPONENT_VERSION,
+        estimator_artifact,
+    )?;
+    let mut payload = Vec::with_capacity(transformer.len() + estimator.len());
+    payload.extend_from_slice(&transformer);
+    payload.extend_from_slice(&estimator);
+    encode_v2_envelope(
+        kind,
+        PIPELINE_PAYLOAD_VERSION,
+        &[
+            (SchemaRole::Input, input_schema),
+            (SchemaRole::Transformed, transformed_schema),
+        ],
+        &payload,
+    )
+}
+
+fn decode_pipeline_components(
+    bytes: &[u8],
+    kind: u16,
+    input_schema: [u8; 32],
+    transformed_schema: [u8; 32],
+) -> Result<(&[u8], &[u8]), ArtifactError> {
+    let mut envelope = decode_v2_envelope(
+        bytes,
+        kind,
+        PIPELINE_PAYLOAD_VERSION,
+        &[
+            (SchemaRole::Input, input_schema),
+            (SchemaRole::Transformed, transformed_schema),
+        ],
+    )?;
+    let transformer =
+        decode_component(&mut envelope, TRANSFORMER_COMPONENT_KIND, COMPONENT_VERSION)?;
+    let estimator = decode_component(&mut envelope, ESTIMATOR_COMPONENT_KIND, COMPONENT_VERSION)?;
+    if !envelope.is_empty() {
+        return Err(ArtifactError::TrailingBytes);
+    }
+    Ok((transformer.remaining(), estimator.remaining()))
+}
+
+impl Pipeline<StandardScaler, LogisticRegression> {
+    /// Writes labels using caller-owned transform and output buffers.
+    pub fn predict_into(
+        &self,
+        data: &MatrixView<'_>,
+        workspace: &mut [f32],
+        output: &mut [u8],
+    ) -> Result<(), ModelError> {
+        self.with_transformed(data, workspace, |model, transformed| {
+            model.predict_into(transformed, output)
+        })
+    }
+
+    /// Writes probabilities using caller-owned transform and output buffers.
+    pub fn predict_proba_into(
+        &self,
+        data: &MatrixView<'_>,
+        workspace: &mut [f32],
+        output: &mut [f32],
+    ) -> Result<(), ModelError> {
+        self.with_transformed(data, workspace, |model, transformed| {
+            model.predict_proba_into(transformed, output)
+        })
+    }
+
+    /// Writes one requested probability column without allocating.
+    pub fn predict_class_proba_into(
+        &self,
+        data: &MatrixView<'_>,
+        class: u8,
+        workspace: &mut [f32],
+        output: &mut [f32],
+    ) -> Result<(), ModelError> {
+        self.with_transformed(data, workspace, |model, transformed| {
+            Classifier::predict_class_proba_into(model, transformed, class, output)
+        })
+    }
+
+    /// Writes raw decision scores without allocating.
+    pub fn decision_function_into(
+        &self,
+        data: &MatrixView<'_>,
+        workspace: &mut [f32],
+        output: &mut [f32],
+    ) -> Result<(), ModelError> {
+        self.with_transformed(data, workspace, |model, transformed| {
+            model.decision_function_into(transformed, output)
+        })
+    }
+
+    /// Encodes this concrete fitted pipeline and both schema identities.
+    pub fn to_artifact(
+        &self,
+        input_schema: [u8; 32],
+        transformed_schema: [u8; 32],
+    ) -> Result<Vec<u8>, ArtifactError> {
+        encode_pipeline_artifact(
+            STANDARD_SCALER_LOGISTIC_PIPELINE_ARTIFACT_KIND,
+            input_schema,
+            transformed_schema,
+            &self
+                .transformer
+                .to_artifact(input_schema, transformed_schema)?,
+            &self.estimator.to_artifact(transformed_schema)?,
+        )
+    }
+
+    /// Decodes this concrete pipeline and validates the fitted width handoff.
+    pub fn from_artifact(
+        bytes: &[u8],
+        input_schema: [u8; 32],
+        transformed_schema: [u8; 32],
+    ) -> Result<Self, ArtifactError> {
+        let (transformer, estimator) = decode_pipeline_components(
+            bytes,
+            STANDARD_SCALER_LOGISTIC_PIPELINE_ARTIFACT_KIND,
+            input_schema,
+            transformed_schema,
+        )?;
+        let transformer =
+            StandardScaler::from_artifact(transformer, input_schema, transformed_schema)?;
+        let estimator = LogisticRegression::from_artifact(estimator, transformed_schema)?;
+        Self::new(transformer, estimator).map_err(|_| ArtifactError::InvalidPayload)
+    }
+}
+
+macro_rules! impl_scaler_regression_pipeline {
+    ($estimator:ty, $kind:expr) => {
+        impl Pipeline<StandardScaler, $estimator> {
+            /// Writes predictions using caller-owned transform and output buffers.
+            pub fn predict_into(
+                &self,
+                data: &MatrixView<'_>,
+                workspace: &mut [f32],
+                output: &mut [f32],
+            ) -> Result<(), ModelError> {
+                self.with_transformed(data, workspace, |model, transformed| {
+                    model.predict_into(transformed, output)
+                })
+            }
+
+            /// Encodes this concrete fitted pipeline and both schema identities.
+            pub fn to_artifact(
+                &self,
+                input_schema: [u8; 32],
+                transformed_schema: [u8; 32],
+            ) -> Result<Vec<u8>, ArtifactError> {
+                encode_pipeline_artifact(
+                    $kind,
+                    input_schema,
+                    transformed_schema,
+                    &self
+                        .transformer
+                        .to_artifact(input_schema, transformed_schema)?,
+                    &self.estimator.to_artifact(transformed_schema)?,
+                )
+            }
+
+            /// Decodes this concrete pipeline and validates the fitted width handoff.
+            pub fn from_artifact(
+                bytes: &[u8],
+                input_schema: [u8; 32],
+                transformed_schema: [u8; 32],
+            ) -> Result<Self, ArtifactError> {
+                let (transformer, estimator) =
+                    decode_pipeline_components(bytes, $kind, input_schema, transformed_schema)?;
+                let transformer =
+                    StandardScaler::from_artifact(transformer, input_schema, transformed_schema)?;
+                let estimator = <$estimator>::from_artifact(estimator, transformed_schema)?;
+                Self::new(transformer, estimator).map_err(|_| ArtifactError::InvalidPayload)
+            }
+        }
+    };
+}
+
+impl_scaler_regression_pipeline!(
+    LinearRegression,
+    STANDARD_SCALER_LINEAR_PIPELINE_ARTIFACT_KIND
+);
+impl_scaler_regression_pipeline!(Ridge, STANDARD_SCALER_RIDGE_PIPELINE_ARTIFACT_KIND);
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::data::{BinaryTargets, RegressionTargets};
+    use crate::linear_model::{LinearRegressionParams, LogisticRegressionParams, RidgeParams};
+    use crate::preprocessing::StandardScalerParams;
+    use sha2::{Digest, Sha256};
+
+    fn data() -> DenseMatrix {
+        DenseMatrix::new(vec![0.0, 1.0, 1.0, 2.0, 2.0, 4.0, 3.0, 8.0], 4, 2).unwrap()
+    }
+
+    fn scaler() -> StandardScaler {
+        StandardScaler::fit(&data().as_view(), StandardScalerParams::default()).unwrap()
+    }
+
+    #[test]
+    fn logistic_pipeline_round_trips_and_reuses_workspace() {
+        let transformed = scaler().transform(&data().as_view()).unwrap();
+        let model = LogisticRegression::fit(
+            &transformed.as_view(),
+            &BinaryTargets::new(vec![0, 0, 1, 1]).unwrap(),
+            LogisticRegressionParams::default(),
+        )
+        .unwrap();
+        let pipeline = Pipeline::new(scaler(), model).unwrap();
+        let mut workspace = vec![0.0; pipeline.workspace_len(4).unwrap()];
+        let mut expected = [0; 4];
+        pipeline
+            .predict_into(&data().as_view(), &mut workspace, &mut expected)
+            .unwrap();
+        let bytes = pipeline.to_artifact([1; 32], [2; 32]).unwrap();
+        let decoded =
+            Pipeline::<StandardScaler, LogisticRegression>::from_artifact(&bytes, [1; 32], [2; 32])
+                .unwrap();
+        let mut actual = [0; 4];
+        decoded
+            .predict_into(&data().as_view(), &mut workspace, &mut actual)
+            .unwrap();
+        assert_eq!(actual, expected);
+        assert_eq!(bytes, pipeline.to_artifact([1; 32], [2; 32]).unwrap());
+    }
+
+    #[test]
+    fn regression_pipeline_artifacts_keep_estimator_identity() {
+        let transformed = scaler().transform(&data().as_view()).unwrap();
+        let targets = RegressionTargets::new(vec![0.0, 1.0, 4.0, 9.0]).unwrap();
+        let linear = Pipeline::new(
+            scaler(),
+            LinearRegression::fit(
+                &transformed.as_view(),
+                &targets,
+                LinearRegressionParams::default(),
+            )
+            .unwrap(),
+        )
+        .unwrap();
+        let bytes = linear.to_artifact([3; 32], [4; 32]).unwrap();
+        assert_eq!(
+            Pipeline::<StandardScaler, Ridge>::from_artifact(&bytes, [3; 32], [4; 32]).unwrap_err(),
+            ArtifactError::UnsupportedModelKind {
+                found: STANDARD_SCALER_LINEAR_PIPELINE_ARTIFACT_KIND
+            }
+        );
+
+        let ridge = Pipeline::new(
+            scaler(),
+            Ridge::fit(&transformed.as_view(), &targets, RidgeParams::default()).unwrap(),
+        )
+        .unwrap();
+        let encoded = ridge.to_artifact([3; 32], [4; 32]).unwrap();
+        let decoded =
+            Pipeline::<StandardScaler, Ridge>::from_artifact(&encoded, [3; 32], [4; 32]).unwrap();
+        let mut workspace = vec![0.0; decoded.workspace_len(4).unwrap()];
+        let mut output = [0.0; 4];
+        decoded
+            .predict_into(&data().as_view(), &mut workspace, &mut output)
+            .unwrap();
+        assert!(output.iter().all(|value| value.is_finite()));
+    }
+
+    #[test]
+    fn pipeline_artifact_rejects_corruption_bad_components_and_width_handoff() {
+        let transformed = scaler().transform(&data().as_view()).unwrap();
+        let model = LogisticRegression::fit(
+            &transformed.as_view(),
+            &BinaryTargets::new(vec![0, 0, 1, 1]).unwrap(),
+            LogisticRegressionParams::default(),
+        )
+        .unwrap();
+        let pipeline = Pipeline::new(scaler(), model).unwrap();
+        let bytes = pipeline.to_artifact([1; 32], [2; 32]).unwrap();
+
+        let mut corrupted = bytes.clone();
+        corrupted[110] ^= 1;
+        assert_eq!(
+            Pipeline::<StandardScaler, LogisticRegression>::from_artifact(
+                &corrupted, [1; 32], [2; 32]
+            )
+            .unwrap_err(),
+            ArtifactError::ChecksumMismatch
+        );
+
+        let mut bad_component = bytes.clone();
+        bad_component[96..98].copy_from_slice(&ESTIMATOR_COMPONENT_KIND.to_le_bytes());
+        let checksum_start = bad_component.len() - 32;
+        let checksum = Sha256::digest(&bad_component[..checksum_start]);
+        bad_component[checksum_start..].copy_from_slice(&checksum);
+        assert_eq!(
+            Pipeline::<StandardScaler, LogisticRegression>::from_artifact(
+                &bad_component,
+                [1; 32],
+                [2; 32]
+            )
+            .unwrap_err(),
+            ArtifactError::InvalidPayload
+        );
+
+        let mut bad_length = bytes.clone();
+        let declared = u32::from_le_bytes(bad_length[100..104].try_into().unwrap());
+        bad_length[100..104].copy_from_slice(&(declared + 1).to_le_bytes());
+        let checksum_start = bad_length.len() - 32;
+        let checksum = Sha256::digest(&bad_length[..checksum_start]);
+        bad_length[checksum_start..].copy_from_slice(&checksum);
+        assert_eq!(
+            Pipeline::<StandardScaler, LogisticRegression>::from_artifact(
+                &bad_length,
+                [1; 32],
+                [2; 32]
+            )
+            .unwrap_err(),
+            ArtifactError::InvalidPayload
+        );
+
+        let one_column = DenseMatrix::new(vec![0.0, 1.0, 2.0, 3.0], 4, 1).unwrap();
+        let narrow_model = LogisticRegression::fit(
+            &one_column.as_view(),
+            &BinaryTargets::new(vec![0, 0, 1, 1]).unwrap(),
+            LogisticRegressionParams::default(),
+        )
+        .unwrap();
+        let mismatched = encode_pipeline_artifact(
+            STANDARD_SCALER_LOGISTIC_PIPELINE_ARTIFACT_KIND,
+            [1; 32],
+            [2; 32],
+            &scaler().to_artifact([1; 32], [2; 32]).unwrap(),
+            &narrow_model.to_artifact([2; 32]).unwrap(),
+        )
+        .unwrap();
+        assert_eq!(
+            Pipeline::<StandardScaler, LogisticRegression>::from_artifact(
+                &mismatched,
+                [1; 32],
+                [2; 32]
+            )
+            .unwrap_err(),
+            ArtifactError::InvalidPayload
+        );
     }
 }

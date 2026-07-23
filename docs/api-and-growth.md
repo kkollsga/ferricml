@@ -22,12 +22,13 @@ reference contract.
 - `ensemble` owns public forest estimators and parameter types; private tree
   training and packed representation stay outside the public module tree.
 - `pipeline` composes a fitted `Transformer` and estimator generically. Its
-  `with_transformed` path uses caller-owned workspace and static dispatch, so a
-  future `StandardScaler` can feed logistic or ridge estimators without a
-  virtual call or intermediate allocation per batch.
+  `with_transformed` path uses caller-owned workspace and static dispatch.
+  Concrete standard-scaler pipelines provide allocation-free prediction and
+  explicit persistence for logistic, linear, and ridge estimators.
 - `linear_model` separates estimator facades from private numerical seams.
-  A future `preprocessing` namespace lands with its first fitted transformer.
-  Training-time pipeline composition and more than one transform step are
+- `preprocessing` owns fitted transformer implementations and their state;
+  `StandardScaler` uses deterministic two-pass population statistics.
+  Training-time pipeline composition and more than one transform step remain
   deliberately deferred until those use cases are real.
 - `artifact` owns stable envelope identity, bounded decoding primitives, and
   artifact errors. It does not expose backend tree layouts.

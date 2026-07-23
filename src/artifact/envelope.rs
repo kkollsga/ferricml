@@ -12,16 +12,22 @@ const COMPONENT_HEADER_BYTES: usize = 2 + 2 + 4;
 pub(crate) const LOGISTIC_ARTIFACT_KIND: u16 = 1;
 pub(crate) const LINEAR_REGRESSION_ARTIFACT_KIND: u16 = 2;
 pub(crate) const RIDGE_ARTIFACT_KIND: u16 = 3;
+pub(crate) const STANDARD_SCALER_ARTIFACT_KIND: u16 = 4;
+pub(crate) const STANDARD_SCALER_LOGISTIC_PIPELINE_ARTIFACT_KIND: u16 = 5;
+pub(crate) const STANDARD_SCALER_LINEAR_PIPELINE_ARTIFACT_KIND: u16 = 6;
+pub(crate) const STANDARD_SCALER_RIDGE_PIPELINE_ARTIFACT_KIND: u16 = 7;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum SchemaRole {
     Input,
+    Transformed,
 }
 
 impl SchemaRole {
     const fn code(self) -> u16 {
         match self {
             Self::Input => 1,
+            Self::Transformed => 2,
         }
     }
 }
@@ -44,6 +50,14 @@ impl ArtifactPayloadWriter {
 
     pub(crate) fn f32(&mut self, value: f32) {
         self.u32(value.to_bits());
+    }
+
+    pub(crate) fn u64(&mut self, value: u64) {
+        self.bytes.extend_from_slice(&value.to_le_bytes());
+    }
+
+    pub(crate) fn f64(&mut self, value: f64) {
+        self.u64(value.to_bits());
     }
 
     pub(crate) fn finish(self) -> Vec<u8> {

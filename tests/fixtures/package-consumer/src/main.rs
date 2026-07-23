@@ -8,6 +8,8 @@ use ferricml::linear_model::{
     LinearRegression, LinearRegressionParams, LogisticRegression, LogisticRegressionParams, Ridge,
     RidgeParams,
 };
+use ferricml::pipeline::Pipeline;
+use ferricml::preprocessing::{StandardScaler, StandardScalerParams};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let features = DenseMatrix::new(vec![0.0, 0.0, 1.0, 1.0, 2.0, 4.0, 3.0, 9.0], 4, 2)?;
@@ -63,6 +65,30 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         Ridge::from_artifact(&ridge_encoded, schema)?.predict(&features.as_view())?,
         ridge.predict(&features.as_view())?
     );
+
+    let transformed_schema = [8; 32];
+    let scaler = StandardScaler::fit(&features.as_view(), StandardScalerParams::default())?;
+    let transformed = scaler.transform(&features.as_view())?;
+    let pipeline_model = Ridge::fit(
+        &transformed.as_view(),
+        &RegressionTargets::new(vec![0.0, 1.0, 4.0, 9.0])?,
+        RidgeParams::default(),
+    )?;
+    let pipeline = Pipeline::new(scaler, pipeline_model)?;
+    let pipeline_encoded = pipeline.to_artifact(schema, transformed_schema)?;
+    let pipeline = Pipeline::<StandardScaler, Ridge>::from_artifact(
+        &pipeline_encoded,
+        schema,
+        transformed_schema,
+    )?;
+    let mut workspace = vec![0.0; pipeline.workspace_len(features.rows())?];
+    let mut pipeline_predictions = vec![0.0; features.rows()];
+    pipeline.predict_into(
+        &features.as_view(),
+        &mut workspace,
+        &mut pipeline_predictions,
+    )?;
+    assert!(pipeline_predictions.iter().all(|value| value.is_finite()));
 
     let regressor = RandomForestRegressor::fit(
         &features.as_view(),

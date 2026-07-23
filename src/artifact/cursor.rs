@@ -30,8 +30,22 @@ impl<'a> ArtifactCursor<'a> {
         ))
     }
 
+    pub(crate) fn u64(&mut self) -> Result<u64, ArtifactError> {
+        Ok(u64::from_le_bytes(
+            self.take(8)?.try_into().expect("exact length"),
+        ))
+    }
+
     pub(crate) fn f32(&mut self) -> Result<f32, ArtifactError> {
         Ok(f32::from_bits(self.u32()?))
+    }
+
+    pub(crate) fn f64(&mut self) -> Result<f64, ArtifactError> {
+        Ok(f64::from_bits(self.u64()?))
+    }
+
+    pub(crate) const fn remaining(&self) -> &'a [u8] {
+        self.remaining
     }
 
     pub(crate) const fn is_empty(&self) -> bool {
