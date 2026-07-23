@@ -37,6 +37,32 @@ QUALITY_PATTERN = re.compile(
     r'QualityReference \{ lane: "([^"]+)", seed: (\d+), '
     r"accuracy: ([^,]+), brier: ([^,]+), nrmse: ([^ }]+) \},"
 )
+ARRAY_PATTERN = re.compile(
+    r"^pub const ([A-Z0-9_]+): &\[(f32|f64|u8)\] = &\[(.*)\];$",
+    re.MULTILINE,
+)
+EXACT_F32_PORTABILITY = 2.0e-5
+PORTABLE_F32_ARRAYS = {
+    "LOGISTIC_NO_INTERCEPT_COEFFICIENTS",
+    "LOGISTIC_NO_INTERCEPT_DECISIONS",
+    "LOGISTIC_NO_INTERCEPT_PROBABILITIES",
+    "LOGISTIC_WEIGHTED_COEFFICIENTS",
+    "LOGISTIC_WEIGHTED_INTERCEPT",
+    "LOGISTIC_WEIGHTED_DECISIONS",
+    "LOGISTIC_WEIGHTED_PROBABILITIES",
+    "LINEAR_FULL_COEFFICIENTS",
+    "LINEAR_FULL_INTERCEPT",
+    "LINEAR_FULL_PREDICTIONS",
+    "LINEAR_RANK_DEFICIENT_COEFFICIENTS",
+    "LINEAR_WEIGHTED_COEFFICIENTS",
+    "LINEAR_WEIGHTED_INTERCEPT",
+    "RIDGE_FULL_COEFFICIENTS",
+    "RIDGE_FULL_INTERCEPT",
+    "RIDGE_FULL_PREDICTIONS",
+    "RIDGE_ALPHA_ZERO_COEFFICIENTS",
+    "RIDGE_WEIGHTED_COEFFICIENTS",
+    "RIDGE_WEIGHTED_INTERCEPT",
+}
 
 # Exact trees are portable because randomness is disabled. Randomized forest
 # quality can vary slightly across supported platforms even with a fixed public
@@ -174,6 +200,88 @@ def rust_array(name: str, values: np.ndarray, rust_type: str) -> str:
     else:
         encoded = ", ".join(str(int(value)) for value in flat)
     return f"pub const {name}: &[{rust_type}] = &[{encoded}];\n"
+
+
+def parsed_arrays(text: str) -> tuple[str, dict[str, tuple[str, list[float | int]]]]:
+    arrays: dict[str, tuple[str, list[float | int]]] = {}
+    for match in ARRAY_PATTERN.finditer(text):
+        name, rust_type, encoded = match.groups()
+        if name in arrays:
+            raise RuntimeError(f"duplicate exact fixture array: {name}")
+        parts = [part.strip() for part in encoded.split(",") if part.strip()]
+        values: list[float | int]
+        if rust_type == "u8":
+            values = [int(part) for part in parts]
+        else:
+            values = [float(part) for part in parts]
+        arrays[name] = (rust_type, values)
+    skeleton = ARRAY_PATTERN.sub(
+        lambda match: (
+            f"pub const {match.group(1)}: &[{match.group(2)}] = &[<values>];"
+        ),
+        text,
+    )
+    return skeleton, arrays
+
+
+def validate_exact_portability(frozen: str, generated: str) -> None:
+    frozen_skeleton, frozen_arrays = parsed_arrays(frozen)
+    generated_skeleton, generated_arrays = parsed_arrays(generated)
+    if frozen_skeleton != generated_skeleton:
+        raise RuntimeError("exact fixture declarations or metadata drifted")
+    if frozen_arrays.keys() != generated_arrays.keys():
+        raise RuntimeError("exact fixture array names or order drifted")
+
+    failures: list[str] = []
+    for name, (frozen_type, frozen_values) in frozen_arrays.items():
+        generated_type, generated_values = generated_arrays[name]
+        if frozen_type != generated_type:
+            failures.append(f"{name}: type changed from {frozen_type} to {generated_type}")
+            continue
+        if len(frozen_values) != len(generated_values):
+            failures.append(
+                f"{name}: length changed from {len(frozen_values)} to "
+                f"{len(generated_values)}"
+            )
+            continue
+        tolerance = (
+            EXACT_F32_PORTABILITY
+            if frozen_type == "f32" and name in PORTABLE_F32_ARRAYS
+            else 0.0
+        )
+        for index, (expected, actual) in enumerate(
+            zip(frozen_values, generated_values, strict=True)
+        ):
+            delta = abs(float(expected) - float(actual))
+            if delta > tolerance:
+                failures.append(
+                    f"{name}[{index}]: drift {delta:.6g} exceeds {tolerance:.6g}"
+                )
+                break
+    if failures:
+        raise RuntimeError("exact fixture drifted:\n" + "\n".join(failures))
+
+
+def self_test_exact_portability() -> None:
+    frozen = (
+        'pub const SKLEARN_VERSION: &str = "1.9.0";\n'
+        "pub const LINEAR_FULL_COEFFICIENTS: &[f32] = &[1.0];\n"
+        "pub const LINEAR_FULL_X: &[f32] = &[2.0];\n"
+        "pub const EXACT_LABELS: &[u8] = &[0, 1];\n"
+    )
+    within_tolerance = frozen.replace("&[1.0];", "&[1.00001];")
+    validate_exact_portability(frozen, within_tolerance)
+    for drifted in (
+        frozen.replace("&[1.0];", "&[1.001];"),
+        frozen.replace("&[2.0];", "&[2.000001];"),
+        frozen.replace("&[0, 1];", "&[1, 0];"),
+    ):
+        try:
+            validate_exact_portability(frozen, drifted)
+        except RuntimeError:
+            pass
+        else:
+            raise AssertionError("exact portability self-test accepted fixture drift")
 
 
 def validate_reference_api() -> None:
@@ -637,6 +745,7 @@ def main() -> int:
         help="explicitly replace the frozen project-owned fixture",
     )
     args = parser.parse_args()
+    self_test_exact_portability()
     generated = generated_fixture()
     if args.update:
         FIXTURE.parent.mkdir(parents=True, exist_ok=True)
@@ -653,7 +762,9 @@ def main() -> int:
     if not marker or not generated_marker:
         print("fixture is missing the quality-reference boundary", file=sys.stderr)
         return 1
-    if frozen_exact != generated_exact:
+    try:
+        validate_exact_portability(frozen_exact, generated_exact)
+    except RuntimeError as error:
         diff = difflib.unified_diff(
             frozen_exact.splitlines(),
             generated_exact.splitlines(),
@@ -662,7 +773,8 @@ def main() -> int:
             lineterm="",
         )
         print("\n".join(diff), file=sys.stderr)
-        print("exact fixture drifted; review before using --update", file=sys.stderr)
+        print(error, file=sys.stderr)
+        print("review before using --update", file=sys.stderr)
         return 1
     try:
         validate_quality_portability(frozen, generated)
@@ -672,7 +784,8 @@ def main() -> int:
     print(
         f"verified {FIXTURE.relative_to(ROOT)} with "
         f"scikit-learn {sklearn.__version__} / NumPy {np.__version__}; "
-        "exact outputs match and quality is within the portability envelope"
+        "exact contracts and portable fitted outputs match; quality is within "
+        "the portability envelope"
     )
     return 0
 
