@@ -1,15 +1,14 @@
 //! Linear estimators with scikit-style fit and prediction semantics.
 
 use crate::api::{Classifier, Estimator, HasParams, ModelError};
-use crate::artifact::{ArtifactError, MODEL_ARTIFACT_VERSION};
+use crate::artifact::{
+    ArtifactError, LOGISTIC_ARTIFACT_KIND, LegacyArtifactWriter, decode_legacy_envelope,
+};
 use crate::data::{BinaryTargets, MatrixView};
-use sha2::{Digest, Sha256};
 
 const BINARY_CLASSES: [u8; 2] = [0, 1];
-const ARTIFACT_MAGIC: &[u8; 8] = b"FERRICML";
-const LOGISTIC_ARTIFACT_KIND: u16 = 1;
-const ARTIFACT_CHECKSUM_BYTES: usize = 32;
 const MAX_ARTIFACT_FEATURES: usize = 1_000_000;
+const LOGISTIC_FIXED_PAYLOAD_BYTES: usize = 8 * 4;
 
 /// Parameters for [`LogisticRegression`].
 #[derive(Clone, Debug, PartialEq)]
@@ -294,25 +293,23 @@ impl LogisticRegression {
             u32::try_from(self.params.max_iter).map_err(|_| ArtifactError::InvalidPayload)?;
         let iterations =
             u32::try_from(self.iterations).map_err(|_| ArtifactError::InvalidPayload)?;
-        let mut bytes = Vec::with_capacity(96 + self.coefficients.len() * 4);
-        bytes.extend_from_slice(ARTIFACT_MAGIC);
-        bytes.extend_from_slice(&MODEL_ARTIFACT_VERSION.to_le_bytes());
-        bytes.extend_from_slice(&LOGISTIC_ARTIFACT_KIND.to_le_bytes());
-        bytes.extend_from_slice(&feature_schema_sha256);
-        bytes.extend_from_slice(&n_features.to_le_bytes());
-        bytes.extend_from_slice(&u32::from(self.params.fit_intercept).to_le_bytes());
-        bytes.extend_from_slice(&self.params.c.to_bits().to_le_bytes());
-        bytes.extend_from_slice(&max_iter.to_le_bytes());
-        bytes.extend_from_slice(&self.params.tol.to_bits().to_le_bytes());
-        bytes.extend_from_slice(&iterations.to_le_bytes());
-        bytes.extend_from_slice(&self.intercept.to_bits().to_le_bytes());
-        bytes.extend_from_slice(&n_features.to_le_bytes());
+        let mut writer = LegacyArtifactWriter::new(
+            LOGISTIC_ARTIFACT_KIND,
+            feature_schema_sha256,
+            96 + self.coefficients.len() * 4,
+        );
+        writer.u32(n_features);
+        writer.u32(u32::from(self.params.fit_intercept));
+        writer.f32(self.params.c);
+        writer.u32(max_iter);
+        writer.f32(self.params.tol);
+        writer.u32(iterations);
+        writer.f32(self.intercept);
+        writer.u32(n_features);
         for &coefficient in &self.coefficients {
-            bytes.extend_from_slice(&coefficient.to_bits().to_le_bytes());
+            writer.f32(coefficient);
         }
-        let checksum = Sha256::digest(&bytes);
-        bytes.extend_from_slice(&checksum);
-        Ok(bytes)
+        Ok(writer.finish())
     }
 
     /// Decodes a logistic model after checking integrity and feature identity.
@@ -320,28 +317,12 @@ impl LogisticRegression {
         bytes: &[u8],
         expected_feature_schema_sha256: [u8; 32],
     ) -> Result<Self, ArtifactError> {
-        if bytes.len() < 8 + 2 + 2 + 32 + 8 * 4 + ARTIFACT_CHECKSUM_BYTES {
-            return Err(ArtifactError::Truncated);
-        }
-        let (payload, checksum) = bytes.split_at(bytes.len() - ARTIFACT_CHECKSUM_BYTES);
-        if &Sha256::digest(payload)[..] != checksum {
-            return Err(ArtifactError::ChecksumMismatch);
-        }
-        let mut cursor = ArtifactCursor::new(payload);
-        if cursor.take(8)? != ARTIFACT_MAGIC {
-            return Err(ArtifactError::InvalidMagic);
-        }
-        let version = cursor.u16()?;
-        if version != MODEL_ARTIFACT_VERSION {
-            return Err(ArtifactError::UnsupportedVersion { found: version });
-        }
-        let kind = cursor.u16()?;
-        if kind != LOGISTIC_ARTIFACT_KIND {
-            return Err(ArtifactError::UnsupportedModelKind { found: kind });
-        }
-        if cursor.take(32)? != expected_feature_schema_sha256 {
-            return Err(ArtifactError::FeatureSchemaMismatch);
-        }
+        let mut cursor = decode_legacy_envelope(
+            bytes,
+            LOGISTIC_ARTIFACT_KIND,
+            expected_feature_schema_sha256,
+            LOGISTIC_FIXED_PAYLOAD_BYTES,
+        )?;
         let n_features_in = cursor.u32()? as usize;
         let fit_intercept = match cursor.u32()? {
             0 => false,
@@ -391,45 +372,6 @@ impl LogisticRegression {
             intercept,
             iterations,
         })
-    }
-}
-
-struct ArtifactCursor<'a> {
-    remaining: &'a [u8],
-}
-
-impl<'a> ArtifactCursor<'a> {
-    const fn new(bytes: &'a [u8]) -> Self {
-        Self { remaining: bytes }
-    }
-
-    fn take(&mut self, count: usize) -> Result<&'a [u8], ArtifactError> {
-        if self.remaining.len() < count {
-            return Err(ArtifactError::Truncated);
-        }
-        let (value, remaining) = self.remaining.split_at(count);
-        self.remaining = remaining;
-        Ok(value)
-    }
-
-    fn u16(&mut self) -> Result<u16, ArtifactError> {
-        Ok(u16::from_le_bytes(
-            self.take(2)?.try_into().expect("exact length"),
-        ))
-    }
-
-    fn u32(&mut self) -> Result<u32, ArtifactError> {
-        Ok(u32::from_le_bytes(
-            self.take(4)?.try_into().expect("exact length"),
-        ))
-    }
-
-    fn f32(&mut self) -> Result<f32, ArtifactError> {
-        Ok(f32::from_bits(self.u32()?))
-    }
-
-    const fn is_empty(&self) -> bool {
-        self.remaining.is_empty()
     }
 }
 
@@ -630,12 +572,50 @@ fn sigmoid_f32(value: f32) -> f32 {
 mod tests {
     use super::*;
     use crate::data::DenseMatrix;
+    use sha2::{Digest, Sha256};
 
     fn simple_data() -> (DenseMatrix, BinaryTargets) {
         (
             DenseMatrix::new(vec![-3.0, -2.0, -1.0, 1.0, 2.0, 3.0], 6, 1).unwrap(),
             BinaryTargets::new(vec![0, 0, 0, 1, 1, 1]).unwrap(),
         )
+    }
+
+    fn phase_zero_artifact() -> (LogisticRegression, [u8; 32], Vec<u8>) {
+        let model = LogisticRegression {
+            n_features_in: 2,
+            params: LogisticRegressionParams {
+                c: 2.0,
+                fit_intercept: true,
+                max_iter: 100,
+                tol: f32::from_bits(0x3586_37bd),
+            },
+            coefficients: vec![f32::from_bits(0x3fb0_56aa), f32::from_bits(0x3eab_d102)],
+            intercept: f32::from_bits(0xc00e_fe0f),
+            iterations: 5,
+        };
+        let bytes = decode_hex(
+            "4645525249434d4c01000100070707070707070707070707070707070707070707070707070707070707070702000000010000000000004064000000bd378635050000000ffe0ec002000000aa56b03f02d1ab3e6d72aa073218a54d30e6d6e5fc5d19b0a8a4e0726ac51369976bfa79a3ae9ec3",
+        );
+        (model, [7; 32], bytes)
+    }
+
+    fn decode_hex(value: &str) -> Vec<u8> {
+        assert_eq!(value.len() % 2, 0);
+        value
+            .as_bytes()
+            .chunks_exact(2)
+            .map(|pair| {
+                let text = std::str::from_utf8(pair).expect("ASCII hex");
+                u8::from_str_radix(text, 16).expect("valid hex")
+            })
+            .collect()
+    }
+
+    fn resign_legacy_artifact(bytes: &mut [u8]) {
+        let payload_len = bytes.len() - 32;
+        let checksum = Sha256::digest(&bytes[..payload_len]);
+        bytes[payload_len..].copy_from_slice(&checksum);
     }
 
     #[test]
@@ -791,6 +771,91 @@ mod tests {
         );
         assert_eq!(
             LogisticRegression::from_artifact(&bytes[..40], schema).unwrap_err(),
+            ArtifactError::Truncated
+        );
+    }
+
+    #[test]
+    fn legacy_artifact_bytes_are_frozen_exactly() {
+        let (model, schema, expected) = phase_zero_artifact();
+        assert_eq!(expected.len(), 116);
+        assert_eq!(model.to_artifact(schema).unwrap(), expected);
+        assert_eq!(
+            LogisticRegression::from_artifact(&expected, schema).unwrap(),
+            model
+        );
+    }
+
+    #[test]
+    fn legacy_artifact_error_precedence_and_payload_validation_are_frozen() {
+        let (_, schema, bytes) = phase_zero_artifact();
+
+        let mut invalid_magic_without_checksum = bytes.clone();
+        invalid_magic_without_checksum[0] ^= 1;
+        assert_eq!(
+            LogisticRegression::from_artifact(&invalid_magic_without_checksum, schema).unwrap_err(),
+            ArtifactError::ChecksumMismatch
+        );
+
+        let mut invalid_magic = bytes.clone();
+        invalid_magic[0] ^= 1;
+        resign_legacy_artifact(&mut invalid_magic);
+        assert_eq!(
+            LogisticRegression::from_artifact(&invalid_magic, schema).unwrap_err(),
+            ArtifactError::InvalidMagic
+        );
+
+        let mut unsupported_version = bytes.clone();
+        unsupported_version[8..10].copy_from_slice(&2_u16.to_le_bytes());
+        resign_legacy_artifact(&mut unsupported_version);
+        assert_eq!(
+            LogisticRegression::from_artifact(&unsupported_version, schema).unwrap_err(),
+            ArtifactError::UnsupportedVersion { found: 2 }
+        );
+
+        let mut unsupported_kind = bytes.clone();
+        unsupported_kind[10..12].copy_from_slice(&2_u16.to_le_bytes());
+        resign_legacy_artifact(&mut unsupported_kind);
+        assert_eq!(
+            LogisticRegression::from_artifact(&unsupported_kind, schema).unwrap_err(),
+            ArtifactError::UnsupportedModelKind { found: 2 }
+        );
+
+        let mut invalid_flag = bytes.clone();
+        invalid_flag[48..52].copy_from_slice(&2_u32.to_le_bytes());
+        resign_legacy_artifact(&mut invalid_flag);
+        assert_eq!(
+            LogisticRegression::from_artifact(&invalid_flag, schema).unwrap_err(),
+            ArtifactError::InvalidPayload
+        );
+
+        let mut count_mismatch = bytes.clone();
+        count_mismatch[72..76].copy_from_slice(&1_u32.to_le_bytes());
+        resign_legacy_artifact(&mut count_mismatch);
+        assert_eq!(
+            LogisticRegression::from_artifact(&count_mismatch, schema).unwrap_err(),
+            ArtifactError::InvalidPayload
+        );
+
+        let mut non_finite = bytes.clone();
+        non_finite[68..72].copy_from_slice(&f32::NAN.to_bits().to_le_bytes());
+        resign_legacy_artifact(&mut non_finite);
+        assert_eq!(
+            LogisticRegression::from_artifact(&non_finite, schema).unwrap_err(),
+            ArtifactError::InvalidPayload
+        );
+
+        let mut trailing = bytes[..bytes.len() - 32].to_vec();
+        trailing.push(0);
+        trailing.extend_from_slice(&[0; 32]);
+        resign_legacy_artifact(&mut trailing);
+        assert_eq!(
+            LogisticRegression::from_artifact(&trailing, schema).unwrap_err(),
+            ArtifactError::TrailingBytes
+        );
+
+        assert_eq!(
+            LogisticRegression::from_artifact(&bytes[..107], schema).unwrap_err(),
             ArtifactError::Truncated
         );
     }

@@ -1,7 +1,13 @@
 //! Stable, bounded model-artifact errors and format identity.
 
+mod cursor;
+mod envelope;
+
 use std::error::Error;
 use std::fmt;
+
+pub(crate) use cursor::ArtifactCursor;
+pub(crate) use envelope::{LOGISTIC_ARTIFACT_KIND, LegacyArtifactWriter, decode_legacy_envelope};
 
 /// Current FerricML binary model artifact version.
 pub const MODEL_ARTIFACT_VERSION: u16 = 1;
