@@ -42,6 +42,12 @@ one tree, all features, and no bootstrap, and must match within `1e-6`;
 iterative or decomposition-based linear outputs use a reviewed `2e-5`
 tolerance.
 
+The histogram-gradient-boosting subset covers squared error, learning rate,
+iteration/leaf/depth limits, minimum leaf size, L2 leaf regularization, and
+maximum bins. A one-step non-tied fixture matches public scikit-learn outputs;
+three nonlinear-regression seeds use a 5% normalized-RMSE quality envelope.
+Exact private tree topology is not a compatibility contract.
+
 Quality is an implementation-level comparison rather than tree identity. Five
 fixed seeds cover nonlinear, separable, imbalanced, noisy classification and
 regression. Each lane is evaluated by its five-seed mean. FerricML may trail by
@@ -60,6 +66,10 @@ RMSE.
 - Standard scaling uses fixed-order two-pass `f64` statistics over finite dense
   input. Partial fitting, sparse centering, and scikit-learn's array/container
   mutation options are outside scope.
+- Histogram boosting is deterministic and serial, with finite continuous
+  features and scalar targets. Other losses, missing/categorical values,
+  sample weights, early stopping, validation sets, constraints, warm starts,
+  feature subsampling, and parallel fitting are outside scope.
 - Typed `MaxFeatures` and `NJobs` replace magic strings and integer sentinels.
   FerricML defaults to deterministic `random_state = 0` and serial execution;
   scikit defaults both settings to `None`. These are deliberate reproducibility

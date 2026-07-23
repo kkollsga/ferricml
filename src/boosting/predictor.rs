@@ -98,6 +98,7 @@ impl CompactTree {
         }
     }
 
+    #[allow(dead_code)] // Used by stable logical-tree encoding in the next phase.
     pub(crate) fn nodes(&self) -> &[CompactNode] {
         &self.nodes
     }

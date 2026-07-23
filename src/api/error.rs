@@ -65,6 +65,22 @@ pub enum ModelError {
     InvalidLeastSquaresTolerance,
     /// A ridge penalty is not finite and non-negative.
     InvalidRidgeAlpha,
+    /// A boosting learning rate is not finite and positive.
+    InvalidLearningRate,
+    /// A boosting iteration count is outside its supported bound.
+    InvalidBoostingIterationCount,
+    /// A boosting leaf-count limit is outside its supported bound.
+    InvalidMaxLeafNodes,
+    /// A boosting depth limit is outside its supported bound.
+    InvalidBoostingMaxDepth,
+    /// A histogram bin count is outside its supported bound.
+    InvalidMaxBins,
+    /// A boosting L2 penalty is not finite and non-negative.
+    InvalidL2Regularization,
+    /// Finite training values overflowed an internal `f32` result.
+    NumericalOverflow,
+    /// A fitted prediction accumulated to NaN or infinity.
+    NonFinitePrediction { row: usize },
     /// The linear solver encountered a non-positive-definite system.
     LinearSolveFailed,
 }
@@ -137,6 +153,28 @@ impl fmt::Display for ModelError {
                 f.write_str("least-squares tolerance must be finite and non-negative")
             }
             Self::InvalidRidgeAlpha => f.write_str("ridge alpha must be finite and non-negative"),
+            Self::InvalidLearningRate => {
+                f.write_str("boosting learning rate must be finite and positive")
+            }
+            Self::InvalidBoostingIterationCount => {
+                f.write_str("boosting max_iter is outside the supported bound")
+            }
+            Self::InvalidMaxLeafNodes => {
+                f.write_str("boosting max_leaf_nodes is outside the supported bound")
+            }
+            Self::InvalidBoostingMaxDepth => {
+                f.write_str("boosting max_depth is outside the supported bound")
+            }
+            Self::InvalidMaxBins => f.write_str("boosting max_bins must be in 2..=255"),
+            Self::InvalidL2Regularization => {
+                f.write_str("boosting L2 regularization must be finite and non-negative")
+            }
+            Self::NumericalOverflow => {
+                f.write_str("finite training values overflowed numerical model state")
+            }
+            Self::NonFinitePrediction { row } => {
+                write!(f, "prediction for row {row} is not finite")
+            }
             Self::LinearSolveFailed => f.write_str("linear solve failed during optimization"),
         }
     }

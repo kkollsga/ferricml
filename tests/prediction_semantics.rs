@@ -4,8 +4,9 @@ use ferricml::api::{
 };
 use ferricml::data::{BinaryTargets, DenseMatrix, RegressionTargets};
 use ferricml::ensemble::{
-    MaxFeatures, NJobs, RandomForestClassifier, RandomForestClassifierParams,
-    RandomForestRegressor, RandomForestRegressorParams,
+    HistGradientBoostingRegressor, HistGradientBoostingRegressorParams, MaxFeatures, NJobs,
+    RandomForestClassifier, RandomForestClassifierParams, RandomForestRegressor,
+    RandomForestRegressorParams,
 };
 use ferricml::linear_model::{LinearRegression, LinearRegressionParams, Ridge, RidgeParams};
 use ferricml::linear_model::{LogisticRegression, LogisticRegressionParams};
@@ -350,4 +351,36 @@ fn pairwise_scores_are_raw_antisymmetric_and_batch_validation_is_atomic() {
         })
     );
     assert_eq!(output, [99.0; 2]);
+}
+
+#[test]
+fn histogram_boosting_scalar_batch_and_output_validation_agree() {
+    let data = matrix(&[0.0, 1.0, 2.0, 3.0], 4, 1);
+    let targets = RegressionTargets::new(vec![0.0, 0.0, 4.0, 4.0]).unwrap();
+    let model = HistGradientBoostingRegressor::fit(
+        &data.as_view(),
+        &targets,
+        HistGradientBoostingRegressorParams::default()
+            .with_learning_rate(1.0)
+            .with_max_iter(1)
+            .with_max_leaf_nodes(2)
+            .with_min_samples_leaf(1),
+    )
+    .unwrap();
+    let allocating = model.predict(&data.as_view()).unwrap();
+    let mut output = vec![0.0; data.rows()];
+    model.predict_into(&data.as_view(), &mut output).unwrap();
+    assert_eq!(allocating, output);
+    for (row, &expected) in data.iter_rows().zip(&output) {
+        assert_eq!(model.predict_one(row).unwrap(), expected);
+    }
+    let mut untouched = [88.0; 3];
+    assert_eq!(
+        model.predict_into(&data.as_view(), &mut untouched),
+        Err(ModelError::OutputLength {
+            expected: 4,
+            actual: 3,
+        })
+    );
+    assert_eq!(untouched, [88.0; 3]);
 }

@@ -3,8 +3,9 @@
 use ferricml::api::ModelError;
 use ferricml::data::{BinaryTargets, DenseMatrix, RegressionTargets, SampleWeights};
 use ferricml::ensemble::{
-    MaxFeatures, NJobs, RandomForestClassifier, RandomForestClassifierParams,
-    RandomForestRegressor, RandomForestRegressorParams,
+    HistGradientBoostingRegressor, HistGradientBoostingRegressorParams, MaxFeatures, NJobs,
+    RandomForestClassifier, RandomForestClassifierParams, RandomForestRegressor,
+    RandomForestRegressorParams,
 };
 use ferricml::linear_model::{
     LinearRegression, LinearRegressionParams, LogisticRegression, LogisticRegressionParams, Ridge,
@@ -20,6 +21,7 @@ mod reference {
 const EXACT_TOLERANCE: f32 = 1.0e-6;
 const LOGISTIC_TOLERANCE: f32 = 2.0e-5;
 const QUALITY_SEEDS: [u64; 5] = [11, 22, 33, 44, 55];
+const HGB_QUALITY_SEEDS: [u64; 3] = [11, 22, 33];
 
 fn matrix(values: &[f32], rows: usize, columns: usize) -> DenseMatrix {
     DenseMatrix::new(values.to_vec(), rows, columns).unwrap()
@@ -388,6 +390,28 @@ fn standard_scaler_matches_public_scikit_outputs() {
 }
 
 #[test]
+fn histogram_boosting_matches_public_scikit_one_step_outputs() {
+    let train = matrix(reference::HGB_TRAIN_X, 8, 1);
+    let targets = RegressionTargets::new(reference::HGB_TRAIN_Y.to_vec()).unwrap();
+    let test = matrix(reference::HGB_TEST_X, 4, 1);
+    let model = HistGradientBoostingRegressor::fit(
+        &train.as_view(),
+        &targets,
+        HistGradientBoostingRegressorParams::default()
+            .with_learning_rate(1.0)
+            .with_max_iter(1)
+            .with_max_leaf_nodes(2)
+            .with_min_samples_leaf(1),
+    )
+    .unwrap();
+    assert_eq!(model.n_iter(), 1);
+    assert_close(
+        &model.predict(&test.as_view()).unwrap(),
+        reference::HGB_PREDICTIONS,
+    );
+}
+
+#[test]
 fn supported_defaults_names_and_validation_are_locked() {
     let classifier = RandomForestClassifierParams::default();
     assert_eq!(classifier.n_estimators(), 100);
@@ -408,6 +432,15 @@ fn supported_defaults_names_and_validation_are_locked() {
     assert!(regressor.bootstrap());
     assert_eq!(regressor.random_state(), 0);
     assert_eq!(regressor.n_jobs(), NJobs::Serial);
+
+    let boosting = HistGradientBoostingRegressorParams::default();
+    assert_eq!(boosting.learning_rate(), 0.1);
+    assert_eq!(boosting.max_iter(), 100);
+    assert_eq!(boosting.max_leaf_nodes(), 31);
+    assert_eq!(boosting.max_depth(), None);
+    assert_eq!(boosting.min_samples_leaf(), 20);
+    assert_eq!(boosting.l2_regularization(), 0.0);
+    assert_eq!(boosting.max_bins(), 255);
 
     let train = matrix(&[0.0, 1.0], 2, 1);
     let targets = BinaryTargets::new(vec![0, 1]).unwrap();
@@ -680,5 +713,36 @@ fn five_seed_regression_quality_stays_within_approved_delta() {
     assert!(
         ferric_nrmse <= sklearn_nrmse * 1.05,
         "FerricML nRMSE {ferric_nrmse:.6} exceeds scikit {sklearn_nrmse:.6} by more than 5%"
+    );
+}
+
+#[test]
+fn histogram_boosting_multi_seed_quality_stays_near_public_scikit() {
+    let mut ferric_nrmse = 0.0;
+    let mut sklearn_nrmse = 0.0;
+    for (index, seed) in HGB_QUALITY_SEEDS.into_iter().enumerate() {
+        let (train, train_y, test, test_y) = regression_data(seed);
+        let model = HistGradientBoostingRegressor::fit(
+            &train.as_view(),
+            &train_y,
+            HistGradientBoostingRegressorParams::default()
+                .with_learning_rate(0.1)
+                .with_max_iter(32)
+                .with_max_leaf_nodes(7)
+                .with_min_samples_leaf(10)
+                .with_max_bins(64),
+        )
+        .unwrap();
+        ferric_nrmse += nrmse(test_y.as_slice(), &model.predict(&test.as_view()).unwrap());
+        sklearn_nrmse += reference::HGB_QUALITY_NRMSE[index];
+    }
+    ferric_nrmse /= HGB_QUALITY_SEEDS.len() as f64;
+    sklearn_nrmse /= HGB_QUALITY_SEEDS.len() as f64;
+    eprintln!(
+        "quality histogram boosting: ferric nRMSE={ferric_nrmse:.6}; scikit nRMSE={sklearn_nrmse:.6}"
+    );
+    assert!(
+        ferric_nrmse <= sklearn_nrmse * 1.05,
+        "FerricML HGB nRMSE {ferric_nrmse:.6} exceeds scikit {sklearn_nrmse:.6} by more than 5%"
     );
 }

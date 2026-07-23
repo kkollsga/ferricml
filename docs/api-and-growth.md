@@ -20,7 +20,9 @@ reference contract.
   parameter access, and batch-level runtime model enums.
 - `data` owns validated row-major inputs, targets, and sample weights.
 - `ensemble` owns public forest estimators and parameter types; private tree
-  training and packed representation stay outside the public module tree.
+  training and packed representation stay outside the public module tree. The
+  histogram-boosting facade validates and orchestrates while private `boosting`
+  modules own binning, mutable growth, and compact prediction separately.
 - `pipeline` composes a fitted `Transformer` and estimator generically. Its
   `with_transformed` path uses caller-owned workspace and static dispatch.
   Concrete standard-scaler pipelines provide allocation-free prediction and

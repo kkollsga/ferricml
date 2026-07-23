@@ -63,14 +63,20 @@ pub ferricml::api::ModelError::FeatureDimension::expected: usize
 pub ferricml::api::ModelError::InvalidBinaryTarget
 pub ferricml::api::ModelError::InvalidBinaryTarget::index: usize
 pub ferricml::api::ModelError::InvalidBinaryTarget::value: u8
+pub ferricml::api::ModelError::InvalidBoostingIterationCount
+pub ferricml::api::ModelError::InvalidBoostingMaxDepth
 pub ferricml::api::ModelError::InvalidEstimatorCount
 pub ferricml::api::ModelError::InvalidIterationCount
 pub ferricml::api::ModelError::InvalidJobCount
+pub ferricml::api::ModelError::InvalidL2Regularization
+pub ferricml::api::ModelError::InvalidLearningRate
 pub ferricml::api::ModelError::InvalidLeastSquaresTolerance
+pub ferricml::api::ModelError::InvalidMaxBins
 pub ferricml::api::ModelError::InvalidMaxDepth
 pub ferricml::api::ModelError::InvalidMaxFeatures
 pub ferricml::api::ModelError::InvalidMaxFeatures::available: usize
 pub ferricml::api::ModelError::InvalidMaxFeatures::requested: usize
+pub ferricml::api::ModelError::InvalidMaxLeafNodes
 pub ferricml::api::ModelError::InvalidMinSamplesLeaf
 pub ferricml::api::ModelError::InvalidMinSamplesSplit
 pub ferricml::api::ModelError::InvalidRegularization
@@ -80,11 +86,14 @@ pub ferricml::api::ModelError::LinearSolveFailed
 pub ferricml::api::ModelError::NonFiniteFeature
 pub ferricml::api::ModelError::NonFiniteFeature::column: usize
 pub ferricml::api::ModelError::NonFiniteFeature::row: usize
+pub ferricml::api::ModelError::NonFinitePrediction
+pub ferricml::api::ModelError::NonFinitePrediction::row: usize
 pub ferricml::api::ModelError::NonFiniteTarget
 pub ferricml::api::ModelError::NonFiniteTarget::index: usize
 pub ferricml::api::ModelError::NonFiniteTransform
 pub ferricml::api::ModelError::NonFiniteTransform::column: usize
 pub ferricml::api::ModelError::NonFiniteTransform::row: usize
+pub ferricml::api::ModelError::NumericalOverflow
 pub ferricml::api::ModelError::OutputLength
 pub ferricml::api::ModelError::OutputLength::actual: usize
 pub ferricml::api::ModelError::OutputLength::expected: usize
@@ -147,6 +156,8 @@ impl ferricml::api::Estimator for ferricml::api::AnyClassifier
 pub fn ferricml::api::AnyClassifier::n_features_in(&self) -> usize
 impl ferricml::api::Estimator for ferricml::api::AnyRegressor
 pub fn ferricml::api::AnyRegressor::n_features_in(&self) -> usize
+impl ferricml::api::Estimator for ferricml::ensemble::HistGradientBoostingRegressor
+pub fn ferricml::ensemble::HistGradientBoostingRegressor::n_features_in(&self) -> usize
 impl ferricml::api::Estimator for ferricml::ensemble::RandomForestClassifier
 pub fn ferricml::ensemble::RandomForestClassifier::n_features_in(&self) -> usize
 impl ferricml::api::Estimator for ferricml::ensemble::RandomForestRegressor
@@ -166,6 +177,9 @@ pub fn ferricml::pipeline::Pipeline<T, E>::n_features_in(&self) -> usize
 pub trait ferricml::api::HasParams
 pub type ferricml::api::HasParams::Params
 pub fn ferricml::api::HasParams::get_params(&self) -> &Self::Params
+impl ferricml::api::HasParams for ferricml::ensemble::HistGradientBoostingRegressor
+pub type ferricml::ensemble::HistGradientBoostingRegressor::Params = ferricml::ensemble::HistGradientBoostingRegressorParams
+pub fn ferricml::ensemble::HistGradientBoostingRegressor::get_params(&self) -> &Self::Params
 impl ferricml::api::HasParams for ferricml::ensemble::RandomForestClassifier
 pub type ferricml::ensemble::RandomForestClassifier::Params = ferricml::ensemble::RandomForestClassifierParams
 pub fn ferricml::ensemble::RandomForestClassifier::get_params(&self) -> &Self::Params
@@ -193,6 +207,9 @@ pub fn ferricml::api::Regressor::predict_into(&self, &ferricml::data::MatrixView
 impl ferricml::api::Regressor for ferricml::api::AnyRegressor
 pub fn ferricml::api::AnyRegressor::predict(&self, &ferricml::data::MatrixView<'_>) -> core::result::Result<alloc::vec::Vec<f32>, ferricml::api::ModelError>
 pub fn ferricml::api::AnyRegressor::predict_into(&self, &ferricml::data::MatrixView<'_>, &mut [f32]) -> core::result::Result<(), ferricml::api::ModelError>
+impl ferricml::api::Regressor for ferricml::ensemble::HistGradientBoostingRegressor
+pub fn ferricml::ensemble::HistGradientBoostingRegressor::predict(&self, &ferricml::data::MatrixView<'_>) -> core::result::Result<alloc::vec::Vec<f32>, ferricml::api::ModelError>
+pub fn ferricml::ensemble::HistGradientBoostingRegressor::predict_into(&self, &ferricml::data::MatrixView<'_>, &mut [f32]) -> core::result::Result<(), ferricml::api::ModelError>
 impl ferricml::api::Regressor for ferricml::ensemble::RandomForestRegressor
 pub fn ferricml::ensemble::RandomForestRegressor::predict(&self, &ferricml::data::MatrixView<'_>) -> core::result::Result<alloc::vec::Vec<f32>, ferricml::api::ModelError>
 pub fn ferricml::ensemble::RandomForestRegressor::predict_into(&self, &ferricml::data::MatrixView<'_>, &mut [f32]) -> core::result::Result<(), ferricml::api::ModelError>
@@ -313,6 +330,42 @@ pub enum ferricml::ensemble::NJobs
 pub ferricml::ensemble::NJobs::All
 pub ferricml::ensemble::NJobs::Count(usize)
 pub ferricml::ensemble::NJobs::Serial
+pub struct ferricml::ensemble::HistGradientBoostingRegressor
+impl ferricml::ensemble::HistGradientBoostingRegressor
+pub const fn ferricml::ensemble::HistGradientBoostingRegressor::baseline(&self) -> f32
+pub fn ferricml::ensemble::HistGradientBoostingRegressor::fit(&ferricml::data::MatrixView<'_>, &ferricml::data::RegressionTargets, ferricml::ensemble::HistGradientBoostingRegressorParams) -> core::result::Result<Self, ferricml::api::ModelError>
+pub const fn ferricml::ensemble::HistGradientBoostingRegressor::get_params(&self) -> &ferricml::ensemble::HistGradientBoostingRegressorParams
+pub const fn ferricml::ensemble::HistGradientBoostingRegressor::n_features_in(&self) -> usize
+pub fn ferricml::ensemble::HistGradientBoostingRegressor::n_iter(&self) -> usize
+pub fn ferricml::ensemble::HistGradientBoostingRegressor::predict(&self, &ferricml::data::MatrixView<'_>) -> core::result::Result<alloc::vec::Vec<f32>, ferricml::api::ModelError>
+pub fn ferricml::ensemble::HistGradientBoostingRegressor::predict_into(&self, &ferricml::data::MatrixView<'_>, &mut [f32]) -> core::result::Result<(), ferricml::api::ModelError>
+pub fn ferricml::ensemble::HistGradientBoostingRegressor::predict_one(&self, &[f32]) -> core::result::Result<f32, ferricml::api::ModelError>
+impl ferricml::api::Estimator for ferricml::ensemble::HistGradientBoostingRegressor
+pub fn ferricml::ensemble::HistGradientBoostingRegressor::n_features_in(&self) -> usize
+impl ferricml::api::HasParams for ferricml::ensemble::HistGradientBoostingRegressor
+pub type ferricml::ensemble::HistGradientBoostingRegressor::Params = ferricml::ensemble::HistGradientBoostingRegressorParams
+pub fn ferricml::ensemble::HistGradientBoostingRegressor::get_params(&self) -> &Self::Params
+impl ferricml::api::Regressor for ferricml::ensemble::HistGradientBoostingRegressor
+pub fn ferricml::ensemble::HistGradientBoostingRegressor::predict(&self, &ferricml::data::MatrixView<'_>) -> core::result::Result<alloc::vec::Vec<f32>, ferricml::api::ModelError>
+pub fn ferricml::ensemble::HistGradientBoostingRegressor::predict_into(&self, &ferricml::data::MatrixView<'_>, &mut [f32]) -> core::result::Result<(), ferricml::api::ModelError>
+pub struct ferricml::ensemble::HistGradientBoostingRegressorParams
+impl ferricml::ensemble::HistGradientBoostingRegressorParams
+pub const fn ferricml::ensemble::HistGradientBoostingRegressorParams::l2_regularization(&self) -> f32
+pub const fn ferricml::ensemble::HistGradientBoostingRegressorParams::learning_rate(&self) -> f32
+pub const fn ferricml::ensemble::HistGradientBoostingRegressorParams::max_bins(&self) -> usize
+pub const fn ferricml::ensemble::HistGradientBoostingRegressorParams::max_depth(&self) -> core::option::Option<usize>
+pub const fn ferricml::ensemble::HistGradientBoostingRegressorParams::max_iter(&self) -> usize
+pub const fn ferricml::ensemble::HistGradientBoostingRegressorParams::max_leaf_nodes(&self) -> usize
+pub const fn ferricml::ensemble::HistGradientBoostingRegressorParams::min_samples_leaf(&self) -> usize
+pub fn ferricml::ensemble::HistGradientBoostingRegressorParams::with_l2_regularization(self, f32) -> Self
+pub fn ferricml::ensemble::HistGradientBoostingRegressorParams::with_learning_rate(self, f32) -> Self
+pub fn ferricml::ensemble::HistGradientBoostingRegressorParams::with_max_bins(self, usize) -> Self
+pub fn ferricml::ensemble::HistGradientBoostingRegressorParams::with_max_depth(self, core::option::Option<usize>) -> Self
+pub fn ferricml::ensemble::HistGradientBoostingRegressorParams::with_max_iter(self, usize) -> Self
+pub fn ferricml::ensemble::HistGradientBoostingRegressorParams::with_max_leaf_nodes(self, usize) -> Self
+pub fn ferricml::ensemble::HistGradientBoostingRegressorParams::with_min_samples_leaf(self, usize) -> Self
+impl core::default::Default for ferricml::ensemble::HistGradientBoostingRegressorParams
+pub fn ferricml::ensemble::HistGradientBoostingRegressorParams::default() -> Self
 pub struct ferricml::ensemble::RandomForestClassifier
 impl ferricml::ensemble::RandomForestClassifier
 pub fn ferricml::ensemble::RandomForestClassifier::classes(&self) -> &[u8]

@@ -1,8 +1,8 @@
 use ferricml::api::{Classifier, Regressor};
 use ferricml::data::{BinaryTargets, DenseMatrix, RegressionTargets, SampleWeights};
 use ferricml::ensemble::{
-    RandomForestClassifier, RandomForestClassifierParams, RandomForestRegressor,
-    RandomForestRegressorParams,
+    HistGradientBoostingRegressor, HistGradientBoostingRegressorParams, RandomForestClassifier,
+    RandomForestClassifierParams, RandomForestRegressor, RandomForestRegressorParams,
 };
 use ferricml::linear_model::{
     LinearRegression, LinearRegressionParams, LogisticRegression, LogisticRegressionParams, Ridge,
@@ -121,6 +121,18 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let scores = ranker.score_items(&features.as_view())?;
     assert_eq!(scores.len(), features.rows());
     assert_eq!(kendall_tau_b(&scores.iter().map(|&value| f64::from(value)).collect::<Vec<_>>(), &[0.0, 1.0, 2.0, 3.0])?, 1.0);
+
+    let boosted = HistGradientBoostingRegressor::fit(
+        &features.as_view(),
+        &RegressionTargets::new(vec![0.0, 1.0, 4.0, 9.0])?,
+        HistGradientBoostingRegressorParams::default()
+            .with_max_iter(4)
+            .with_max_leaf_nodes(3)
+            .with_min_samples_leaf(1),
+    )?;
+    let mut boosted_predictions = vec![0.0; features.rows()];
+    boosted.predict_into(&features.as_view(), &mut boosted_predictions)?;
+    assert!(boosted_predictions.iter().all(|value| value.is_finite()));
 
     let regressor = RandomForestRegressor::fit(
         &features.as_view(),

@@ -66,6 +66,7 @@ impl Binner {
         self.thresholds.len()
     }
 
+    #[allow(dead_code)]
     pub(crate) fn thresholds(&self) -> &[Vec<f32>] {
         &self.thresholds
     }
@@ -100,6 +101,7 @@ impl BinnedMatrix {
         self.columns
     }
 
+    #[allow(dead_code)]
     pub(crate) fn row(&self, index: usize) -> Option<&[u8]> {
         let start = index.checked_mul(self.columns)?;
         self.bins.get(start..start + self.columns)

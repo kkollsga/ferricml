@@ -1,8 +1,9 @@
 use ferricml::api::{Classifier, Estimator, HasParams, ModelError, Regressor, Transformer};
 use ferricml::data::{BinaryTargets, DenseMatrix, MatrixView, RegressionTargets, SampleWeights};
 use ferricml::ensemble::{
-    MaxFeatures, NJobs, RandomForestClassifier, RandomForestClassifierParams,
-    RandomForestRegressor, RandomForestRegressorParams,
+    HistGradientBoostingRegressor, HistGradientBoostingRegressorParams, MaxFeatures, NJobs,
+    RandomForestClassifier, RandomForestClassifierParams, RandomForestRegressor,
+    RandomForestRegressorParams,
 };
 use ferricml::linear_model::{
     LinearRegression, LinearRegressionParams, LogisticRegression, LogisticRegressionParams, Ridge,
@@ -426,4 +427,35 @@ fn pairwise_ranker_and_metric_paths_are_stable() {
     );
     assert_eq!(spearman_correlation(&[1.0, 2.0], &[3.0, 4.0]), Ok(1.0));
     assert_eq!(kendall_tau_b(&[1.0, 2.0], &[4.0, 3.0]), Ok(-1.0));
+}
+
+#[test]
+fn histogram_boosting_paths_builders_and_traits_are_stable() {
+    let matrix = training_matrix();
+    let targets = RegressionTargets::new(vec![0.0, 1.0, 4.0, 9.0]).unwrap();
+    let params = HistGradientBoostingRegressorParams::default()
+        .with_learning_rate(0.2)
+        .with_max_iter(4)
+        .with_max_leaf_nodes(3)
+        .with_max_depth(Some(2))
+        .with_min_samples_leaf(1)
+        .with_l2_regularization(0.5)
+        .with_max_bins(8);
+    let model =
+        HistGradientBoostingRegressor::fit(&matrix.as_view(), &targets, params.clone()).unwrap();
+    assert_eq!(estimator_width(&model), 2);
+    assert_eq!(regressor_width(&model), 2);
+    assert_eq!(
+        retained_params::<_, HistGradientBoostingRegressorParams>(&model),
+        &params
+    );
+    assert_eq!(params.learning_rate(), 0.2);
+    assert_eq!(params.max_iter(), 4);
+    assert_eq!(params.max_leaf_nodes(), 3);
+    assert_eq!(params.max_depth(), Some(2));
+    assert_eq!(params.min_samples_leaf(), 1);
+    assert_eq!(params.l2_regularization(), 0.5);
+    assert_eq!(params.max_bins(), 8);
+    assert_eq!(model.n_iter(), 4);
+    assert_eq!(model.predict(&matrix.as_view()).unwrap().len(), 4);
 }
