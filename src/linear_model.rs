@@ -2,13 +2,18 @@
 
 use crate::api::{Classifier, Estimator, HasParams, ModelError};
 use crate::artifact::{
-    ArtifactError, LOGISTIC_ARTIFACT_KIND, LegacyArtifactWriter, decode_legacy_envelope,
+    ArtifactError, ArtifactPayloadWriter, LOGISTIC_ARTIFACT_KIND, MODEL_ARTIFACT_VERSION,
+    SchemaRole, artifact_version, decode_component, decode_legacy_envelope, decode_v2_envelope,
+    encode_component, encode_v2_envelope,
 };
 use crate::data::{BinaryTargets, MatrixView, SampleWeights};
 
 const BINARY_CLASSES: [u8; 2] = [0, 1];
 const MAX_ARTIFACT_FEATURES: usize = 1_000_000;
 const LOGISTIC_FIXED_PAYLOAD_BYTES: usize = 8 * 4;
+const LOGISTIC_PAYLOAD_VERSION: u16 = 1;
+const LOGISTIC_STATE_COMPONENT_KIND: u16 = 1;
+const LOGISTIC_STATE_COMPONENT_VERSION: u16 = 1;
 
 /// Parameters for [`LogisticRegression`].
 #[derive(Clone, Debug, PartialEq)]
@@ -338,29 +343,40 @@ impl LogisticRegression {
 
     /// Encodes this model in FerricML's stable checksummed artifact format.
     pub fn to_artifact(&self, feature_schema_sha256: [u8; 32]) -> Result<Vec<u8>, ArtifactError> {
+        if self.n_features_in > MAX_ARTIFACT_FEATURES {
+            return Err(ArtifactError::InvalidPayload);
+        }
         let n_features =
             u32::try_from(self.n_features_in).map_err(|_| ArtifactError::InvalidPayload)?;
         let max_iter =
             u32::try_from(self.params.max_iter).map_err(|_| ArtifactError::InvalidPayload)?;
         let iterations =
             u32::try_from(self.iterations).map_err(|_| ArtifactError::InvalidPayload)?;
-        let mut writer = LegacyArtifactWriter::new(
-            LOGISTIC_ARTIFACT_KIND,
-            feature_schema_sha256,
-            96 + self.coefficients.len() * 4,
+        let mut state = ArtifactPayloadWriter::with_capacity(
+            LOGISTIC_FIXED_PAYLOAD_BYTES + self.coefficients.len() * 4,
         );
-        writer.u32(n_features);
-        writer.u32(u32::from(self.params.fit_intercept));
-        writer.f32(self.params.c);
-        writer.u32(max_iter);
-        writer.f32(self.params.tol);
-        writer.u32(iterations);
-        writer.f32(self.intercept);
-        writer.u32(n_features);
+        state.u32(n_features);
+        state.u32(u32::from(self.params.fit_intercept));
+        state.f32(self.params.c);
+        state.u32(max_iter);
+        state.f32(self.params.tol);
+        state.u32(iterations);
+        state.f32(self.intercept);
+        state.u32(n_features);
         for &coefficient in &self.coefficients {
-            writer.f32(coefficient);
+            state.f32(coefficient);
         }
-        Ok(writer.finish())
+        let component = encode_component(
+            LOGISTIC_STATE_COMPONENT_KIND,
+            LOGISTIC_STATE_COMPONENT_VERSION,
+            &state.finish(),
+        )?;
+        encode_v2_envelope(
+            LOGISTIC_ARTIFACT_KIND,
+            LOGISTIC_PAYLOAD_VERSION,
+            &[(SchemaRole::Input, feature_schema_sha256)],
+            &component,
+        )
     }
 
     /// Decodes a logistic model after checking integrity and feature identity.
@@ -368,12 +384,36 @@ impl LogisticRegression {
         bytes: &[u8],
         expected_feature_schema_sha256: [u8; 32],
     ) -> Result<Self, ArtifactError> {
-        let mut cursor = decode_legacy_envelope(
-            bytes,
-            LOGISTIC_ARTIFACT_KIND,
-            expected_feature_schema_sha256,
-            LOGISTIC_FIXED_PAYLOAD_BYTES,
-        )?;
+        let cursor = if artifact_version(bytes)? == MODEL_ARTIFACT_VERSION {
+            let mut envelope = decode_v2_envelope(
+                bytes,
+                LOGISTIC_ARTIFACT_KIND,
+                LOGISTIC_PAYLOAD_VERSION,
+                &[(SchemaRole::Input, expected_feature_schema_sha256)],
+            )?;
+            let component = decode_component(
+                &mut envelope,
+                LOGISTIC_STATE_COMPONENT_KIND,
+                LOGISTIC_STATE_COMPONENT_VERSION,
+            )?;
+            if !envelope.is_empty() {
+                return Err(ArtifactError::TrailingBytes);
+            }
+            component
+        } else {
+            decode_legacy_envelope(
+                bytes,
+                LOGISTIC_ARTIFACT_KIND,
+                expected_feature_schema_sha256,
+                LOGISTIC_FIXED_PAYLOAD_BYTES,
+            )?
+        };
+        Self::decode_payload(cursor)
+    }
+
+    fn decode_payload(
+        mut cursor: crate::artifact::ArtifactCursor<'_>,
+    ) -> Result<Self, ArtifactError> {
         let n_features_in = cursor.u32()? as usize;
         let fit_intercept = match cursor.u32()? {
             0 => false,
@@ -983,12 +1023,30 @@ mod tests {
     }
 
     #[test]
-    fn legacy_artifact_bytes_are_frozen_exactly() {
+    fn legacy_artifact_fixture_decodes_exactly() {
         let (model, schema, expected) = phase_zero_artifact();
         assert_eq!(expected.len(), 116);
-        assert_eq!(model.to_artifact(schema).unwrap(), expected);
         assert_eq!(
             LogisticRegression::from_artifact(&expected, schema).unwrap(),
+            model
+        );
+    }
+
+    #[test]
+    fn v2_artifact_bytes_are_deterministic_and_round_trip() {
+        let (model, schema, _) = phase_zero_artifact();
+        let left = model.to_artifact(schema).unwrap();
+        let right = model.to_artifact(schema).unwrap();
+        let expected = decode_hex(
+            "4645525249434d4c02000100010000003000000001000000010000000707070707070707070707070707070707070707070707070707070707070707010001002800000002000000010000000000004064000000bd378635050000000ffe0ec002000000aa56b03f02d1ab3ea6361781d561733ab80f4fd31372ffecb2f42c7dfc24050b0d11f7b524d7a90f",
+        );
+        assert_eq!(left, right);
+        assert_eq!(left, expected);
+        assert_eq!(left.len(), 140);
+        assert_eq!(&left[..8], b"FERRICML");
+        assert_eq!(u16::from_le_bytes(left[8..10].try_into().unwrap()), 2);
+        assert_eq!(
+            LogisticRegression::from_artifact(&left, schema).unwrap(),
             model
         );
     }
@@ -1013,11 +1071,11 @@ mod tests {
         );
 
         let mut unsupported_version = bytes.clone();
-        unsupported_version[8..10].copy_from_slice(&2_u16.to_le_bytes());
+        unsupported_version[8..10].copy_from_slice(&3_u16.to_le_bytes());
         resign_legacy_artifact(&mut unsupported_version);
         assert_eq!(
             LogisticRegression::from_artifact(&unsupported_version, schema).unwrap_err(),
-            ArtifactError::UnsupportedVersion { found: 2 }
+            ArtifactError::UnsupportedVersion { found: 3 }
         );
 
         let mut unsupported_kind = bytes.clone();
@@ -1064,6 +1122,93 @@ mod tests {
         assert_eq!(
             LogisticRegression::from_artifact(&bytes[..107], schema).unwrap_err(),
             ArtifactError::Truncated
+        );
+    }
+
+    #[test]
+    fn v2_artifact_rejects_unknown_metadata_and_bad_framing() {
+        let (model, schema, _) = phase_zero_artifact();
+        let bytes = model.to_artifact(schema).unwrap();
+
+        let mut flags_without_checksum = bytes.clone();
+        flags_without_checksum[14..16].copy_from_slice(&1_u16.to_le_bytes());
+        assert_eq!(
+            LogisticRegression::from_artifact(&flags_without_checksum, schema).unwrap_err(),
+            ArtifactError::ChecksumMismatch
+        );
+
+        let mut flags = flags_without_checksum;
+        resign_legacy_artifact(&mut flags);
+        assert_eq!(
+            LogisticRegression::from_artifact(&flags, schema).unwrap_err(),
+            ArtifactError::UnsupportedRequiredFlags { found: 1 }
+        );
+
+        let mut payload_version = bytes.clone();
+        payload_version[12..14].copy_from_slice(&2_u16.to_le_bytes());
+        resign_legacy_artifact(&mut payload_version);
+        assert_eq!(
+            LogisticRegression::from_artifact(&payload_version, schema).unwrap_err(),
+            ArtifactError::UnsupportedPayloadVersion { found: 2 }
+        );
+
+        let mut schema_role = bytes.clone();
+        schema_role[24..26].copy_from_slice(&2_u16.to_le_bytes());
+        resign_legacy_artifact(&mut schema_role);
+        assert_eq!(
+            LogisticRegression::from_artifact(&schema_role, schema).unwrap_err(),
+            ArtifactError::InvalidPayload
+        );
+
+        let mut component_kind = bytes.clone();
+        component_kind[60..62].copy_from_slice(&2_u16.to_le_bytes());
+        resign_legacy_artifact(&mut component_kind);
+        assert_eq!(
+            LogisticRegression::from_artifact(&component_kind, schema).unwrap_err(),
+            ArtifactError::InvalidPayload
+        );
+
+        let mut component_version = bytes.clone();
+        component_version[62..64].copy_from_slice(&2_u16.to_le_bytes());
+        resign_legacy_artifact(&mut component_version);
+        assert_eq!(
+            LogisticRegression::from_artifact(&component_version, schema).unwrap_err(),
+            ArtifactError::UnsupportedPayloadVersion { found: 2 }
+        );
+
+        let mut short_payload = bytes.clone();
+        short_payload[16..20].copy_from_slice(&47_u32.to_le_bytes());
+        resign_legacy_artifact(&mut short_payload);
+        assert_eq!(
+            LogisticRegression::from_artifact(&short_payload, schema).unwrap_err(),
+            ArtifactError::TrailingBytes
+        );
+
+        let mut long_payload = bytes.clone();
+        long_payload[16..20].copy_from_slice(&49_u32.to_le_bytes());
+        resign_legacy_artifact(&mut long_payload);
+        assert_eq!(
+            LogisticRegression::from_artifact(&long_payload, schema).unwrap_err(),
+            ArtifactError::Truncated
+        );
+
+        let mut trailing = bytes[..bytes.len() - 32].to_vec();
+        trailing.push(0);
+        trailing.extend_from_slice(&[0; 32]);
+        resign_legacy_artifact(&mut trailing);
+        assert_eq!(
+            LogisticRegression::from_artifact(&trailing, schema).unwrap_err(),
+            ArtifactError::TrailingBytes
+        );
+
+        let mut oversized = vec![0_u8; crate::artifact::MAX_MODEL_ARTIFACT_BYTES + 1];
+        oversized[8..10].copy_from_slice(&MODEL_ARTIFACT_VERSION.to_le_bytes());
+        assert_eq!(
+            LogisticRegression::from_artifact(&oversized, schema).unwrap_err(),
+            ArtifactError::SizeLimitExceeded {
+                limit: crate::artifact::MAX_MODEL_ARTIFACT_BYTES,
+                actual: oversized.len(),
+            }
         );
     }
 }

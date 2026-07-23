@@ -11,6 +11,8 @@ and releases use [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 - Validated sample weights, weighted logistic fitting, and allocation-free raw
   logistic decision scores.
+- Bounded version-2 model artifacts with independent payload/component
+  versions while retaining strict legacy logistic decoding.
 
 ### Fixed
 

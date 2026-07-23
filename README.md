@@ -24,10 +24,10 @@ of scikit-learn; typed Rust parameters and caller-owned `_into` methods preserve
 validation and performance. See [API and growth](docs/api-and-growth.md) and
 [the conformance contract](docs/sklearn-conformance.md).
 
-Logistic models support a versioned, checksummed binary artifact with strict
-feature-schema verification. The backend-neutral envelope proposed in
-[artifact-envelope.md](docs/artifact-envelope.md) remains deliberately
-unfrozen for private tree layouts.
+Logistic models support a bounded, versioned, checksummed binary artifact with
+strict feature-schema verification and legacy-v1 decoding. The logical
+envelope documented in [artifact-envelope.md](docs/artifact-envelope.md)
+deliberately excludes private tree layouts.
 
 ## Verification and benchmarks
 

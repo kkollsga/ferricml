@@ -1,21 +1,36 @@
 # Model artifact envelope
 
-FerricML artifact version 1 supports fitted logistic-regression models. The
-private forest representation remains outside the persistence contract; no
-byte sequence produced from packed trees is a compatibility promise.
+FerricML writes artifact envelope version 2 for fitted logistic-regression
+models and continues to read the legacy version-1 logistic format. The private
+forest representation remains outside the persistence contract; no byte
+sequence produced from packed trees is a compatibility promise.
 
-`LogisticRegression::to_artifact` writes, in little-endian order, the FerricML
-magic, envelope version, estimator kind, caller-supplied 32-byte feature-schema
-identity, fitted dimensions and parameters, intercept, and ordered `f32`
-coefficients. A SHA-256 footer covers every preceding byte.
-`LogisticRegression::from_artifact` verifies the checksum before parsing,
-requires the expected feature-schema identity, bounds feature allocation,
-rejects non-finite or inconsistent values, and rejects trailing bytes.
+`LogisticRegression::to_artifact` writes, in little-endian order:
 
-A future multi-backend envelope must additionally carry:
+- the eight-byte `FERRICML` magic and envelope version `2`;
+- the never-reused estimator kind and independent payload version;
+- required flags, declared payload length, schema-record count, and a zero
+  reserved field;
+- role-tagged, 32-byte feature-schema identities;
+- length-delimited typed components containing fitted dimensions, parameters,
+  intercept, and ordered `f32` coefficients;
+- a SHA-256 integrity footer covering every preceding byte.
 
-- an envelope format version and estimator kind;
-- the estimator/model payload version, independent of the envelope version;
+The current writer uses no required flags, one input-schema record, and one
+logistic-state component. Unknown required flags, payload versions, schema
+roles, nonzero reserved fields, and component versions are rejected rather
+than guessed. The hard encoded-size limit is 32 MiB.
+
+`LogisticRegression::from_artifact` checks the size and checksum before parsing
+counts or model state, requires the expected input-schema identity, validates
+all declared lengths before borrowing component payloads, bounds feature
+allocation, rejects non-finite or inconsistent values, and rejects trailing
+bytes. SHA-256 provides corruption detection only; artifacts are not signed or
+authenticated.
+
+Additional estimator payloads must carry:
+
+- a never-reused estimator kind and independent payload version;
 - ordered feature names plus a canonical feature-schema hash;
 - every effective fitted parameter, including deterministic seed and training
   parallelism metadata where relevant;
@@ -23,7 +38,7 @@ A future multi-backend envelope must additionally carry:
 - ordered preprocessing steps and their fitted state;
 - optional calibration method/state and decision-threshold metadata;
 - explicit scalar representation and byte order;
-- payload length and a checksum covering header metadata and payload.
+- declared component and payload lengths covered by the outer checksum.
 
 Every envelope must use fixed-width encodings, reject unknown required fields,
 validate dimensions and numeric finiteness, and verify its checksum before any

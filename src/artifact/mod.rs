@@ -7,10 +7,16 @@ use std::error::Error;
 use std::fmt;
 
 pub(crate) use cursor::ArtifactCursor;
-pub(crate) use envelope::{LOGISTIC_ARTIFACT_KIND, LegacyArtifactWriter, decode_legacy_envelope};
+pub(crate) use envelope::{
+    ArtifactPayloadWriter, LOGISTIC_ARTIFACT_KIND, SchemaRole, artifact_version, decode_component,
+    decode_legacy_envelope, decode_v2_envelope, encode_component, encode_v2_envelope,
+};
 
 /// Current FerricML binary model artifact version.
-pub const MODEL_ARTIFACT_VERSION: u16 = 1;
+pub const MODEL_ARTIFACT_VERSION: u16 = 2;
+
+/// Maximum accepted size of one encoded model artifact.
+pub const MAX_MODEL_ARTIFACT_BYTES: usize = 32 * 1024 * 1024;
 
 /// Errors encountered while decoding or validating a model artifact.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -22,6 +28,10 @@ pub enum ArtifactError {
     InvalidMagic,
     /// The artifact version is unsupported.
     UnsupportedVersion { found: u16 },
+    /// The estimator payload version is unsupported.
+    UnsupportedPayloadVersion { found: u16 },
+    /// Required envelope flags are not understood by this reader.
+    UnsupportedRequiredFlags { found: u16 },
     /// The model kind is unsupported by the requested decoder.
     UnsupportedModelKind { found: u16 },
     /// The SHA-256 integrity footer does not match the payload.
@@ -32,6 +42,8 @@ pub enum ArtifactError {
     InvalidPayload,
     /// Bytes remain after the complete model payload.
     TrailingBytes,
+    /// The encoded artifact exceeds the hard reader limit.
+    SizeLimitExceeded { limit: usize, actual: usize },
 }
 
 impl fmt::Display for ArtifactError {
@@ -42,6 +54,12 @@ impl fmt::Display for ArtifactError {
             Self::UnsupportedVersion { found } => {
                 write!(f, "unsupported model artifact version {found}")
             }
+            Self::UnsupportedPayloadVersion { found } => {
+                write!(f, "unsupported model payload version {found}")
+            }
+            Self::UnsupportedRequiredFlags { found } => {
+                write!(f, "unsupported required artifact flags {found:#06x}")
+            }
             Self::UnsupportedModelKind { found } => {
                 write!(f, "unsupported model artifact kind {found}")
             }
@@ -49,6 +67,9 @@ impl fmt::Display for ArtifactError {
             Self::FeatureSchemaMismatch => f.write_str("model artifact feature schema mismatch"),
             Self::InvalidPayload => f.write_str("model artifact payload is invalid"),
             Self::TrailingBytes => f.write_str("model artifact contains trailing bytes"),
+            Self::SizeLimitExceeded { limit, actual } => {
+                write!(f, "model artifact size {actual} exceeds limit {limit}")
+            }
         }
     }
 }

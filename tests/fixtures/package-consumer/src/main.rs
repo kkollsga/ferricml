@@ -30,6 +30,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut decisions = vec![0.0; features.rows()];
     logistic.decision_function_into(&features.as_view(), &mut decisions)?;
     assert!(decisions.iter().all(|value| value.is_finite()));
+    let schema = [7; 32];
+    let encoded = logistic.to_artifact(schema)?;
+    let decoded = LogisticRegression::from_artifact(&encoded, schema)?;
+    assert_eq!(
+        decoded.predict_proba(&features.as_view())?,
+        logistic.predict_proba(&features.as_view())?
+    );
 
     let regressor = RandomForestRegressor::fit(
         &features.as_view(),

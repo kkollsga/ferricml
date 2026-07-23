@@ -171,15 +171,23 @@ pub ferricml::artifact::ArtifactError::ChecksumMismatch
 pub ferricml::artifact::ArtifactError::FeatureSchemaMismatch
 pub ferricml::artifact::ArtifactError::InvalidMagic
 pub ferricml::artifact::ArtifactError::InvalidPayload
+pub ferricml::artifact::ArtifactError::SizeLimitExceeded
+pub ferricml::artifact::ArtifactError::SizeLimitExceeded::actual: usize
+pub ferricml::artifact::ArtifactError::SizeLimitExceeded::limit: usize
 pub ferricml::artifact::ArtifactError::TrailingBytes
 pub ferricml::artifact::ArtifactError::Truncated
 pub ferricml::artifact::ArtifactError::UnsupportedModelKind
 pub ferricml::artifact::ArtifactError::UnsupportedModelKind::found: u16
+pub ferricml::artifact::ArtifactError::UnsupportedPayloadVersion
+pub ferricml::artifact::ArtifactError::UnsupportedPayloadVersion::found: u16
+pub ferricml::artifact::ArtifactError::UnsupportedRequiredFlags
+pub ferricml::artifact::ArtifactError::UnsupportedRequiredFlags::found: u16
 pub ferricml::artifact::ArtifactError::UnsupportedVersion
 pub ferricml::artifact::ArtifactError::UnsupportedVersion::found: u16
 impl core::error::Error for ferricml::artifact::ArtifactError
 impl core::fmt::Display for ferricml::artifact::ArtifactError
 pub fn ferricml::artifact::ArtifactError::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+pub const ferricml::artifact::MAX_MODEL_ARTIFACT_BYTES: usize
 pub const ferricml::artifact::MODEL_ARTIFACT_VERSION: u16
 pub mod ferricml::data
 pub enum ferricml::data::DataError
