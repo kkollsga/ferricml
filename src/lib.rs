@@ -12,4 +12,8 @@ pub mod pipeline;
 pub mod preprocessing;
 pub mod ranking;
 
+// The private runtime is intentionally introduced one green commit before its
+// public estimator orchestration.
+#[allow(dead_code)]
+mod boosting;
 mod forest;
