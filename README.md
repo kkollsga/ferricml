@@ -27,11 +27,12 @@ of scikit-learn; typed Rust parameters and caller-owned `_into` methods preserve
 validation and performance. See [API and growth](docs/api-and-growth.md) and
 [the conformance contract](docs/sklearn-conformance.md).
 
-Logistic, linear, ridge, standard-scaler, and supported typed pipeline models
-support bounded, versioned, checksummed binary artifacts with strict schema
-verification; logistic retains legacy-v1 decoding. The logical
-envelope documented in [artifact-envelope.md](docs/artifact-envelope.md)
-deliberately excludes private tree layouts.
+Logistic, linear, ridge, histogram-gradient-boosting, standard-scaler, and
+supported typed pipeline models support bounded, versioned, checksummed binary
+artifacts with strict schema verification; logistic retains legacy-v1
+decoding. Boosted ensembles persist backend-neutral logical trees while their
+compact runtime layout stays private. See
+[artifact-envelope.md](docs/artifact-envelope.md).
 
 The pairwise ranker consumes checked pairs over one item matrix and exposes raw
 item scores and score differences, not classifier probabilities. Its mirrored

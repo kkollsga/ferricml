@@ -458,4 +458,7 @@ fn histogram_boosting_paths_builders_and_traits_are_stable() {
     assert_eq!(params.max_bins(), 8);
     assert_eq!(model.n_iter(), 4);
     assert_eq!(model.predict(&matrix.as_view()).unwrap().len(), 4);
+    let artifact = model.to_artifact([17; 32]).unwrap();
+    let decoded = HistGradientBoostingRegressor::from_artifact(&artifact, [17; 32]).unwrap();
+    assert_eq!(decoded, model);
 }

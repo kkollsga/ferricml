@@ -12,6 +12,7 @@ pub(crate) const MAX_TREE_NODES: usize = 131_071;
 pub(crate) const MAX_TREE_LEAVES: usize = 65_536;
 pub(crate) const MAX_TREE_DEPTH: usize = 256;
 pub(crate) const MAX_TREES: usize = 4_096;
+pub(crate) const MAX_TOTAL_NODES: usize = 1_000_000;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) enum BoostingError {

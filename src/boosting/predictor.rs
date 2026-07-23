@@ -98,9 +98,18 @@ impl CompactTree {
         }
     }
 
-    #[allow(dead_code)] // Used by stable logical-tree encoding in the next phase.
     pub(crate) fn nodes(&self) -> &[CompactNode] {
         &self.nodes
+    }
+
+    pub(crate) fn max_abs_leaf(&self) -> f32 {
+        self.nodes
+            .iter()
+            .filter_map(|node| match node {
+                CompactNode::Leaf { value } => Some(value.abs()),
+                CompactNode::Branch { .. } => None,
+            })
+            .fold(0.0, f32::max)
     }
 }
 

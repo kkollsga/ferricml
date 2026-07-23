@@ -1,10 +1,10 @@
 # Model artifact envelope
 
 FerricML writes artifact envelope version 2 for fitted logistic, linear, ridge,
-standard-scaler, and supported typed pipeline models. It continues to read the
-legacy version-1 logistic format. The private forest representation remains
-outside the persistence contract; no byte sequence produced from packed trees
-is a compatibility promise.
+histogram-gradient-boosting, standard-scaler, and supported typed pipeline
+models. It continues to read the legacy version-1 logistic format. The private
+forest representation remains outside the persistence contract; no byte
+sequence produced from packed forest trees is a compatibility promise.
 
 `LogisticRegression::to_artifact` writes, in little-endian order:
 
@@ -45,6 +45,17 @@ artifact carries the no-intercept fitted coefficients. Decode requires exact
 agreement between both components, including an exact positive-zero
 intercept, before exposing item scoring.
 
+`HistGradientBoostingRegressor` artifacts freeze the squared-error objective,
+fitted baseline, effective parameters, feature width, tree count, and total
+logical-node count. Each tree is a length-delimited preorder sequence of
+backend-neutral branch and leaf records. Branches encode feature, threshold,
+and logical child indices; leaves encode only their prediction value. The
+reader bounds tree and aggregate node counts before allocation, requires a
+canonical full binary topology, validates finite values and feature indices,
+and rejects unreachable, repeated, cyclic, over-depth, truncated, or trailing
+records before constructing compact runtime trees. The private compact node
+representation and traversal layout remain free to change.
+
 Additional estimator payloads must carry:
 
 - a never-reused estimator kind and independent payload version;
@@ -67,6 +78,6 @@ state rather than serializing a Rust enum, Python pickle, or third-party type.
 Field IDs and migration rules for additional estimator kinds remain open until
 their first reader/writer is implemented.
 
-The private compact forest-node layout is explicitly unfrozen. Node compaction
-and traversal layout can change without an artifact migration until a logical
-tree payload and round-trip tests are defined.
+The private compact forest-node layout remains explicitly unfrozen. Histogram
+boosting persists the logical tree contract described above, never its compact
+runtime representation; random-forest persistence remains unsupported.

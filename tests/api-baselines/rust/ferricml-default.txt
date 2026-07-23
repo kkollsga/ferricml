@@ -31,6 +31,7 @@ pub fn ferricml::api::AnyClassifier::n_features_in(&self) -> usize
 pub ferricml::api::AnyClassifierParams::LogisticRegression(&'a ferricml::linear_model::LogisticRegressionParams)
 pub ferricml::api::AnyClassifierParams::RandomForest(&'a ferricml::ensemble::RandomForestClassifierParams)
 #[non_exhaustive] pub enum ferricml::api::AnyRegressor
+pub ferricml::api::AnyRegressor::HistGradientBoosting(ferricml::ensemble::HistGradientBoostingRegressor)
 pub ferricml::api::AnyRegressor::LinearRegression(ferricml::linear_model::LinearRegression)
 pub ferricml::api::AnyRegressor::RandomForest(ferricml::ensemble::RandomForestRegressor)
 pub ferricml::api::AnyRegressor::Ridge(ferricml::linear_model::Ridge)
@@ -39,6 +40,8 @@ pub fn ferricml::api::AnyRegressor::get_params(&self) -> ferricml::api::AnyRegre
 pub fn ferricml::api::AnyRegressor::n_features_in(&self) -> usize
 pub fn ferricml::api::AnyRegressor::predict(&self, &ferricml::data::MatrixView<'_>) -> core::result::Result<alloc::vec::Vec<f32>, ferricml::api::ModelError>
 pub fn ferricml::api::AnyRegressor::predict_into(&self, &ferricml::data::MatrixView<'_>, &mut [f32]) -> core::result::Result<(), ferricml::api::ModelError>
+impl core::convert::From<ferricml::ensemble::HistGradientBoostingRegressor> for ferricml::api::AnyRegressor
+pub fn ferricml::api::AnyRegressor::from(ferricml::ensemble::HistGradientBoostingRegressor) -> Self
 impl core::convert::From<ferricml::ensemble::RandomForestRegressor> for ferricml::api::AnyRegressor
 pub fn ferricml::api::AnyRegressor::from(ferricml::ensemble::RandomForestRegressor) -> Self
 impl core::convert::From<ferricml::linear_model::LinearRegression> for ferricml::api::AnyRegressor
@@ -51,10 +54,12 @@ impl ferricml::api::Regressor for ferricml::api::AnyRegressor
 pub fn ferricml::api::AnyRegressor::predict(&self, &ferricml::data::MatrixView<'_>) -> core::result::Result<alloc::vec::Vec<f32>, ferricml::api::ModelError>
 pub fn ferricml::api::AnyRegressor::predict_into(&self, &ferricml::data::MatrixView<'_>, &mut [f32]) -> core::result::Result<(), ferricml::api::ModelError>
 #[non_exhaustive] pub enum ferricml::api::AnyRegressorParams<'a>
+pub ferricml::api::AnyRegressorParams::HistGradientBoosting(&'a ferricml::ensemble::HistGradientBoostingRegressorParams)
 pub ferricml::api::AnyRegressorParams::LinearRegression(&'a ferricml::linear_model::LinearRegressionParams)
 pub ferricml::api::AnyRegressorParams::RandomForest(&'a ferricml::ensemble::RandomForestRegressorParams)
 pub ferricml::api::AnyRegressorParams::Ridge(&'a ferricml::linear_model::RidgeParams)
 #[non_exhaustive] pub enum ferricml::api::ModelError
+pub ferricml::api::ModelError::BoostingModelTooLarge
 pub ferricml::api::ModelError::EmptyData
 pub ferricml::api::ModelError::EmptyTargets
 pub ferricml::api::ModelError::FeatureDimension
@@ -334,12 +339,16 @@ pub struct ferricml::ensemble::HistGradientBoostingRegressor
 impl ferricml::ensemble::HistGradientBoostingRegressor
 pub const fn ferricml::ensemble::HistGradientBoostingRegressor::baseline(&self) -> f32
 pub fn ferricml::ensemble::HistGradientBoostingRegressor::fit(&ferricml::data::MatrixView<'_>, &ferricml::data::RegressionTargets, ferricml::ensemble::HistGradientBoostingRegressorParams) -> core::result::Result<Self, ferricml::api::ModelError>
+pub fn ferricml::ensemble::HistGradientBoostingRegressor::from_artifact(&[u8], [u8; 32]) -> core::result::Result<Self, ferricml::artifact::ArtifactError>
 pub const fn ferricml::ensemble::HistGradientBoostingRegressor::get_params(&self) -> &ferricml::ensemble::HistGradientBoostingRegressorParams
 pub const fn ferricml::ensemble::HistGradientBoostingRegressor::n_features_in(&self) -> usize
 pub fn ferricml::ensemble::HistGradientBoostingRegressor::n_iter(&self) -> usize
 pub fn ferricml::ensemble::HistGradientBoostingRegressor::predict(&self, &ferricml::data::MatrixView<'_>) -> core::result::Result<alloc::vec::Vec<f32>, ferricml::api::ModelError>
 pub fn ferricml::ensemble::HistGradientBoostingRegressor::predict_into(&self, &ferricml::data::MatrixView<'_>, &mut [f32]) -> core::result::Result<(), ferricml::api::ModelError>
 pub fn ferricml::ensemble::HistGradientBoostingRegressor::predict_one(&self, &[f32]) -> core::result::Result<f32, ferricml::api::ModelError>
+pub fn ferricml::ensemble::HistGradientBoostingRegressor::to_artifact(&self, [u8; 32]) -> core::result::Result<alloc::vec::Vec<u8>, ferricml::artifact::ArtifactError>
+impl core::convert::From<ferricml::ensemble::HistGradientBoostingRegressor> for ferricml::api::AnyRegressor
+pub fn ferricml::api::AnyRegressor::from(ferricml::ensemble::HistGradientBoostingRegressor) -> Self
 impl ferricml::api::Estimator for ferricml::ensemble::HistGradientBoostingRegressor
 pub fn ferricml::ensemble::HistGradientBoostingRegressor::n_features_in(&self) -> usize
 impl ferricml::api::HasParams for ferricml::ensemble::HistGradientBoostingRegressor

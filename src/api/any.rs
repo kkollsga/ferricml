@@ -2,8 +2,8 @@
 
 use crate::data::MatrixView;
 use crate::ensemble::{
-    RandomForestClassifier, RandomForestClassifierParams, RandomForestRegressor,
-    RandomForestRegressorParams,
+    HistGradientBoostingRegressor, HistGradientBoostingRegressorParams, RandomForestClassifier,
+    RandomForestClassifierParams, RandomForestRegressor, RandomForestRegressorParams,
 };
 use crate::linear_model::{
     LinearRegression, LinearRegressionParams, LogisticRegression, LogisticRegressionParams, Ridge,
@@ -32,6 +32,8 @@ pub enum AnyRegressorParams<'a> {
     LinearRegression(&'a LinearRegressionParams),
     /// Ridge-regression parameters.
     Ridge(&'a RidgeParams),
+    /// Histogram gradient-boosting parameters.
+    HistGradientBoosting(&'a HistGradientBoostingRegressorParams),
 }
 
 /// An owned fitted classifier selected at runtime.
@@ -182,6 +184,8 @@ pub enum AnyRegressor {
     LinearRegression(LinearRegression),
     /// A fitted ridge regressor.
     Ridge(Ridge),
+    /// A fitted histogram gradient-boosted regressor.
+    HistGradientBoosting(HistGradientBoostingRegressor),
 }
 
 impl AnyRegressor {
@@ -198,6 +202,9 @@ impl AnyRegressor {
                 AnyRegressorParams::LinearRegression(model.get_params())
             }
             Self::Ridge(model) => AnyRegressorParams::Ridge(model.get_params()),
+            Self::HistGradientBoosting(model) => {
+                AnyRegressorParams::HistGradientBoosting(model.get_params())
+            }
         }
     }
 
@@ -234,12 +241,19 @@ impl From<Ridge> for AnyRegressor {
     }
 }
 
+impl From<HistGradientBoostingRegressor> for AnyRegressor {
+    fn from(model: HistGradientBoostingRegressor) -> Self {
+        Self::HistGradientBoosting(model)
+    }
+}
+
 impl Estimator for AnyRegressor {
     fn n_features_in(&self) -> usize {
         match self {
             Self::RandomForest(model) => model.n_features_in(),
             Self::LinearRegression(model) => model.n_features_in(),
             Self::Ridge(model) => model.n_features_in(),
+            Self::HistGradientBoosting(model) => model.n_features_in(),
         }
     }
 }
@@ -250,6 +264,7 @@ impl Regressor for AnyRegressor {
             Self::RandomForest(model) => model.predict_into(data, output),
             Self::LinearRegression(model) => model.predict_into(data, output),
             Self::Ridge(model) => model.predict_into(data, output),
+            Self::HistGradientBoosting(model) => model.predict_into(data, output),
         }
     }
 }

@@ -1,11 +1,24 @@
 //! Deterministic dense histogram gradient-boosted regression.
 
 use crate::api::{Estimator, HasParams, ModelError, Regressor};
+use crate::artifact::{
+    ArtifactError, ArtifactPayloadWriter, HIST_GRADIENT_BOOSTING_REGRESSOR_ARTIFACT_KIND,
+    SchemaRole, decode_component, decode_logical_tree, decode_v2_envelope, encode_component,
+    encode_logical_tree, encode_v2_envelope,
+};
 use crate::boosting::binning::Binner;
 use crate::boosting::grower::{GrowConfig, grow_tree};
 use crate::boosting::predictor::CompactTree;
-use crate::boosting::{BoostingError, MAX_BINS, MAX_TREE_DEPTH, MAX_TREE_LEAVES, MAX_TREES};
+use crate::boosting::{
+    BoostingError, MAX_BINS, MAX_TOTAL_NODES, MAX_TREE_DEPTH, MAX_TREE_LEAVES, MAX_TREES,
+};
 use crate::data::{MatrixView, RegressionTargets};
+
+const ARTIFACT_PAYLOAD_VERSION: u16 = 1;
+const METADATA_COMPONENT_KIND: u16 = 1;
+const TREE_COMPONENT_KIND: u16 = 2;
+const COMPONENT_VERSION: u16 = 1;
+const OBJECTIVE_VERSION: u32 = 1;
 
 /// Parameters for [`HistGradientBoostingRegressor`].
 #[derive(Clone, Debug, PartialEq)]
@@ -166,6 +179,9 @@ impl HistGradientBoostingRegressor {
             residuals = compute_residuals(targets.as_slice(), &predictions)?;
             trees.push(tree);
         }
+        if !prediction_bound_is_finite(baseline, params.learning_rate, &trees) {
+            return Err(ModelError::NumericalOverflow);
+        }
         Ok(Self {
             n_features_in: data.columns(),
             params,
@@ -225,9 +241,143 @@ impl HistGradientBoostingRegressor {
         <Self as Regressor>::predict_into(self, data, output)
     }
 
-    #[allow(dead_code)] // Used by the stable logical-tree codec in the next phase.
-    pub(crate) fn trees(&self) -> &[CompactTree] {
-        &self.trees
+    /// Encodes the fitted baseline, parameters, and canonical logical trees.
+    pub fn to_artifact(&self, schema: [u8; 32]) -> Result<Vec<u8>, ArtifactError> {
+        let n_features =
+            u32::try_from(self.n_features_in).map_err(|_| ArtifactError::InvalidPayload)?;
+        let max_iter =
+            u32::try_from(self.params.max_iter).map_err(|_| ArtifactError::InvalidPayload)?;
+        let max_leaf_nodes =
+            u32::try_from(self.params.max_leaf_nodes).map_err(|_| ArtifactError::InvalidPayload)?;
+        let max_depth = self
+            .params
+            .max_depth
+            .map(u32::try_from)
+            .transpose()
+            .map_err(|_| ArtifactError::InvalidPayload)?
+            .unwrap_or(0);
+        let min_samples_leaf = u32::try_from(self.params.min_samples_leaf)
+            .map_err(|_| ArtifactError::InvalidPayload)?;
+        let max_bins =
+            u32::try_from(self.params.max_bins).map_err(|_| ArtifactError::InvalidPayload)?;
+        let tree_count =
+            u32::try_from(self.trees.len()).map_err(|_| ArtifactError::InvalidPayload)?;
+        let total_nodes = self.trees.iter().try_fold(0_usize, |total, tree| {
+            total
+                .checked_add(tree.nodes().len())
+                .ok_or(ArtifactError::InvalidPayload)
+        })?;
+        let total_nodes = u32::try_from(total_nodes).map_err(|_| ArtifactError::InvalidPayload)?;
+        let mut metadata = ArtifactPayloadWriter::with_capacity(12 * 4);
+        metadata.u32(OBJECTIVE_VERSION);
+        metadata.u32(n_features);
+        metadata.f32(self.params.learning_rate);
+        metadata.u32(max_iter);
+        metadata.u32(max_leaf_nodes);
+        metadata.u32(max_depth);
+        metadata.u32(min_samples_leaf);
+        metadata.f32(self.params.l2_regularization);
+        metadata.u32(max_bins);
+        metadata.f32(self.baseline);
+        metadata.u32(tree_count);
+        metadata.u32(total_nodes);
+        let metadata = encode_component(
+            METADATA_COMPONENT_KIND,
+            COMPONENT_VERSION,
+            &metadata.finish(),
+        )?;
+        let mut payload = metadata;
+        for tree in &self.trees {
+            payload.extend_from_slice(&encode_component(
+                TREE_COMPONENT_KIND,
+                COMPONENT_VERSION,
+                &encode_logical_tree(tree)?,
+            )?);
+        }
+        encode_v2_envelope(
+            HIST_GRADIENT_BOOSTING_REGRESSOR_ARTIFACT_KIND,
+            ARTIFACT_PAYLOAD_VERSION,
+            &[(SchemaRole::Input, schema)],
+            &payload,
+        )
+    }
+
+    /// Decodes and validates logical trees before building runtime state.
+    pub fn from_artifact(bytes: &[u8], schema: [u8; 32]) -> Result<Self, ArtifactError> {
+        let mut envelope = decode_v2_envelope(
+            bytes,
+            HIST_GRADIENT_BOOSTING_REGRESSOR_ARTIFACT_KIND,
+            ARTIFACT_PAYLOAD_VERSION,
+            &[(SchemaRole::Input, schema)],
+        )?;
+        let mut metadata =
+            decode_component(&mut envelope, METADATA_COMPONENT_KIND, COMPONENT_VERSION)?;
+        let objective_version = metadata.u32()?;
+        let n_features_in = metadata.u32()? as usize;
+        let learning_rate = metadata.f32()?;
+        let max_iter = metadata.u32()? as usize;
+        let max_leaf_nodes = metadata.u32()? as usize;
+        let encoded_depth = metadata.u32()? as usize;
+        let min_samples_leaf = metadata.u32()? as usize;
+        let l2_regularization = metadata.f32()?;
+        let max_bins = metadata.u32()? as usize;
+        let baseline = metadata.f32()?;
+        let tree_count = metadata.u32()? as usize;
+        let declared_total_nodes = metadata.u32()? as usize;
+        let params = HistGradientBoostingRegressorParams {
+            learning_rate,
+            max_iter,
+            max_leaf_nodes,
+            max_depth: (encoded_depth != 0).then_some(encoded_depth),
+            min_samples_leaf,
+            l2_regularization,
+            max_bins,
+        };
+        if !metadata.is_empty()
+            || objective_version != OBJECTIVE_VERSION
+            || n_features_in == 0
+            || n_features_in > 1_000_000
+            || !baseline.is_finite()
+            || tree_count == 0
+            || tree_count > MAX_TREES
+            || tree_count != max_iter
+            || declared_total_nodes == 0
+            || declared_total_nodes > MAX_TOTAL_NODES
+            || validate_params(&params).is_err()
+            || validate_model_bounds(&params).is_err()
+        {
+            return Err(ArtifactError::InvalidPayload);
+        }
+        let mut trees = Vec::with_capacity(tree_count);
+        let mut actual_total_nodes = 0_usize;
+        for _ in 0..tree_count {
+            let tree = decode_logical_tree(
+                decode_component(&mut envelope, TREE_COMPONENT_KIND, COMPONENT_VERSION)?,
+                n_features_in,
+            )?;
+            actual_total_nodes = actual_total_nodes
+                .checked_add(tree.nodes().len())
+                .ok_or(ArtifactError::InvalidPayload)?;
+            if actual_total_nodes > declared_total_nodes || actual_total_nodes > MAX_TOTAL_NODES {
+                return Err(ArtifactError::InvalidPayload);
+            }
+            trees.push(tree);
+        }
+        if !envelope.is_empty() {
+            return Err(ArtifactError::TrailingBytes);
+        }
+        if actual_total_nodes != declared_total_nodes {
+            return Err(ArtifactError::InvalidPayload);
+        }
+        if !prediction_bound_is_finite(baseline, params.learning_rate, &trees) {
+            return Err(ArtifactError::InvalidPayload);
+        }
+        Ok(Self {
+            n_features_in,
+            params,
+            baseline,
+            trees,
+        })
     }
 }
 
@@ -259,18 +409,14 @@ impl Regressor for HistGradientBoostingRegressor {
                 actual: output.len(),
             });
         }
-        for (row_index, row) in data.iter_rows().enumerate() {
+        for (row_index, (row, slot)) in data.iter_rows().zip(output).enumerate() {
             let prediction = self.trees.iter().fold(self.baseline, |prediction, tree| {
                 prediction + self.params.learning_rate * tree.predict_one(row)
             });
             if !prediction.is_finite() {
                 return Err(ModelError::NonFinitePrediction { row: row_index });
             }
-        }
-        for (row, slot) in data.iter_rows().zip(output) {
-            *slot = self.trees.iter().fold(self.baseline, |prediction, tree| {
-                prediction + self.params.learning_rate * tree.predict_one(row)
-            });
+            *slot = prediction;
         }
         Ok(())
     }
@@ -299,6 +445,36 @@ fn validate_fit(
             targets: targets.len(),
         });
     }
+    validate_params(params)?;
+    validate_model_bounds(params)?;
+    Ok(())
+}
+
+fn validate_model_bounds(params: &HistGradientBoostingRegressorParams) -> Result<(), ModelError> {
+    let maximum_nodes = params
+        .max_leaf_nodes
+        .checked_mul(2)
+        .and_then(|nodes| nodes.checked_sub(1))
+        .and_then(|nodes| nodes.checked_mul(params.max_iter))
+        .ok_or(ModelError::BoostingModelTooLarge)?;
+    if maximum_nodes > MAX_TOTAL_NODES {
+        return Err(ModelError::BoostingModelTooLarge);
+    }
+    Ok(())
+}
+
+fn prediction_bound_is_finite(baseline: f32, learning_rate: f32, trees: &[CompactTree]) -> bool {
+    let mut bound = f64::from(baseline.abs());
+    for tree in trees {
+        bound += f64::from(learning_rate.abs()) * f64::from(tree.max_abs_leaf());
+        if !bound.is_finite() || bound > f64::from(f32::MAX) {
+            return false;
+        }
+    }
+    true
+}
+
+fn validate_params(params: &HistGradientBoostingRegressorParams) -> Result<(), ModelError> {
     if !params.learning_rate.is_finite() || params.learning_rate <= 0.0 {
         return Err(ModelError::InvalidLearningRate);
     }
@@ -348,6 +524,14 @@ fn map_boosting_error(error: BoostingError) -> ModelError {
 mod tests {
     use super::*;
     use crate::data::DenseMatrix;
+    use crate::linear_model::Ridge;
+    use sha2::{Digest, Sha256};
+
+    fn resign_artifact(bytes: &mut [u8]) {
+        let checksum_offset = bytes.len() - 32;
+        let checksum = Sha256::digest(&bytes[..checksum_offset]);
+        bytes[checksum_offset..].copy_from_slice(&checksum);
+    }
 
     fn piecewise() -> (DenseMatrix, RegressionTargets) {
         (
@@ -471,6 +655,101 @@ mod tests {
         assert_eq!(
             HistGradientBoostingRegressor::fit(&data.as_view(), &targets, one_tree_params()),
             Err(ModelError::NumericalOverflow)
+        );
+    }
+
+    #[test]
+    fn artifact_round_trip_is_deterministic_schema_bound_and_kind_isolated() {
+        let (data, targets) = piecewise();
+        let model =
+            HistGradientBoostingRegressor::fit(&data.as_view(), &targets, one_tree_params())
+                .unwrap();
+        let schema = [23; 32];
+        let left = model.to_artifact(schema).unwrap();
+        let right = model.to_artifact(schema).unwrap();
+        assert_eq!(left, right);
+
+        let decoded = HistGradientBoostingRegressor::from_artifact(&left, schema).unwrap();
+        assert_eq!(decoded, model);
+        assert_eq!(
+            decoded.predict(&data.as_view()).unwrap(),
+            model.predict(&data.as_view()).unwrap()
+        );
+        assert_eq!(
+            HistGradientBoostingRegressor::from_artifact(&left, [24; 32]).unwrap_err(),
+            ArtifactError::FeatureSchemaMismatch
+        );
+        assert_eq!(
+            Ridge::from_artifact(&left, schema).unwrap_err(),
+            ArtifactError::UnsupportedModelKind {
+                found: HIST_GRADIENT_BOOSTING_REGRESSOR_ARTIFACT_KIND,
+            }
+        );
+
+        let mut corrupted = left.clone();
+        corrupted[140] ^= 1;
+        assert_eq!(
+            HistGradientBoostingRegressor::from_artifact(&corrupted, schema).unwrap_err(),
+            ArtifactError::ChecksumMismatch
+        );
+    }
+
+    #[test]
+    fn artifact_rejects_invalid_metadata_tree_records_and_framing() {
+        let (data, targets) = piecewise();
+        let model =
+            HistGradientBoostingRegressor::fit(&data.as_view(), &targets, one_tree_params())
+                .unwrap();
+        let schema = [31; 32];
+        let bytes = model.to_artifact(schema).unwrap();
+
+        let mut objective = bytes.clone();
+        objective[68..72].copy_from_slice(&2_u32.to_le_bytes());
+        resign_artifact(&mut objective);
+        assert_eq!(
+            HistGradientBoostingRegressor::from_artifact(&objective, schema).unwrap_err(),
+            ArtifactError::InvalidPayload
+        );
+
+        let mut total_nodes = bytes.clone();
+        total_nodes[112..116].copy_from_slice(&4_u32.to_le_bytes());
+        resign_artifact(&mut total_nodes);
+        assert_eq!(
+            HistGradientBoostingRegressor::from_artifact(&total_nodes, schema).unwrap_err(),
+            ArtifactError::InvalidPayload
+        );
+
+        let mut component_kind = bytes.clone();
+        component_kind[116..118].copy_from_slice(&3_u16.to_le_bytes());
+        resign_artifact(&mut component_kind);
+        assert_eq!(
+            HistGradientBoostingRegressor::from_artifact(&component_kind, schema).unwrap_err(),
+            ArtifactError::InvalidPayload
+        );
+
+        let mut feature = bytes.clone();
+        feature[140..144].copy_from_slice(&1_u32.to_le_bytes());
+        resign_artifact(&mut feature);
+        assert_eq!(
+            HistGradientBoostingRegressor::from_artifact(&feature, schema).unwrap_err(),
+            ArtifactError::InvalidPayload
+        );
+
+        assert_eq!(
+            HistGradientBoostingRegressor::from_artifact(&bytes[..120], schema).unwrap_err(),
+            ArtifactError::ChecksumMismatch
+        );
+    }
+
+    #[test]
+    fn aggregate_model_bound_is_checked_before_training() {
+        let (data, targets) = piecewise();
+        let params = HistGradientBoostingRegressorParams::default()
+            .with_max_iter(MAX_TREES)
+            .with_max_leaf_nodes(MAX_TREE_LEAVES);
+        assert_eq!(
+            HistGradientBoostingRegressor::fit(&data.as_view(), &targets, params),
+            Err(ModelError::BoostingModelTooLarge)
         );
     }
 }

@@ -17,6 +17,12 @@ growth, and canonical compact prediction trees. This mirrors the responsibility
 boundaries of the scikit-learn reference without copying its implementation or
 exposing runtime tree layout.
 
+Fitted models support deterministic, schema-bound, checksummed artifacts and
+owned runtime switching through `AnyRegressor`. Persistence uses canonical
+logical tree records, so compact prediction storage can evolve independently.
+Decode validates all metadata, component framing, topology, feature indices,
+numeric finiteness, and aggregate allocation bounds before exposing a model.
+
 The initial scope intentionally excludes other losses, missing or categorical
 features, sample weights, feature subsampling, monotonic/interactions
 constraints, early stopping, validation sets, warm starts, and parallel

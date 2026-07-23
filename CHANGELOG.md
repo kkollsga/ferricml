@@ -24,7 +24,8 @@ and releases use [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   schema-bound artifacts, and tie-aware accuracy, Spearman, and Kendall tau-b
   metrics.
 - Deterministic dense squared-error histogram gradient boosting with bounded
-  bins, leaves, depth, iterations, and allocation-free batch prediction.
+  bins, leaves, depth, iterations, allocation-free batch prediction, owned
+  runtime switching, and schema-bound logical-tree artifacts.
 
 ### Fixed
 

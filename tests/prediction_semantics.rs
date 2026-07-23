@@ -266,6 +266,23 @@ fn object_safe_traits_and_owned_enums_dispatch_by_batch() {
     let ridge: AnyRegressor = ridge.into();
     assert_eq!(ridge.predict(&data.as_view()).unwrap(), expected);
     assert!(matches!(ridge.get_params(), AnyRegressorParams::Ridge(_)));
+
+    let boosted = HistGradientBoostingRegressor::fit(
+        &data.as_view(),
+        &targets,
+        HistGradientBoostingRegressorParams::default()
+            .with_max_iter(3)
+            .with_max_leaf_nodes(2)
+            .with_min_samples_leaf(1),
+    )
+    .unwrap();
+    let expected = boosted.predict(&data.as_view()).unwrap();
+    let boosted: AnyRegressor = boosted.into();
+    assert_eq!(boosted.predict(&data.as_view()).unwrap(), expected);
+    assert!(matches!(
+        boosted.get_params(),
+        AnyRegressorParams::HistGradientBoosting(_)
+    ));
 }
 
 #[test]

@@ -1,4 +1,4 @@
-use ferricml::api::{Classifier, Regressor};
+use ferricml::api::{AnyRegressor, AnyRegressorParams, Classifier, Regressor};
 use ferricml::data::{BinaryTargets, DenseMatrix, RegressionTargets, SampleWeights};
 use ferricml::ensemble::{
     HistGradientBoostingRegressor, HistGradientBoostingRegressorParams, RandomForestClassifier,
@@ -133,6 +133,18 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut boosted_predictions = vec![0.0; features.rows()];
     boosted.predict_into(&features.as_view(), &mut boosted_predictions)?;
     assert!(boosted_predictions.iter().all(|value| value.is_finite()));
+    let boosted_encoded = boosted.to_artifact(schema)?;
+    let boosted =
+        HistGradientBoostingRegressor::from_artifact(&boosted_encoded, schema)?;
+    assert_eq!(
+        boosted.predict(&features.as_view())?,
+        boosted_predictions
+    );
+    let boosted: AnyRegressor = boosted.into();
+    assert!(matches!(
+        boosted.get_params(),
+        AnyRegressorParams::HistGradientBoosting(_)
+    ));
 
     let regressor = RandomForestRegressor::fit(
         &features.as_view(),

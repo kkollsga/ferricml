@@ -77,6 +77,8 @@ pub enum ModelError {
     InvalidMaxBins,
     /// A boosting L2 penalty is not finite and non-negative.
     InvalidL2Regularization,
+    /// Requested boosting bounds exceed the total logical-node limit.
+    BoostingModelTooLarge,
     /// Finite training values overflowed an internal `f32` result.
     NumericalOverflow,
     /// A fitted prediction accumulated to NaN or infinity.
@@ -168,6 +170,9 @@ impl fmt::Display for ModelError {
             Self::InvalidMaxBins => f.write_str("boosting max_bins must be in 2..=255"),
             Self::InvalidL2Regularization => {
                 f.write_str("boosting L2 regularization must be finite and non-negative")
+            }
+            Self::BoostingModelTooLarge => {
+                f.write_str("requested boosting model exceeds the logical-node limit")
             }
             Self::NumericalOverflow => {
                 f.write_str("finite training values overflowed numerical model state")
