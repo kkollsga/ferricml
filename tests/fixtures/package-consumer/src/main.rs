@@ -10,6 +10,10 @@ use ferricml::linear_model::{
 };
 use ferricml::pipeline::Pipeline;
 use ferricml::preprocessing::{StandardScaler, StandardScalerParams};
+use ferricml::ranking::{
+    PairIndex, PairOutcome, PairwiseLinearRanker, PairwiseLinearRankerParams,
+    PairwiseObservation, kendall_tau_b,
+};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let features = DenseMatrix::new(vec![0.0, 0.0, 1.0, 1.0, 2.0, 4.0, 3.0, 9.0], 4, 2)?;
@@ -89,6 +93,34 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         &mut pipeline_predictions,
     )?;
     assert!(pipeline_predictions.iter().all(|value| value.is_finite()));
+
+    let pair_observations = [
+        PairwiseObservation::new(
+            PairIndex::new(3, 2)?,
+            PairOutcome::LeftPreferred,
+            1.0,
+        )?,
+        PairwiseObservation::new(
+            PairIndex::new(2, 1)?,
+            PairOutcome::LeftPreferred,
+            1.0,
+        )?,
+        PairwiseObservation::new(
+            PairIndex::new(1, 0)?,
+            PairOutcome::LeftPreferred,
+            1.0,
+        )?,
+    ];
+    let ranker = PairwiseLinearRanker::fit(
+        &features.as_view(),
+        &pair_observations,
+        PairwiseLinearRankerParams::default(),
+    )?;
+    let ranker_encoded = ranker.to_artifact(schema)?;
+    let ranker = PairwiseLinearRanker::from_artifact(&ranker_encoded, schema)?;
+    let scores = ranker.score_items(&features.as_view())?;
+    assert_eq!(scores.len(), features.rows());
+    assert_eq!(kendall_tau_b(&scores.iter().map(|&value| f64::from(value)).collect::<Vec<_>>(), &[0.0, 1.0, 2.0, 3.0])?, 1.0);
 
     let regressor = RandomForestRegressor::fit(
         &features.as_view(),

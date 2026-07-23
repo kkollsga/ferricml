@@ -20,6 +20,9 @@ and releases use [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Deterministic weighted standard scaling and schema-bound serialized
   scaler-to-logistic, scaler-to-linear, and scaler-to-ridge pipelines with
   caller-owned inference workspace.
+- Pairwise linear ranking with explicit tie observations and thresholds,
+  schema-bound artifacts, and tie-aware accuracy, Spearman, and Kendall tau-b
+  metrics.
 
 ### Fixed
 

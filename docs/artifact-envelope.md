@@ -38,6 +38,13 @@ validates the fitted feature-width handoff before constructing the pipeline.
 This is intentionally not a generic serialization trait: unsupported pipeline
 shapes have no persistence API.
 
+`PairwiseLinearRanker` has its own never-reused estimator kind. Its metadata
+component freezes the pairwise logistic objective and mirrored-normalization
+versions, ranker parameters, and feature width. A separate nested logistic
+artifact carries the no-intercept fitted coefficients. Decode requires exact
+agreement between both components, including an exact positive-zero
+intercept, before exposing item scoring.
+
 Additional estimator payloads must carry:
 
 - a never-reused estimator kind and independent payload version;

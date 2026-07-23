@@ -9,6 +9,10 @@ use ferricml::ensemble::{
 };
 use ferricml::linear_model::{LinearRegression, LinearRegressionParams, Ridge, RidgeParams};
 use ferricml::linear_model::{LogisticRegression, LogisticRegressionParams};
+use ferricml::ranking::{
+    PairIndex, PairOutcome, PairwiseError, PairwiseLinearRanker, PairwiseLinearRankerParams,
+    PairwiseObservation,
+};
 
 fn matrix(values: &[f32], rows: usize, columns: usize) -> DenseMatrix {
     DenseMatrix::new(values.to_vec(), rows, columns).unwrap()
@@ -295,4 +299,55 @@ fn regressor_scalar_batch_and_output_validation_agree() {
         }
     );
     assert_eq!(too_short, [123.0; 3]);
+}
+
+#[test]
+fn pairwise_scores_are_raw_antisymmetric_and_batch_validation_is_atomic() {
+    let items = matrix(&[0.0, 0.0, 1.0, 0.5, 2.0, 1.0, 3.0, 2.0], 4, 2);
+    let observations = [
+        PairwiseObservation::new(
+            PairIndex::new(3, 2).unwrap(),
+            PairOutcome::LeftPreferred,
+            1.0,
+        )
+        .unwrap(),
+        PairwiseObservation::new(
+            PairIndex::new(2, 1).unwrap(),
+            PairOutcome::LeftPreferred,
+            1.0,
+        )
+        .unwrap(),
+        PairwiseObservation::new(
+            PairIndex::new(1, 0).unwrap(),
+            PairOutcome::LeftPreferred,
+            1.0,
+        )
+        .unwrap(),
+    ];
+    let model = PairwiseLinearRanker::fit(
+        &items.as_view(),
+        &observations,
+        PairwiseLinearRankerParams::default().with_c(4.0),
+    )
+    .unwrap();
+    let forward = model
+        .pair_margin(&items.as_view(), PairIndex::new(3, 0).unwrap())
+        .unwrap();
+    let reverse = model
+        .pair_margin(&items.as_view(), PairIndex::new(0, 3).unwrap())
+        .unwrap();
+    assert_eq!(forward.to_bits(), (-reverse).to_bits());
+    assert!(forward > 1.0);
+
+    let pairs = [PairIndex::new(3, 0).unwrap(), PairIndex::new(0, 7).unwrap()];
+    let mut output = [99.0; 2];
+    assert_eq!(
+        model.pair_margins_into(&items.as_view(), &pairs, &mut output),
+        Err(PairwiseError::PairIndexOutOfBounds {
+            pair: 1,
+            item: 7,
+            items: 4,
+        })
+    );
+    assert_eq!(output, [99.0; 2]);
 }

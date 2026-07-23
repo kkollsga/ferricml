@@ -17,6 +17,7 @@ validation gate passes.
 The core crate provides validated dense data and sample weights, weighted
 logistic regression with raw decision scores, minimum-norm linear and ridge regression,
 weighted standard scaling and typed serialized scaler/model pipelines,
+pairwise linear ranking and tie-aware rank metrics,
 deterministic random-forest classification and regression, private packed
 trees, bounded parallel training, allocation-free batch prediction, and a
 generic fitted pipeline seam.
@@ -30,6 +31,11 @@ support bounded, versioned, checksummed binary artifacts with strict schema
 verification; logistic retains legacy-v1 decoding. The logical
 envelope documented in [artifact-envelope.md](docs/artifact-envelope.md)
 deliberately excludes private tree layouts.
+
+The pairwise ranker consumes checked pairs over one item matrix and exposes raw
+item scores and score differences, not classifier probabilities. Its mirrored
+objective and tie normalization are documented in
+[pairwise-ranking.md](docs/pairwise-ranking.md).
 
 ## Verification and benchmarks
 

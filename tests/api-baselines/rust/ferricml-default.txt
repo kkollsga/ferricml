@@ -104,6 +104,8 @@ pub ferricml::api::ModelError::TreeTooLarge
 pub ferricml::api::ModelError::UnknownClass
 pub ferricml::api::ModelError::UnknownClass::class: u8
 pub ferricml::api::ModelError::WorkerPanicked
+impl core::convert::From<ferricml::api::ModelError> for ferricml::ranking::PairwiseError
+pub fn ferricml::ranking::PairwiseError::from(ferricml::api::ModelError) -> Self
 impl core::error::Error for ferricml::api::ModelError
 impl core::fmt::Display for ferricml::api::ModelError
 pub fn ferricml::api::ModelError::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
@@ -157,6 +159,8 @@ impl ferricml::api::Estimator for ferricml::linear_model::Ridge
 pub fn ferricml::linear_model::Ridge::n_features_in(&self) -> usize
 impl ferricml::api::Estimator for ferricml::preprocessing::StandardScaler
 pub fn ferricml::preprocessing::StandardScaler::n_features_in(&self) -> usize
+impl ferricml::api::Estimator for ferricml::ranking::PairwiseLinearRanker
+pub fn ferricml::ranking::PairwiseLinearRanker::n_features_in(&self) -> usize
 impl<T, E> ferricml::api::Estimator for ferricml::pipeline::Pipeline<T, E> where T: ferricml::api::Transformer, E: ferricml::api::Estimator
 pub fn ferricml::pipeline::Pipeline<T, E>::n_features_in(&self) -> usize
 pub trait ferricml::api::HasParams
@@ -180,6 +184,9 @@ pub fn ferricml::linear_model::Ridge::get_params(&self) -> &Self::Params
 impl ferricml::api::HasParams for ferricml::preprocessing::StandardScaler
 pub type ferricml::preprocessing::StandardScaler::Params = ferricml::preprocessing::StandardScalerParams
 pub fn ferricml::preprocessing::StandardScaler::get_params(&self) -> &Self::Params
+impl ferricml::api::HasParams for ferricml::ranking::PairwiseLinearRanker
+pub type ferricml::ranking::PairwiseLinearRanker::Params = ferricml::ranking::PairwiseLinearRankerParams
+pub fn ferricml::ranking::PairwiseLinearRanker::get_params(&self) -> &Self::Params
 pub trait ferricml::api::Regressor: ferricml::api::Estimator
 pub fn ferricml::api::Regressor::predict(&self, &ferricml::data::MatrixView<'_>) -> core::result::Result<alloc::vec::Vec<f32>, ferricml::api::ModelError>
 pub fn ferricml::api::Regressor::predict_into(&self, &ferricml::data::MatrixView<'_>, &mut [f32]) -> core::result::Result<(), ferricml::api::ModelError>
@@ -569,3 +576,97 @@ pub fn ferricml::preprocessing::StandardScalerParams::with_mean(self, bool) -> S
 pub fn ferricml::preprocessing::StandardScalerParams::with_std(self, bool) -> Self
 impl core::default::Default for ferricml::preprocessing::StandardScalerParams
 pub fn ferricml::preprocessing::StandardScalerParams::default() -> Self
+pub mod ferricml::ranking
+#[non_exhaustive] pub enum ferricml::ranking::PairDataError
+pub ferricml::ranking::PairDataError::NegativeWeight
+pub ferricml::ranking::PairDataError::NonFiniteWeight
+pub ferricml::ranking::PairDataError::SameItem
+pub ferricml::ranking::PairDataError::SameItem::index: usize
+impl core::error::Error for ferricml::ranking::PairDataError
+impl core::fmt::Display for ferricml::ranking::PairDataError
+pub fn ferricml::ranking::PairDataError::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+pub enum ferricml::ranking::PairOutcome
+pub ferricml::ranking::PairOutcome::LeftPreferred
+pub ferricml::ranking::PairOutcome::RightPreferred
+pub ferricml::ranking::PairOutcome::Tie
+#[non_exhaustive] pub enum ferricml::ranking::PairwiseError
+pub ferricml::ranking::PairwiseError::EmptyPairs
+pub ferricml::ranking::PairwiseError::InvalidTieThreshold
+pub ferricml::ranking::PairwiseError::Model(ferricml::api::ModelError)
+pub ferricml::ranking::PairwiseError::NonFinitePairDifference
+pub ferricml::ranking::PairwiseError::NonFinitePairDifference::column: usize
+pub ferricml::ranking::PairwiseError::NonFinitePairDifference::pair: usize
+pub ferricml::ranking::PairwiseError::PairIndexOutOfBounds
+pub ferricml::ranking::PairwiseError::PairIndexOutOfBounds::item: usize
+pub ferricml::ranking::PairwiseError::PairIndexOutOfBounds::items: usize
+pub ferricml::ranking::PairwiseError::PairIndexOutOfBounds::pair: usize
+pub ferricml::ranking::PairwiseError::PairMatrixOverflow
+pub ferricml::ranking::PairwiseError::PairWeightUnderflow
+pub ferricml::ranking::PairwiseError::PairWeightUnderflow::pair: usize
+pub ferricml::ranking::PairwiseError::ZeroTotalPairWeight
+impl core::convert::From<ferricml::api::ModelError> for ferricml::ranking::PairwiseError
+pub fn ferricml::ranking::PairwiseError::from(ferricml::api::ModelError) -> Self
+impl core::error::Error for ferricml::ranking::PairwiseError
+pub fn ferricml::ranking::PairwiseError::source(&self) -> core::option::Option<&(dyn core::error::Error + 'static)>
+impl core::fmt::Display for ferricml::ranking::PairwiseError
+pub fn ferricml::ranking::PairwiseError::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+#[non_exhaustive] pub enum ferricml::ranking::RankingMetricError
+pub ferricml::ranking::RankingMetricError::Empty
+pub ferricml::ranking::RankingMetricError::LengthMismatch
+pub ferricml::ranking::RankingMetricError::LengthMismatch::actual: usize
+pub ferricml::ranking::RankingMetricError::LengthMismatch::expected: usize
+pub ferricml::ranking::RankingMetricError::NonFiniteScore
+pub ferricml::ranking::RankingMetricError::NonFiniteScore::index: usize
+pub ferricml::ranking::RankingMetricError::NonFiniteScore::input: usize
+pub ferricml::ranking::RankingMetricError::Undefined
+impl core::error::Error for ferricml::ranking::RankingMetricError
+impl core::fmt::Display for ferricml::ranking::RankingMetricError
+pub fn ferricml::ranking::RankingMetricError::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+pub struct ferricml::ranking::PairIndex
+impl ferricml::ranking::PairIndex
+pub const fn ferricml::ranking::PairIndex::left(&self) -> usize
+pub fn ferricml::ranking::PairIndex::new(usize, usize) -> core::result::Result<Self, ferricml::ranking::PairDataError>
+pub const fn ferricml::ranking::PairIndex::right(&self) -> usize
+pub struct ferricml::ranking::PairwiseLinearRanker
+impl ferricml::ranking::PairwiseLinearRanker
+pub fn ferricml::ranking::PairwiseLinearRanker::coefficients(&self) -> &[f32]
+pub fn ferricml::ranking::PairwiseLinearRanker::compare(&self, &ferricml::data::MatrixView<'_>, ferricml::ranking::PairIndex) -> core::result::Result<ferricml::ranking::PairOutcome, ferricml::ranking::PairwiseError>
+pub fn ferricml::ranking::PairwiseLinearRanker::compare_into(&self, &ferricml::data::MatrixView<'_>, &[ferricml::ranking::PairIndex], &mut [ferricml::ranking::PairOutcome]) -> core::result::Result<(), ferricml::ranking::PairwiseError>
+pub fn ferricml::ranking::PairwiseLinearRanker::fit(&ferricml::data::MatrixView<'_>, &[ferricml::ranking::PairwiseObservation], ferricml::ranking::PairwiseLinearRankerParams) -> core::result::Result<Self, ferricml::ranking::PairwiseError>
+pub fn ferricml::ranking::PairwiseLinearRanker::from_artifact(&[u8], [u8; 32]) -> core::result::Result<Self, ferricml::artifact::ArtifactError>
+pub const fn ferricml::ranking::PairwiseLinearRanker::get_params(&self) -> &ferricml::ranking::PairwiseLinearRankerParams
+pub fn ferricml::ranking::PairwiseLinearRanker::n_features_in(&self) -> usize
+pub fn ferricml::ranking::PairwiseLinearRanker::n_iter(&self) -> usize
+pub fn ferricml::ranking::PairwiseLinearRanker::pair_margin(&self, &ferricml::data::MatrixView<'_>, ferricml::ranking::PairIndex) -> core::result::Result<f32, ferricml::ranking::PairwiseError>
+pub fn ferricml::ranking::PairwiseLinearRanker::pair_margins_into(&self, &ferricml::data::MatrixView<'_>, &[ferricml::ranking::PairIndex], &mut [f32]) -> core::result::Result<(), ferricml::ranking::PairwiseError>
+pub fn ferricml::ranking::PairwiseLinearRanker::score_items(&self, &ferricml::data::MatrixView<'_>) -> core::result::Result<alloc::vec::Vec<f32>, ferricml::ranking::PairwiseError>
+pub fn ferricml::ranking::PairwiseLinearRanker::score_items_into(&self, &ferricml::data::MatrixView<'_>, &mut [f32]) -> core::result::Result<(), ferricml::ranking::PairwiseError>
+pub fn ferricml::ranking::PairwiseLinearRanker::score_one(&self, &[f32]) -> core::result::Result<f32, ferricml::ranking::PairwiseError>
+pub fn ferricml::ranking::PairwiseLinearRanker::to_artifact(&self, [u8; 32]) -> core::result::Result<alloc::vec::Vec<u8>, ferricml::artifact::ArtifactError>
+impl ferricml::api::Estimator for ferricml::ranking::PairwiseLinearRanker
+pub fn ferricml::ranking::PairwiseLinearRanker::n_features_in(&self) -> usize
+impl ferricml::api::HasParams for ferricml::ranking::PairwiseLinearRanker
+pub type ferricml::ranking::PairwiseLinearRanker::Params = ferricml::ranking::PairwiseLinearRankerParams
+pub fn ferricml::ranking::PairwiseLinearRanker::get_params(&self) -> &Self::Params
+pub struct ferricml::ranking::PairwiseLinearRankerParams
+impl ferricml::ranking::PairwiseLinearRankerParams
+pub const fn ferricml::ranking::PairwiseLinearRankerParams::c(&self) -> f32
+pub const fn ferricml::ranking::PairwiseLinearRankerParams::max_iter(&self) -> usize
+pub const fn ferricml::ranking::PairwiseLinearRankerParams::tie_threshold(&self) -> f32
+pub const fn ferricml::ranking::PairwiseLinearRankerParams::tol(&self) -> f32
+pub fn ferricml::ranking::PairwiseLinearRankerParams::with_c(self, f32) -> Self
+pub fn ferricml::ranking::PairwiseLinearRankerParams::with_max_iter(self, usize) -> Self
+pub fn ferricml::ranking::PairwiseLinearRankerParams::with_tie_threshold(self, f32) -> Self
+pub fn ferricml::ranking::PairwiseLinearRankerParams::with_tol(self, f32) -> Self
+impl core::default::Default for ferricml::ranking::PairwiseLinearRankerParams
+pub fn ferricml::ranking::PairwiseLinearRankerParams::default() -> Self
+pub struct ferricml::ranking::PairwiseObservation
+impl ferricml::ranking::PairwiseObservation
+pub fn ferricml::ranking::PairwiseObservation::new(ferricml::ranking::PairIndex, ferricml::ranking::PairOutcome, f32) -> core::result::Result<Self, ferricml::ranking::PairDataError>
+pub const fn ferricml::ranking::PairwiseObservation::outcome(&self) -> ferricml::ranking::PairOutcome
+pub const fn ferricml::ranking::PairwiseObservation::pair(&self) -> ferricml::ranking::PairIndex
+pub const fn ferricml::ranking::PairwiseObservation::weight(&self) -> f32
+pub fn ferricml::ranking::decisive_directional_accuracy(&[ferricml::ranking::PairOutcome], &[ferricml::ranking::PairOutcome]) -> core::result::Result<f64, ferricml::ranking::RankingMetricError>
+pub fn ferricml::ranking::kendall_tau_b(&[f64], &[f64]) -> core::result::Result<f64, ferricml::ranking::RankingMetricError>
+pub fn ferricml::ranking::spearman_correlation(&[f64], &[f64]) -> core::result::Result<f64, ferricml::ranking::RankingMetricError>
+pub fn ferricml::ranking::three_way_accuracy(&[ferricml::ranking::PairOutcome], &[ferricml::ranking::PairOutcome]) -> core::result::Result<f64, ferricml::ranking::RankingMetricError>

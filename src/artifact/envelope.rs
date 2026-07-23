@@ -16,6 +16,7 @@ pub(crate) const STANDARD_SCALER_ARTIFACT_KIND: u16 = 4;
 pub(crate) const STANDARD_SCALER_LOGISTIC_PIPELINE_ARTIFACT_KIND: u16 = 5;
 pub(crate) const STANDARD_SCALER_LINEAR_PIPELINE_ARTIFACT_KIND: u16 = 6;
 pub(crate) const STANDARD_SCALER_RIDGE_PIPELINE_ARTIFACT_KIND: u16 = 7;
+pub(crate) const PAIRWISE_LINEAR_RANKER_ARTIFACT_KIND: u16 = 8;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum SchemaRole {

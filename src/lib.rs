@@ -10,5 +10,6 @@ pub mod ensemble;
 pub mod linear_model;
 pub mod pipeline;
 pub mod preprocessing;
+pub mod ranking;
 
 mod forest;

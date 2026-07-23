@@ -10,6 +10,10 @@ use ferricml::linear_model::{
 };
 use ferricml::pipeline::Pipeline;
 use ferricml::preprocessing::{StandardScaler, StandardScalerParams};
+use ferricml::ranking::{
+    PairIndex, PairOutcome, PairwiseLinearRanker, PairwiseLinearRankerParams, PairwiseObservation,
+    decisive_directional_accuracy, kendall_tau_b, spearman_correlation, three_way_accuracy,
+};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 struct IdentityTransformer {
@@ -368,4 +372,58 @@ fn standard_scaler_and_typed_pipeline_paths_are_stable() {
         .decision_function_into(&matrix.as_view(), &mut workspace, &mut decisions)
         .unwrap();
     assert!(decisions.iter().all(|value| value.is_finite()));
+}
+
+#[test]
+fn pairwise_ranker_and_metric_paths_are_stable() {
+    let matrix = training_matrix();
+    let pairs = [
+        PairwiseObservation::new(
+            PairIndex::new(3, 2).unwrap(),
+            PairOutcome::LeftPreferred,
+            1.0,
+        )
+        .unwrap(),
+        PairwiseObservation::new(
+            PairIndex::new(2, 1).unwrap(),
+            PairOutcome::LeftPreferred,
+            1.0,
+        )
+        .unwrap(),
+        PairwiseObservation::new(PairIndex::new(1, 0).unwrap(), PairOutcome::Tie, 0.5).unwrap(),
+    ];
+    let params = PairwiseLinearRankerParams::default()
+        .with_c(2.0)
+        .with_max_iter(80)
+        .with_tol(1.0e-5)
+        .with_tie_threshold(0.1);
+    let model = PairwiseLinearRanker::fit(&matrix.as_view(), &pairs, params.clone()).unwrap();
+    assert_eq!(estimator_width(&model), 2);
+    assert_eq!(
+        retained_params::<_, PairwiseLinearRankerParams>(&model),
+        &params
+    );
+    assert_eq!(model.coefficients().len(), 2);
+    let query = [PairIndex::new(3, 0).unwrap()];
+    let mut margins = [0.0];
+    model
+        .pair_margins_into(&matrix.as_view(), &query, &mut margins)
+        .unwrap();
+    assert_eq!(model.score_items(&matrix.as_view()).unwrap().len(), 4);
+    let artifact = model.to_artifact([5; 32]).unwrap();
+    assert_eq!(
+        PairwiseLinearRanker::from_artifact(&artifact, [5; 32]).unwrap(),
+        model
+    );
+
+    assert_eq!(
+        decisive_directional_accuracy(&[PairOutcome::LeftPreferred], &[PairOutcome::LeftPreferred]),
+        Ok(1.0)
+    );
+    assert_eq!(
+        three_way_accuracy(&[PairOutcome::Tie], &[PairOutcome::Tie]),
+        Ok(1.0)
+    );
+    assert_eq!(spearman_correlation(&[1.0, 2.0], &[3.0, 4.0]), Ok(1.0));
+    assert_eq!(kendall_tau_b(&[1.0, 2.0], &[4.0, 3.0]), Ok(-1.0));
 }

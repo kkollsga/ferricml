@@ -30,6 +30,9 @@ reference contract.
   `StandardScaler` uses deterministic two-pass population statistics.
   Training-time pipeline composition and more than one transform step remain
   deliberately deferred until those use cases are real.
+- `ranking` owns pair construction, the pairwise linear estimator, and
+  denominator-safe rank metrics. It remains distinct from `Classifier`: raw
+  ranking scores and pair margins are not probabilities.
 - `artifact` owns stable envelope identity, bounded decoding primitives, and
   artifact errors. It does not expose backend tree layouts.
 
