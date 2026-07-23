@@ -7,6 +7,11 @@ and releases use [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+
+- Validated sample weights, weighted logistic fitting, and allocation-free raw
+  logistic decision scores.
+
 ### Fixed
 
 - Honor `LogisticRegressionParams::with_fit_intercept(false)` without silently

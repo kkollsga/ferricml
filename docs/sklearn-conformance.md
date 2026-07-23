@@ -31,9 +31,11 @@ The contract covers the scikit parameter names `n_estimators`, `max_depth`,
 `min_samples_split`, `min_samples_leaf`, `max_features`, `bootstrap`,
 `random_state`, and `n_jobs`; sorted `classes_`; `n_features_in_`; label and
 row-major probability outputs; one-column single-class probability shape;
-regression output; first-class tie selection; and common parameter/shape
-validation. Exact fixtures use one tree, all features, and no bootstrap, and
-must match within `1e-6`.
+regression output; logistic sample weights, raw decision scores, and exact-zero
+no-intercept semantics; first-class tie selection; and common parameter/shape
+validation. Exact forest fixtures use one tree, all features, and no bootstrap,
+and must match within `1e-6`; iterative logistic outputs use a reviewed
+`2e-5` tolerance.
 
 Quality is an implementation-level comparison rather than tree identity. Five
 fixed seeds cover nonlinear, separable, imbalanced, noisy classification and
@@ -47,8 +49,9 @@ RMSE.
   values, sparse matrices, and implicit numeric conversion are outside scope.
 - Targets are binary `u8` or scalar `f32`; multiclass, multilabel, multi-output,
   and arbitrary class-label types are outside scope.
-- Sample/class weights, OOB estimates, pruning, monotonic constraints, warm
-  starts, and impurity-based inspection attributes are not implemented.
+- Logistic regression accepts validated sample weights. Forest sample weights,
+  class weights, OOB estimates, pruning, monotonic constraints, warm starts,
+  and impurity-based inspection attributes are not implemented.
 - Typed `MaxFeatures` and `NJobs` replace magic strings and integer sentinels.
   FerricML defaults to deterministic `random_state = 0` and serial execution;
   scikit defaults both settings to `None`. These are deliberate reproducibility

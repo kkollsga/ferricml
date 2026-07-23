@@ -36,6 +36,20 @@ pub enum DataError {
     },
     /// A target vector was empty.
     EmptyTargets,
+    /// A sample-weight vector was empty.
+    EmptySampleWeights,
+    /// A sample weight was NaN or infinite.
+    NonFiniteSampleWeight {
+        /// Index of the invalid sample weight.
+        index: usize,
+    },
+    /// A sample weight was negative.
+    NegativeSampleWeight {
+        /// Index of the invalid sample weight.
+        index: usize,
+    },
+    /// Every sample weight was zero.
+    ZeroTotalSampleWeight,
     /// A binary target was neither zero nor one.
     InvalidBinaryTarget {
         /// Index of the invalid target.
@@ -61,6 +75,14 @@ impl fmt::Display for DataError {
                 write!(f, "floating-point value at index {index} is not finite")
             }
             Self::EmptyTargets => f.write_str("target vector must be non-empty"),
+            Self::EmptySampleWeights => f.write_str("sample weights must be non-empty"),
+            Self::NonFiniteSampleWeight { index } => {
+                write!(f, "sample weight at index {index} is not finite")
+            }
+            Self::NegativeSampleWeight { index } => {
+                write!(f, "sample weight at index {index} is negative")
+            }
+            Self::ZeroTotalSampleWeight => f.write_str("sample weights must have a positive total"),
             Self::InvalidBinaryTarget { index, value } => write!(
                 f,
                 "binary target at index {index} must be 0 or 1, got {value}"
@@ -360,6 +382,78 @@ impl RegressionTargets {
     }
 }
 
+/// An owned, non-empty vector of finite, non-negative sample weights.
+///
+/// At least one weight is positive. Estimators check that the weight count
+/// matches the training row count at their public fit boundary.
+#[derive(Clone, Debug, PartialEq)]
+pub struct SampleWeights {
+    values: Vec<f32>,
+    total: f64,
+}
+
+impl SampleWeights {
+    /// Validates and stores sample weights.
+    pub fn new(values: Vec<f32>) -> Result<Self, DataError> {
+        if values.is_empty() {
+            return Err(DataError::EmptySampleWeights);
+        }
+        let mut total = 0.0_f64;
+        for (index, &value) in values.iter().enumerate() {
+            if !value.is_finite() {
+                return Err(DataError::NonFiniteSampleWeight { index });
+            }
+            if value < 0.0 {
+                return Err(DataError::NegativeSampleWeight { index });
+            }
+            total += f64::from(value);
+        }
+        if total <= 0.0 {
+            return Err(DataError::ZeroTotalSampleWeight);
+        }
+        Ok(Self { values, total })
+    }
+
+    /// Returns the number of sample weights.
+    #[inline]
+    pub fn len(&self) -> usize {
+        self.values.len()
+    }
+
+    /// Returns whether the vector is empty.
+    ///
+    /// Valid instances are never empty; this method is provided for standard
+    /// collection-style interfaces.
+    #[inline]
+    pub fn is_empty(&self) -> bool {
+        self.values.is_empty()
+    }
+
+    /// Returns the validated sample weights.
+    #[inline]
+    pub fn as_slice(&self) -> &[f32] {
+        &self.values
+    }
+
+    /// Returns a sample weight, or `None` if `index` is out of bounds.
+    #[inline]
+    pub fn get(&self, index: usize) -> Option<f32> {
+        self.values.get(index).copied()
+    }
+
+    /// Returns the finite positive sum accumulated in input order.
+    #[inline]
+    pub const fn total(&self) -> f64 {
+        self.total
+    }
+
+    /// Consumes the weights and returns their allocation.
+    #[inline]
+    pub fn into_values(self) -> Vec<f32> {
+        self.values
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -510,6 +604,43 @@ mod tests {
             RegressionTargets::new(values.clone())
                 .unwrap()
                 .into_values(),
+            values
+        );
+    }
+
+    #[test]
+    fn sample_weights_are_nonempty_finite_nonnegative_and_positive() {
+        let weights = SampleWeights::new(vec![0.0, 1.5, 2.5]).unwrap();
+        assert_eq!(weights.len(), 3);
+        assert!(!weights.is_empty());
+        assert_eq!(weights.as_slice(), &[0.0, 1.5, 2.5]);
+        assert_eq!(weights.get(1), Some(1.5));
+        assert_eq!(weights.get(3), None);
+        assert_eq!(weights.total(), 4.0);
+
+        assert_eq!(
+            SampleWeights::new(vec![]),
+            Err(DataError::EmptySampleWeights)
+        );
+        assert_eq!(
+            SampleWeights::new(vec![1.0, f32::NAN]),
+            Err(DataError::NonFiniteSampleWeight { index: 1 })
+        );
+        assert_eq!(
+            SampleWeights::new(vec![1.0, -0.5]),
+            Err(DataError::NegativeSampleWeight { index: 1 })
+        );
+        assert_eq!(
+            SampleWeights::new(vec![0.0, 0.0]),
+            Err(DataError::ZeroTotalSampleWeight)
+        );
+    }
+
+    #[test]
+    fn sample_weights_return_their_storage() {
+        let values = vec![0.5, 1.5];
+        assert_eq!(
+            SampleWeights::new(values.clone()).unwrap().into_values(),
             values
         );
     }

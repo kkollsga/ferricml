@@ -1,7 +1,7 @@
 //! Black-box conformance against frozen public scikit-learn 1.9.0 outputs.
 
 use ferricml::api::ModelError;
-use ferricml::data::{BinaryTargets, DenseMatrix, RegressionTargets};
+use ferricml::data::{BinaryTargets, DenseMatrix, RegressionTargets, SampleWeights};
 use ferricml::ensemble::{
     MaxFeatures, NJobs, RandomForestClassifier, RandomForestClassifierParams,
     RandomForestRegressor, RandomForestRegressorParams,
@@ -14,6 +14,7 @@ mod reference {
 }
 
 const EXACT_TOLERANCE: f32 = 1.0e-6;
+const LOGISTIC_TOLERANCE: f32 = 2.0e-5;
 const QUALITY_SEEDS: [u64; 5] = [11, 22, 33, 44, 55];
 
 fn matrix(values: &[f32], rows: usize, columns: usize) -> DenseMatrix {
@@ -45,10 +46,14 @@ fn exact_regressor_params() -> RandomForestRegressorParams {
 }
 
 fn assert_close(actual: &[f32], expected: &[f32]) {
+    assert_close_with_tolerance(actual, expected, EXACT_TOLERANCE);
+}
+
+fn assert_close_with_tolerance(actual: &[f32], expected: &[f32], tolerance: f32) {
     assert_eq!(actual.len(), expected.len());
     for (index, (&actual, &expected)) in actual.iter().zip(expected).enumerate() {
         assert!(
-            (actual - expected).abs() <= EXACT_TOLERANCE,
+            (actual - expected).abs() <= tolerance,
             "value {index}: expected {expected}, got {actual}"
         );
     }
@@ -149,8 +154,50 @@ fn logistic_without_intercept_matches_public_scikit_outputs() {
         reference::LOGISTIC_NO_INTERCEPT_COEFFICIENTS,
     );
     assert_close(
+        &model.decision_function(&test.as_view()).unwrap(),
+        reference::LOGISTIC_NO_INTERCEPT_DECISIONS,
+    );
+    assert_close(
         &model.predict_proba(&test.as_view()).unwrap(),
         reference::LOGISTIC_NO_INTERCEPT_PROBABILITIES,
+    );
+}
+
+#[test]
+fn weighted_logistic_matches_public_scikit_outputs() {
+    let train = matrix(reference::LOGISTIC_NO_INTERCEPT_TRAIN_X, 6, 2);
+    let test = matrix(reference::LOGISTIC_NO_INTERCEPT_TEST_X, 5, 2);
+    let targets = BinaryTargets::new(reference::LOGISTIC_NO_INTERCEPT_Y.to_vec()).unwrap();
+    let weights = SampleWeights::new(reference::LOGISTIC_WEIGHTS.to_vec()).unwrap();
+    let model = LogisticRegression::fit_weighted(
+        &train.as_view(),
+        &targets,
+        &weights,
+        LogisticRegressionParams::default()
+            .with_c(0.75)
+            .with_tol(1.0e-8),
+    )
+    .unwrap();
+
+    assert_close_with_tolerance(
+        model.coefficients(),
+        reference::LOGISTIC_WEIGHTED_COEFFICIENTS,
+        LOGISTIC_TOLERANCE,
+    );
+    assert_close_with_tolerance(
+        &[model.intercept()],
+        reference::LOGISTIC_WEIGHTED_INTERCEPT,
+        LOGISTIC_TOLERANCE,
+    );
+    assert_close_with_tolerance(
+        &model.decision_function(&test.as_view()).unwrap(),
+        reference::LOGISTIC_WEIGHTED_DECISIONS,
+        LOGISTIC_TOLERANCE,
+    );
+    assert_close_with_tolerance(
+        &model.predict_proba(&test.as_view()).unwrap(),
+        reference::LOGISTIC_WEIGHTED_PROBABILITIES,
+        LOGISTIC_TOLERANCE,
     );
 }
 

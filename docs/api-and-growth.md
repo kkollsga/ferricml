@@ -18,7 +18,7 @@ reference contract.
 
 - `api` owns backend-independent estimator categories, errors, retained
   parameter access, and batch-level runtime model enums.
-- `data` owns validated row-major inputs and targets.
+- `data` owns validated row-major inputs, targets, and sample weights.
 - `ensemble` owns public forest estimators and parameter types; private tree
   training and packed representation stay outside the public module tree.
 - `pipeline` composes a fitted `Transformer` and estimator generically. Its
@@ -28,8 +28,8 @@ reference contract.
 - Future `preprocessing` and `linear_model` modules land only with their first
   concrete estimators. Training-time pipeline composition and more than one
   transform step are deliberately deferred until those use cases are real.
-- A future `artifact` module will own a backend-neutral envelope. It will not
-  expose backend tree layouts.
+- `artifact` owns stable envelope identity, bounded decoding primitives, and
+  artifact errors. It does not expose backend tree layouts.
 
 `AnyClassifier` and `AnyRegressor` remain the owned runtime-swap layer. They
 match once per batch. Generic estimators and pipelines remain the primary

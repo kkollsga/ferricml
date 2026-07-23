@@ -1,5 +1,5 @@
 use ferricml::api::{Classifier, Estimator, HasParams, ModelError, Regressor, Transformer};
-use ferricml::data::{BinaryTargets, DenseMatrix, MatrixView, RegressionTargets};
+use ferricml::data::{BinaryTargets, DenseMatrix, MatrixView, RegressionTargets, SampleWeights};
 use ferricml::ensemble::{
     MaxFeatures, NJobs, RandomForestClassifier, RandomForestClassifierParams,
     RandomForestRegressor, RandomForestRegressorParams,
@@ -147,6 +147,24 @@ fn logistic_paths_builders_traits_and_retained_params_are_stable() {
     assert_eq!(model.classes(), &[0, 1]);
     assert_eq!(model.predict(&matrix.as_view()).unwrap().len(), 4);
     assert_eq!(model.predict_proba(&matrix.as_view()).unwrap().len(), 8);
+
+    let weights = SampleWeights::new(vec![1.0, 2.0, 1.0, 2.0]).unwrap();
+    assert_eq!(weights.len(), matrix.rows());
+    assert_eq!(weights.total(), 6.0);
+    let weighted =
+        LogisticRegression::fit_weighted(&matrix.as_view(), &targets, &weights, params).unwrap();
+    let scores = weighted.decision_function(&matrix.as_view()).unwrap();
+    let mut score_output = [0.0; 4];
+    weighted
+        .decision_function_into(&matrix.as_view(), &mut score_output)
+        .unwrap();
+    assert_eq!(scores, score_output);
+    assert_eq!(
+        weighted
+            .decision_function_one(matrix.row(0).unwrap())
+            .unwrap(),
+        scores[0]
+    );
 }
 
 #[test]

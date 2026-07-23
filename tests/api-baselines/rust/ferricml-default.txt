@@ -79,6 +79,9 @@ pub ferricml::api::ModelError::OutputShapeOverflow
 pub ferricml::api::ModelError::OutputShapeOverflow::columns: usize
 pub ferricml::api::ModelError::OutputShapeOverflow::rows: usize
 pub ferricml::api::ModelError::RequiresTwoClasses
+pub ferricml::api::ModelError::SampleWeightLength
+pub ferricml::api::ModelError::SampleWeightLength::rows: usize
+pub ferricml::api::ModelError::SampleWeightLength::weights: usize
 pub ferricml::api::ModelError::TargetLength
 pub ferricml::api::ModelError::TargetLength::rows: usize
 pub ferricml::api::ModelError::TargetLength::targets: usize
@@ -183,6 +186,7 @@ pub enum ferricml::data::DataError
 pub ferricml::data::DataError::DimensionOverflow
 pub ferricml::data::DataError::DimensionOverflow::columns: usize
 pub ferricml::data::DataError::DimensionOverflow::rows: usize
+pub ferricml::data::DataError::EmptySampleWeights
 pub ferricml::data::DataError::EmptyTargets
 pub ferricml::data::DataError::InvalidBinaryTarget
 pub ferricml::data::DataError::InvalidBinaryTarget::index: usize
@@ -190,10 +194,15 @@ pub ferricml::data::DataError::InvalidBinaryTarget::value: u8
 pub ferricml::data::DataError::LengthMismatch
 pub ferricml::data::DataError::LengthMismatch::actual: usize
 pub ferricml::data::DataError::LengthMismatch::expected: usize
+pub ferricml::data::DataError::NegativeSampleWeight
+pub ferricml::data::DataError::NegativeSampleWeight::index: usize
+pub ferricml::data::DataError::NonFiniteSampleWeight
+pub ferricml::data::DataError::NonFiniteSampleWeight::index: usize
 pub ferricml::data::DataError::NonFiniteValue
 pub ferricml::data::DataError::NonFiniteValue::index: usize
 pub ferricml::data::DataError::ZeroColumns
 pub ferricml::data::DataError::ZeroRows
+pub ferricml::data::DataError::ZeroTotalSampleWeight
 impl core::error::Error for ferricml::data::DataError
 impl core::fmt::Display for ferricml::data::DataError
 pub fn ferricml::data::DataError::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
@@ -233,6 +242,15 @@ pub fn ferricml::data::RegressionTargets::into_values(self) -> alloc::vec::Vec<f
 pub fn ferricml::data::RegressionTargets::is_empty(&self) -> bool
 pub fn ferricml::data::RegressionTargets::len(&self) -> usize
 pub fn ferricml::data::RegressionTargets::new(alloc::vec::Vec<f32>) -> core::result::Result<Self, ferricml::data::DataError>
+pub struct ferricml::data::SampleWeights
+impl ferricml::data::SampleWeights
+pub fn ferricml::data::SampleWeights::as_slice(&self) -> &[f32]
+pub fn ferricml::data::SampleWeights::get(&self, usize) -> core::option::Option<f32>
+pub fn ferricml::data::SampleWeights::into_values(self) -> alloc::vec::Vec<f32>
+pub fn ferricml::data::SampleWeights::is_empty(&self) -> bool
+pub fn ferricml::data::SampleWeights::len(&self) -> usize
+pub fn ferricml::data::SampleWeights::new(alloc::vec::Vec<f32>) -> core::result::Result<Self, ferricml::data::DataError>
+pub const fn ferricml::data::SampleWeights::total(&self) -> f64
 pub mod ferricml::ensemble
 pub enum ferricml::ensemble::MaxFeatures
 pub ferricml::ensemble::MaxFeatures::All
@@ -337,7 +355,11 @@ pub mod ferricml::linear_model
 pub struct ferricml::linear_model::LogisticRegression
 impl ferricml::linear_model::LogisticRegression
 pub fn ferricml::linear_model::LogisticRegression::coefficients(&self) -> &[f32]
+pub fn ferricml::linear_model::LogisticRegression::decision_function(&self, &ferricml::data::MatrixView<'_>) -> core::result::Result<alloc::vec::Vec<f32>, ferricml::api::ModelError>
+pub fn ferricml::linear_model::LogisticRegression::decision_function_into(&self, &ferricml::data::MatrixView<'_>, &mut [f32]) -> core::result::Result<(), ferricml::api::ModelError>
+pub fn ferricml::linear_model::LogisticRegression::decision_function_one(&self, &[f32]) -> core::result::Result<f32, ferricml::api::ModelError>
 pub fn ferricml::linear_model::LogisticRegression::fit(&ferricml::data::MatrixView<'_>, &ferricml::data::BinaryTargets, ferricml::linear_model::LogisticRegressionParams) -> core::result::Result<Self, ferricml::api::ModelError>
+pub fn ferricml::linear_model::LogisticRegression::fit_weighted(&ferricml::data::MatrixView<'_>, &ferricml::data::BinaryTargets, &ferricml::data::SampleWeights, ferricml::linear_model::LogisticRegressionParams) -> core::result::Result<Self, ferricml::api::ModelError>
 pub fn ferricml::linear_model::LogisticRegression::from_artifact(&[u8], [u8; 32]) -> core::result::Result<Self, ferricml::artifact::ArtifactError>
 pub const fn ferricml::linear_model::LogisticRegression::get_params(&self) -> &ferricml::linear_model::LogisticRegressionParams
 pub const fn ferricml::linear_model::LogisticRegression::intercept(&self) -> f32

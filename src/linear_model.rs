@@ -4,7 +4,7 @@ use crate::api::{Classifier, Estimator, HasParams, ModelError};
 use crate::artifact::{
     ArtifactError, LOGISTIC_ARTIFACT_KIND, LegacyArtifactWriter, decode_legacy_envelope,
 };
-use crate::data::{BinaryTargets, MatrixView};
+use crate::data::{BinaryTargets, MatrixView, SampleWeights};
 
 const BINARY_CLASSES: [u8; 2] = [0, 1];
 const MAX_ARTIFACT_FEATURES: usize = 1_000_000;
@@ -102,29 +102,51 @@ impl LogisticRegression {
         targets: &BinaryTargets,
         params: LogisticRegressionParams,
     ) -> Result<Self, ModelError> {
-        validate_fit(data, targets, &params)?;
+        Self::fit_internal(data, targets, None, params)
+    }
+
+    /// Fits a binary logistic classifier with per-row sample weights.
+    pub fn fit_weighted(
+        data: &MatrixView<'_>,
+        targets: &BinaryTargets,
+        sample_weights: &SampleWeights,
+        params: LogisticRegressionParams,
+    ) -> Result<Self, ModelError> {
+        Self::fit_internal(data, targets, Some(sample_weights), params)
+    }
+
+    fn fit_internal(
+        data: &MatrixView<'_>,
+        targets: &BinaryTargets,
+        sample_weights: Option<&SampleWeights>,
+        params: LogisticRegressionParams,
+    ) -> Result<Self, ModelError> {
+        validate_fit(data, targets, sample_weights, &params)?;
         let rows = data.rows();
         let columns = data.columns();
+        let total_weight = sample_weights.map_or(rows as f64, SampleWeights::total);
         let mut means = vec![0.0_f64; columns];
         if params.fit_intercept {
-            for row in data.iter_rows() {
+            for (row_index, row) in data.iter_rows().enumerate() {
+                let sample_weight = sample_weight(sample_weights, row_index);
                 for (column, &value) in row.iter().enumerate() {
-                    means[column] += f64::from(value);
+                    means[column] += sample_weight * f64::from(value);
                 }
             }
             for mean in &mut means {
-                *mean /= rows as f64;
+                *mean /= total_weight;
             }
         }
         let mut scales = vec![0.0_f64; columns];
-        for row in data.iter_rows() {
+        for (row_index, row) in data.iter_rows().enumerate() {
+            let sample_weight = sample_weight(sample_weights, row_index);
             for (column, &value) in row.iter().enumerate() {
                 let centered = f64::from(value) - means[column];
-                scales[column] += centered * centered;
+                scales[column] += sample_weight * centered * centered;
             }
         }
         for scale in &mut scales {
-            *scale = (*scale / rows as f64).sqrt();
+            *scale = (*scale / total_weight).sqrt();
             if *scale <= f64::EPSILON {
                 *scale = 1.0;
             }
@@ -138,15 +160,17 @@ impl LogisticRegression {
         for iteration in 0..params.max_iter {
             let mut gradient = vec![0.0_f64; parameter_count];
             let mut hessian = vec![0.0_f64; parameter_count * parameter_count];
-            for (row, &target) in data.iter_rows().zip(targets.as_slice()) {
+            for (row_index, (row, &target)) in data.iter_rows().zip(targets.as_slice()).enumerate()
+            {
+                let sample_weight = sample_weight(sample_weights, row_index);
                 let mut score = intercept_index.map_or(0.0, |index| theta[index]);
                 for column in 0..columns {
                     score +=
                         theta[column] * (f64::from(row[column]) - means[column]) / scales[column];
                 }
                 let probability = sigmoid_f64(score);
-                let residual = probability - f64::from(target);
-                let weight = (probability * (1.0 - probability)).max(1.0e-12);
+                let residual = sample_weight * (probability - f64::from(target));
+                let curvature = sample_weight * (probability * (1.0 - probability)).max(1.0e-12);
                 for left in 0..parameter_count {
                     let left_value =
                         design_value(row, left, columns, &means, &scales, params.fit_intercept);
@@ -161,7 +185,7 @@ impl LogisticRegression {
                             params.fit_intercept,
                         );
                         hessian[left * parameter_count + right] +=
-                            weight * left_value * right_value;
+                            curvature * left_value * right_value;
                     }
                 }
             }
@@ -233,21 +257,45 @@ impl LogisticRegression {
         &self.params
     }
 
-    /// Predicts one positive-class probability.
-    pub fn predict_positive_proba(&self, row: &[f32]) -> Result<f32, ModelError> {
+    /// Returns the raw linear decision score for one row.
+    pub fn decision_function_one(&self, row: &[f32]) -> Result<f32, ModelError> {
         if row.len() != self.n_features_in {
             return Err(ModelError::FeatureDimension {
                 expected: self.n_features_in,
                 actual: row.len(),
             });
         }
-        let score = row
+        Ok(row
             .iter()
             .zip(&self.coefficients)
             .fold(self.intercept, |sum, (&value, &coefficient)| {
                 sum + value * coefficient
-            });
-        Ok(sigmoid_f32(score))
+            }))
+    }
+
+    /// Returns one raw linear decision score per row.
+    pub fn decision_function(&self, data: &MatrixView<'_>) -> Result<Vec<f32>, ModelError> {
+        let mut output = vec![0.0; data.rows()];
+        self.decision_function_into(data, &mut output)?;
+        Ok(output)
+    }
+
+    /// Writes raw linear decision scores into caller-owned storage.
+    pub fn decision_function_into(
+        &self,
+        data: &MatrixView<'_>,
+        output: &mut [f32],
+    ) -> Result<(), ModelError> {
+        validate_predict(data, output.len(), self.n_features_in)?;
+        for (row, slot) in data.iter_rows().zip(output) {
+            *slot = self.decision_function_one(row)?;
+        }
+        Ok(())
+    }
+
+    /// Predicts one positive-class probability.
+    pub fn predict_positive_proba(&self, row: &[f32]) -> Result<f32, ModelError> {
+        Ok(sigmoid_f32(self.decision_function_one(row)?))
     }
 
     /// Predicts one label.
@@ -453,12 +501,21 @@ impl Classifier for LogisticRegression {
 fn validate_fit(
     data: &MatrixView<'_>,
     targets: &BinaryTargets,
+    sample_weights: Option<&SampleWeights>,
     params: &LogisticRegressionParams,
 ) -> Result<(), ModelError> {
     if data.rows() != targets.len() {
         return Err(ModelError::TargetLength {
             rows: data.rows(),
             targets: targets.len(),
+        });
+    }
+    if let Some(sample_weights) = sample_weights
+        && data.rows() != sample_weights.len()
+    {
+        return Err(ModelError::SampleWeightLength {
+            rows: data.rows(),
+            weights: sample_weights.len(),
         });
     }
     if !params.c.is_finite() || params.c <= 0.0 {
@@ -474,6 +531,10 @@ fn validate_fit(
         return Err(ModelError::RequiresTwoClasses);
     }
     Ok(())
+}
+
+fn sample_weight(sample_weights: Option<&SampleWeights>, row: usize) -> f64 {
+    sample_weights.map_or(1.0, |weights| f64::from(weights.as_slice()[row]))
 }
 
 fn validate_predict(
@@ -574,7 +635,7 @@ fn sigmoid_f32(value: f32) -> f32 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::data::DenseMatrix;
+    use crate::data::{DenseMatrix, SampleWeights};
     use sha2::{Digest, Sha256};
 
     fn simple_data() -> (DenseMatrix, BinaryTargets) {
@@ -764,6 +825,127 @@ mod tests {
             let mirrored = model.predict_positive_proba(&rows[2..]).unwrap();
             assert!((positive + mirrored - 1.0).abs() <= 1.0e-6);
         }
+    }
+
+    #[test]
+    fn uniform_weights_are_bit_equivalent_and_scaled_weights_change_regularization() {
+        let (data, targets) = simple_data();
+        let params = LogisticRegressionParams::default().with_tol(1.0e-8);
+        let unweighted =
+            LogisticRegression::fit(&data.as_view(), &targets, params.clone()).unwrap();
+        let uniform = LogisticRegression::fit_weighted(
+            &data.as_view(),
+            &targets,
+            &SampleWeights::new(vec![1.0; data.rows()]).unwrap(),
+            params.clone(),
+        )
+        .unwrap();
+        assert_eq!(uniform, unweighted);
+
+        let scaled = LogisticRegression::fit_weighted(
+            &data.as_view(),
+            &targets,
+            &SampleWeights::new(vec![10.0; data.rows()]).unwrap(),
+            params,
+        )
+        .unwrap();
+        assert!(scaled.coefficients()[0].abs() > unweighted.coefficients()[0].abs());
+    }
+
+    #[test]
+    fn integer_weights_match_replicated_rows() {
+        let (data, targets) = simple_data();
+        let weights = [1_u8, 2, 1, 3, 1, 2];
+        let weighted = LogisticRegression::fit_weighted(
+            &data.as_view(),
+            &targets,
+            &SampleWeights::new(weights.iter().map(|&value| f32::from(value)).collect()).unwrap(),
+            LogisticRegressionParams::default().with_tol(1.0e-8),
+        )
+        .unwrap();
+
+        let mut replicated_data = Vec::new();
+        let mut replicated_targets = Vec::new();
+        for ((row, &target), &count) in data.iter_rows().zip(targets.as_slice()).zip(&weights) {
+            for _ in 0..count {
+                replicated_data.extend_from_slice(row);
+                replicated_targets.push(target);
+            }
+        }
+        let replicated_data =
+            DenseMatrix::new(replicated_data, replicated_targets.len(), data.columns()).unwrap();
+        let replicated_targets = BinaryTargets::new(replicated_targets).unwrap();
+        let replicated = LogisticRegression::fit(
+            &replicated_data.as_view(),
+            &replicated_targets,
+            LogisticRegressionParams::default().with_tol(1.0e-8),
+        )
+        .unwrap();
+
+        assert!((weighted.intercept() - replicated.intercept()).abs() <= 1.0e-6);
+        for (&weighted, &replicated) in weighted
+            .coefficients()
+            .iter()
+            .zip(replicated.coefficients())
+        {
+            assert!((weighted - replicated).abs() <= 1.0e-6);
+        }
+    }
+
+    #[test]
+    fn decision_scores_validate_before_writing_and_drive_probabilities() {
+        let (data, targets) = simple_data();
+        let model = LogisticRegression::fit(
+            &data.as_view(),
+            &targets,
+            LogisticRegressionParams::default(),
+        )
+        .unwrap();
+        let scores = model.decision_function(&data.as_view()).unwrap();
+        let mut output = vec![0.0; data.rows()];
+        model
+            .decision_function_into(&data.as_view(), &mut output)
+            .unwrap();
+        assert_eq!(output, scores);
+        for ((row, &score), probability) in data
+            .iter_rows()
+            .zip(&scores)
+            .zip(model.predict_class_proba(&data.as_view(), 1).unwrap())
+        {
+            assert_eq!(model.decision_function_one(row).unwrap(), score);
+            assert_eq!(sigmoid_f32(score), probability);
+        }
+
+        let mut untouched = [9.0; 2];
+        assert_eq!(
+            model
+                .decision_function_into(&data.as_view(), &mut untouched)
+                .unwrap_err(),
+            ModelError::OutputLength {
+                expected: data.rows(),
+                actual: 2,
+            }
+        );
+        assert_eq!(untouched, [9.0; 2]);
+    }
+
+    #[test]
+    fn weighted_fit_rejects_row_count_mismatch() {
+        let (data, targets) = simple_data();
+        let weights = SampleWeights::new(vec![1.0; data.rows() - 1]).unwrap();
+        assert_eq!(
+            LogisticRegression::fit_weighted(
+                &data.as_view(),
+                &targets,
+                &weights,
+                LogisticRegressionParams::default(),
+            )
+            .unwrap_err(),
+            ModelError::SampleWeightLength {
+                rows: data.rows(),
+                weights: data.rows() - 1,
+            }
+        );
     }
 
     #[test]

@@ -15,6 +15,8 @@ pub enum ModelError {
     EmptyTargets,
     /// The target count does not match the sample count.
     TargetLength { rows: usize, targets: usize },
+    /// The sample-weight count does not match the sample count.
+    SampleWeightLength { rows: usize, weights: usize },
     /// A feature is NaN or infinite.
     NonFiniteFeature { row: usize, column: usize },
     /// A binary target is not zero or one.
@@ -68,6 +70,12 @@ impl fmt::Display for ModelError {
             Self::EmptyTargets => f.write_str("targets must not be empty"),
             Self::TargetLength { rows, targets } => {
                 write!(f, "target length {targets} does not match row count {rows}")
+            }
+            Self::SampleWeightLength { rows, weights } => {
+                write!(
+                    f,
+                    "sample-weight length {weights} does not match row count {rows}"
+                )
             }
             Self::NonFiniteFeature { row, column } => {
                 write!(f, "feature at row {row}, column {column} is not finite")
