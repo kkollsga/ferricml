@@ -3,7 +3,8 @@
 FerricML is one pure-Rust crate for lean classical machine learning. Dataset
 acquisition and application-specific evaluation stay in downstream projects.
 This file is the tracked standing policy. The gitignored working-folder and
-inbox maps live in `dev-docs/README.md` and `inbox/README.md`.
+inbox maps live in `dev-docs/README.md` and `inbox/README.md`;
+`dev-docs/learn-from-us.md` is the outward-facing adaptation guide.
 
 ## Working style
 
