@@ -4,7 +4,7 @@
 SHELL := /bin/bash
 PYTHON ?= python3
 
-.PHONY: gate gate-full api-check api-refresh package-check semver-check bench-self bench-history bench-rafor
+.PHONY: gate gate-full api-check api-refresh package-check semver-check bench-self bench-history bench-diagnostic bench-rafor
 
 ## Ordinary pre-push gate: formatting, default lint/tests, dependency isolation,
 ## and the extracted-package external-consumer contract.
@@ -42,13 +42,17 @@ semver-check:
 
 ## Run only FerricML's root Criterion suite.
 bench-self:
-	cargo bench --locked --bench forest -- --noplot
+	cargo bench --locked --bench forest --bench models --bench boosting -- --noplot
 
 ## Capture an immutable versioned FerricML-only summary and compare it with the
 ## previous release and, when available, the three-release anchor. Set the
 ## runner identity in dev-docs/bench/runner.json or FERRICML_PERF_RUNNER_ID.
 bench-history:
 	$(PYTHON) scripts/performance_history.py capture $(PERF_HISTORY_ARGS)
+
+## Capture dated registered-runner evidence without occupying a release slot.
+bench-diagnostic:
+	$(PYTHON) scripts/performance_history.py capture --diagnostic $(PERF_HISTORY_ARGS)
 
 ## Explicit on-demand comparison with Rafor in its standalone package.
 bench-rafor:

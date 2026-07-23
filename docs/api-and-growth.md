@@ -39,5 +39,6 @@ reference contract.
   artifact errors. It does not expose backend tree layouts.
 
 `AnyClassifier` and `AnyRegressor` remain the owned runtime-swap layer. They
-match once per batch. Generic estimators and pipelines remain the primary
-zero-overhead layer.
+match once per batch; the regressor variants cover forests, linear regression,
+ridge, and histogram gradient boosting. Generic estimators and pipelines
+remain the primary zero-overhead layer.

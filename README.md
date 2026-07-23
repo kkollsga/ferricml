@@ -77,6 +77,12 @@ make bench-rafor
 `make bench-history` records a named first-party local baseline. Neither timing
 target is part of shared CI.
 
+The registered FerricML linear, ranking, preprocessing, and compact boosting
+workloads and their compatible named-history protocol are documented
+in [model-performance.md](docs/model-performance.md). `make bench-diagnostic`
+captures dated local evidence without consuming an immutable release-history
+slot.
+
 Use `--enforce --runner-id apple-m4-local` only on the registered stable
 machine. The matched Rafor protocol and thresholds are documented in
 [forest-head-to-head.md](docs/forest-head-to-head.md).

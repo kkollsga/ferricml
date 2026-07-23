@@ -26,7 +26,9 @@ ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_HISTORY = ROOT / "dev-docs" / "bench" / "results" / "releases"
 DEFAULT_OUT = ROOT / "dev-docs" / "bench" / "out"
 RUNNER_CONFIG = ROOT / "dev-docs" / "bench" / "runner.json"
-PROTOCOL = "forest-history-v1"
+MULTI_SUITE_PROTOCOL = "ferricml-history-v2"
+FOREST_PROTOCOL = "forest-history-v1"
+FERRICML_MODELS_PROTOCOL = "ferricml-models-v1"
 FIT_LIMIT = 1.15
 INFERENCE_LIMIT = 1.10
 
@@ -36,6 +38,47 @@ INFERENCE = tuple(
     for rows in (1, 32, 1024)
     for operation in ("labels", "full_proba", "class_proba")
 )
+
+MODEL_FIT = (
+    "ferricml_models_v1_fit_2048x48/linear",
+    "ferricml_models_v1_fit_2048x48/ridge",
+    "ferricml_models_v1_fit_2048x48/ranker_1024_pairs",
+    "ferricml_models_v1_fit_2048x48/scaler_ridge_pipeline",
+    "ferricml_boosting_v1_fit_2048x48_64t7l/ferricml",
+)
+MODEL_INFERENCE = (
+    "ferricml_models_v1_into_1024x48/linear",
+    "ferricml_models_v1_into_1024x48/ridge",
+    "ferricml_models_v1_into_1024x48/ranker_scores",
+    "ferricml_models_v1_into_1024x48/scaler_ridge_pipeline",
+    "ferricml_boosting_v1_predict_one_32t7l/predict",
+    "ferricml_boosting_v1_predict_one_64t7l/predict",
+    "ferricml_boosting_v1_predict_one_64t15l/predict",
+    "ferricml_boosting_v1_predict_one_128t15l/predict",
+    "ferricml_boosting_v1_into_32x48_64t7l/predict",
+    "ferricml_boosting_v1_into_1024x48_64t7l/predict",
+)
+BENCH_TARGETS = ("forest", "models", "boosting")
+
+
+def limits(fit: tuple[str, ...], inference: tuple[str, ...]) -> dict[str, float]:
+    result = {name: FIT_LIMIT for name in fit}
+    result.update({name: INFERENCE_LIMIT for name in inference})
+    return result
+
+
+SUITE_SPECS = {
+    "forest-v1": {
+        "protocol": FOREST_PROTOCOL,
+        "benchmarks": (FIT, *INFERENCE),
+        "limits": limits((FIT,), INFERENCE),
+    },
+    "ferricml-models-v1": {
+        "protocol": FERRICML_MODELS_PROTOCOL,
+        "benchmarks": (*MODEL_FIT, *MODEL_INFERENCE),
+        "limits": limits(MODEL_FIT, MODEL_INFERENCE),
+    },
+}
 
 
 def output(command: list[str]) -> str:
@@ -83,7 +126,9 @@ def active_build_processes() -> list[str]:
     active = []
     for line in listing.splitlines():
         executable = Path(line.strip().split(maxsplit=1)[-1]).name.lower()
-        if executable in {"cargo", "rustc", "criterion"} or executable.startswith("forest-"):
+        if executable in {"cargo", "rustc", "criterion"} or executable.startswith(
+            ("forest-", "models-", "boosting-")
+        ):
             active.append(line.strip())
     return active
 
@@ -134,7 +179,24 @@ def estimate(criterion: Path, benchmark: str) -> float:
         raise RuntimeError(f"missing Criterion median for {benchmark}: {path}") from error
 
 
-def load_history(history_dir: Path, current: dict[str, Any]) -> list[dict[str, Any]]:
+def record_suites(record: dict[str, Any]) -> dict[str, dict[str, Any]]:
+    suites = record.get("suites")
+    if isinstance(suites, dict):
+        return suites
+    if record.get("protocol") == FOREST_PROTOCOL and isinstance(record.get("metrics"), dict):
+        return {
+            "forest-v1": {
+                "protocol": FOREST_PROTOCOL,
+                "limits": SUITE_SPECS["forest-v1"]["limits"],
+                "metrics": record["metrics"],
+            }
+        }
+    return {}
+
+
+def load_history(
+    history_dir: Path, current: dict[str, Any], include_equal_version: bool = False
+) -> list[dict[str, Any]]:
     records = []
     for path in history_dir.glob("v*.json"):
         try:
@@ -142,59 +204,93 @@ def load_history(history_dir: Path, current: dict[str, Any]) -> list[dict[str, A
             version_key(candidate["version"])
         except (OSError, KeyError, TypeError, ValueError, json.JSONDecodeError):
             continue
-        if (
-            candidate.get("protocol") == current["protocol"]
-            and candidate.get("runner", {}).get("id") == current["runner"]["id"]
-            and version_key(candidate["version"]) < version_key(current["version"])
-        ):
+        candidate_version = version_key(candidate["version"])
+        current_version = version_key(current["version"])
+        version_matches = candidate_version < current_version or (
+            include_equal_version and candidate_version == current_version
+        )
+        if candidate.get("runner", {}).get("id") == current["runner"]["id"] and version_matches:
             records.append(candidate)
     return sorted(records, key=lambda item: version_key(item["version"]))
 
 
-def compare_one(current: dict[str, Any], reference: dict[str, Any], kind: str) -> dict[str, Any]:
+def compare_one(
+    current: dict[str, Any], reference: dict[str, Any], reference_version: str, kind: str
+) -> dict[str, Any]:
     current_metrics = current["metrics"]
     reference_metrics = reference["metrics"]
-    fit_ratio = current_metrics[FIT] / reference_metrics[FIT]
-    inference_ratios = {
-        name: current_metrics[name] / reference_metrics[name] for name in INFERENCE
-    }
+    shared = sorted(set(current_metrics) & set(reference_metrics))
+    new_lanes = sorted(set(current_metrics) - set(reference_metrics))
+    missing_lanes = sorted(set(reference_metrics) - set(current_metrics))
+    ratios = {name: current_metrics[name] / reference_metrics[name] for name in shared}
     failures = [
-        {"benchmark": name, "ratio": ratio, "limit": INFERENCE_LIMIT}
-        for name, ratio in inference_ratios.items()
-        if ratio > INFERENCE_LIMIT
+        {"benchmark": name, "ratio": ratio, "limit": current["limits"][name]}
+        for name, ratio in ratios.items()
+        if ratio > current["limits"][name]
     ]
-    if fit_ratio > FIT_LIMIT:
-        failures.append({"benchmark": FIT, "ratio": fit_ratio, "limit": FIT_LIMIT})
+    if failures:
+        status = "regression"
+    elif not shared or new_lanes or missing_lanes:
+        status = "insufficient_history"
+    else:
+        status = "pass"
     return {
         "kind": kind,
-        "status": "pass" if not failures else "regression",
-        "reference_version": reference["version"],
-        "fit_ratio": fit_ratio,
-        "maximum_inference_ratio": max(inference_ratios.values()),
-        "inference_ratios": inference_ratios,
+        "status": status,
+        "reference_version": reference_version,
+        "ratios": ratios,
+        "new_lanes": new_lanes,
+        "missing_lanes": missing_lanes,
         "failures": failures,
     }
 
 
-def comparisons(current: dict[str, Any], history_dir: Path) -> dict[str, Any]:
-    history = load_history(history_dir, current)
-    if history:
-        previous = compare_one(current, history[-1], "previous_release")
-    else:
-        previous = {
-            "kind": "previous_release",
-            "status": "insufficient_history",
-            "reason": "no earlier release exists for this runner and protocol",
+def comparisons(
+    current: dict[str, Any], history_dir: Path, include_equal_version: bool = False
+) -> dict[str, Any]:
+    history = load_history(history_dir, current, include_equal_version)
+    suite_results = {}
+    for suite_name, current_suite in record_suites(current).items():
+        compatible = []
+        for candidate in history:
+            candidate_suite = record_suites(candidate).get(suite_name)
+            if candidate_suite and candidate_suite.get("protocol") == current_suite.get("protocol"):
+                compatible.append((candidate["version"], candidate_suite))
+        if compatible:
+            reference_version, reference_suite = compatible[-1]
+            previous = compare_one(
+                current_suite, reference_suite, reference_version, "previous_release"
+            )
+        else:
+            previous = {
+                "kind": "previous_release",
+                "status": "insufficient_history",
+                "reason": "no earlier compatible release exists for this runner and suite",
+            }
+        if len(compatible) >= 3:
+            reference_version, reference_suite = compatible[-3]
+            anchor = compare_one(
+                current_suite,
+                reference_suite,
+                reference_version,
+                "approximately_three_release_anchor",
+            )
+        else:
+            anchor = {
+                "kind": "approximately_three_release_anchor",
+                "status": "insufficient_history",
+                "reason": f"need three earlier compatible releases; found {len(compatible)}",
+            }
+        suite_results[suite_name] = {
+            "protocol": current_suite["protocol"],
+            "previous_release": previous,
+            "anchor": anchor,
         }
-    if len(history) >= 3:
-        anchor = compare_one(current, history[-3], "approximately_three_release_anchor")
-    else:
-        anchor = {
-            "kind": "approximately_three_release_anchor",
-            "status": "insufficient_history",
-            "reason": f"need three earlier releases; found {len(history)}",
-        }
-    statuses = (previous["status"], anchor["status"])
+    statuses = [
+        comparison["status"]
+        for suite in suite_results.values()
+        for comparison in (suite["previous_release"], suite["anchor"])
+    ]
     if "regression" in statuses:
         verdict = "regression"
     elif "insufficient_history" in statuses:
@@ -203,10 +299,35 @@ def comparisons(current: dict[str, Any], history_dir: Path) -> dict[str, Any]:
         verdict = "pass"
     return {
         "thresholds": {"fit_ratio": FIT_LIMIT, "inference_ratio": INFERENCE_LIMIT},
-        "previous_release": previous,
-        "anchor": anchor,
+        "suites": suite_results,
         "verdict": verdict,
     }
+
+
+def parse_model_metadata(console: str) -> dict[str, dict[str, Any]]:
+    prefix = "FERRICML_BENCH_METADATA "
+    result = {}
+    for line in console.splitlines():
+        if prefix not in line:
+            continue
+        payload = json.loads(line.split(prefix, 1)[1])
+        name = payload.pop("model")
+        if not isinstance(name, str) or name in result:
+            raise RuntimeError(f"invalid or repeated benchmark model metadata: {name!r}")
+        if any(not isinstance(payload.get(field), int) or payload[field] <= 0 for field in (
+            "trees",
+            "max_leaf_nodes",
+            "logical_nodes",
+            "artifact_bytes",
+        )):
+            raise RuntimeError(f"invalid benchmark model metadata for {name}: {payload}")
+        result[name] = payload
+    expected = {"32t7l", "64t7l", "64t15l", "128t15l"}
+    if set(result) != expected:
+        raise RuntimeError(
+            f"benchmark model metadata mismatch: expected {sorted(expected)}, got {sorted(result)}"
+        )
+    return result
 
 
 def capture(args: argparse.Namespace) -> int:
@@ -214,34 +335,39 @@ def capture(args: argparse.Namespace) -> int:
     out_root = Path(args.out_dir).resolve()
     version = args.version or cargo_version()
     identity = runner_id(args.runner_id)
-    destination = history_dir / f"v{version}.json"
-    if destination.exists():
+    release_destination = history_dir / f"v{version}.json"
+    if not args.diagnostic and release_destination.exists():
         raise RuntimeError(
-            f"immutable release summary already exists: {destination}; "
+            f"immutable release summary already exists: {release_destination}; "
             "use a new version, never overwrite release history"
         )
 
     idle_before = idle_evidence(args.idle_samples, args.minimum_idle)
 
     stamp = dt.datetime.now(dt.timezone.utc).strftime("%Y%m%dT%H%M%SZ")
-    evidence = out_root / f"{stamp}-ferricml-history-v{version}"
+    run_kind = "ferricml-model-diagnostic" if args.diagnostic else f"ferricml-history-v{version}"
+    evidence = out_root / f"{stamp}-{run_kind}"
     evidence.mkdir(parents=True, exist_ok=False)
     before_load = list(os.getloadavg()) if hasattr(os, "getloadavg") else None
     command = [
         "cargo",
         "bench",
         "--locked",
-        "--bench",
-        "forest",
-        "--",
-        "--noplot",
-        "--sample-size",
-        str(args.sample_size),
-        "--warm-up-time",
-        str(args.warm_up_time),
-        "--measurement-time",
-        str(args.measurement_time),
     ]
+    for target in BENCH_TARGETS:
+        command.extend(("--bench", target))
+    command.extend(
+        (
+            "--",
+            "--noplot",
+            "--sample-size",
+            str(args.sample_size),
+            "--warm-up-time",
+            str(args.warm_up_time),
+            "--measurement-time",
+            str(args.measurement_time),
+        )
+    )
     run = subprocess.run(
         command, cwd=ROOT, text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT
     )
@@ -251,14 +377,24 @@ def capture(args: argparse.Namespace) -> int:
         return run.returncode
 
     criterion = ROOT / "target" / "criterion"
-    metrics = {FIT: estimate(criterion, FIT)}
-    metrics.update({name: estimate(criterion, name) for name in INFERENCE})
+    suites = {
+        name: {
+            "protocol": spec["protocol"],
+            "limits": spec["limits"],
+            "metrics": {
+                benchmark: estimate(criterion, benchmark)
+                for benchmark in spec["benchmarks"]
+            },
+        }
+        for name, spec in SUITE_SPECS.items()
+    }
+    model_metadata = parse_model_metadata(run.stdout)
     logical_cpus = os.cpu_count()
     after_load = list(os.getloadavg()) if hasattr(os, "getloadavg") else None
     record: dict[str, Any] = {
-        "schema_version": 1,
+        "schema_version": 2,
         "version": version,
-        "protocol": PROTOCOL,
+        "protocol": MULTI_SUITE_PROTOCOL,
         "runner": {
             "id": identity,
             "system": platform.system(),
@@ -284,24 +420,41 @@ def capture(args: argparse.Namespace) -> int:
             "measurement_seconds": args.measurement_time,
             "note": args.note,
             "raw_evidence": str(evidence.relative_to(ROOT)),
+            "history_includes_equal_version": args.diagnostic,
         },
-        "metrics": metrics,
+        "suites": suites,
+        "model_metadata": model_metadata,
     }
-    record["comparison"] = comparisons(record, history_dir)
-    history_dir.mkdir(parents=True, exist_ok=True)
+    record["comparison"] = comparisons(
+        record, history_dir, include_equal_version=args.diagnostic
+    )
+    if args.diagnostic:
+        destination = history_dir.parent / f"{stamp}-ferricml-model-workloads.json"
+    else:
+        destination = release_destination
+        history_dir.mkdir(parents=True, exist_ok=True)
+    destination.parent.mkdir(parents=True, exist_ok=True)
     with destination.open("x", encoding="utf-8") as stream:
         stream.write(json.dumps(record, indent=2, sort_keys=True) + "\n")
 
     for name in ("benchmark.json", "estimates.json", "sample.json", "tukey.json"):
         for source in criterion.rglob(name):
-            if "forest_historical_" not in source.as_posix():
+            if not any(
+                prefix in source.as_posix()
+                for prefix in (
+                    "forest_historical_",
+                    "ferricml_models_v1_",
+                    "ferricml_boosting_v1_",
+                )
+            ):
                 continue
             copied = evidence / "criterion" / source.relative_to(criterion)
             copied.parent.mkdir(parents=True, exist_ok=True)
             shutil.copy2(source, copied)
 
     verdict = record["comparison"]["verdict"]
-    print(f"immutable summary: {destination}")
+    label = "dated diagnostic summary" if args.diagnostic else "immutable release summary"
+    print(f"{label}: {destination}")
     print(f"history verdict: {verdict}")
     if verdict == "insufficient_history":
         print("insufficient history is expected until prior and three-release anchors exist")
@@ -310,45 +463,130 @@ def capture(args: argparse.Namespace) -> int:
 
 def check(args: argparse.Namespace) -> int:
     summary = json.loads(Path(args.summary).read_text())
-    result = comparisons(summary, Path(args.history_dir).resolve())
+    include_equal = bool(summary.get("run", {}).get("history_includes_equal_version", False))
+    result = comparisons(
+        summary, Path(args.history_dir).resolve(), include_equal_version=include_equal
+    )
     print(json.dumps(result, indent=2, sort_keys=True))
     return 1 if result["verdict"] == "regression" and args.enforce else 0
 
 
-def fixture(version: str, fit: float = 100.0, inference: float = 100.0) -> dict[str, Any]:
+def fixture(
+    version: str,
+    fit: float = 100.0,
+    inference: float = 100.0,
+    include_models: bool = False,
+) -> dict[str, Any]:
     metrics = {FIT: fit}
     metrics.update({name: inference for name in INFERENCE})
+    record = {
+        "schema_version": 2,
+        "version": version,
+        "protocol": MULTI_SUITE_PROTOCOL,
+        "runner": {"id": "self-test"},
+        "suites": {
+            "forest-v1": {
+                "protocol": FOREST_PROTOCOL,
+                "limits": dict(SUITE_SPECS["forest-v1"]["limits"]),
+                "metrics": metrics,
+            }
+        },
+    }
+    if include_models:
+        model_metrics = {name: fit for name in MODEL_FIT}
+        model_metrics.update({name: inference for name in MODEL_INFERENCE})
+        record["suites"]["ferricml-models-v1"] = {
+            "protocol": FERRICML_MODELS_PROTOCOL,
+            "limits": dict(SUITE_SPECS["ferricml-models-v1"]["limits"]),
+            "metrics": model_metrics,
+        }
+    return record
+
+
+def legacy_forest_fixture(version: str) -> dict[str, Any]:
+    current = fixture(version)
     return {
         "schema_version": 1,
         "version": version,
-        "protocol": PROTOCOL,
+        "protocol": FOREST_PROTOCOL,
         "runner": {"id": "self-test"},
-        "metrics": metrics,
+        "metrics": current["suites"]["forest-v1"]["metrics"],
     }
 
 
 def self_test() -> int:
+    metadata = "\n".join(
+        f'FERRICML_BENCH_METADATA {{"model":"{name}","trees":1,'
+        '"max_leaf_nodes":2,"logical_nodes":3,"artifact_bytes":4}'
+        for name in ("32t7l", "64t7l", "64t15l", "128t15l")
+    )
+    assert set(parse_model_metadata(metadata)) == {
+        "32t7l",
+        "64t7l",
+        "64t15l",
+        "128t15l",
+    }
     with tempfile.TemporaryDirectory() as temporary:
         history = Path(temporary)
         first = fixture("0.1.0")
         result = comparisons(first, history)
         assert result["verdict"] == "insufficient_history"
-        assert result["previous_release"]["status"] == "insufficient_history"
-        assert result["anchor"]["status"] == "insufficient_history"
+        forest = result["suites"]["forest-v1"]
+        assert forest["previous_release"]["status"] == "insufficient_history"
+        assert forest["anchor"]["status"] == "insufficient_history"
 
-        for version in ("0.1.0", "0.2.0", "0.3.0"):
+        (history / "v0.1.0.json").write_text(json.dumps(legacy_forest_fixture("0.1.0")))
+        mixed = fixture("0.2.0", include_models=True)
+        result = comparisons(mixed, history)
+        assert result["suites"]["forest-v1"]["previous_release"]["status"] == "pass"
+        assert (
+            result["suites"]["ferricml-models-v1"]["previous_release"]["status"]
+            == "insufficient_history"
+        )
+
+        new_lane = fixture("0.2.0")
+        forest_suite = new_lane["suites"]["forest-v1"]
+        forest_suite["metrics"]["forest_new_lane"] = 100.0
+        forest_suite["limits"]["forest_new_lane"] = INFERENCE_LIMIT
+        result = comparisons(new_lane, history)
+        previous = result["suites"]["forest-v1"]["previous_release"]
+        assert previous["status"] == "insufficient_history"
+        assert previous["new_lanes"] == ["forest_new_lane"]
+
+        missing_lane = fixture("0.2.0")
+        del missing_lane["suites"]["forest-v1"]["metrics"][INFERENCE[0]]
+        result = comparisons(missing_lane, history)
+        previous = result["suites"]["forest-v1"]["previous_release"]
+        assert previous["status"] == "insufficient_history"
+        assert previous["missing_lanes"] == [INFERENCE[0]]
+
+        for version in ("0.2.0", "0.3.0"):
             (history / f"v{version}.json").write_text(json.dumps(fixture(version)))
         fourth = fixture("0.4.0", fit=114.9, inference=109.9)
         result = comparisons(fourth, history)
         assert result["verdict"] == "pass"
-        assert result["anchor"]["reference_version"] == "0.1.0"
+        assert (
+            result["suites"]["forest-v1"]["anchor"]["reference_version"] == "0.1.0"
+        )
 
         regressed = fixture("0.4.0", fit=115.1, inference=110.1)
         result = comparisons(regressed, history)
         assert result["verdict"] == "regression"
-        assert result["previous_release"]["status"] == "regression"
-        assert result["anchor"]["status"] == "regression"
-    print("performance history self-test passed (insufficient, prior, anchor, regression)")
+        forest = result["suites"]["forest-v1"]
+        assert forest["previous_release"]["status"] == "regression"
+        assert forest["anchor"]["status"] == "regression"
+
+        incompatible = fixture("0.5.0")
+        incompatible["suites"]["forest-v1"]["protocol"] = "forest-history-v2"
+        result = comparisons(incompatible, history)
+        assert (
+            result["suites"]["forest-v1"]["previous_release"]["status"]
+            == "insufficient_history"
+        )
+    print(
+        "performance history self-test passed "
+        "(mixed protocols, missing/new lanes, prior, anchor, regression)"
+    )
     return 0
 
 
@@ -367,6 +605,11 @@ def parser() -> argparse.ArgumentParser:
     capture_parser.add_argument("--idle-samples", type=int, default=3)
     capture_parser.add_argument("--minimum-idle", type=float, default=90.0)
     capture_parser.add_argument("--enforce", action="store_true")
+    capture_parser.add_argument(
+        "--diagnostic",
+        action="store_true",
+        help="write dated evidence without occupying an immutable release version",
+    )
     capture_parser.set_defaults(function=capture)
     check_parser = subparsers.add_parser("check")
     check_parser.add_argument("summary")

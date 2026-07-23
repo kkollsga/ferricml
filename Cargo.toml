@@ -38,3 +38,11 @@ tempfile = "3"
 [[bench]]
 name = "forest"
 harness = false
+
+[[bench]]
+name = "models"
+harness = false
+
+[[bench]]
+name = "boosting"
+harness = false
