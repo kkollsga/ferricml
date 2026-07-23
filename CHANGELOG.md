@@ -7,6 +7,8 @@ and releases use [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.1.1] - 2026-07-23
+
 ### Added
 
 - Validated sample weights, weighted logistic fitting, and allocation-free raw
@@ -48,5 +50,6 @@ and releases use [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Generic static-dispatch pipeline and transformer growth seams.
 - Frozen correctness fixtures and an on-demand Rust implementation benchmark.
 
-[Unreleased]: https://github.com/kkollsga/ferricml/compare/v0.1.0...HEAD
+[Unreleased]: https://github.com/kkollsga/ferricml/compare/v0.1.1...HEAD
+[0.1.1]: https://github.com/kkollsga/ferricml/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/kkollsga/ferricml/releases/tag/v0.1.0

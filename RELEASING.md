@@ -38,9 +38,11 @@ argument, workflow log, or GitHub release description.
    release at 10% inference/15% fit thresholds and the approximately
    three-release anchor. Before enough versions exist it must explicitly report
    `insufficient_history`; that is evidence, not a fabricated pass.
-3. Choose the version from semver evidence and user-visible scope. Update only
-   `Cargo.toml`, `Cargo.lock`, and the matching dated `CHANGELOG.md` heading and
-   links. Re-run every applicable gate above, plus:
+3. Increment only the patch component unless the user explicitly requests a
+   minor or major release. Semver evidence remains required and visible but
+   does not override this patch-default policy. Update only `Cargo.toml`,
+   `Cargo.lock`, and the matching dated `CHANGELOG.md` heading and links.
+   Re-run every applicable gate above, plus:
 
    ```console
    cargo publish --locked --dry-run

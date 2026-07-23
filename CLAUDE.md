@@ -147,8 +147,11 @@ not sensitive strategy.
 ## Release safety
 
 FerricML has one crate, one Cargo version, one changelog, and version-matching
-`vX.Y.Z` tags. The tag is the crates.io publication boundary. The `release`
-skill must goal-check the active plan, run contracts and package checks, obtain
-explicit approval before remote ref updates, wait for green `main`, and only
-then push the matching tag. Never force-update branches during cleanup; use
-worktree-aware checks and safe deletion, or leave cleanup deferred.
+`vX.Y.Z` tags. Unless the user explicitly requests another level, every
+release increments only the patch component. Semver analysis remains required
+evidence but does not override that patch-default policy. The tag is the
+crates.io publication boundary. The `release` skill must goal-check the active
+plan, run contracts and package checks, obtain explicit approval before remote
+ref updates, wait for green `main`, and only then push the matching tag. Never
+force-update branches during cleanup; use worktree-aware checks and safe
+deletion, or leave cleanup deferred.
