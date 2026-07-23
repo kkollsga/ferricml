@@ -6,6 +6,7 @@ use ferricml::ensemble::{
     MaxFeatures, NJobs, RandomForestClassifier, RandomForestClassifierParams,
     RandomForestRegressor, RandomForestRegressorParams,
 };
+use ferricml::linear_model::{LogisticRegression, LogisticRegressionParams};
 
 #[allow(dead_code, clippy::excessive_precision)]
 mod reference {
@@ -126,6 +127,31 @@ fn tie_and_single_class_shapes_match_public_scikit_outputs() {
     let probabilities = single.predict_proba(&test.as_view()).unwrap();
     assert_eq!(probabilities.len(), test.rows());
     assert_close(&probabilities, reference::SINGLE_PROBABILITIES);
+}
+
+#[test]
+fn logistic_without_intercept_matches_public_scikit_outputs() {
+    let train = matrix(reference::LOGISTIC_NO_INTERCEPT_TRAIN_X, 6, 2);
+    let test = matrix(reference::LOGISTIC_NO_INTERCEPT_TEST_X, 5, 2);
+    let targets = BinaryTargets::new(reference::LOGISTIC_NO_INTERCEPT_Y.to_vec()).unwrap();
+    let model = LogisticRegression::fit(
+        &train.as_view(),
+        &targets,
+        LogisticRegressionParams::default()
+            .with_fit_intercept(false)
+            .with_tol(1.0e-8),
+    )
+    .unwrap();
+
+    assert_eq!(model.intercept().to_bits(), 0.0_f32.to_bits());
+    assert_close(
+        model.coefficients(),
+        reference::LOGISTIC_NO_INTERCEPT_COEFFICIENTS,
+    );
+    assert_close(
+        &model.predict_proba(&test.as_view()).unwrap(),
+        reference::LOGISTIC_NO_INTERCEPT_PROBABILITIES,
+    );
 }
 
 #[test]

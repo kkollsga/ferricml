@@ -82,9 +82,10 @@ impl LogisticRegressionParams {
 
 /// Binary L2-regularized logistic regression.
 ///
-/// Fitting standardizes features internally for numerical conditioning and
-/// folds that transformation into the stored coefficients. Prediction is
-/// therefore one allocation-free dot product and sigmoid per row.
+/// Fitting scales features internally for numerical conditioning and centers
+/// them only when an intercept is requested. The transformation is folded into
+/// the stored coefficients, so prediction is one allocation-free dot product
+/// and sigmoid per row.
 #[derive(Clone, Debug, PartialEq)]
 pub struct LogisticRegression {
     n_features_in: usize,
@@ -105,13 +106,15 @@ impl LogisticRegression {
         let rows = data.rows();
         let columns = data.columns();
         let mut means = vec![0.0_f64; columns];
-        for row in data.iter_rows() {
-            for (column, &value) in row.iter().enumerate() {
-                means[column] += f64::from(value);
+        if params.fit_intercept {
+            for row in data.iter_rows() {
+                for (column, &value) in row.iter().enumerate() {
+                    means[column] += f64::from(value);
+                }
             }
-        }
-        for mean in &mut means {
-            *mean /= rows as f64;
+            for mean in &mut means {
+                *mean /= rows as f64;
+            }
         }
         let mut scales = vec![0.0_f64; columns];
         for row in data.iter_rows() {
@@ -739,6 +742,28 @@ mod tests {
         assert!((model.coefficients()[0] - 0.595_291_14).abs() <= 2.0e-5);
         assert!(model.coefficients()[1].abs() <= 2.0e-5);
         assert!((model.intercept() + 0.892_936_77).abs() <= 2.0e-5);
+    }
+
+    #[test]
+    fn mirrored_rows_have_opposite_no_intercept_scores() {
+        let data =
+            DenseMatrix::new(vec![2.0, 1.0, -2.0, -1.0, 1.0, -1.0, -1.0, 1.0], 4, 2).unwrap();
+        let targets = BinaryTargets::new(vec![1, 0, 1, 0]).unwrap();
+        let model = LogisticRegression::fit(
+            &data.as_view(),
+            &targets,
+            LogisticRegressionParams::default()
+                .with_fit_intercept(false)
+                .with_tol(1.0e-8),
+        )
+        .unwrap();
+
+        assert_eq!(model.intercept().to_bits(), 0.0_f32.to_bits());
+        for rows in data.as_slice().chunks_exact(4) {
+            let positive = model.predict_positive_proba(&rows[..2]).unwrap();
+            let mirrored = model.predict_positive_proba(&rows[2..]).unwrap();
+            assert!((positive + mirrored - 1.0).abs() <= 1.0e-6);
+        }
     }
 
     #[test]

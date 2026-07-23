@@ -7,6 +7,11 @@ and releases use [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Fixed
+
+- Honor `LogisticRegressionParams::with_fit_intercept(false)` without silently
+  centering features or fitting a folded intercept.
+
 ## [0.1.0] - 2026-07-22
 
 ### Added
