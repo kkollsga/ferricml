@@ -17,8 +17,9 @@ use ferricml::metrics::{
     roc_auc_score, root_mean_squared_error,
 };
 use ferricml::model_selection::{
-    ClassificationScorer, HoldoutParams, KFold, RegressionScorer, ScoringError, Split, SplitError,
-    StratifiedKFold, TestSize, score_classifier, score_regressor, stratified_train_test_split,
+    ClassificationScorer, CrossValidationError, HoldoutParams, KFold, RegressionScorer,
+    ScoringError, Split, SplitError, StratifiedKFold, TestSize, cross_validate_classifier,
+    cross_validate_regressor, score_classifier, score_regressor, stratified_train_test_split,
     train_test_split,
 };
 use ferricml::pipeline::Pipeline;
@@ -244,6 +245,54 @@ fn fitted_estimator_scoring_paths_are_stable() {
             rows: 4,
             targets: 2
         })
+    ));
+}
+
+#[test]
+fn closure_based_cross_validation_paths_are_stable() {
+    let matrix = training_matrix();
+    let binary = BinaryTargets::new(vec![0, 0, 1, 1]).unwrap();
+    let classifier = cross_validate_classifier(
+        &matrix.as_view(),
+        &binary,
+        StratifiedKFold::new(2).split(binary.as_slice()).unwrap(),
+        ClassificationScorer::Accuracy,
+        |train, targets| {
+            RandomForestClassifier::fit(
+                train,
+                targets,
+                RandomForestClassifierParams::default()
+                    .with_n_estimators(1)
+                    .with_bootstrap(false),
+            )
+        },
+    )
+    .unwrap();
+    assert_eq!(classifier.len(), 2);
+    assert!(!classifier.is_empty());
+    assert_eq!(classifier.scores().len(), 2);
+    assert!(classifier.mean().is_finite());
+    assert!(classifier.population_standard_deviation().is_finite());
+
+    let regression = RegressionTargets::new(vec![0.0, 1.0, 4.0, 9.0]).unwrap();
+    let regressor = cross_validate_regressor(
+        &matrix.as_view(),
+        &regression,
+        KFold::new(2).split(matrix.rows()).unwrap(),
+        RegressionScorer::MeanSquaredError,
+        |train, targets| Ridge::fit(train, targets, RidgeParams::default()),
+    )
+    .unwrap();
+    assert_eq!(regressor.len(), 2);
+    assert!(matches!(
+        cross_validate_regressor::<Ridge, _, _>(
+            &matrix.as_view(),
+            &regression,
+            std::iter::empty(),
+            RegressionScorer::MeanSquaredError,
+            |train, targets| Ridge::fit(train, targets, RidgeParams::default()),
+        ),
+        Err(CrossValidationError::NoSplits)
     ));
 }
 

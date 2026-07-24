@@ -640,6 +640,30 @@ pub ferricml::model_selection::ClassificationScorer::LogLoss
 pub ferricml::model_selection::ClassificationScorer::Precision
 pub ferricml::model_selection::ClassificationScorer::Recall
 pub ferricml::model_selection::ClassificationScorer::RocAuc
+#[non_exhaustive] pub enum ferricml::model_selection::CrossValidationError
+pub ferricml::model_selection::CrossValidationError::Fit
+pub ferricml::model_selection::CrossValidationError::Fit::fold: usize
+pub ferricml::model_selection::CrossValidationError::Fit::source: ferricml::api::ModelError
+pub ferricml::model_selection::CrossValidationError::Metric
+pub ferricml::model_selection::CrossValidationError::Metric::fold: usize
+pub ferricml::model_selection::CrossValidationError::Metric::source: ferricml::metrics::MetricError
+pub ferricml::model_selection::CrossValidationError::NoSplits
+pub ferricml::model_selection::CrossValidationError::Prediction
+pub ferricml::model_selection::CrossValidationError::Prediction::fold: usize
+pub ferricml::model_selection::CrossValidationError::Prediction::source: ferricml::api::ModelError
+pub ferricml::model_selection::CrossValidationError::SplitSampleCount
+pub ferricml::model_selection::CrossValidationError::SplitSampleCount::actual: usize
+pub ferricml::model_selection::CrossValidationError::SplitSampleCount::expected: usize
+pub ferricml::model_selection::CrossValidationError::SplitSampleCount::fold: usize
+pub ferricml::model_selection::CrossValidationError::TargetLength
+pub ferricml::model_selection::CrossValidationError::TargetLength::rows: usize
+pub ferricml::model_selection::CrossValidationError::TargetLength::targets: usize
+pub ferricml::model_selection::CrossValidationError::UnsupportedClasses
+pub ferricml::model_selection::CrossValidationError::UnsupportedClasses::fold: usize
+impl core::error::Error for ferricml::model_selection::CrossValidationError
+pub fn ferricml::model_selection::CrossValidationError::source(&self) -> core::option::Option<&(dyn core::error::Error + 'static)>
+impl core::fmt::Display for ferricml::model_selection::CrossValidationError
+pub fn ferricml::model_selection::CrossValidationError::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
 #[non_exhaustive] pub enum ferricml::model_selection::RegressionScorer
 pub ferricml::model_selection::RegressionScorer::MeanAbsoluteError
 pub ferricml::model_selection::RegressionScorer::MeanSquaredError
@@ -698,6 +722,13 @@ pub ferricml::model_selection::SplitPartition::Train
 pub enum ferricml::model_selection::TestSize
 pub ferricml::model_selection::TestSize::Count(usize)
 pub ferricml::model_selection::TestSize::Fraction(f64)
+pub struct ferricml::model_selection::CrossValidationResult
+impl ferricml::model_selection::CrossValidationResult
+pub fn ferricml::model_selection::CrossValidationResult::is_empty(&self) -> bool
+pub fn ferricml::model_selection::CrossValidationResult::len(&self) -> usize
+pub fn ferricml::model_selection::CrossValidationResult::mean(&self) -> f64
+pub fn ferricml::model_selection::CrossValidationResult::population_standard_deviation(&self) -> f64
+pub fn ferricml::model_selection::CrossValidationResult::scores(&self) -> &[f64]
 pub struct ferricml::model_selection::HoldoutParams
 impl ferricml::model_selection::HoldoutParams
 pub const fn ferricml::model_selection::HoldoutParams::random_state(&self) -> u64
@@ -726,6 +757,7 @@ pub fn ferricml::model_selection::KFoldIter::size_hint(&self) -> (usize, core::o
 pub struct ferricml::model_selection::Split
 impl ferricml::model_selection::Split
 pub fn ferricml::model_selection::Split::new(usize, alloc::vec::Vec<usize>, alloc::vec::Vec<usize>) -> core::result::Result<Self, ferricml::model_selection::SplitError>
+pub fn ferricml::model_selection::Split::sample_count(&self) -> usize
 pub fn ferricml::model_selection::Split::test_indices(&self) -> &[usize]
 pub fn ferricml::model_selection::Split::train_indices(&self) -> &[usize]
 pub struct ferricml::model_selection::StratifiedKFold
@@ -743,6 +775,8 @@ impl core::iter::traits::iterator::Iterator for ferricml::model_selection::Strat
 pub type ferricml::model_selection::StratifiedKFoldIter::Item = ferricml::model_selection::Split
 pub fn ferricml::model_selection::StratifiedKFoldIter::next(&mut self) -> core::option::Option<Self::Item>
 pub fn ferricml::model_selection::StratifiedKFoldIter::size_hint(&self) -> (usize, core::option::Option<usize>)
+pub fn ferricml::model_selection::cross_validate_classifier<M, I, F>(&ferricml::data::MatrixView<'_>, &ferricml::data::BinaryTargets, I, ferricml::model_selection::ClassificationScorer, F) -> core::result::Result<ferricml::model_selection::CrossValidationResult, ferricml::model_selection::CrossValidationError> where M: ferricml::api::Classifier, I: core::iter::traits::collect::IntoIterator<Item = ferricml::model_selection::Split>, F: core::ops::function::FnMut(&ferricml::data::MatrixView<'_>, &ferricml::data::BinaryTargets) -> core::result::Result<M, ferricml::api::ModelError>
+pub fn ferricml::model_selection::cross_validate_regressor<M, I, F>(&ferricml::data::MatrixView<'_>, &ferricml::data::RegressionTargets, I, ferricml::model_selection::RegressionScorer, F) -> core::result::Result<ferricml::model_selection::CrossValidationResult, ferricml::model_selection::CrossValidationError> where M: ferricml::api::Regressor, I: core::iter::traits::collect::IntoIterator<Item = ferricml::model_selection::Split>, F: core::ops::function::FnMut(&ferricml::data::MatrixView<'_>, &ferricml::data::RegressionTargets) -> core::result::Result<M, ferricml::api::ModelError>
 pub fn ferricml::model_selection::score_classifier(&dyn ferricml::api::Classifier, &ferricml::data::MatrixView<'_>, &ferricml::data::BinaryTargets, ferricml::model_selection::ClassificationScorer) -> core::result::Result<f64, ferricml::model_selection::ScoringError>
 pub fn ferricml::model_selection::score_regressor(&dyn ferricml::api::Regressor, &ferricml::data::MatrixView<'_>, &ferricml::data::RegressionTargets, ferricml::model_selection::RegressionScorer) -> core::result::Result<f64, ferricml::model_selection::ScoringError>
 pub fn ferricml::model_selection::stratified_train_test_split(&[u8], ferricml::model_selection::HoldoutParams) -> core::result::Result<ferricml::model_selection::Split, ferricml::model_selection::SplitError>

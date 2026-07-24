@@ -230,6 +230,11 @@ impl Split {
         &self.test_indices
     }
 
+    /// Total number of samples covered by this split.
+    pub fn sample_count(&self) -> usize {
+        self.train_indices.len() + self.test_indices.len()
+    }
+
     fn from_test_indices(samples: usize, mut test_indices: Vec<usize>) -> Self {
         test_indices.sort_unstable();
         let mut train_indices = Vec::with_capacity(samples - test_indices.len());

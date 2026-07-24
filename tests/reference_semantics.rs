@@ -17,9 +17,10 @@ use ferricml::metrics::{
     roc_auc_score, root_mean_squared_error,
 };
 use ferricml::model_selection::{
-    ClassificationScorer, HoldoutParams, KFold, RegressionScorer, ScoringError, SplitError,
-    SplitPartition, StratifiedKFold, TestSize, score_classifier, score_regressor,
-    stratified_train_test_split, train_test_split,
+    ClassificationScorer, CrossValidationError, HoldoutParams, KFold, RegressionScorer,
+    ScoringError, SplitError, SplitPartition, StratifiedKFold, TestSize, cross_validate_classifier,
+    cross_validate_regressor, score_classifier, score_regressor, stratified_train_test_split,
+    train_test_split,
 };
 use ferricml::preprocessing::{StandardScaler, StandardScalerParams};
 
@@ -265,6 +266,65 @@ fn direct_estimator_scores_and_errors_are_frozen() {
         Err(ScoringError::TargetLength {
             rows: 5,
             targets: 1,
+        })
+    );
+}
+
+#[test]
+fn cross_validation_fold_scores_and_error_attribution_are_frozen() {
+    let data = matrix(&[0.0, 0.0, 1.0, 1.0, 2.0, 4.0, 3.0, 9.0], 4, 2);
+    let binary = BinaryTargets::new(vec![0, 0, 1, 1]).unwrap();
+    let classification = cross_validate_classifier(
+        &data.as_view(),
+        &binary,
+        StratifiedKFold::new(2).split(binary.as_slice()).unwrap(),
+        ClassificationScorer::Accuracy,
+        |train, targets| {
+            RandomForestClassifier::fit(
+                train,
+                targets,
+                RandomForestClassifierParams::default()
+                    .with_n_estimators(1)
+                    .with_max_features(MaxFeatures::All)
+                    .with_bootstrap(false),
+            )
+        },
+    )
+    .unwrap();
+    assert_eq!(classification.scores(), &[0.5, 1.0]);
+    assert_eq!(classification.mean(), 0.75);
+    assert_eq!(classification.population_standard_deviation(), 0.25);
+
+    let regression = RegressionTargets::new(vec![0.0, 1.0, 4.0, 9.0]).unwrap();
+    let regression_result = cross_validate_regressor(
+        &data.as_view(),
+        &regression,
+        KFold::new(2).split(data.rows()).unwrap(),
+        RegressionScorer::MeanSquaredError,
+        |train, targets| Ridge::fit(train, targets, RidgeParams::default().with_alpha(0.0)),
+    )
+    .unwrap();
+    assert_eq!(
+        regression_result.scores(),
+        &[0.029_585_803_313_369_685, 5.0]
+    );
+    assert_eq!(regression_result.mean(), 2.514_792_901_656_685);
+    assert_eq!(
+        regression_result.population_standard_deviation(),
+        2.485_207_098_343_315
+    );
+
+    assert_eq!(
+        cross_validate_regressor::<Ridge, _, _>(
+            &data.as_view(),
+            &regression,
+            KFold::new(2).split(data.rows()).unwrap(),
+            RegressionScorer::MeanSquaredError,
+            |_train, _targets| Err(ModelError::LinearSolveFailed),
+        ),
+        Err(CrossValidationError::Fit {
+            fold: 0,
+            source: ModelError::LinearSolveFailed,
         })
     );
 }
