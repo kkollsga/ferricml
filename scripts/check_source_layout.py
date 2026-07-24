@@ -90,6 +90,22 @@ def inspection_uses_only_public_surfaces(root: Path) -> list[str]:
     ]
 
 
+def loss_depends_on_no_estimator(root: Path) -> list[str]:
+    """The objective contract sits below every solver that consumes it.
+
+    A loss exists so that linear and ensemble solvers share one definition of
+    what they minimize. Naming a concrete estimator module inside it would
+    invert that dependency and reintroduce the per-estimator fusion of
+    objective and solver the contract was built to remove.
+    """
+    text = directory_text(root / "src" / "loss")
+    return [
+        f"loss contract depends on estimator module {module}"
+        for module in ESTIMATOR_MODULES
+        if f"crate::{module}" in text
+    ]
+
+
 def capability_descriptor_names_no_estimator(root: Path) -> list[str]:
     """The capability descriptor is vocabulary, not a registry of estimators.
 
@@ -128,6 +144,7 @@ RULES: tuple[tuple[str, Callable[[Path], list[str]]], ...] = (
     ("ensemble-families-private", ensemble_families_stay_private),
     ("numeric-below-estimators", numeric_depends_on_no_estimator),
     ("inspection-public-surfaces-only", inspection_uses_only_public_surfaces),
+    ("loss-below-estimators", loss_depends_on_no_estimator),
     ("capability-descriptor-neutral", capability_descriptor_names_no_estimator),
     ("baselines-independent", baselines_depend_on_no_estimator),
 )
@@ -150,6 +167,8 @@ def write_clean_tree(root: Path) -> Path:
         "ensemble/random_forest/mod.rs": "//! forest\n",
         "numeric/mod.rs": "//! numeric\npub(crate) fn kernel() {}\n",
         "numeric/rng.rs": "//! rng\n",
+        "loss/mod.rs": "//! loss\nmod objective;\n",
+        "loss/objective.rs": "//! objective\nuse crate::numeric::kernel;\n",
         "inspection/mod.rs": "//! inspection\nmod permutation;\n",
         "inspection/permutation.rs": "//! permutation\nuse crate::api::Regressor;\n",
         "api/mod.rs": "//! api\nmod capabilities;\n",
@@ -204,6 +223,14 @@ SYNTHETIC_VIOLATIONS: tuple[tuple[str, Callable[[Path], None], str], ...] = (
             "use crate::ensemble::RandomForestRegressor;\n",
         ),
         "inspection depends on non-public-surface module ensemble",
+    ),
+    (
+        "loss-below-estimators",
+        lambda root: append(
+            root / "src" / "loss" / "objective.rs",
+            "use crate::ensemble::HistGradientBoostingRegressor;\n",
+        ),
+        "loss contract depends on estimator module ensemble",
     ),
     (
         "capability-descriptor-neutral",
