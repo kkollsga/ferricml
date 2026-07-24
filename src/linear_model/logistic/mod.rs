@@ -9,6 +9,7 @@ use crate::artifact::{
     encode_component, encode_v2_envelope,
 };
 use crate::data::{BinaryTargets, MatrixView, SampleWeights};
+use crate::numeric::{sigmoid_f32, sigmoid_f64};
 
 const BINARY_CLASSES: [u8; 2] = [0, 1];
 const MAX_ARTIFACT_FEATURES: usize = 1_000_000;
@@ -657,24 +658,6 @@ fn solve_positive_definite(
         solution[row] /= matrix[row * size + row];
     }
     Ok(())
-}
-
-fn sigmoid_f64(value: f64) -> f64 {
-    if value >= 0.0 {
-        1.0 / (1.0 + (-value).exp())
-    } else {
-        let exp = value.exp();
-        exp / (1.0 + exp)
-    }
-}
-
-fn sigmoid_f32(value: f32) -> f32 {
-    if value >= 0.0 {
-        1.0 / (1.0 + (-value).exp())
-    } else {
-        let exp = value.exp();
-        exp / (1.0 + exp)
-    }
 }
 
 #[cfg(test)]

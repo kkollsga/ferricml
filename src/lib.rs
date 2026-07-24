@@ -10,6 +10,7 @@ pub mod ensemble;
 pub mod linear_model;
 pub mod metrics;
 pub mod model_selection;
+mod numeric;
 pub mod pipeline;
 pub mod preprocessing;
 pub mod ranking;
