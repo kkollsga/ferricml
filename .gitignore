@@ -7,5 +7,9 @@
 /.agents/
 /AGENTS.md
 
+# Byte cache from importing the gate scripts under scripts/
+__pycache__/
+*.pyc
+
 # Local experiment inputs and generated artifacts
 /research/
