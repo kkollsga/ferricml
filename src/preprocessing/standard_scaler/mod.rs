@@ -292,6 +292,7 @@ impl StandardScaler {
         })
     }
 
+    #[cfg(test)]
     fn transformed_value(&self, value: f32, column: usize) -> f32 {
         let mut transformed = f64::from(value);
         if self.params.with_mean {
@@ -301,6 +302,35 @@ impl StandardScaler {
             transformed /= self.scales[column];
         }
         transformed as f32
+    }
+
+    fn transform_checked<F>(
+        data: &MatrixView<'_>,
+        output: &mut [f32],
+        transform: F,
+    ) -> Result<(), ModelError>
+    where
+        F: Fn(f32, usize) -> f32 + Copy,
+    {
+        for (row_index, row) in data.iter_rows().enumerate() {
+            for (column, &value) in row.iter().enumerate() {
+                if !transform(value, column).is_finite() {
+                    return Err(ModelError::NonFiniteTransform {
+                        row: row_index,
+                        column,
+                    });
+                }
+            }
+        }
+        for (row, output_row) in data
+            .iter_rows()
+            .zip(output.chunks_exact_mut(data.columns()))
+        {
+            for (column, (&value, slot)) in row.iter().zip(output_row).enumerate() {
+                *slot = transform(value, column);
+            }
+        }
+        Ok(())
     }
 }
 
@@ -356,17 +386,17 @@ impl Transformer for StandardScaler {
             });
         }
 
-        for (index, &value) in data.as_slice().iter().enumerate() {
-            let column = index % self.n_features_in;
-            if !self.transformed_value(value, column).is_finite() {
-                return Err(ModelError::NonFiniteTransform {
-                    row: index / self.n_features_in,
-                    column,
-                });
-            }
-        }
-        for (index, (&value, slot)) in data.as_slice().iter().zip(output.iter_mut()).enumerate() {
-            *slot = self.transformed_value(value, index % self.n_features_in);
+        match (self.params.with_mean, self.params.with_std) {
+            (false, false) => Self::transform_checked(data, output, |value, _| value)?,
+            (true, false) => Self::transform_checked(data, output, |value, column| {
+                (f64::from(value) - self.means[column]) as f32
+            })?,
+            (false, true) => Self::transform_checked(data, output, |value, column| {
+                (f64::from(value) / self.scales[column]) as f32
+            })?,
+            (true, true) => Self::transform_checked(data, output, |value, column| {
+                ((f64::from(value) - self.means[column]) / self.scales[column]) as f32
+            })?,
         }
         Ok(MatrixView::from_validated_parts(
             output,
