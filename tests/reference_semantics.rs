@@ -1,4 +1,4 @@
-//! Black-box conformance against frozen public scikit-learn 1.9.0 outputs.
+//! FerricML conformance against frozen reference outputs.
 
 use ferricml::api::ModelError;
 use ferricml::data::{BinaryTargets, DenseMatrix, RegressionTargets, SampleWeights};
@@ -15,7 +15,7 @@ use ferricml::preprocessing::{StandardScaler, StandardScalerParams};
 
 #[allow(dead_code, clippy::excessive_precision)]
 mod reference {
-    include!("fixtures/sklearn_1_9.rs");
+    include!("fixtures/reference_semantics_v1.rs");
 }
 
 const EXACT_TOLERANCE: f32 = 1.0e-6;
@@ -76,9 +76,7 @@ fn assert_close_f64(actual: &[f64], expected: &[f64]) {
 }
 
 #[test]
-fn exact_classifier_matches_public_scikit_outputs() {
-    assert_eq!(reference::SKLEARN_VERSION, "1.9.0");
-    assert_eq!(reference::NUMPY_VERSION, "2.4.1");
+fn exact_classifier_matches_frozen_reference_outputs() {
     let train = matrix(reference::EXACT_TRAIN_X, 8, 2);
     let test = matrix(reference::EXACT_TEST_X, 5, 2);
     let targets = BinaryTargets::new(reference::EXACT_CLASSIFIER_Y.to_vec()).unwrap();
@@ -97,7 +95,7 @@ fn exact_classifier_matches_public_scikit_outputs() {
 }
 
 #[test]
-fn exact_regressor_matches_public_scikit_outputs() {
+fn exact_regressor_matches_frozen_reference_outputs() {
     let train = matrix(reference::EXACT_TRAIN_X, 8, 2);
     let test = matrix(reference::EXACT_TEST_X, 5, 2);
     let targets = RegressionTargets::new(reference::EXACT_REGRESSION_Y.to_vec()).unwrap();
@@ -111,7 +109,7 @@ fn exact_regressor_matches_public_scikit_outputs() {
 }
 
 #[test]
-fn tie_and_single_class_shapes_match_public_scikit_outputs() {
+fn tie_and_single_class_shapes_match_frozen_reference_outputs() {
     let train = matrix(reference::TIE_TRAIN_X, 4, 1);
     let test = matrix(reference::TIE_TEST_X, 3, 1);
     let tie = RandomForestClassifier::fit(
@@ -151,7 +149,7 @@ fn tie_and_single_class_shapes_match_public_scikit_outputs() {
 }
 
 #[test]
-fn logistic_without_intercept_matches_public_scikit_outputs() {
+fn logistic_without_intercept_matches_frozen_reference_outputs() {
     let train = matrix(reference::LOGISTIC_NO_INTERCEPT_TRAIN_X, 6, 2);
     let test = matrix(reference::LOGISTIC_NO_INTERCEPT_TEST_X, 5, 2);
     let targets = BinaryTargets::new(reference::LOGISTIC_NO_INTERCEPT_Y.to_vec()).unwrap();
@@ -180,7 +178,7 @@ fn logistic_without_intercept_matches_public_scikit_outputs() {
 }
 
 #[test]
-fn weighted_logistic_matches_public_scikit_outputs() {
+fn weighted_logistic_matches_frozen_reference_outputs() {
     let train = matrix(reference::LOGISTIC_NO_INTERCEPT_TRAIN_X, 6, 2);
     let test = matrix(reference::LOGISTIC_NO_INTERCEPT_TEST_X, 5, 2);
     let targets = BinaryTargets::new(reference::LOGISTIC_NO_INTERCEPT_Y.to_vec()).unwrap();
@@ -218,7 +216,7 @@ fn weighted_logistic_matches_public_scikit_outputs() {
 }
 
 #[test]
-fn linear_regression_matches_public_scikit_outputs() {
+fn linear_regression_matches_frozen_reference_outputs() {
     let full_x = matrix(reference::LINEAR_FULL_X, 4, 2);
     let full_y = RegressionTargets::new(reference::LINEAR_FULL_Y.to_vec()).unwrap();
     let test_x = matrix(reference::LINEAR_TEST_X, 3, 2);
@@ -285,7 +283,7 @@ fn linear_regression_matches_public_scikit_outputs() {
 }
 
 #[test]
-fn ridge_matches_public_scikit_outputs() {
+fn ridge_matches_frozen_reference_outputs() {
     let full_x = matrix(reference::LINEAR_FULL_X, 4, 2);
     let full_y = RegressionTargets::new(reference::LINEAR_FULL_Y.to_vec()).unwrap();
     let test_x = matrix(reference::LINEAR_TEST_X, 3, 2);
@@ -345,7 +343,7 @@ fn ridge_matches_public_scikit_outputs() {
 }
 
 #[test]
-fn standard_scaler_matches_public_scikit_outputs() {
+fn standard_scaler_matches_frozen_reference_outputs() {
     let data = matrix(reference::SCALER_TRAIN_X, 4, 3);
     let default = StandardScaler::fit(&data.as_view(), StandardScalerParams::default()).unwrap();
     assert_close_f64(default.means(), reference::SCALER_DEFAULT_MEAN);
@@ -390,7 +388,7 @@ fn standard_scaler_matches_public_scikit_outputs() {
 }
 
 #[test]
-fn histogram_boosting_matches_public_scikit_one_step_outputs() {
+fn histogram_boosting_matches_frozen_reference_one_step_outputs() {
     let train = matrix(reference::HGB_TRAIN_X, 8, 1);
     let targets = RegressionTargets::new(reference::HGB_TRAIN_Y.to_vec()).unwrap();
     let test = matrix(reference::HGB_TEST_X, 4, 1);
@@ -633,8 +631,8 @@ fn five_seed_classification_quality_stays_within_approved_deltas() {
     for lane in ["nonlinear", "separable", "imbalanced", "noise"] {
         let mut ferric_accuracy = 0.0;
         let mut ferric_brier = 0.0;
-        let mut sklearn_accuracy = 0.0;
-        let mut sklearn_brier = 0.0;
+        let mut baseline_accuracy = 0.0;
+        let mut baseline_brier = 0.0;
         for seed in QUALITY_SEEDS {
             let (train, train_y, test, test_y) = classification_data(lane, seed);
             let model = RandomForestClassifier::fit(
@@ -658,24 +656,24 @@ fn five_seed_classification_quality_stays_within_approved_deltas() {
                 .iter()
                 .find(|reference| reference.lane == lane && reference.seed == seed)
                 .unwrap();
-            sklearn_accuracy += reference.accuracy;
-            sklearn_brier += reference.brier;
+            baseline_accuracy += reference.accuracy;
+            baseline_brier += reference.brier;
         }
         let count = QUALITY_SEEDS.len() as f64;
         ferric_accuracy /= count;
         ferric_brier /= count;
-        sklearn_accuracy /= count;
-        sklearn_brier /= count;
+        baseline_accuracy /= count;
+        baseline_brier /= count;
         eprintln!(
-            "quality {lane}: ferric accuracy={ferric_accuracy:.6} brier={ferric_brier:.6}; scikit accuracy={sklearn_accuracy:.6} brier={sklearn_brier:.6}"
+            "quality {lane}: ferric accuracy={ferric_accuracy:.6} brier={ferric_brier:.6}; baseline accuracy={baseline_accuracy:.6} brier={baseline_brier:.6}"
         );
         assert!(
-            ferric_accuracy + 0.02 >= sklearn_accuracy,
-            "{lane}: FerricML accuracy {ferric_accuracy:.6} trails scikit {sklearn_accuracy:.6} by more than 0.02"
+            ferric_accuracy + 0.02 >= baseline_accuracy,
+            "{lane}: FerricML accuracy {ferric_accuracy:.6} trails baseline {baseline_accuracy:.6} by more than 0.02"
         );
         assert!(
-            ferric_brier <= sklearn_brier + 0.02,
-            "{lane}: FerricML Brier {ferric_brier:.6} exceeds scikit {sklearn_brier:.6} by more than 0.02"
+            ferric_brier <= baseline_brier + 0.02,
+            "{lane}: FerricML Brier {ferric_brier:.6} exceeds baseline {baseline_brier:.6} by more than 0.02"
         );
     }
 }
@@ -683,7 +681,7 @@ fn five_seed_classification_quality_stays_within_approved_deltas() {
 #[test]
 fn five_seed_regression_quality_stays_within_approved_delta() {
     let mut ferric_nrmse = 0.0;
-    let mut sklearn_nrmse = 0.0;
+    let mut baseline_nrmse = 0.0;
     for seed in QUALITY_SEEDS {
         let (train, train_y, test, test_y) = regression_data(seed);
         let model = RandomForestRegressor::fit(
@@ -698,7 +696,7 @@ fn five_seed_regression_quality_stays_within_approved_delta() {
         )
         .unwrap();
         ferric_nrmse += nrmse(test_y.as_slice(), &model.predict(&test.as_view()).unwrap());
-        sklearn_nrmse += reference::QUALITY_REFERENCES
+        baseline_nrmse += reference::QUALITY_REFERENCES
             .iter()
             .find(|reference| reference.lane == "regression" && reference.seed == seed)
             .unwrap()
@@ -706,20 +704,20 @@ fn five_seed_regression_quality_stays_within_approved_delta() {
     }
     let count = QUALITY_SEEDS.len() as f64;
     ferric_nrmse /= count;
-    sklearn_nrmse /= count;
+    baseline_nrmse /= count;
     eprintln!(
-        "quality regression: ferric nRMSE={ferric_nrmse:.6}; scikit nRMSE={sklearn_nrmse:.6}"
+        "quality regression: ferric nRMSE={ferric_nrmse:.6}; baseline nRMSE={baseline_nrmse:.6}"
     );
     assert!(
-        ferric_nrmse <= sklearn_nrmse * 1.05,
-        "FerricML nRMSE {ferric_nrmse:.6} exceeds scikit {sklearn_nrmse:.6} by more than 5%"
+        ferric_nrmse <= baseline_nrmse * 1.05,
+        "FerricML nRMSE {ferric_nrmse:.6} exceeds baseline {baseline_nrmse:.6} by more than 5%"
     );
 }
 
 #[test]
-fn histogram_boosting_multi_seed_quality_stays_near_public_scikit() {
+fn histogram_boosting_multi_seed_quality_stays_near_frozen_baseline() {
     let mut ferric_nrmse = 0.0;
-    let mut sklearn_nrmse = 0.0;
+    let mut baseline_nrmse = 0.0;
     for (index, seed) in HGB_QUALITY_SEEDS.into_iter().enumerate() {
         let (train, train_y, test, test_y) = regression_data(seed);
         let model = HistGradientBoostingRegressor::fit(
@@ -734,15 +732,15 @@ fn histogram_boosting_multi_seed_quality_stays_near_public_scikit() {
         )
         .unwrap();
         ferric_nrmse += nrmse(test_y.as_slice(), &model.predict(&test.as_view()).unwrap());
-        sklearn_nrmse += reference::HGB_QUALITY_NRMSE[index];
+        baseline_nrmse += reference::HGB_QUALITY_NRMSE[index];
     }
     ferric_nrmse /= HGB_QUALITY_SEEDS.len() as f64;
-    sklearn_nrmse /= HGB_QUALITY_SEEDS.len() as f64;
+    baseline_nrmse /= HGB_QUALITY_SEEDS.len() as f64;
     eprintln!(
-        "quality histogram boosting: ferric nRMSE={ferric_nrmse:.6}; scikit nRMSE={sklearn_nrmse:.6}"
+        "quality histogram boosting: ferric nRMSE={ferric_nrmse:.6}; baseline nRMSE={baseline_nrmse:.6}"
     );
     assert!(
-        ferric_nrmse <= sklearn_nrmse * 1.05,
-        "FerricML HGB nRMSE {ferric_nrmse:.6} exceeds scikit {sklearn_nrmse:.6} by more than 5%"
+        ferric_nrmse <= baseline_nrmse * 1.05,
+        "FerricML HGB nRMSE {ferric_nrmse:.6} exceeds baseline {baseline_nrmse:.6} by more than 5%"
     );
 }

@@ -1,7 +1,7 @@
 //! Lean, pure-Rust classical machine learning.
 //!
-//! FerricML focuses first on linear models and random forests, with
-//! scikit-style estimator semantics and fast, allocation-conscious inference.
+//! FerricML focuses first on linear models and random forests, with stable
+//! estimator semantics and fast, allocation-conscious inference.
 
 pub mod api;
 pub mod artifact;

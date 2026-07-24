@@ -1,4 +1,4 @@
-//! Linear estimators with scikit-style fit and prediction semantics.
+//! Linear estimators with stable fit and prediction semantics.
 
 mod least_squares;
 mod linear;

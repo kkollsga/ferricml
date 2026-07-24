@@ -198,8 +198,7 @@ impl PackedTree {
 /// A random-forest binary classifier.
 ///
 /// Class labels are sorted, and probability columns follow that order. Models
-/// fitted on a single class expose one probability column containing `1.0`,
-/// matching scikit-learn's binary single-class shape.
+/// fitted on a single class expose one probability column containing `1.0`.
 #[derive(Clone, Debug, PartialEq)]
 pub struct RandomForestClassifier {
     n_features_in: usize,
@@ -438,7 +437,7 @@ impl RandomForestClassifier {
     /// Returns the positive-class probability for one sample.
     ///
     /// This explicit method preserves the Phase A probability behavior. The
-    /// scikit-style label and two-column probability methods land in Phase B.
+    /// label and two-column probability methods land in Phase B.
     pub fn predict_positive_proba(&self, row: &[f32]) -> Result<f32, ModelError> {
         check_row(row, self.n_features_in)?;
         if self.classes.len() == 1 {

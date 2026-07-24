@@ -799,7 +799,7 @@ mod tests {
     }
 
     #[test]
-    fn matches_frozen_sklearn_lbfgs_fixture() {
+    fn matches_frozen_logistic_reference_fixture() {
         let train = DenseMatrix::new(
             vec![
                 0.0, 0.0, 0.0, 1.0, 1.0, 0.0, 1.0, 1.0, 2.0, 0.0, 2.0, 1.0, 3.0, 0.0, 3.0, 1.0,
