@@ -72,13 +72,6 @@ Rust gate:
 make reference-check
 ```
 
-Third-party Rust performance comparisons are never part of root tests or CI.
-They live in an independent package and can be run on demand:
-
-```console
-make bench-rafor
-```
-
 `make bench-self` runs only FerricML's Criterion workloads, while
 `make bench-history` records a named first-party local baseline. Neither timing
 target is part of shared CI.
@@ -90,13 +83,11 @@ captures dated local evidence without consuming an immutable release-history
 slot.
 
 Use `--enforce --runner-id apple-m4-local` only on the registered stable
-machine. The matched Rafor protocol and thresholds are documented in
-[forest-head-to-head.md](docs/forest-head-to-head.md).
+machine.
 
 ## Contributing and releases
 
 GitHub Actions checks formatting, clippy, default and all-feature tests,
-documentation, package assembly, and the frozen reference contract. Competitor
-performance benchmarks remain manual-only and are not part of CI. See
+documentation, package assembly, and the frozen reference contract. See
 [RELEASING.md](RELEASING.md) for the token-gated crates.io and GitHub release
 process.

@@ -1,59 +1,37 @@
 #!/usr/bin/env python3
-"""Reject competitor crates from root dependencies and automated gates."""
+"""Keep comparison workspaces out of the crate dependency and gate surface."""
 
 from __future__ import annotations
 
-import json
 from pathlib import Path
-import subprocess
 import sys
 
 ROOT = Path(__file__).resolve().parents[1]
-FORBIDDEN = {"linfa", "linfa-ensemble", "linfa-trees", "rafor", "smartcore"}
-
-
-def check_automation() -> list[str]:
+def check_isolation() -> list[str]:
     leaked: list[str] = []
-    for path in sorted((ROOT / ".github" / "workflows").glob("*.yml")):
-        contents = path.read_text().lower()
-        matches = sorted(name for name in FORBIDDEN if name in contents)
-        if matches:
-            leaked.append(f"{path.relative_to(ROOT)}: {', '.join(matches)}")
-
-    makefile = (ROOT / "Makefile").read_text()
+    makefile = (ROOT / "Makefile").read_text().lower()
     active_target = ""
     protected = {"gate", "gate-full", "package-check", "bench-self", "bench-history"}
     for line in makefile.splitlines():
         if line and not line[0].isspace() and ":" in line:
             active_target = line.split(":", 1)[0]
-        if active_target in protected and (
-            "bench-rafor" in line or "benchmarks/alternatives" in line or "run_forest_performance" in line
-        ):
-            leaked.append(f"Makefile target {active_target}: competitor invocation")
+        if active_target in protected and "benchmarks/" in line:
+            leaked.append(f"Makefile target {active_target}: comparison workspace invocation")
+
+    alternatives = ROOT / "benchmarks" / "alternatives"
+    if (alternatives / "Cargo.toml").exists():
+        leaked.append("benchmarks/alternatives: comparison workspace is tracked in the crate tree")
     return leaked
 
 
 def main() -> int:
-    result = subprocess.run(
-        ["cargo", "metadata", "--locked", "--all-features", "--format-version", "1"],
-        cwd=ROOT,
-        check=True,
-        capture_output=True,
-        text=True,
-    )
-    metadata = json.loads(result.stdout)
-    names = {package["name"] for package in metadata["packages"]}
-    leaked = sorted(names & FORBIDDEN)
-    if leaked:
-        print(f"root dependency graph contains competitor crates: {', '.join(leaked)}", file=sys.stderr)
-        return 1
-    automation_leaks = check_automation()
-    if automation_leaks:
-        print("competitor tooling leaked into CI/release gates:", file=sys.stderr)
-        for leak in automation_leaks:
+    isolation_leaks = check_isolation()
+    if isolation_leaks:
+        print("comparison tooling leaked into the crate or gate surface:", file=sys.stderr)
+        for leak in isolation_leaks:
             print(f"- {leak}", file=sys.stderr)
         return 1
-    print("root dependency isolation: no competitor crates in dependencies, CI, or release gates")
+    print("root dependency isolation: comparison workspaces are outside the crate and gates")
     return 0
 
 

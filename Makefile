@@ -1,10 +1,9 @@
-# FerricML development gates. Third-party benchmarks are explicit and never
-# prerequisites of CI, release, or the first-party benchmark targets.
+# FerricML development gates.
 
 SHELL := /bin/bash
 PYTHON ?= python3
 
-.PHONY: gate gate-full api-check api-refresh reference-check package-check semver-check bench-self bench-history bench-diagnostic bench-rafor
+.PHONY: gate gate-full api-check api-refresh reference-check package-check semver-check bench-self bench-history bench-diagnostic
 
 ## Ordinary pre-push gate: formatting, default lint/tests, dependency isolation,
 ## and the extracted-package external-consumer contract.
@@ -14,6 +13,7 @@ gate:
 	cargo test --locked
 	$(PYTHON) scripts/check_root_dependency_isolation.py
 	$(PYTHON) scripts/check_reference_isolation.py
+	$(PYTHON) scripts/check_source_layout.py
 	$(PYTHON) scripts/check_release_workflow.py
 	$(MAKE) package-check
 
@@ -58,7 +58,3 @@ bench-history:
 ## Capture dated registered-runner evidence without occupying a release slot.
 bench-diagnostic:
 	$(PYTHON) scripts/performance_history.py capture --diagnostic $(PERF_HISTORY_ARGS)
-
-## Explicit on-demand comparison with Rafor in its standalone package.
-bench-rafor:
-	$(PYTHON) scripts/run_forest_performance.py

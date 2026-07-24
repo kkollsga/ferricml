@@ -73,6 +73,4 @@ argument, workflow log, or GitHub release description.
    synchronization. Delete branches only when safe; never reset or force-delete
    another worktree's state.
 
-The standalone Rafor comparison is intentionally not a release or CI gate.
-Run `make bench-rafor` manually when comparison evidence is useful. FerricML's
-release performance record is first-party only.
+FerricML's release performance record is first-party only.

@@ -32,6 +32,8 @@ inbox maps live in `dev-docs/README.md` and `inbox/README.md`;
 - `src/pipeline/` owns fitted preprocessing/model composition without
   per-row dynamic dispatch.
 - `src/artifact/` owns fitted-model persistence and compatibility checks.
+- `src/lib.rs` is the only Rust source at crate root; capability facades own
+  directories and keep estimator-family child modules private.
 - `default = []` is a product boundary. Comparison dependencies must not enter
   the default dependency graph.
 - The public model API follows FerricML's locked semantic contract while
@@ -48,8 +50,8 @@ make gate
 ```
 
 The heavier named entry points are `gate-full`, `api-check`, `api-refresh`,
-`reference-check`, `package-check`, `semver-check`, `bench-self`, `bench-history`, and
-`bench-rafor`. Do not invent substitutes for these contracts.
+`reference-check`, `package-check`, `semver-check`, `bench-self`, and
+`bench-history`. Do not invent substitutes for these contracts.
 
 Run heavier checks only when their surface is touched:
 
@@ -77,10 +79,7 @@ first-party-only local gate on the registered stable runner.
 4. Preserve immutable per-release FerricML results and compare both the prior
    release and an approximately three-release anchor so slow drift cannot
    ratchet into the baseline.
-5. Rafor is a manual, on-demand comparator only. Run the standalone harness
-   with `make bench-rafor`.
-   It must remain outside the root dependency graph, CI, and release gates.
-6. Gate FerricML against its own registered-runner history. Use third-party
+5. Gate FerricML against its own registered-runner history. Use third-party
    results for diagnosis and design decisions, never as a shared-runner test.
 
 ## Code health
