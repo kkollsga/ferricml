@@ -192,5 +192,15 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         predictions
     );
     assert!(RandomForestRegressor::from_artifact(&forest_encoded, transformed_schema).is_err());
+
+    let dispatch: AnyRegressor = forest_decoded.into();
+    let dispatch_encoded = dispatch.to_artifact(schema)?;
+    let dispatch_decoded = AnyRegressor::from_artifact(&dispatch_encoded, schema)?;
+    assert!(matches!(
+        dispatch_decoded.get_params(),
+        AnyRegressorParams::RandomForest(_)
+    ));
+    assert_eq!(dispatch_decoded.predict(&features.as_view())?, predictions);
+    assert!(AnyRegressor::from_artifact(&forest_encoded, schema).is_err());
     Ok(())
 }

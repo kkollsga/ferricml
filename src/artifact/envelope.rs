@@ -19,6 +19,7 @@ pub(crate) const STANDARD_SCALER_RIDGE_PIPELINE_ARTIFACT_KIND: u16 = 7;
 pub(crate) const PAIRWISE_LINEAR_RANKER_ARTIFACT_KIND: u16 = 8;
 pub(crate) const HIST_GRADIENT_BOOSTING_REGRESSOR_ARTIFACT_KIND: u16 = 9;
 pub(crate) const RANDOM_FOREST_REGRESSOR_ARTIFACT_KIND: u16 = 10;
+pub(crate) const ANY_REGRESSOR_ARTIFACT_KIND: u16 = 12;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum SchemaRole {

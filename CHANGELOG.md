@@ -11,6 +11,8 @@ and releases use [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 - Schema-bound `RandomForestRegressor` artifacts that persist backend-neutral
   logical trees and revalidate every decoded topology, count, and parameter.
+- `AnyRegressor` dispatch artifacts that record the fitted runtime variant and
+  nest the estimator's own complete, independently validated artifact.
 
 ### Fixed
 

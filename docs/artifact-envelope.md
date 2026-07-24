@@ -70,6 +70,14 @@ counts it does not recognize, and refuses a forest whose averaged prediction
 could not stay finite. Classifier persistence remains unsupported until the
 multiclass leaf and probability semantics are frozen.
 
+`AnyRegressor` artifacts are dispatch envelopes rather than model formats. They
+carry a dispatch version and a variant tag, then the selected estimator's own
+complete artifact nested whole and length-delimited. Decoding hands the nested
+bytes back to that estimator, so it is checksummed, schema-bound, and validated
+exactly as it would be standalone; a variant tag that disagrees with the nested
+payload fails the nested kind check instead of being reinterpreted. Adding a
+runtime variant therefore never perturbs an existing estimator's payload.
+
 Additional estimator payloads must carry:
 
 - a never-reused estimator kind and independent payload version;
