@@ -17,7 +17,8 @@ use ferricml::metrics::{
     roc_auc_score, root_mean_squared_error,
 };
 use ferricml::model_selection::{
-    HoldoutParams, KFold, SplitError, SplitPartition, StratifiedKFold, TestSize,
+    ClassificationScorer, HoldoutParams, KFold, RegressionScorer, ScoringError, SplitError,
+    SplitPartition, StratifiedKFold, TestSize, score_classifier, score_regressor,
     stratified_train_test_split, train_test_split,
 };
 use ferricml::preprocessing::{StandardScaler, StandardScalerParams};
@@ -203,6 +204,67 @@ fn deterministic_split_membership_and_validation_are_frozen() {
             partition: SplitPartition::Test,
             rows: 1,
             classes: 2,
+        })
+    );
+}
+
+#[test]
+fn direct_estimator_scores_and_errors_are_frozen() {
+    let train = matrix(reference::EXACT_TRAIN_X, 8, 2);
+    let test = matrix(reference::EXACT_TEST_X, 5, 2);
+    let classifier = RandomForestClassifier::fit(
+        &train.as_view(),
+        &BinaryTargets::new(reference::EXACT_CLASSIFIER_Y.to_vec()).unwrap(),
+        exact_classifier_params(),
+    )
+    .unwrap();
+    let expected_labels = BinaryTargets::new(reference::EXACT_LABELS.to_vec()).unwrap();
+    assert_eq!(
+        score_classifier(
+            &classifier,
+            &test.as_view(),
+            &expected_labels,
+            ClassificationScorer::Accuracy,
+        ),
+        Ok(1.0)
+    );
+    assert_eq!(
+        score_classifier(
+            &classifier,
+            &test.as_view(),
+            &expected_labels,
+            ClassificationScorer::Brier,
+        ),
+        brier_score(expected_labels.as_slice(), &[0.0, 0.0, 0.5, 0.75, 0.75])
+            .map_err(ScoringError::Metric)
+    );
+
+    let regressor = RandomForestRegressor::fit(
+        &train.as_view(),
+        &RegressionTargets::new(reference::EXACT_REGRESSION_Y.to_vec()).unwrap(),
+        exact_regressor_params(),
+    )
+    .unwrap();
+    let expected_regression = RegressionTargets::new(reference::EXACT_REGRESSION.to_vec()).unwrap();
+    assert_eq!(
+        score_regressor(
+            &regressor,
+            &test.as_view(),
+            &expected_regression,
+            RegressionScorer::MeanSquaredError,
+        ),
+        Ok(0.0)
+    );
+    assert_eq!(
+        score_regressor(
+            &regressor,
+            &test.as_view(),
+            &RegressionTargets::new(vec![0.0]).unwrap(),
+            RegressionScorer::MeanSquaredError,
+        ),
+        Err(ScoringError::TargetLength {
+            rows: 5,
+            targets: 1,
         })
     );
 }

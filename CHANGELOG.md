@@ -13,6 +13,7 @@ and releases use [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   and undefined-result semantics.
 - Checked row/target selection plus deterministic holdout, K-fold, and
   label-stratified dataset splitting.
+- Batch-level fitted classifier and regressor scoring across built-in metrics.
 
 ### Changed
 

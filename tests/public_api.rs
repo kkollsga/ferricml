@@ -17,8 +17,9 @@ use ferricml::metrics::{
     roc_auc_score, root_mean_squared_error,
 };
 use ferricml::model_selection::{
-    HoldoutParams, KFold, Split, SplitError, StratifiedKFold, TestSize,
-    stratified_train_test_split, train_test_split,
+    ClassificationScorer, HoldoutParams, KFold, RegressionScorer, ScoringError, Split, SplitError,
+    StratifiedKFold, TestSize, score_classifier, score_regressor, stratified_train_test_split,
+    train_test_split,
 };
 use ferricml::pipeline::Pipeline;
 use ferricml::preprocessing::{StandardScaler, StandardScalerParams};
@@ -196,6 +197,54 @@ fn deterministic_selection_paths_and_materialization_are_stable() {
     assert!(stratified_kfold.shuffle());
     assert_eq!(stratified_kfold.random_state(), 3);
     assert_eq!(stratified_kfold.split(binary.as_slice()).unwrap().len(), 2);
+}
+
+#[test]
+fn fitted_estimator_scoring_paths_are_stable() {
+    let matrix = training_matrix();
+    let binary = BinaryTargets::new(vec![0, 0, 1, 1]).unwrap();
+    let classifier = RandomForestClassifier::fit(
+        &matrix.as_view(),
+        &binary,
+        RandomForestClassifierParams::default()
+            .with_n_estimators(1)
+            .with_bootstrap(false),
+    )
+    .unwrap();
+    for scorer in [
+        ClassificationScorer::Accuracy,
+        ClassificationScorer::Precision,
+        ClassificationScorer::Recall,
+        ClassificationScorer::F1,
+        ClassificationScorer::Brier,
+        ClassificationScorer::LogLoss,
+        ClassificationScorer::RocAuc,
+    ] {
+        assert!(score_classifier(&classifier, &matrix.as_view(), &binary, scorer).is_ok());
+    }
+
+    let regression = RegressionTargets::new(vec![0.0, 1.0, 4.0, 9.0]).unwrap();
+    let regressor = Ridge::fit(&matrix.as_view(), &regression, RidgeParams::default()).unwrap();
+    for scorer in [
+        RegressionScorer::MeanAbsoluteError,
+        RegressionScorer::MeanSquaredError,
+        RegressionScorer::RootMeanSquaredError,
+        RegressionScorer::R2,
+    ] {
+        assert!(score_regressor(&regressor, &matrix.as_view(), &regression, scorer).is_ok());
+    }
+    assert!(matches!(
+        score_classifier(
+            &classifier,
+            &matrix.as_view(),
+            &BinaryTargets::new(vec![0, 1]).unwrap(),
+            ClassificationScorer::Accuracy,
+        ),
+        Err(ScoringError::TargetLength {
+            rows: 4,
+            targets: 2
+        })
+    ));
 }
 
 #[test]

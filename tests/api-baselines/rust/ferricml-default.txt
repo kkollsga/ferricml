@@ -632,6 +632,30 @@ pub fn ferricml::metrics::recall_score(&[u8], &[u8]) -> core::result::Result<f64
 pub fn ferricml::metrics::roc_auc_score(&[u8], &[f32]) -> core::result::Result<f64, ferricml::metrics::MetricError>
 pub fn ferricml::metrics::root_mean_squared_error(&[f32], &[f32]) -> core::result::Result<f64, ferricml::metrics::MetricError>
 pub mod ferricml::model_selection
+#[non_exhaustive] pub enum ferricml::model_selection::ClassificationScorer
+pub ferricml::model_selection::ClassificationScorer::Accuracy
+pub ferricml::model_selection::ClassificationScorer::Brier
+pub ferricml::model_selection::ClassificationScorer::F1
+pub ferricml::model_selection::ClassificationScorer::LogLoss
+pub ferricml::model_selection::ClassificationScorer::Precision
+pub ferricml::model_selection::ClassificationScorer::Recall
+pub ferricml::model_selection::ClassificationScorer::RocAuc
+#[non_exhaustive] pub enum ferricml::model_selection::RegressionScorer
+pub ferricml::model_selection::RegressionScorer::MeanAbsoluteError
+pub ferricml::model_selection::RegressionScorer::MeanSquaredError
+pub ferricml::model_selection::RegressionScorer::R2
+pub ferricml::model_selection::RegressionScorer::RootMeanSquaredError
+#[non_exhaustive] pub enum ferricml::model_selection::ScoringError
+pub ferricml::model_selection::ScoringError::Metric(ferricml::metrics::MetricError)
+pub ferricml::model_selection::ScoringError::Prediction(ferricml::api::ModelError)
+pub ferricml::model_selection::ScoringError::TargetLength
+pub ferricml::model_selection::ScoringError::TargetLength::rows: usize
+pub ferricml::model_selection::ScoringError::TargetLength::targets: usize
+pub ferricml::model_selection::ScoringError::UnsupportedClasses
+impl core::error::Error for ferricml::model_selection::ScoringError
+pub fn ferricml::model_selection::ScoringError::source(&self) -> core::option::Option<&(dyn core::error::Error + 'static)>
+impl core::fmt::Display for ferricml::model_selection::ScoringError
+pub fn ferricml::model_selection::ScoringError::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
 #[non_exhaustive] pub enum ferricml::model_selection::SplitError
 pub ferricml::model_selection::SplitError::DuplicateIndex
 pub ferricml::model_selection::SplitError::DuplicateIndex::index: usize
@@ -719,6 +743,8 @@ impl core::iter::traits::iterator::Iterator for ferricml::model_selection::Strat
 pub type ferricml::model_selection::StratifiedKFoldIter::Item = ferricml::model_selection::Split
 pub fn ferricml::model_selection::StratifiedKFoldIter::next(&mut self) -> core::option::Option<Self::Item>
 pub fn ferricml::model_selection::StratifiedKFoldIter::size_hint(&self) -> (usize, core::option::Option<usize>)
+pub fn ferricml::model_selection::score_classifier(&dyn ferricml::api::Classifier, &ferricml::data::MatrixView<'_>, &ferricml::data::BinaryTargets, ferricml::model_selection::ClassificationScorer) -> core::result::Result<f64, ferricml::model_selection::ScoringError>
+pub fn ferricml::model_selection::score_regressor(&dyn ferricml::api::Regressor, &ferricml::data::MatrixView<'_>, &ferricml::data::RegressionTargets, ferricml::model_selection::RegressionScorer) -> core::result::Result<f64, ferricml::model_selection::ScoringError>
 pub fn ferricml::model_selection::stratified_train_test_split(&[u8], ferricml::model_selection::HoldoutParams) -> core::result::Result<ferricml::model_selection::Split, ferricml::model_selection::SplitError>
 pub fn ferricml::model_selection::train_test_split(usize, ferricml::model_selection::HoldoutParams) -> core::result::Result<ferricml::model_selection::Split, ferricml::model_selection::SplitError>
 pub mod ferricml::pipeline
