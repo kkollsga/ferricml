@@ -12,6 +12,7 @@ const MAX_ARTIFACT_FEATURES: usize = 1_000_000;
 const PAYLOAD_VERSION: u16 = 1;
 const STATE_COMPONENT_KIND: u16 = 1;
 const STATE_COMPONENT_VERSION: u16 = 1;
+const STACK_PREFLIGHT_FEATURES: usize = 256;
 
 /// Parameters for [`StandardScaler`].
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -304,7 +305,7 @@ impl StandardScaler {
         transformed as f32
     }
 
-    fn transform_checked<F>(
+    fn transform_preflighted<F>(
         data: &MatrixView<'_>,
         output: &mut [f32],
         transform: F,
@@ -312,13 +313,15 @@ impl StandardScaler {
     where
         F: Fn(f32, usize) -> f32 + Copy,
     {
-        for (row_index, row) in data.iter_rows().enumerate() {
-            for (column, &value) in row.iter().enumerate() {
-                if !transform(value, column).is_finite() {
-                    return Err(ModelError::NonFiniteTransform {
-                        row: row_index,
-                        column,
-                    });
+        if !Self::extrema_are_safe(data, transform) {
+            for (row_index, row) in data.iter_rows().enumerate() {
+                for (column, &value) in row.iter().enumerate() {
+                    if !transform(value, column).is_finite() {
+                        return Err(ModelError::NonFiniteTransform {
+                            row: row_index,
+                            column,
+                        });
+                    }
                 }
             }
         }
@@ -331,6 +334,27 @@ impl StandardScaler {
             }
         }
         Ok(())
+    }
+
+    fn extrema_are_safe<F>(data: &MatrixView<'_>, transform: F) -> bool
+    where
+        F: Fn(f32, usize) -> f32,
+    {
+        if data.columns() > STACK_PREFLIGHT_FEATURES {
+            return false;
+        }
+        let mut minima = [f32::INFINITY; STACK_PREFLIGHT_FEATURES];
+        let mut maxima = [f32::NEG_INFINITY; STACK_PREFLIGHT_FEATURES];
+        for row in data.iter_rows() {
+            for (column, &value) in row.iter().enumerate() {
+                minima[column] = minima[column].min(value);
+                maxima[column] = maxima[column].max(value);
+            }
+        }
+        (0..data.columns()).all(|column| {
+            transform(minima[column], column).is_finite()
+                && transform(maxima[column], column).is_finite()
+        })
     }
 }
 
@@ -387,14 +411,14 @@ impl Transformer for StandardScaler {
         }
 
         match (self.params.with_mean, self.params.with_std) {
-            (false, false) => Self::transform_checked(data, output, |value, _| value)?,
-            (true, false) => Self::transform_checked(data, output, |value, column| {
+            (false, false) => Self::transform_preflighted(data, output, |value, _| value)?,
+            (true, false) => Self::transform_preflighted(data, output, |value, column| {
                 (f64::from(value) - self.means[column]) as f32
             })?,
-            (false, true) => Self::transform_checked(data, output, |value, column| {
+            (false, true) => Self::transform_preflighted(data, output, |value, column| {
                 (f64::from(value) / self.scales[column]) as f32
             })?,
-            (true, true) => Self::transform_checked(data, output, |value, column| {
+            (true, true) => Self::transform_preflighted(data, output, |value, column| {
                 ((f64::from(value) - self.means[column]) / self.scales[column]) as f32
             })?,
         }
@@ -532,6 +556,23 @@ mod tests {
             ModelError::NonFiniteTransform { row: 1, column: 1 }
         );
         assert_eq!(output, [73.0; 4]);
+    }
+
+    #[test]
+    fn unsafe_extrema_fall_back_to_the_first_row_major_error() {
+        let fitted =
+            DenseMatrix::new(vec![1.0, 1.0, 1.0 + f32::EPSILON, 1.0 + f32::EPSILON], 2, 2).unwrap();
+        let scaler =
+            StandardScaler::fit(&fitted.as_view(), StandardScalerParams::default()).unwrap();
+        let extreme = DenseMatrix::new(vec![1.0, f32::MAX, f32::MAX, 1.0], 2, 2).unwrap();
+        let mut output = [41.0; 4];
+        assert_eq!(
+            scaler
+                .transform_into(&extreme.as_view(), &mut output)
+                .unwrap_err(),
+            ModelError::NonFiniteTransform { row: 0, column: 1 }
+        );
+        assert_eq!(output, [41.0; 4]);
     }
 
     #[test]
