@@ -1,6 +1,9 @@
 use criterion::{BatchSize, BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
-use ferricml::data::{BinaryTargets, DenseMatrix};
-use ferricml::ensemble::{MaxFeatures, RandomForestClassifier, RandomForestClassifierParams};
+use ferricml::data::{BinaryTargets, DenseMatrix, RegressionTargets};
+use ferricml::ensemble::{
+    MaxFeatures, RandomForestClassifier, RandomForestClassifierParams, RandomForestRegressor,
+    RandomForestRegressorParams,
+};
 use std::hint::black_box;
 
 fn fixture(rows: usize, columns: usize) -> (DenseMatrix, BinaryTargets) {
@@ -109,5 +112,48 @@ fn training(c: &mut Criterion) {
     group.finish();
 }
 
-criterion_group!(benches, inference, training);
+/// Round-tripping a fitted forest through its artifact: encoding expands every
+/// packed tree into logical records, and decoding revalidates each one before
+/// rebuilding the packed layout.
+fn artifact(c: &mut Criterion) {
+    let (rows, columns, trees) = (512, 16, 32);
+    let (data, labels) = fixture(rows, columns);
+    let targets = RegressionTargets::new(
+        labels
+            .as_slice()
+            .iter()
+            .enumerate()
+            .map(|(row, &label)| f32::from(label) * 4.0 + (row % 11) as f32)
+            .collect(),
+    )
+    .unwrap();
+    let model = RandomForestRegressor::fit(
+        &data.as_view(),
+        &targets,
+        RandomForestRegressorParams::default()
+            .with_n_estimators(trees)
+            .with_max_depth(Some(8))
+            .with_max_features(MaxFeatures::All)
+            .with_random_state(42),
+    )
+    .unwrap();
+    let schema = [42; 32];
+    let encoded = model.to_artifact(schema).unwrap();
+
+    let mut group = c.benchmark_group("ferricml_artifact_v1_forest_regressor_512x16_32t");
+    group.throughput(Throughput::Bytes(encoded.len() as u64));
+    group.bench_function(BenchmarkId::from_parameter("encode"), |bencher| {
+        bencher.iter(|| {
+            black_box(model.to_artifact(black_box(schema)).unwrap());
+        });
+    });
+    group.bench_function(BenchmarkId::from_parameter("decode"), |bencher| {
+        bencher.iter(|| {
+            black_box(RandomForestRegressor::from_artifact(black_box(&encoded), schema).unwrap());
+        });
+    });
+    group.finish();
+}
+
+criterion_group!(benches, inference, training, artifact);
 criterion_main!(benches);

@@ -15,6 +15,10 @@ seeded holdout over 4,096 rows plus five-fold ridge cross-validation over a
 256x12 fixture. The `boosting` target measures single-row
 prediction for 32x7, 64x7, 64x15, and 128x15 tree/leaf limits; 32-row and
 1,024-row caller-owned prediction for 64x7; and 2,048x48 fitting for 64x7.
+The `forest` target measures classifier inference and fitting, and adds
+artifact encode/decode round trips for a 512x16 32-tree regressor. The `models`
+target also measures permutation importance over a 256x8 fixture with three
+repeats, for a forest and a ridge model.
 All data, targets, pair construction, parameters, and model schemas are fixed
 by the benchmark source.
 

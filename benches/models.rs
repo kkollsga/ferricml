@@ -1,6 +1,8 @@
 use criterion::{BatchSize, BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
 use ferricml::api::Classifier;
 use ferricml::data::{BinaryTargets, DenseMatrix, RegressionTargets};
+use ferricml::ensemble::{MaxFeatures, RandomForestRegressor, RandomForestRegressorParams};
+use ferricml::inspection::{PermutationImportanceParams, permutation_importance_regressor_into};
 use ferricml::linear_model::{
     LinearRegression, LinearRegressionParams, LogisticRegression, LogisticRegressionParams, Ridge,
     RidgeParams,
@@ -26,6 +28,9 @@ const CV_ROWS: usize = 256;
 const CV_COLUMNS: usize = 12;
 const HOLDOUT_ROWS: usize = 1_000_000;
 const MANY_CLASS_ROWS: usize = 262_144;
+const INSPECTION_ROWS: usize = 256;
+const INSPECTION_COLUMNS: usize = 8;
+const INSPECTION_REPEATS: usize = 3;
 
 fn fixture(rows: usize, columns: usize) -> (DenseMatrix, RegressionTargets) {
     let mut state = 0x9e37_79b9_u32;
@@ -424,12 +429,70 @@ fn split_workloads(c: &mut Criterion) {
     many_class.finish();
 }
 
+/// Permutation importance is a scoring loop, not a fitting loop: one baseline
+/// score plus `columns * repeats` rescorings over a permuted column, all from
+/// a workspace allocated once.
+fn inspection(c: &mut Criterion) {
+    let (data, targets) = fixture(INSPECTION_ROWS, INSPECTION_COLUMNS);
+    let forest = RandomForestRegressor::fit(
+        &data.as_view(),
+        &targets,
+        RandomForestRegressorParams::default()
+            .with_n_estimators(16)
+            .with_max_depth(Some(8))
+            .with_max_features(MaxFeatures::All)
+            .with_random_state(31),
+    )
+    .unwrap();
+    let ridge = Ridge::fit(&data.as_view(), &targets, RidgeParams::default()).unwrap();
+    let params = PermutationImportanceParams::default()
+        .with_n_repeats(INSPECTION_REPEATS)
+        .with_random_state(31);
+    let mut means = vec![0.0; INSPECTION_COLUMNS];
+    let mut std_devs = vec![0.0; INSPECTION_COLUMNS];
+
+    let mut group = c.benchmark_group("ferricml_inspection_v1_permutation_256x8_3r");
+    group.throughput(Throughput::Elements(
+        (INSPECTION_ROWS * INSPECTION_COLUMNS * INSPECTION_REPEATS) as u64,
+    ));
+    group.bench_function(BenchmarkId::from_parameter("forest_mse"), |bencher| {
+        bencher.iter(|| {
+            permutation_importance_regressor_into(
+                black_box(&forest),
+                black_box(&data.as_view()),
+                &targets,
+                RegressionScorer::MeanSquaredError,
+                params,
+                black_box(&mut means),
+                black_box(&mut std_devs),
+            )
+            .unwrap();
+        });
+    });
+    group.bench_function(BenchmarkId::from_parameter("ridge_r2"), |bencher| {
+        bencher.iter(|| {
+            permutation_importance_regressor_into(
+                black_box(&ridge),
+                black_box(&data.as_view()),
+                &targets,
+                RegressionScorer::R2,
+                params,
+                black_box(&mut means),
+                black_box(&mut std_devs),
+            )
+            .unwrap();
+        });
+    });
+    group.finish();
+}
+
 criterion_group!(
     benches,
     inference,
     training,
     logistic_and_scaler,
     evaluation,
-    split_workloads
+    split_workloads,
+    inspection
 );
 criterion_main!(benches);
