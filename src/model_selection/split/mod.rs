@@ -323,19 +323,24 @@ impl HoldoutParams {
 /// Splits sample indices into one train and test partition.
 pub fn train_test_split(samples: usize, params: HoldoutParams) -> Result<Split, SplitError> {
     let test_count = resolve_test_count(samples, params.test_size)?;
-    let mut order = (0..samples).collect::<Vec<_>>();
-    if params.shuffle {
-        stable_shuffle(&mut order, params.random_state);
-    }
     let train_count = samples - test_count;
-    let mut train_indices = order[..train_count].to_vec();
-    let mut test_indices = order[train_count..].to_vec();
-    train_indices.sort_unstable();
-    test_indices.sort_unstable();
-    Ok(Split {
-        train_indices,
-        test_indices,
-    })
+    if !params.shuffle {
+        return Ok(Split {
+            train_indices: (0..train_count).collect(),
+            test_indices: (train_count..samples).collect(),
+        });
+    }
+
+    let mut order = (0..samples).collect::<Vec<_>>();
+    let mut test_membership = vec![0_u8; samples];
+    let mut rng = StableRng::new(params.random_state);
+    for index in (train_count..samples).rev() {
+        let other = rng.index(index + 1);
+        order.swap(index, other);
+        test_membership[order[index]] = 1;
+    }
+    drop(order);
+    Ok(split_from_test_membership(&test_membership, test_count))
 }
 
 /// Splits indices while preserving every observed label in both partitions.
@@ -684,6 +689,22 @@ fn class_counts(labels: &[u8]) -> [usize; 256] {
         counts[label as usize] += 1;
     }
     counts
+}
+
+fn split_from_test_membership(test_membership: &[u8], test_count: usize) -> Split {
+    let mut train_indices = Vec::with_capacity(test_membership.len() - test_count);
+    let mut test_indices = Vec::with_capacity(test_count);
+    for (index, &is_test) in test_membership.iter().enumerate() {
+        if is_test != 0 {
+            test_indices.push(index);
+        } else {
+            train_indices.push(index);
+        }
+    }
+    Split {
+        train_indices,
+        test_indices,
+    }
 }
 
 fn stratified_test_quotas(counts: &[usize; 256], test_count: usize) -> [usize; 256] {
