@@ -858,11 +858,13 @@ pub const fn ferricml::metrics::ClassCounts::true_positives(self) -> u64
 pub struct ferricml::metrics::ConfusionMatrix
 impl ferricml::metrics::ConfusionMatrix
 pub fn ferricml::metrics::ConfusionMatrix::accuracy(&self) -> f64
+pub fn ferricml::metrics::ConfusionMatrix::balanced_accuracy(&self) -> f64
 pub fn ferricml::metrics::ConfusionMatrix::class_counts(&self, usize) -> core::option::Option<ferricml::metrics::ClassCounts>
 pub fn ferricml::metrics::ConfusionMatrix::counts(&self) -> &[u64]
 pub fn ferricml::metrics::ConfusionMatrix::f1(&self, impl core::convert::Into<ferricml::metrics::Averaging>) -> core::result::Result<f64, ferricml::metrics::MetricError>
 pub fn ferricml::metrics::ConfusionMatrix::fbeta(&self, f64, impl core::convert::Into<ferricml::metrics::Averaging>) -> core::result::Result<f64, ferricml::metrics::MetricError>
 pub fn ferricml::metrics::ConfusionMatrix::labels(&self) -> &[u8]
+pub fn ferricml::metrics::ConfusionMatrix::matthews_correlation(&self) -> core::result::Result<f64, ferricml::metrics::MetricError>
 pub fn ferricml::metrics::ConfusionMatrix::n_labels(&self) -> usize
 pub fn ferricml::metrics::ConfusionMatrix::new(&[u8], &[u8]) -> core::result::Result<Self, ferricml::metrics::MetricError>
 pub fn ferricml::metrics::ConfusionMatrix::precision(&self, impl core::convert::Into<ferricml::metrics::Averaging>) -> core::result::Result<f64, ferricml::metrics::MetricError>

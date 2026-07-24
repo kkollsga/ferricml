@@ -63,6 +63,10 @@ and releases use [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - `metrics::Averaging` and `metrics::ZeroDivision`, making the treatment of a
   class with an empty denominator an explicit typed choice. The default reports
   `MetricError::Undefined` instead of substituting a value.
+- `ConfusionMatrix::balanced_accuracy`, mean recall over the classes that have
+  true rows, and `ConfusionMatrix::matthews_correlation`, which correlates
+  expected and predicted labels over any number of classes and is undefined
+  rather than zero when either side is constant.
 
 ### Fixed
 

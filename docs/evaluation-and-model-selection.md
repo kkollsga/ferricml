@@ -38,6 +38,12 @@ multiclass evaluation share a single set of names:
 - `Weighted` weighs each per-class score by that class's true support, so a
   class with no true rows carries no weight.
 
+`balanced_accuracy` and `matthews_correlation` read the same matrix and need no
+averaging choice. Balanced accuracy is mean recall over the classes that have
+true rows, so it is always defined. Matthews correlation runs from `-1.0` to
+`1.0` over any number of classes and is `MetricError::Undefined` — not zero —
+when either side of the result is constant and so has no variance.
+
 A class that is never predicted has no precision, and a class with no true rows
 has no recall. FerricML reports that as `MetricError::Undefined` by default
 rather than substituting a value. `Averaging::with_zero_division` states the

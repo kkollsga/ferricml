@@ -133,6 +133,59 @@ impl ConfusionMatrix {
         correct as f64 / self.total as f64
     }
 
+    /// Mean recall over the classes that have true rows.
+    ///
+    /// This is the macro-averaged recall of every class actually present in the
+    /// expected labels, which is what makes it insensitive to class imbalance.
+    /// A class predicted but never observed has no recall and no place in the
+    /// mean, so — unlike [`ConfusionMatrix::recall`] with [`Average::Macro`] —
+    /// this is always defined.
+    pub fn balanced_accuracy(&self) -> f64 {
+        let mut total = 0.0_f64;
+        let mut classes = 0.0_f64;
+        for index in 0..self.labels.len() {
+            let counts = self.counts_at(index);
+            if counts.support() == 0 {
+                continue;
+            }
+            total += counts.true_positives() as f64 / counts.support() as f64;
+            classes += 1.0;
+        }
+        debug_assert!(classes > 0.0, "a non-empty matrix has a class with support");
+        total / classes
+    }
+
+    /// Matthews correlation between the expected and predicted labels.
+    ///
+    /// The coefficient runs from `-1.0` for complete disagreement through
+    /// `0.0` for chance agreement to `1.0` for a perfect result, over any
+    /// number of classes. It is undefined — rather than reported as zero —
+    /// when either side of the result is constant, because a constant vector
+    /// has no variance to correlate.
+    pub fn matthews_correlation(&self) -> Result<f64, MetricError> {
+        let labels = self.labels.len();
+        let total = self.total as f64;
+        let mut correct = 0.0_f64;
+        let mut agreement = 0.0_f64;
+        let mut expected_squares = 0.0_f64;
+        let mut predicted_squares = 0.0_f64;
+        for index in 0..labels {
+            let counts = self.counts_at(index);
+            let support = counts.support() as f64;
+            let predicted = counts.predicted() as f64;
+            correct += counts.true_positives() as f64;
+            agreement += support * predicted;
+            expected_squares += support * support;
+            predicted_squares += predicted * predicted;
+        }
+        let expected_variance = total * total - expected_squares;
+        let predicted_variance = total * total - predicted_squares;
+        if expected_variance <= 0.0 || predicted_variance <= 0.0 {
+            return Err(MetricError::Undefined);
+        }
+        Ok((correct * total - agreement) / (expected_variance * predicted_variance).sqrt())
+    }
+
     /// Positive predictive value, combined the requested way.
     pub fn precision(&self, averaging: impl Into<Averaging>) -> Result<f64, MetricError> {
         self.average(averaging.into(), Score::Precision)
@@ -472,6 +525,70 @@ mod tests {
             assert_eq!(matrix.f1(average), Ok(1.0));
         }
         assert_eq!(matrix.accuracy(), 1.0);
+    }
+
+    #[test]
+    fn balanced_accuracy_is_macro_recall_over_the_classes_that_occur() {
+        let matrix = three_class();
+        assert_near(Ok(matrix.balanced_accuracy()), 0.666_666_666_666_666_6);
+        assert_eq!(
+            Ok(matrix.balanced_accuracy()),
+            matrix.recall(Average::Macro)
+        );
+
+        // Class 2 is predicted but never true, so it has no recall to average.
+        let absent_truth = ConfusionMatrix::new(&[0, 0, 1], &[0, 2, 1]).unwrap();
+        assert_eq!(
+            absent_truth.recall(Average::Macro),
+            Err(MetricError::Undefined)
+        );
+        assert_near(Ok(absent_truth.balanced_accuracy()), 0.75);
+
+        // Imbalance is what balanced accuracy exists to expose.
+        let mut expected = vec![0_u8; 90];
+        expected.extend(std::iter::repeat_n(1, 10));
+        let majority = ConfusionMatrix::new(&expected, &[0_u8; 100]).unwrap();
+        assert_eq!(majority.accuracy(), 0.9);
+        assert_eq!(majority.balanced_accuracy(), 0.5);
+    }
+
+    #[test]
+    fn matthews_correlation_spans_disagreement_to_agreement() {
+        assert_near(
+            three_class().matthews_correlation(),
+            0.452_380_952_380_952_4,
+        );
+        assert_near(
+            ConfusionMatrix::new(&[0, 0, 1, 1], &[0, 1, 1, 1])
+                .unwrap()
+                .matthews_correlation(),
+            0.577_350_269_189_625_8,
+        );
+        assert_eq!(
+            ConfusionMatrix::new(&[0, 1, 2], &[0, 1, 2])
+                .unwrap()
+                .matthews_correlation(),
+            Ok(1.0)
+        );
+        assert_eq!(
+            ConfusionMatrix::new(&[0, 1, 0, 1], &[1, 0, 1, 0])
+                .unwrap()
+                .matthews_correlation(),
+            Ok(-1.0)
+        );
+        // A constant expected or predicted vector has no variance to correlate.
+        for (expected, predicted) in [
+            (&[0, 0][..], &[0, 0][..]),
+            (&[0, 1][..], &[1, 1][..]),
+            (&[1, 1][..], &[0, 1][..]),
+        ] {
+            assert_eq!(
+                ConfusionMatrix::new(expected, predicted)
+                    .unwrap()
+                    .matthews_correlation(),
+                Err(MetricError::Undefined)
+            );
+        }
     }
 
     #[test]
