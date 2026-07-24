@@ -8,11 +8,12 @@ use crate::artifact::{
 };
 use crate::data::{MatrixView, SampleWeights};
 
+use super::scaling::{transform_preflighted, validate_transform_request};
+
 const MAX_ARTIFACT_FEATURES: usize = 1_000_000;
 const PAYLOAD_VERSION: u16 = 1;
 const STATE_COMPONENT_KIND: u16 = 1;
 const STATE_COMPONENT_VERSION: u16 = 1;
-const STACK_PREFLIGHT_FEATURES: usize = 256;
 
 /// Parameters for [`StandardScaler`].
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -304,58 +305,6 @@ impl StandardScaler {
         }
         transformed as f32
     }
-
-    fn transform_preflighted<F>(
-        data: &MatrixView<'_>,
-        output: &mut [f32],
-        transform: F,
-    ) -> Result<(), ModelError>
-    where
-        F: Fn(f32, usize) -> f32 + Copy,
-    {
-        if !Self::extrema_are_safe(data, transform) {
-            for (row_index, row) in data.iter_rows().enumerate() {
-                for (column, &value) in row.iter().enumerate() {
-                    if !transform(value, column).is_finite() {
-                        return Err(ModelError::NonFiniteTransform {
-                            row: row_index,
-                            column,
-                        });
-                    }
-                }
-            }
-        }
-        for (row, output_row) in data
-            .iter_rows()
-            .zip(output.chunks_exact_mut(data.columns()))
-        {
-            for (column, (&value, slot)) in row.iter().zip(output_row).enumerate() {
-                *slot = transform(value, column);
-            }
-        }
-        Ok(())
-    }
-
-    fn extrema_are_safe<F>(data: &MatrixView<'_>, transform: F) -> bool
-    where
-        F: Fn(f32, usize) -> f32,
-    {
-        if data.columns() > STACK_PREFLIGHT_FEATURES {
-            return false;
-        }
-        let mut minima = [f32::INFINITY; STACK_PREFLIGHT_FEATURES];
-        let mut maxima = [f32::NEG_INFINITY; STACK_PREFLIGHT_FEATURES];
-        for row in data.iter_rows() {
-            for (column, &value) in row.iter().enumerate() {
-                minima[column] = minima[column].min(value);
-                maxima[column] = maxima[column].max(value);
-            }
-        }
-        (0..data.columns()).all(|column| {
-            transform(minima[column], column).is_finite()
-                && transform(maxima[column], column).is_finite()
-        })
-    }
 }
 
 fn decode_bool(value: u32) -> Result<bool, ArtifactError> {
@@ -396,35 +345,17 @@ impl Transformer for StandardScaler {
         data: &MatrixView<'_>,
         output: &'output mut [f32],
     ) -> Result<MatrixView<'output>, ModelError> {
-        if data.columns() != self.n_features_in {
-            return Err(ModelError::FeatureDimension {
-                expected: self.n_features_in,
-                actual: data.columns(),
-            });
-        }
-        let expected =
-            data.rows()
-                .checked_mul(self.n_features_in)
-                .ok_or(ModelError::OutputShapeOverflow {
-                    rows: data.rows(),
-                    columns: self.n_features_in,
-                })?;
-        if output.len() != expected {
-            return Err(ModelError::OutputLength {
-                expected,
-                actual: output.len(),
-            });
-        }
+        validate_transform_request(self.n_features_in, data, output)?;
 
         match (self.params.with_mean, self.params.with_std) {
-            (false, false) => Self::transform_preflighted(data, output, |value, _| value)?,
-            (true, false) => Self::transform_preflighted(data, output, |value, column| {
+            (false, false) => transform_preflighted(data, output, |value, _| value)?,
+            (true, false) => transform_preflighted(data, output, |value, column| {
                 (f64::from(value) - self.means[column]) as f32
             })?,
-            (false, true) => Self::transform_preflighted(data, output, |value, column| {
+            (false, true) => transform_preflighted(data, output, |value, column| {
                 (f64::from(value) / self.scales[column]) as f32
             })?,
-            (true, true) => Self::transform_preflighted(data, output, |value, column| {
+            (true, true) => transform_preflighted(data, output, |value, column| {
                 ((f64::from(value) - self.means[column]) / self.scales[column]) as f32
             })?,
         }

@@ -32,7 +32,9 @@ use ferricml::linear_model::{
     LinearRegression, LinearRegressionParams, LogisticRegression, LogisticRegressionParams, Ridge,
     RidgeParams,
 };
-use ferricml::preprocessing::{StandardScaler, StandardScalerParams};
+use ferricml::preprocessing::{
+    MinMaxScaler, MinMaxScalerParams, StandardScaler, StandardScalerParams,
+};
 use ferricml::ranking::{
     PairIndex, PairOutcome, PairwiseError, PairwiseLinearRanker, PairwiseLinearRankerParams,
     PairwiseObservation,
@@ -384,6 +386,24 @@ impl TransformerCase for StandardScalerCase {
     }
 }
 
+struct MinMaxScalerCase;
+
+impl TransformerCase for MinMaxScalerCase {
+    type Model = MinMaxScaler;
+    const NAME: &'static str = "MinMaxScaler";
+
+    fn fit(data: &MatrixView<'_>) -> Self::Model {
+        MinMaxScaler::fit(data, MinMaxScalerParams::default()).expect("fit")
+    }
+
+    fn round_trip(model: &Self::Model) -> RoundTrip<Self::Model> {
+        round_trip(
+            || model.to_artifact(SCHEMA, TRANSFORMED_SCHEMA),
+            |bytes| MinMaxScaler::from_artifact(bytes, SCHEMA, TRANSFORMED_SCHEMA),
+        )
+    }
+}
+
 // ----------------------------------------------------- registration list
 //
 // One line per estimator. `check_batch_only_*` is the weaker entry point and
@@ -446,6 +466,11 @@ fn dummy_regressor_conforms() {
 #[test]
 fn standard_scaler_conforms() {
     check_transformer::<StandardScalerCase>();
+}
+
+#[test]
+fn min_max_scaler_conforms() {
+    check_transformer::<MinMaxScalerCase>();
 }
 
 // -------------------------------------------------- estimator-specific tests

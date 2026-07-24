@@ -26,6 +26,10 @@ and releases use [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - `dummy::DummyClassifier` and `dummy::DummyRegressor`, baseline estimators
   that ignore their features and predict the majority class or the training
   mean. They give a quality floor to compare a real estimator against.
+- `preprocessing::MinMaxScaler`, a schema-bound transformer that maps every
+  fitted feature onto `0.0..=1.0`, carries a column with no spread to `0.0`
+  instead of dividing by zero, and can optionally clip later batches into the
+  fitted range.
 - `AnyClassifier::capabilities` and `AnyRegressor::capabilities`, reporting the
   selected runtime variant's capabilities. The declared constant on each
   dispatch enum and each concrete pipeline is composed from its variants or
