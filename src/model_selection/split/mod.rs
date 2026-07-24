@@ -377,28 +377,41 @@ pub fn stratified_train_test_split(
         }
     }
 
-    let mut order = (0..samples).collect::<Vec<_>>();
+    let mut remaining_quotas = stratified_test_quotas(&counts, test_count);
+    let mut remaining_total = test_count;
+    let mut test_membership = vec![0_u8; samples];
     if params.shuffle {
-        stable_shuffle(&mut order, params.random_state);
+        let mut order = (0..samples).collect::<Vec<_>>();
+        let mut rng = StableRng::new(params.random_state);
+        for position in (1..samples).rev() {
+            let other = rng.index(position + 1);
+            order.swap(position, other);
+            let index = order[position];
+            let label = labels[index] as usize;
+            if remaining_quotas[label] > 0 {
+                test_membership[index] = 1;
+                remaining_quotas[label] -= 1;
+                remaining_total -= 1;
+                if remaining_total == 0 {
+                    break;
+                }
+            }
+        }
+    } else {
+        for index in (0..samples).rev() {
+            let label = labels[index] as usize;
+            if remaining_quotas[label] > 0 {
+                test_membership[index] = 1;
+                remaining_quotas[label] -= 1;
+                remaining_total -= 1;
+                if remaining_total == 0 {
+                    break;
+                }
+            }
+        }
     }
-    let mut buckets = (0..=u8::MAX).map(|_| Vec::new()).collect::<Vec<_>>();
-    for index in order {
-        buckets[labels[index] as usize].push(index);
-    }
-    let quotas = stratified_test_quotas(&counts, test_count);
-    let mut train_indices = Vec::with_capacity(train_count);
-    let mut test_indices = Vec::with_capacity(test_count);
-    for (label, bucket) in buckets.into_iter().enumerate() {
-        let test_start = bucket.len().saturating_sub(quotas[label]);
-        train_indices.extend_from_slice(&bucket[..test_start]);
-        test_indices.extend_from_slice(&bucket[test_start..]);
-    }
-    train_indices.sort_unstable();
-    test_indices.sort_unstable();
-    Ok(Split {
-        train_indices,
-        test_indices,
-    })
+    debug_assert_eq!(remaining_total, 0);
+    Ok(split_from_test_membership(&test_membership, test_count))
 }
 
 /// Deterministic K-fold splitter configuration.
