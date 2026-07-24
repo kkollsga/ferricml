@@ -578,6 +578,44 @@ pub fn ferricml::linear_model::RidgeParams::with_alpha(self, f32) -> Self
 pub fn ferricml::linear_model::RidgeParams::with_fit_intercept(self, bool) -> Self
 impl core::default::Default for ferricml::linear_model::RidgeParams
 pub fn ferricml::linear_model::RidgeParams::default() -> Self
+pub mod ferricml::metrics
+#[non_exhaustive] pub enum ferricml::metrics::MetricError
+pub ferricml::metrics::MetricError::Empty
+pub ferricml::metrics::MetricError::InvalidBinaryTarget
+pub ferricml::metrics::MetricError::InvalidBinaryTarget::index: usize
+pub ferricml::metrics::MetricError::InvalidBinaryTarget::input: usize
+pub ferricml::metrics::MetricError::InvalidBinaryTarget::value: u8
+pub ferricml::metrics::MetricError::InvalidProbability
+pub ferricml::metrics::MetricError::InvalidProbability::index: usize
+pub ferricml::metrics::MetricError::LengthMismatch
+pub ferricml::metrics::MetricError::LengthMismatch::actual: usize
+pub ferricml::metrics::MetricError::LengthMismatch::expected: usize
+pub ferricml::metrics::MetricError::NonFiniteValue
+pub ferricml::metrics::MetricError::NonFiniteValue::index: usize
+pub ferricml::metrics::MetricError::NonFiniteValue::input: usize
+pub ferricml::metrics::MetricError::Undefined
+impl core::error::Error for ferricml::metrics::MetricError
+impl core::fmt::Display for ferricml::metrics::MetricError
+pub fn ferricml::metrics::MetricError::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+pub struct ferricml::metrics::BinaryConfusionMatrix
+impl ferricml::metrics::BinaryConfusionMatrix
+pub const fn ferricml::metrics::BinaryConfusionMatrix::false_negatives(self) -> u64
+pub const fn ferricml::metrics::BinaryConfusionMatrix::false_positives(self) -> u64
+pub const fn ferricml::metrics::BinaryConfusionMatrix::total(self) -> u64
+pub const fn ferricml::metrics::BinaryConfusionMatrix::true_negatives(self) -> u64
+pub const fn ferricml::metrics::BinaryConfusionMatrix::true_positives(self) -> u64
+pub fn ferricml::metrics::accuracy_score(&[u8], &[u8]) -> core::result::Result<f64, ferricml::metrics::MetricError>
+pub fn ferricml::metrics::binary_confusion_matrix(&[u8], &[u8]) -> core::result::Result<ferricml::metrics::BinaryConfusionMatrix, ferricml::metrics::MetricError>
+pub fn ferricml::metrics::brier_score(&[u8], &[f32]) -> core::result::Result<f64, ferricml::metrics::MetricError>
+pub fn ferricml::metrics::f1_score(&[u8], &[u8]) -> core::result::Result<f64, ferricml::metrics::MetricError>
+pub fn ferricml::metrics::log_loss(&[u8], &[f32]) -> core::result::Result<f64, ferricml::metrics::MetricError>
+pub fn ferricml::metrics::mean_absolute_error(&[f32], &[f32]) -> core::result::Result<f64, ferricml::metrics::MetricError>
+pub fn ferricml::metrics::mean_squared_error(&[f32], &[f32]) -> core::result::Result<f64, ferricml::metrics::MetricError>
+pub fn ferricml::metrics::precision_score(&[u8], &[u8]) -> core::result::Result<f64, ferricml::metrics::MetricError>
+pub fn ferricml::metrics::r2_score(&[f32], &[f32]) -> core::result::Result<f64, ferricml::metrics::MetricError>
+pub fn ferricml::metrics::recall_score(&[u8], &[u8]) -> core::result::Result<f64, ferricml::metrics::MetricError>
+pub fn ferricml::metrics::roc_auc_score(&[u8], &[f32]) -> core::result::Result<f64, ferricml::metrics::MetricError>
+pub fn ferricml::metrics::root_mean_squared_error(&[f32], &[f32]) -> core::result::Result<f64, ferricml::metrics::MetricError>
 pub mod ferricml::pipeline
 pub struct ferricml::pipeline::Pipeline<T, E>
 impl ferricml::pipeline::Pipeline<ferricml::preprocessing::StandardScaler, ferricml::linear_model::LinearRegression>

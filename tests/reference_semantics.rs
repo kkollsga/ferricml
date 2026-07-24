@@ -11,6 +11,11 @@ use ferricml::linear_model::{
     LinearRegression, LinearRegressionParams, LogisticRegression, LogisticRegressionParams, Ridge,
     RidgeParams,
 };
+use ferricml::metrics::{
+    MetricError, accuracy_score, binary_confusion_matrix, brier_score, f1_score, log_loss,
+    mean_absolute_error, mean_squared_error, precision_score, r2_score, recall_score,
+    roc_auc_score, root_mean_squared_error,
+};
 use ferricml::preprocessing::{StandardScaler, StandardScalerParams};
 
 #[allow(dead_code, clippy::excessive_precision)]
@@ -73,6 +78,71 @@ fn assert_close_f64(actual: &[f64], expected: &[f64]) {
             "value {index}: expected {expected}, got {actual}"
         );
     }
+}
+
+#[test]
+fn evaluation_metric_values_and_validation_order_are_frozen() {
+    let expected = [0, 0, 1, 1];
+    let predicted = [0, 1, 1, 1];
+    let probabilities = [0.1, 0.8, 0.7, 0.9];
+    let confusion = binary_confusion_matrix(&expected, &predicted).unwrap();
+    assert_eq!(
+        [
+            confusion.true_negatives(),
+            confusion.false_positives(),
+            confusion.false_negatives(),
+            confusion.true_positives(),
+        ],
+        [1, 1, 0, 2]
+    );
+    assert_eq!(accuracy_score(&expected, &predicted), Ok(0.75));
+    assert_eq!(precision_score(&expected, &predicted), Ok(2.0 / 3.0));
+    assert_eq!(recall_score(&expected, &predicted), Ok(1.0));
+    assert_eq!(f1_score(&expected, &predicted), Ok(0.8));
+    assert_eq!(
+        brier_score(&expected, &probabilities),
+        Ok(0.187_500_007_823_109_83)
+    );
+    assert_eq!(
+        log_loss(&expected, &probabilities),
+        Ok(0.544_208_498_117_417_1)
+    );
+    assert_eq!(roc_auc_score(&expected, &probabilities), Ok(0.75));
+
+    let regression_expected = [1.0, 2.0, 3.0, 4.0];
+    let regression_predicted = [1.0, 3.0, 2.0, 5.0];
+    assert_eq!(
+        mean_absolute_error(&regression_expected, &regression_predicted),
+        Ok(0.75)
+    );
+    assert_eq!(
+        mean_squared_error(&regression_expected, &regression_predicted),
+        Ok(0.75)
+    );
+    assert_eq!(
+        root_mean_squared_error(&regression_expected, &regression_predicted),
+        Ok(0.75_f64.sqrt())
+    );
+    assert_eq!(
+        r2_score(&regression_expected, &regression_predicted),
+        Ok(0.4)
+    );
+
+    assert_eq!(
+        brier_score(&[2], &[]),
+        Err(MetricError::LengthMismatch {
+            expected: 1,
+            actual: 0,
+        })
+    );
+    assert_eq!(
+        roc_auc_score(&[1, 1], &[0.1, 0.9]),
+        Err(MetricError::Undefined)
+    );
+    assert_eq!(
+        r2_score(&[2.0, 2.0], &[2.0, 2.0]),
+        Err(MetricError::Undefined)
+    );
 }
 
 #[test]

@@ -7,6 +7,11 @@ and releases use [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+
+- Deterministic classification and regression metrics with explicit validation
+  and undefined-result semantics.
+
 ### Changed
 
 - Keep third-party provenance and regeneration tooling in local development

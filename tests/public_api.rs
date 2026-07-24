@@ -9,6 +9,11 @@ use ferricml::linear_model::{
     LinearRegression, LinearRegressionParams, LogisticRegression, LogisticRegressionParams, Ridge,
     RidgeParams,
 };
+use ferricml::metrics::{
+    MetricError, accuracy_score, binary_confusion_matrix, brier_score, f1_score, log_loss,
+    mean_absolute_error, mean_squared_error, precision_score, r2_score, recall_score,
+    roc_auc_score, root_mean_squared_error,
+};
 use ferricml::pipeline::Pipeline;
 use ferricml::preprocessing::{StandardScaler, StandardScalerParams};
 use ferricml::ranking::{
@@ -80,6 +85,53 @@ where
     E: HasParams<Params = P>,
 {
     estimator.get_params()
+}
+
+#[test]
+fn evaluation_metric_paths_and_results_are_stable() {
+    let expected = [0, 0, 1, 1];
+    let predicted = [0, 1, 1, 1];
+    let probabilities = [0.1, 0.8, 0.7, 0.9];
+    let confusion = binary_confusion_matrix(&expected, &predicted).unwrap();
+    assert_eq!(confusion.true_negatives(), 1);
+    assert_eq!(confusion.false_positives(), 1);
+    assert_eq!(confusion.false_negatives(), 0);
+    assert_eq!(confusion.true_positives(), 2);
+    assert_eq!(confusion.total(), 4);
+    assert_eq!(accuracy_score(&expected, &predicted), Ok(0.75));
+    assert_eq!(precision_score(&expected, &predicted), Ok(2.0 / 3.0));
+    assert_eq!(recall_score(&expected, &predicted), Ok(1.0));
+    assert_eq!(f1_score(&expected, &predicted), Ok(0.8));
+    assert!(brier_score(&expected, &probabilities).unwrap().is_finite());
+    assert!(log_loss(&expected, &probabilities).unwrap().is_finite());
+    assert_eq!(roc_auc_score(&expected, &probabilities), Ok(0.75));
+
+    let regression_expected = [1.0, 2.0, 3.0];
+    let regression_predicted = [1.0, 3.0, 2.0];
+    assert!(
+        mean_absolute_error(&regression_expected, &regression_predicted)
+            .unwrap()
+            .is_finite()
+    );
+    assert!(
+        mean_squared_error(&regression_expected, &regression_predicted)
+            .unwrap()
+            .is_finite()
+    );
+    assert!(
+        root_mean_squared_error(&regression_expected, &regression_predicted)
+            .unwrap()
+            .is_finite()
+    );
+    assert!(
+        r2_score(&regression_expected, &regression_predicted)
+            .unwrap()
+            .is_finite()
+    );
+    assert!(matches!(
+        precision_score(&[0], &[0]),
+        Err(MetricError::Undefined)
+    ));
 }
 
 #[test]
