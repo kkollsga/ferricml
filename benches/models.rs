@@ -15,8 +15,11 @@ use ferricml::model_selection::{
     HoldoutParams, KFold, RegressionScorer, TestSize, cross_validate_regressor,
     stratified_train_test_split, train_test_split,
 };
-use ferricml::pipeline::Pipeline;
-use ferricml::preprocessing::{StandardScaler, StandardScalerParams};
+use ferricml::pipeline::{Pipeline, StagedPipeline};
+use ferricml::preprocessing::{
+    MaxAbsScaler, MaxAbsScalerParams, MinMaxScaler, MinMaxScalerParams, StandardScaler,
+    StandardScalerParams,
+};
 use ferricml::ranking::{
     PairIndex, PairOutcome, PairwiseLinearRanker, PairwiseLinearRankerParams, PairwiseObservation,
 };
@@ -528,12 +531,143 @@ fn baselines(c: &mut Criterion) {
     group.finish();
 }
 
+/// Transformer family and multi-stage composition workloads.
+///
+/// Registered so the new user-facing capability is visible to `bench-history`
+/// from the sprint that added it. The lanes cover both halves that can drift
+/// independently: per-column scaling itself, and the workspace splitting a
+/// multi-stage composition adds on top of the stages it runs.
+fn transformers_and_staged_pipelines(c: &mut Criterion) {
+    let (training, targets) = fixture(ROWS, COLUMNS);
+    let (inference, _) = fixture(INFERENCE_ROWS, COLUMNS);
+
+    let min_max = MinMaxScaler::fit(&training.as_view(), MinMaxScalerParams::default()).unwrap();
+    let max_abs = MaxAbsScaler::fit(&training.as_view(), MaxAbsScalerParams).unwrap();
+
+    let mut transformed = vec![0.0; INFERENCE_ROWS * COLUMNS];
+    let mut into = c.benchmark_group("ferricml_transformers_v1_into_1024x48");
+    into.throughput(Throughput::Elements(INFERENCE_ROWS as u64));
+    into.bench_function(BenchmarkId::from_parameter("min_max"), |bencher| {
+        bencher.iter(|| {
+            black_box(
+                min_max
+                    .transform_into(black_box(&inference.as_view()), black_box(&mut transformed))
+                    .unwrap(),
+            );
+        });
+    });
+    into.bench_function(BenchmarkId::from_parameter("max_abs"), |bencher| {
+        bencher.iter(|| {
+            black_box(
+                max_abs
+                    .transform_into(black_box(&inference.as_view()), black_box(&mut transformed))
+                    .unwrap(),
+            );
+        });
+    });
+    into.finish();
+
+    let mut fit = c.benchmark_group("ferricml_transformers_v1_fit_2048x48");
+    fit.throughput(Throughput::Elements(ROWS as u64));
+    fit.bench_function(BenchmarkId::from_parameter("min_max"), |bencher| {
+        bencher.iter(|| {
+            black_box(
+                MinMaxScaler::fit(
+                    black_box(&training.as_view()),
+                    MinMaxScalerParams::default(),
+                )
+                .unwrap(),
+            );
+        });
+    });
+    fit.bench_function(BenchmarkId::from_parameter("max_abs"), |bencher| {
+        bencher.iter(|| {
+            black_box(
+                MaxAbsScaler::fit(black_box(&training.as_view()), MaxAbsScalerParams).unwrap(),
+            );
+        });
+    });
+    fit.finish();
+
+    let staged: StagedPipeline<(MinMaxScaler, StandardScaler), Ridge> = StagedPipeline::fit(
+        &training.as_view(),
+        |batch| MinMaxScaler::fit(batch, MinMaxScalerParams::default()),
+        |batch| StandardScaler::fit(batch, StandardScalerParams::default()),
+        |batch| Ridge::fit(batch, &targets, RidgeParams::default()),
+    )
+    .unwrap();
+    let three: StagedPipeline<(MinMaxScaler, StandardScaler, MaxAbsScaler), Ridge> = {
+        let first = MinMaxScaler::fit(&training.as_view(), MinMaxScalerParams::default()).unwrap();
+        let after_first = first.transform(&training.as_view()).unwrap();
+        let second =
+            StandardScaler::fit(&after_first.as_view(), StandardScalerParams::default()).unwrap();
+        let after_second = second.transform(&after_first.as_view()).unwrap();
+        let third = MaxAbsScaler::fit(&after_second.as_view(), MaxAbsScalerParams).unwrap();
+        let final_batch = third.transform(&after_second.as_view()).unwrap();
+        let estimator =
+            Ridge::fit(&final_batch.as_view(), &targets, RidgeParams::default()).unwrap();
+        StagedPipeline::new((first, second, third), estimator).unwrap()
+    };
+
+    let mut two_workspace = vec![0.0; staged.workspace_len(INFERENCE_ROWS).unwrap()];
+    let mut three_workspace = vec![0.0; three.workspace_len(INFERENCE_ROWS).unwrap()];
+    let mut predictions = vec![0.0; INFERENCE_ROWS];
+    let mut staged_into = c.benchmark_group("ferricml_staged_pipeline_v1_into_1024x48");
+    staged_into.throughput(Throughput::Elements(INFERENCE_ROWS as u64));
+    staged_into.bench_function(BenchmarkId::from_parameter("two_stage_ridge"), |bencher| {
+        bencher.iter(|| {
+            staged
+                .with_transformed(
+                    black_box(&inference.as_view()),
+                    black_box(&mut two_workspace),
+                    |model, batch| model.predict_into(batch, &mut predictions),
+                )
+                .unwrap();
+            black_box(&predictions);
+        });
+    });
+    staged_into.bench_function(
+        BenchmarkId::from_parameter("three_stage_ridge"),
+        |bencher| {
+            bencher.iter(|| {
+                three
+                    .with_transformed(
+                        black_box(&inference.as_view()),
+                        black_box(&mut three_workspace),
+                        |model, batch| model.predict_into(batch, &mut predictions),
+                    )
+                    .unwrap();
+                black_box(&predictions);
+            });
+        },
+    );
+    staged_into.finish();
+
+    let mut artifact = c.benchmark_group("ferricml_staged_pipeline_v1_artifact_2048x48");
+    artifact.throughput(Throughput::Elements(1));
+    artifact.bench_function(BenchmarkId::from_parameter("round_trip"), |bencher| {
+        bencher.iter(|| {
+            let bytes = staged.to_artifact([7; 32], [8; 32]).unwrap();
+            black_box(
+                StagedPipeline::<(MinMaxScaler, StandardScaler), Ridge>::from_artifact(
+                    black_box(&bytes),
+                    [7; 32],
+                    [8; 32],
+                )
+                .unwrap(),
+            );
+        });
+    });
+    artifact.finish();
+}
+
 criterion_group!(
     benches,
     baselines,
     inference,
     training,
     logistic_and_scaler,
+    transformers_and_staged_pipelines,
     evaluation,
     split_workloads,
     inspection
