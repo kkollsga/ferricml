@@ -33,7 +33,8 @@ use ferricml::linear_model::{
     RidgeParams,
 };
 use ferricml::preprocessing::{
-    MinMaxScaler, MinMaxScalerParams, StandardScaler, StandardScalerParams,
+    MaxAbsScaler, MaxAbsScalerParams, MinMaxScaler, MinMaxScalerParams, StandardScaler,
+    StandardScalerParams,
 };
 use ferricml::ranking::{
     PairIndex, PairOutcome, PairwiseError, PairwiseLinearRanker, PairwiseLinearRankerParams,
@@ -404,6 +405,24 @@ impl TransformerCase for MinMaxScalerCase {
     }
 }
 
+struct MaxAbsScalerCase;
+
+impl TransformerCase for MaxAbsScalerCase {
+    type Model = MaxAbsScaler;
+    const NAME: &'static str = "MaxAbsScaler";
+
+    fn fit(data: &MatrixView<'_>) -> Self::Model {
+        MaxAbsScaler::fit(data, MaxAbsScalerParams).expect("fit")
+    }
+
+    fn round_trip(model: &Self::Model) -> RoundTrip<Self::Model> {
+        round_trip(
+            || model.to_artifact(SCHEMA, TRANSFORMED_SCHEMA),
+            |bytes| MaxAbsScaler::from_artifact(bytes, SCHEMA, TRANSFORMED_SCHEMA),
+        )
+    }
+}
+
 // ----------------------------------------------------- registration list
 //
 // One line per estimator. `check_batch_only_*` is the weaker entry point and
@@ -471,6 +490,11 @@ fn standard_scaler_conforms() {
 #[test]
 fn min_max_scaler_conforms() {
     check_transformer::<MinMaxScalerCase>();
+}
+
+#[test]
+fn max_abs_scaler_conforms() {
+    check_transformer::<MaxAbsScalerCase>();
 }
 
 // -------------------------------------------------- estimator-specific tests

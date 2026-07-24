@@ -22,7 +22,7 @@ use ferricml::linear_model::{
     RidgeParams,
 };
 use ferricml::pipeline::Pipeline;
-use ferricml::preprocessing::{MinMaxScaler, StandardScaler, StandardScalerParams};
+use ferricml::preprocessing::{MaxAbsScaler, MinMaxScaler, StandardScaler, StandardScalerParams};
 
 const WEIGHTED_AND_PERSISTED: Capabilities = Capabilities::NONE
     .with_sample_weights(true)
@@ -46,6 +46,7 @@ fn range_scalers_declare_persistence_but_not_weighted_fitting() {
     // Minima and maxima are order statistics, so a per-sample weight cannot
     // move them and there is no weighted entry point to declare.
     assert_eq!(MinMaxScaler::CAPABILITIES, PERSISTED_ONLY);
+    assert_eq!(MaxAbsScaler::CAPABILITIES, PERSISTED_ONLY);
 }
 
 #[test]

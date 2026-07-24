@@ -201,6 +201,8 @@ impl ferricml::api::Estimator for ferricml::linear_model::LogisticRegression
 pub fn ferricml::linear_model::LogisticRegression::n_features_in(&self) -> usize
 impl ferricml::api::Estimator for ferricml::linear_model::Ridge
 pub fn ferricml::linear_model::Ridge::n_features_in(&self) -> usize
+impl ferricml::api::Estimator for ferricml::preprocessing::MaxAbsScaler
+pub fn ferricml::preprocessing::MaxAbsScaler::n_features_in(&self) -> usize
 impl ferricml::api::Estimator for ferricml::preprocessing::MinMaxScaler
 pub fn ferricml::preprocessing::MinMaxScaler::n_features_in(&self) -> usize
 impl ferricml::api::Estimator for ferricml::preprocessing::StandardScaler
@@ -237,6 +239,8 @@ impl ferricml::api::HasCapabilities for ferricml::pipeline::Pipeline<ferricml::p
 pub const ferricml::pipeline::Pipeline<ferricml::preprocessing::StandardScaler, ferricml::linear_model::LogisticRegression>::CAPABILITIES: ferricml::api::Capabilities
 impl ferricml::api::HasCapabilities for ferricml::pipeline::Pipeline<ferricml::preprocessing::StandardScaler, ferricml::linear_model::Ridge>
 pub const ferricml::pipeline::Pipeline<ferricml::preprocessing::StandardScaler, ferricml::linear_model::Ridge>::CAPABILITIES: ferricml::api::Capabilities
+impl ferricml::api::HasCapabilities for ferricml::preprocessing::MaxAbsScaler
+pub const ferricml::preprocessing::MaxAbsScaler::CAPABILITIES: ferricml::api::Capabilities
 impl ferricml::api::HasCapabilities for ferricml::preprocessing::MinMaxScaler
 pub const ferricml::preprocessing::MinMaxScaler::CAPABILITIES: ferricml::api::Capabilities
 impl ferricml::api::HasCapabilities for ferricml::preprocessing::StandardScaler
@@ -268,6 +272,9 @@ pub fn ferricml::linear_model::LogisticRegression::get_params(&self) -> &Self::P
 impl ferricml::api::HasParams for ferricml::linear_model::Ridge
 pub type ferricml::linear_model::Ridge::Params = ferricml::linear_model::RidgeParams
 pub fn ferricml::linear_model::Ridge::get_params(&self) -> &Self::Params
+impl ferricml::api::HasParams for ferricml::preprocessing::MaxAbsScaler
+pub type ferricml::preprocessing::MaxAbsScaler::Params = ferricml::preprocessing::MaxAbsScalerParams
+pub fn ferricml::preprocessing::MaxAbsScaler::get_params(&self) -> &Self::Params
 impl ferricml::api::HasParams for ferricml::preprocessing::MinMaxScaler
 pub type ferricml::preprocessing::MinMaxScaler::Params = ferricml::preprocessing::MinMaxScalerParams
 pub fn ferricml::preprocessing::MinMaxScaler::get_params(&self) -> &Self::Params
@@ -302,6 +309,10 @@ pub trait ferricml::api::Transformer: ferricml::api::Estimator
 pub fn ferricml::api::Transformer::n_features_out(&self) -> usize
 pub fn ferricml::api::Transformer::transform(&self, &ferricml::data::MatrixView<'_>) -> core::result::Result<ferricml::data::DenseMatrix, ferricml::api::ModelError>
 pub fn ferricml::api::Transformer::transform_into<'output>(&self, &ferricml::data::MatrixView<'_>, &'output mut [f32]) -> core::result::Result<ferricml::data::MatrixView<'output>, ferricml::api::ModelError>
+impl ferricml::api::Transformer for ferricml::preprocessing::MaxAbsScaler
+pub fn ferricml::preprocessing::MaxAbsScaler::n_features_out(&self) -> usize
+pub fn ferricml::preprocessing::MaxAbsScaler::transform(&self, &ferricml::data::MatrixView<'_>) -> core::result::Result<ferricml::data::DenseMatrix, ferricml::api::ModelError>
+pub fn ferricml::preprocessing::MaxAbsScaler::transform_into<'output>(&self, &ferricml::data::MatrixView<'_>, &'output mut [f32]) -> core::result::Result<ferricml::data::MatrixView<'output>, ferricml::api::ModelError>
 impl ferricml::api::Transformer for ferricml::preprocessing::MinMaxScaler
 pub fn ferricml::preprocessing::MinMaxScaler::n_features_out(&self) -> usize
 pub fn ferricml::preprocessing::MinMaxScaler::transform(&self, &ferricml::data::MatrixView<'_>) -> core::result::Result<ferricml::data::DenseMatrix, ferricml::api::ModelError>
@@ -988,6 +999,30 @@ pub const ferricml::pipeline::Pipeline<ferricml::preprocessing::StandardScaler, 
 impl<T, E> ferricml::api::Estimator for ferricml::pipeline::Pipeline<T, E> where T: ferricml::api::Transformer, E: ferricml::api::Estimator
 pub fn ferricml::pipeline::Pipeline<T, E>::n_features_in(&self) -> usize
 pub mod ferricml::preprocessing
+pub struct ferricml::preprocessing::MaxAbsScaler
+impl ferricml::preprocessing::MaxAbsScaler
+pub fn ferricml::preprocessing::MaxAbsScaler::fit(&ferricml::data::MatrixView<'_>, ferricml::preprocessing::MaxAbsScalerParams) -> core::result::Result<Self, ferricml::api::ModelError>
+pub fn ferricml::preprocessing::MaxAbsScaler::from_artifact(&[u8], [u8; 32], [u8; 32]) -> core::result::Result<Self, ferricml::artifact::ArtifactError>
+pub const fn ferricml::preprocessing::MaxAbsScaler::get_params(&self) -> &ferricml::preprocessing::MaxAbsScalerParams
+pub fn ferricml::preprocessing::MaxAbsScaler::max_abs(&self) -> &[f64]
+pub const fn ferricml::preprocessing::MaxAbsScaler::n_features_in(&self) -> usize
+pub const fn ferricml::preprocessing::MaxAbsScaler::n_features_out(&self) -> usize
+pub fn ferricml::preprocessing::MaxAbsScaler::scales(&self) -> &[f64]
+pub fn ferricml::preprocessing::MaxAbsScaler::to_artifact(&self, [u8; 32], [u8; 32]) -> core::result::Result<alloc::vec::Vec<u8>, ferricml::artifact::ArtifactError>
+pub fn ferricml::preprocessing::MaxAbsScaler::transform(&self, &ferricml::data::MatrixView<'_>) -> core::result::Result<ferricml::data::DenseMatrix, ferricml::api::ModelError>
+pub fn ferricml::preprocessing::MaxAbsScaler::transform_into<'output>(&self, &ferricml::data::MatrixView<'_>, &'output mut [f32]) -> core::result::Result<ferricml::data::MatrixView<'output>, ferricml::api::ModelError>
+impl ferricml::api::Estimator for ferricml::preprocessing::MaxAbsScaler
+pub fn ferricml::preprocessing::MaxAbsScaler::n_features_in(&self) -> usize
+impl ferricml::api::HasCapabilities for ferricml::preprocessing::MaxAbsScaler
+pub const ferricml::preprocessing::MaxAbsScaler::CAPABILITIES: ferricml::api::Capabilities
+impl ferricml::api::HasParams for ferricml::preprocessing::MaxAbsScaler
+pub type ferricml::preprocessing::MaxAbsScaler::Params = ferricml::preprocessing::MaxAbsScalerParams
+pub fn ferricml::preprocessing::MaxAbsScaler::get_params(&self) -> &Self::Params
+impl ferricml::api::Transformer for ferricml::preprocessing::MaxAbsScaler
+pub fn ferricml::preprocessing::MaxAbsScaler::n_features_out(&self) -> usize
+pub fn ferricml::preprocessing::MaxAbsScaler::transform(&self, &ferricml::data::MatrixView<'_>) -> core::result::Result<ferricml::data::DenseMatrix, ferricml::api::ModelError>
+pub fn ferricml::preprocessing::MaxAbsScaler::transform_into<'output>(&self, &ferricml::data::MatrixView<'_>, &'output mut [f32]) -> core::result::Result<ferricml::data::MatrixView<'output>, ferricml::api::ModelError>
+pub struct ferricml::preprocessing::MaxAbsScalerParams
 pub struct ferricml::preprocessing::MinMaxScaler
 impl ferricml::preprocessing::MinMaxScaler
 pub fn ferricml::preprocessing::MinMaxScaler::data_max(&self) -> &[f64]

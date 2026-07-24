@@ -21,6 +21,7 @@ pub(crate) const HIST_GRADIENT_BOOSTING_REGRESSOR_ARTIFACT_KIND: u16 = 9;
 pub(crate) const RANDOM_FOREST_REGRESSOR_ARTIFACT_KIND: u16 = 10;
 pub(crate) const ANY_REGRESSOR_ARTIFACT_KIND: u16 = 12;
 pub(crate) const MIN_MAX_SCALER_ARTIFACT_KIND: u16 = 14;
+pub(crate) const MAX_ABS_SCALER_ARTIFACT_KIND: u16 = 15;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum SchemaRole {

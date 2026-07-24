@@ -30,6 +30,9 @@ and releases use [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   fitted feature onto `0.0..=1.0`, carries a column with no spread to `0.0`
   instead of dividing by zero, and can optionally clip later batches into the
   fitted range.
+- `preprocessing::MaxAbsScaler`, a schema-bound transformer that divides each
+  fitted feature by its largest observed magnitude, preserving sign and zeros,
+  and passing an all-zero column through unchanged instead of dividing by zero.
 - `AnyClassifier::capabilities` and `AnyRegressor::capabilities`, reporting the
   selected runtime variant's capabilities. The declared constant on each
   dispatch enum and each concrete pipeline is composed from its variants or
