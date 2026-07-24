@@ -281,6 +281,18 @@ pub ferricml::data::DataError::ZeroTotalSampleWeight
 impl core::error::Error for ferricml::data::DataError
 impl core::fmt::Display for ferricml::data::DataError
 pub fn ferricml::data::DataError::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+#[non_exhaustive] pub enum ferricml::data::SelectionError
+pub ferricml::data::SelectionError::Empty
+pub ferricml::data::SelectionError::IndexOutOfBounds
+pub ferricml::data::SelectionError::IndexOutOfBounds::available: usize
+pub ferricml::data::SelectionError::IndexOutOfBounds::index: usize
+pub ferricml::data::SelectionError::IndexOutOfBounds::position: usize
+pub ferricml::data::SelectionError::OutputShapeOverflow
+pub ferricml::data::SelectionError::OutputShapeOverflow::columns: usize
+pub ferricml::data::SelectionError::OutputShapeOverflow::rows: usize
+impl core::error::Error for ferricml::data::SelectionError
+impl core::fmt::Display for ferricml::data::SelectionError
+pub fn ferricml::data::SelectionError::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
 pub struct ferricml::data::BinaryTargets
 impl ferricml::data::BinaryTargets
 pub fn ferricml::data::BinaryTargets::as_slice(&self) -> &[u8]
@@ -289,6 +301,7 @@ pub fn ferricml::data::BinaryTargets::into_values(self) -> alloc::vec::Vec<u8>
 pub fn ferricml::data::BinaryTargets::is_empty(&self) -> bool
 pub fn ferricml::data::BinaryTargets::len(&self) -> usize
 pub fn ferricml::data::BinaryTargets::new(alloc::vec::Vec<u8>) -> core::result::Result<Self, ferricml::data::DataError>
+pub fn ferricml::data::BinaryTargets::select(&self, &[usize]) -> core::result::Result<Self, ferricml::data::SelectionError>
 pub struct ferricml::data::DenseMatrix
 impl ferricml::data::DenseMatrix
 pub fn ferricml::data::DenseMatrix::as_slice(&self) -> &[f32]
@@ -300,6 +313,7 @@ pub fn ferricml::data::DenseMatrix::iter_rows(&self) -> core::slice::iter::Chunk
 pub fn ferricml::data::DenseMatrix::new(alloc::vec::Vec<f32>, usize, usize) -> core::result::Result<Self, ferricml::data::DataError>
 pub fn ferricml::data::DenseMatrix::row(&self, usize) -> core::option::Option<&[f32]>
 pub const fn ferricml::data::DenseMatrix::rows(&self) -> usize
+pub fn ferricml::data::DenseMatrix::select_rows(&self, &[usize]) -> core::result::Result<Self, ferricml::data::SelectionError>
 pub struct ferricml::data::MatrixView<'a>
 impl<'a> ferricml::data::MatrixView<'a>
 pub const fn ferricml::data::MatrixView<'a>::as_slice(&self) -> &'a [f32]
@@ -317,6 +331,7 @@ pub fn ferricml::data::RegressionTargets::into_values(self) -> alloc::vec::Vec<f
 pub fn ferricml::data::RegressionTargets::is_empty(&self) -> bool
 pub fn ferricml::data::RegressionTargets::len(&self) -> usize
 pub fn ferricml::data::RegressionTargets::new(alloc::vec::Vec<f32>) -> core::result::Result<Self, ferricml::data::DataError>
+pub fn ferricml::data::RegressionTargets::select(&self, &[usize]) -> core::result::Result<Self, ferricml::data::SelectionError>
 pub struct ferricml::data::SampleWeights
 impl ferricml::data::SampleWeights
 pub fn ferricml::data::SampleWeights::as_slice(&self) -> &[f32]
@@ -616,6 +631,96 @@ pub fn ferricml::metrics::r2_score(&[f32], &[f32]) -> core::result::Result<f64, 
 pub fn ferricml::metrics::recall_score(&[u8], &[u8]) -> core::result::Result<f64, ferricml::metrics::MetricError>
 pub fn ferricml::metrics::roc_auc_score(&[u8], &[f32]) -> core::result::Result<f64, ferricml::metrics::MetricError>
 pub fn ferricml::metrics::root_mean_squared_error(&[f32], &[f32]) -> core::result::Result<f64, ferricml::metrics::MetricError>
+pub mod ferricml::model_selection
+#[non_exhaustive] pub enum ferricml::model_selection::SplitError
+pub ferricml::model_selection::SplitError::DuplicateIndex
+pub ferricml::model_selection::SplitError::DuplicateIndex::index: usize
+pub ferricml::model_selection::SplitError::DuplicateIndex::partition: ferricml::model_selection::SplitPartition
+pub ferricml::model_selection::SplitError::EmptyPartition
+pub ferricml::model_selection::SplitError::EmptyPartition::partition: ferricml::model_selection::SplitPartition
+pub ferricml::model_selection::SplitError::IncompleteCoverage
+pub ferricml::model_selection::SplitError::IncompleteCoverage::actual: usize
+pub ferricml::model_selection::SplitError::IncompleteCoverage::expected: usize
+pub ferricml::model_selection::SplitError::IndexOutOfBounds
+pub ferricml::model_selection::SplitError::IndexOutOfBounds::index: usize
+pub ferricml::model_selection::SplitError::IndexOutOfBounds::partition: ferricml::model_selection::SplitPartition
+pub ferricml::model_selection::SplitError::IndexOutOfBounds::position: usize
+pub ferricml::model_selection::SplitError::IndexOutOfBounds::samples: usize
+pub ferricml::model_selection::SplitError::InsufficientClassMembers
+pub ferricml::model_selection::SplitError::InsufficientClassMembers::count: usize
+pub ferricml::model_selection::SplitError::InsufficientClassMembers::label: u8
+pub ferricml::model_selection::SplitError::InsufficientClassMembers::partitions: usize
+pub ferricml::model_selection::SplitError::InvalidFoldCount
+pub ferricml::model_selection::SplitError::InvalidFoldCount::folds: usize
+pub ferricml::model_selection::SplitError::InvalidFoldCount::samples: usize
+pub ferricml::model_selection::SplitError::InvalidTestCount
+pub ferricml::model_selection::SplitError::InvalidTestCount::samples: usize
+pub ferricml::model_selection::SplitError::InvalidTestCount::test: usize
+pub ferricml::model_selection::SplitError::InvalidTestFraction
+pub ferricml::model_selection::SplitError::NotEnoughSamples
+pub ferricml::model_selection::SplitError::NotEnoughSamples::samples: usize
+pub ferricml::model_selection::SplitError::OverlappingIndex
+pub ferricml::model_selection::SplitError::OverlappingIndex::index: usize
+pub ferricml::model_selection::SplitError::PartitionTooSmallForClasses
+pub ferricml::model_selection::SplitError::PartitionTooSmallForClasses::classes: usize
+pub ferricml::model_selection::SplitError::PartitionTooSmallForClasses::partition: ferricml::model_selection::SplitPartition
+pub ferricml::model_selection::SplitError::PartitionTooSmallForClasses::rows: usize
+impl core::error::Error for ferricml::model_selection::SplitError
+impl core::fmt::Display for ferricml::model_selection::SplitError
+pub fn ferricml::model_selection::SplitError::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+pub enum ferricml::model_selection::SplitPartition
+pub ferricml::model_selection::SplitPartition::Test
+pub ferricml::model_selection::SplitPartition::Train
+pub enum ferricml::model_selection::TestSize
+pub ferricml::model_selection::TestSize::Count(usize)
+pub ferricml::model_selection::TestSize::Fraction(f64)
+pub struct ferricml::model_selection::HoldoutParams
+impl ferricml::model_selection::HoldoutParams
+pub const fn ferricml::model_selection::HoldoutParams::random_state(&self) -> u64
+pub const fn ferricml::model_selection::HoldoutParams::shuffle(&self) -> bool
+pub const fn ferricml::model_selection::HoldoutParams::test_size(&self) -> ferricml::model_selection::TestSize
+pub fn ferricml::model_selection::HoldoutParams::with_random_state(self, u64) -> Self
+pub fn ferricml::model_selection::HoldoutParams::with_shuffle(self, bool) -> Self
+pub fn ferricml::model_selection::HoldoutParams::with_test_size(self, ferricml::model_selection::TestSize) -> Self
+impl core::default::Default for ferricml::model_selection::HoldoutParams
+pub fn ferricml::model_selection::HoldoutParams::default() -> Self
+pub struct ferricml::model_selection::KFold
+impl ferricml::model_selection::KFold
+pub const fn ferricml::model_selection::KFold::n_splits(&self) -> usize
+pub const fn ferricml::model_selection::KFold::new(usize) -> Self
+pub const fn ferricml::model_selection::KFold::random_state(&self) -> u64
+pub const fn ferricml::model_selection::KFold::shuffle(&self) -> bool
+pub fn ferricml::model_selection::KFold::split(&self, usize) -> core::result::Result<ferricml::model_selection::KFoldIter, ferricml::model_selection::SplitError>
+pub const fn ferricml::model_selection::KFold::with_random_state(self, u64) -> Self
+pub const fn ferricml::model_selection::KFold::with_shuffle(self, bool) -> Self
+pub struct ferricml::model_selection::KFoldIter
+impl core::iter::traits::exact_size::ExactSizeIterator for ferricml::model_selection::KFoldIter
+impl core::iter::traits::iterator::Iterator for ferricml::model_selection::KFoldIter
+pub type ferricml::model_selection::KFoldIter::Item = ferricml::model_selection::Split
+pub fn ferricml::model_selection::KFoldIter::next(&mut self) -> core::option::Option<Self::Item>
+pub fn ferricml::model_selection::KFoldIter::size_hint(&self) -> (usize, core::option::Option<usize>)
+pub struct ferricml::model_selection::Split
+impl ferricml::model_selection::Split
+pub fn ferricml::model_selection::Split::new(usize, alloc::vec::Vec<usize>, alloc::vec::Vec<usize>) -> core::result::Result<Self, ferricml::model_selection::SplitError>
+pub fn ferricml::model_selection::Split::test_indices(&self) -> &[usize]
+pub fn ferricml::model_selection::Split::train_indices(&self) -> &[usize]
+pub struct ferricml::model_selection::StratifiedKFold
+impl ferricml::model_selection::StratifiedKFold
+pub const fn ferricml::model_selection::StratifiedKFold::n_splits(&self) -> usize
+pub const fn ferricml::model_selection::StratifiedKFold::new(usize) -> Self
+pub const fn ferricml::model_selection::StratifiedKFold::random_state(&self) -> u64
+pub const fn ferricml::model_selection::StratifiedKFold::shuffle(&self) -> bool
+pub fn ferricml::model_selection::StratifiedKFold::split(&self, &[u8]) -> core::result::Result<ferricml::model_selection::StratifiedKFoldIter, ferricml::model_selection::SplitError>
+pub const fn ferricml::model_selection::StratifiedKFold::with_random_state(self, u64) -> Self
+pub const fn ferricml::model_selection::StratifiedKFold::with_shuffle(self, bool) -> Self
+pub struct ferricml::model_selection::StratifiedKFoldIter
+impl core::iter::traits::exact_size::ExactSizeIterator for ferricml::model_selection::StratifiedKFoldIter
+impl core::iter::traits::iterator::Iterator for ferricml::model_selection::StratifiedKFoldIter
+pub type ferricml::model_selection::StratifiedKFoldIter::Item = ferricml::model_selection::Split
+pub fn ferricml::model_selection::StratifiedKFoldIter::next(&mut self) -> core::option::Option<Self::Item>
+pub fn ferricml::model_selection::StratifiedKFoldIter::size_hint(&self) -> (usize, core::option::Option<usize>)
+pub fn ferricml::model_selection::stratified_train_test_split(&[u8], ferricml::model_selection::HoldoutParams) -> core::result::Result<ferricml::model_selection::Split, ferricml::model_selection::SplitError>
+pub fn ferricml::model_selection::train_test_split(usize, ferricml::model_selection::HoldoutParams) -> core::result::Result<ferricml::model_selection::Split, ferricml::model_selection::SplitError>
 pub mod ferricml::pipeline
 pub struct ferricml::pipeline::Pipeline<T, E>
 impl ferricml::pipeline::Pipeline<ferricml::preprocessing::StandardScaler, ferricml::linear_model::LinearRegression>

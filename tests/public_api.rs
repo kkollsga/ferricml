@@ -1,5 +1,7 @@
 use ferricml::api::{Classifier, Estimator, HasParams, ModelError, Regressor, Transformer};
-use ferricml::data::{BinaryTargets, DenseMatrix, MatrixView, RegressionTargets, SampleWeights};
+use ferricml::data::{
+    BinaryTargets, DenseMatrix, MatrixView, RegressionTargets, SampleWeights, SelectionError,
+};
 use ferricml::ensemble::{
     HistGradientBoostingRegressor, HistGradientBoostingRegressorParams, MaxFeatures, NJobs,
     RandomForestClassifier, RandomForestClassifierParams, RandomForestRegressor,
@@ -13,6 +15,10 @@ use ferricml::metrics::{
     MetricError, accuracy_score, binary_confusion_matrix, brier_score, f1_score, log_loss,
     mean_absolute_error, mean_squared_error, precision_score, r2_score, recall_score,
     roc_auc_score, root_mean_squared_error,
+};
+use ferricml::model_selection::{
+    HoldoutParams, KFold, Split, SplitError, StratifiedKFold, TestSize,
+    stratified_train_test_split, train_test_split,
 };
 use ferricml::pipeline::Pipeline;
 use ferricml::preprocessing::{StandardScaler, StandardScalerParams};
@@ -132,6 +138,64 @@ fn evaluation_metric_paths_and_results_are_stable() {
         precision_score(&[0], &[0]),
         Err(MetricError::Undefined)
     ));
+}
+
+#[test]
+fn deterministic_selection_paths_and_materialization_are_stable() {
+    let matrix = training_matrix();
+    let binary = BinaryTargets::new(vec![0, 0, 1, 1]).unwrap();
+    let regression = RegressionTargets::new(vec![0.0, 1.0, 4.0, 9.0]).unwrap();
+    let selected = matrix.select_rows(&[3, 1]).unwrap();
+    assert_eq!(selected.as_slice(), &[3.0, 9.0, 1.0, 1.0]);
+    assert_eq!(binary.select(&[3, 1]).unwrap().as_slice(), &[1, 0]);
+    assert_eq!(regression.select(&[3, 1]).unwrap().as_slice(), &[9.0, 1.0]);
+    assert!(matches!(
+        matrix.select_rows(&[]),
+        Err(SelectionError::Empty)
+    ));
+
+    let params = HoldoutParams::default()
+        .with_test_size(TestSize::Count(2))
+        .with_shuffle(false)
+        .with_random_state(7);
+    assert_eq!(params.test_size(), TestSize::Count(2));
+    assert!(!params.shuffle());
+    assert_eq!(params.random_state(), 7);
+    let holdout = train_test_split(4, params).unwrap();
+    assert_eq!(holdout.train_indices(), &[0, 1]);
+    assert_eq!(holdout.test_indices(), &[2, 3]);
+    assert_eq!(
+        Split::new(4, vec![0, 2], vec![1, 3]).unwrap(),
+        Split::new(4, vec![0, 2], vec![1, 3]).unwrap()
+    );
+    assert!(matches!(
+        Split::new(4, vec![0, 1], vec![1, 3]),
+        Err(SplitError::OverlappingIndex { index: 1 })
+    ));
+
+    let stratified = stratified_train_test_split(
+        binary.as_slice(),
+        HoldoutParams::default()
+            .with_test_size(TestSize::Count(2))
+            .with_shuffle(false),
+    )
+    .unwrap();
+    assert_eq!(stratified.train_indices(), &[0, 2]);
+    assert_eq!(stratified.test_indices(), &[1, 3]);
+
+    let kfold = KFold::new(2).with_shuffle(true).with_random_state(3);
+    assert_eq!(kfold.n_splits(), 2);
+    assert!(kfold.shuffle());
+    assert_eq!(kfold.random_state(), 3);
+    assert_eq!(kfold.split(4).unwrap().len(), 2);
+
+    let stratified_kfold = StratifiedKFold::new(2)
+        .with_shuffle(true)
+        .with_random_state(3);
+    assert_eq!(stratified_kfold.n_splits(), 2);
+    assert!(stratified_kfold.shuffle());
+    assert_eq!(stratified_kfold.random_state(), 3);
+    assert_eq!(stratified_kfold.split(binary.as_slice()).unwrap().len(), 2);
 }
 
 #[test]

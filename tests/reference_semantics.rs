@@ -16,6 +16,10 @@ use ferricml::metrics::{
     mean_absolute_error, mean_squared_error, precision_score, r2_score, recall_score,
     roc_auc_score, root_mean_squared_error,
 };
+use ferricml::model_selection::{
+    HoldoutParams, KFold, SplitError, SplitPartition, StratifiedKFold, TestSize,
+    stratified_train_test_split, train_test_split,
+};
 use ferricml::preprocessing::{StandardScaler, StandardScalerParams};
 
 #[allow(dead_code, clippy::excessive_precision)]
@@ -142,6 +146,64 @@ fn evaluation_metric_values_and_validation_order_are_frozen() {
     assert_eq!(
         r2_score(&[2.0, 2.0], &[2.0, 2.0]),
         Err(MetricError::Undefined)
+    );
+}
+
+#[test]
+fn deterministic_split_membership_and_validation_are_frozen() {
+    let holdout = train_test_split(
+        10,
+        HoldoutParams::default()
+            .with_test_size(TestSize::Count(3))
+            .with_random_state(42),
+    )
+    .unwrap();
+    assert_eq!(holdout.train_indices(), &[0, 4, 5, 6, 7, 8, 9]);
+    assert_eq!(holdout.test_indices(), &[1, 2, 3]);
+
+    let folds = KFold::new(3)
+        .with_shuffle(true)
+        .with_random_state(42)
+        .split(8)
+        .unwrap()
+        .map(|split| split.test_indices().to_vec())
+        .collect::<Vec<_>>();
+    assert_eq!(folds, vec![vec![1, 3, 6], vec![0, 2, 4], vec![5, 7]]);
+
+    let labels = [0, 0, 0, 0, 1, 1, 1, 1];
+    let stratified = stratified_train_test_split(
+        &labels,
+        HoldoutParams::default()
+            .with_test_size(TestSize::Count(4))
+            .with_shuffle(false),
+    )
+    .unwrap();
+    assert_eq!(stratified.train_indices(), &[0, 1, 4, 5]);
+    assert_eq!(stratified.test_indices(), &[2, 3, 6, 7]);
+    let stratified_folds = StratifiedKFold::new(2)
+        .split(&labels)
+        .unwrap()
+        .map(|split| split.test_indices().to_vec())
+        .collect::<Vec<_>>();
+    assert_eq!(stratified_folds, vec![vec![0, 2, 4, 6], vec![1, 3, 5, 7]]);
+
+    assert_eq!(
+        train_test_split(
+            4,
+            HoldoutParams::default().with_test_size(TestSize::Fraction(f64::NAN))
+        ),
+        Err(SplitError::InvalidTestFraction)
+    );
+    assert_eq!(
+        stratified_train_test_split(
+            &[0, 0, 1, 1],
+            HoldoutParams::default().with_test_size(TestSize::Count(1))
+        ),
+        Err(SplitError::PartitionTooSmallForClasses {
+            partition: SplitPartition::Test,
+            rows: 1,
+            classes: 2,
+        })
     );
 }
 

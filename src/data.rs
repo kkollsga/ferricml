@@ -93,6 +93,54 @@ impl fmt::Display for DataError {
 
 impl Error for DataError {}
 
+/// Errors produced while selecting rows or targets by index.
+#[derive(Clone, Debug, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum SelectionError {
+    /// A selection contained no indices.
+    Empty,
+    /// A selected index was outside the source.
+    IndexOutOfBounds {
+        /// Position within the requested selection.
+        position: usize,
+        /// Invalid source index.
+        index: usize,
+        /// Number of available source values.
+        available: usize,
+    },
+    /// Selected matrix dimensions could not be represented.
+    OutputShapeOverflow {
+        /// Requested output rows.
+        rows: usize,
+        /// Requested output columns.
+        columns: usize,
+    },
+}
+
+impl fmt::Display for SelectionError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Empty => f.write_str("selection must contain at least one index"),
+            Self::IndexOutOfBounds {
+                position,
+                index,
+                available,
+            } => write!(
+                f,
+                "selection index {index} at position {position} is outside 0..{available}"
+            ),
+            Self::OutputShapeOverflow { rows, columns } => {
+                write!(
+                    f,
+                    "selected matrix dimensions overflow usize: {rows} x {columns}"
+                )
+            }
+        }
+    }
+}
+
+impl Error for SelectionError {}
+
 fn validated_matrix_len(rows: usize, columns: usize, actual: usize) -> Result<usize, DataError> {
     if rows == 0 {
         return Err(DataError::ZeroRows);
@@ -113,6 +161,24 @@ fn validated_matrix_len(rows: usize, columns: usize, actual: usize) -> Result<us
 fn validate_finite(values: &[f32]) -> Result<(), DataError> {
     if let Some(index) = values.iter().position(|value| !value.is_finite()) {
         return Err(DataError::NonFiniteValue { index });
+    }
+    Ok(())
+}
+
+fn validate_selection(indices: &[usize], available: usize) -> Result<(), SelectionError> {
+    if indices.is_empty() {
+        return Err(SelectionError::Empty);
+    }
+    if let Some((position, &index)) = indices
+        .iter()
+        .enumerate()
+        .find(|(_, index)| **index >= available)
+    {
+        return Err(SelectionError::IndexOutOfBounds {
+            position,
+            index,
+            available,
+        });
     }
     Ok(())
 }
@@ -276,6 +342,31 @@ impl DenseMatrix {
     pub fn into_values(self) -> Vec<f32> {
         self.values
     }
+
+    /// Copies selected rows into a new contiguous validated matrix.
+    ///
+    /// Selection order and repeated indices are preserved. Every index is
+    /// validated before the result allocation is created.
+    pub fn select_rows(&self, indices: &[usize]) -> Result<Self, SelectionError> {
+        validate_selection(indices, self.rows)?;
+        let output_len =
+            indices
+                .len()
+                .checked_mul(self.columns)
+                .ok_or(SelectionError::OutputShapeOverflow {
+                    rows: indices.len(),
+                    columns: self.columns,
+                })?;
+        let mut values = Vec::with_capacity(output_len);
+        for &index in indices {
+            values.extend_from_slice(self.row(index).expect("selection index was validated"));
+        }
+        Ok(Self {
+            values,
+            rows: indices.len(),
+            columns: self.columns,
+        })
+    }
 }
 
 /// An owned, non-empty vector of binary classification targets.
@@ -330,6 +421,14 @@ impl BinaryTargets {
     pub fn into_values(self) -> Vec<u8> {
         self.values
     }
+
+    /// Copies selected targets in the requested order.
+    pub fn select(&self, indices: &[usize]) -> Result<Self, SelectionError> {
+        validate_selection(indices, self.values.len())?;
+        Ok(Self {
+            values: indices.iter().map(|&index| self.values[index]).collect(),
+        })
+    }
 }
 
 /// An owned, non-empty vector of finite regression targets.
@@ -379,6 +478,14 @@ impl RegressionTargets {
     #[inline]
     pub fn into_values(self) -> Vec<f32> {
         self.values
+    }
+
+    /// Copies selected targets in the requested order.
+    pub fn select(&self, indices: &[usize]) -> Result<Self, SelectionError> {
+        validate_selection(indices, self.values.len())?;
+        Ok(Self {
+            values: indices.iter().map(|&index| self.values[index]).collect(),
+        })
     }
 }
 
@@ -605,6 +712,47 @@ mod tests {
                 .unwrap()
                 .into_values(),
             values
+        );
+    }
+
+    #[test]
+    fn row_and_target_selection_preserve_order_and_repetition() {
+        let matrix = DenseMatrix::new(vec![0.0, 1.0, 2.0, 3.0, 4.0, 5.0], 3, 2).unwrap();
+        let selected = matrix.select_rows(&[2, 0, 2]).unwrap();
+        assert_eq!(selected.rows(), 3);
+        assert_eq!(selected.columns(), 2);
+        assert_eq!(selected.as_slice(), &[4.0, 5.0, 0.0, 1.0, 4.0, 5.0]);
+
+        let binary = BinaryTargets::new(vec![0, 1, 0]).unwrap();
+        assert_eq!(binary.select(&[2, 1, 2]).unwrap().as_slice(), &[0, 1, 0]);
+        let regression = RegressionTargets::new(vec![1.0, 2.0, 3.0]).unwrap();
+        assert_eq!(
+            regression.select(&[2, 0, 2]).unwrap().as_slice(),
+            &[3.0, 1.0, 3.0]
+        );
+    }
+
+    #[test]
+    fn selection_validates_every_index_before_allocating() {
+        let matrix = DenseMatrix::new(vec![0.0, 1.0], 2, 1).unwrap();
+        assert_eq!(matrix.select_rows(&[]), Err(SelectionError::Empty));
+        assert_eq!(
+            matrix.select_rows(&[0, 2]),
+            Err(SelectionError::IndexOutOfBounds {
+                position: 1,
+                index: 2,
+                available: 2,
+            })
+        );
+        let targets = BinaryTargets::new(vec![0, 1]).unwrap();
+        assert_eq!(targets.select(&[]), Err(SelectionError::Empty));
+        assert_eq!(
+            targets.select(&[2]),
+            Err(SelectionError::IndexOutOfBounds {
+                position: 0,
+                index: 2,
+                available: 2,
+            })
         );
     }
 
