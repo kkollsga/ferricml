@@ -801,8 +801,16 @@ pub fn ferricml::linear_model::RidgeParams::with_fit_intercept(self, bool) -> Se
 impl core::default::Default for ferricml::linear_model::RidgeParams
 pub fn ferricml::linear_model::RidgeParams::default() -> Self
 pub mod ferricml::metrics
+#[non_exhaustive] pub enum ferricml::metrics::Average
+pub ferricml::metrics::Average::Binary
+pub ferricml::metrics::Average::Macro
+pub ferricml::metrics::Average::Micro
+pub ferricml::metrics::Average::Weighted
+impl core::convert::From<ferricml::metrics::Average> for ferricml::metrics::Averaging
+pub fn ferricml::metrics::Averaging::from(ferricml::metrics::Average) -> Self
 #[non_exhaustive] pub enum ferricml::metrics::MetricError
 pub ferricml::metrics::MetricError::Empty
+pub ferricml::metrics::MetricError::InvalidBeta
 pub ferricml::metrics::MetricError::InvalidBinaryTarget
 pub ferricml::metrics::MetricError::InvalidBinaryTarget::index: usize
 pub ferricml::metrics::MetricError::InvalidBinaryTarget::input: usize
@@ -815,10 +823,24 @@ pub ferricml::metrics::MetricError::LengthMismatch::expected: usize
 pub ferricml::metrics::MetricError::NonFiniteValue
 pub ferricml::metrics::MetricError::NonFiniteValue::index: usize
 pub ferricml::metrics::MetricError::NonFiniteValue::input: usize
+pub ferricml::metrics::MetricError::NotBinary
+pub ferricml::metrics::MetricError::NotBinary::labels: usize
 pub ferricml::metrics::MetricError::Undefined
 impl core::error::Error for ferricml::metrics::MetricError
 impl core::fmt::Display for ferricml::metrics::MetricError
 pub fn ferricml::metrics::MetricError::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+#[non_exhaustive] pub enum ferricml::metrics::ZeroDivision
+pub ferricml::metrics::ZeroDivision::Error
+pub ferricml::metrics::ZeroDivision::Skip
+pub ferricml::metrics::ZeroDivision::Zero
+pub struct ferricml::metrics::Averaging
+impl ferricml::metrics::Averaging
+pub const fn ferricml::metrics::Averaging::average(self) -> ferricml::metrics::Average
+pub const fn ferricml::metrics::Averaging::new(ferricml::metrics::Average) -> Self
+pub const fn ferricml::metrics::Averaging::with_zero_division(self, ferricml::metrics::ZeroDivision) -> Self
+pub const fn ferricml::metrics::Averaging::zero_division(self) -> ferricml::metrics::ZeroDivision
+impl core::convert::From<ferricml::metrics::Average> for ferricml::metrics::Averaging
+pub fn ferricml::metrics::Averaging::from(ferricml::metrics::Average) -> Self
 pub struct ferricml::metrics::BinaryConfusionMatrix
 impl ferricml::metrics::BinaryConfusionMatrix
 pub const fn ferricml::metrics::BinaryConfusionMatrix::false_negatives(self) -> u64
@@ -826,6 +848,26 @@ pub const fn ferricml::metrics::BinaryConfusionMatrix::false_positives(self) -> 
 pub const fn ferricml::metrics::BinaryConfusionMatrix::total(self) -> u64
 pub const fn ferricml::metrics::BinaryConfusionMatrix::true_negatives(self) -> u64
 pub const fn ferricml::metrics::BinaryConfusionMatrix::true_positives(self) -> u64
+pub struct ferricml::metrics::ClassCounts
+impl ferricml::metrics::ClassCounts
+pub const fn ferricml::metrics::ClassCounts::false_negatives(self) -> u64
+pub const fn ferricml::metrics::ClassCounts::false_positives(self) -> u64
+pub const fn ferricml::metrics::ClassCounts::predicted(self) -> u64
+pub const fn ferricml::metrics::ClassCounts::support(self) -> u64
+pub const fn ferricml::metrics::ClassCounts::true_positives(self) -> u64
+pub struct ferricml::metrics::ConfusionMatrix
+impl ferricml::metrics::ConfusionMatrix
+pub fn ferricml::metrics::ConfusionMatrix::accuracy(&self) -> f64
+pub fn ferricml::metrics::ConfusionMatrix::class_counts(&self, usize) -> core::option::Option<ferricml::metrics::ClassCounts>
+pub fn ferricml::metrics::ConfusionMatrix::counts(&self) -> &[u64]
+pub fn ferricml::metrics::ConfusionMatrix::f1(&self, impl core::convert::Into<ferricml::metrics::Averaging>) -> core::result::Result<f64, ferricml::metrics::MetricError>
+pub fn ferricml::metrics::ConfusionMatrix::fbeta(&self, f64, impl core::convert::Into<ferricml::metrics::Averaging>) -> core::result::Result<f64, ferricml::metrics::MetricError>
+pub fn ferricml::metrics::ConfusionMatrix::labels(&self) -> &[u8]
+pub fn ferricml::metrics::ConfusionMatrix::n_labels(&self) -> usize
+pub fn ferricml::metrics::ConfusionMatrix::new(&[u8], &[u8]) -> core::result::Result<Self, ferricml::metrics::MetricError>
+pub fn ferricml::metrics::ConfusionMatrix::precision(&self, impl core::convert::Into<ferricml::metrics::Averaging>) -> core::result::Result<f64, ferricml::metrics::MetricError>
+pub fn ferricml::metrics::ConfusionMatrix::recall(&self, impl core::convert::Into<ferricml::metrics::Averaging>) -> core::result::Result<f64, ferricml::metrics::MetricError>
+pub const fn ferricml::metrics::ConfusionMatrix::total(&self) -> u64
 pub fn ferricml::metrics::accuracy_score(&[u8], &[u8]) -> core::result::Result<f64, ferricml::metrics::MetricError>
 pub fn ferricml::metrics::binary_confusion_matrix(&[u8], &[u8]) -> core::result::Result<ferricml::metrics::BinaryConfusionMatrix, ferricml::metrics::MetricError>
 pub fn ferricml::metrics::brier_score(&[u8], &[f32]) -> core::result::Result<f64, ferricml::metrics::MetricError>

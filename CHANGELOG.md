@@ -54,6 +54,15 @@ and releases use [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   selected runtime variant's capabilities. The declared constant on each
   dispatch enum and each concrete pipeline is composed from its variants or
   parts, so it promises only what holds whichever one is held.
+- `metrics::ConfusionMatrix`, counting one classification result over the
+  sorted union of the observed labels, and the `metrics::Average` vocabulary
+  that combines its per-class precision, recall, F1, and F-beta as a binary,
+  micro, macro, or support-weighted score. Micro-averaging a single-label
+  result equals accuracy, and binary averaging equals the standalone binary
+  functions exactly.
+- `metrics::Averaging` and `metrics::ZeroDivision`, making the treatment of a
+  class with an empty denominator an explicit typed choice. The default reports
+  `MetricError::Undefined` instead of substituting a value.
 
 ### Fixed
 

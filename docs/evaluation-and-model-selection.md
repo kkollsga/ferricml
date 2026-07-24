@@ -20,6 +20,31 @@ values outside `0..=1`. Precision, recall, F1, R2, and ROC AUC return
 does not exist. Binary logarithmic loss clips valid endpoint probabilities to
 `1e-15..=1-1e-15` before taking logarithms.
 
+## Averaging
+
+`ConfusionMatrix` counts one classification result over the sorted union of the
+labels observed in either input, with expected labels as rows and predicted
+labels as columns. Precision, recall, F1, and F-beta are derived from that one
+validated pass and combined through the `Average` vocabulary, so binary and
+multiclass evaluation share a single set of names:
+
+- `Binary` reports the positive class, label `1`, alone. A wider label set is
+  `MetricError::NotBinary` rather than a silently reinterpreted one-vs-rest
+  score, and the resulting values equal the standalone binary functions
+  exactly.
+- `Micro` pools every class into one count pair. For single-label predictions
+  micro-averaged precision, recall, and F-score therefore all equal accuracy.
+- `Macro` takes the unweighted mean of the per-class scores.
+- `Weighted` weighs each per-class score by that class's true support, so a
+  class with no true rows carries no weight.
+
+A class that is never predicted has no precision, and a class with no true rows
+has no recall. FerricML reports that as `MetricError::Undefined` by default
+rather than substituting a value. `Averaging::with_zero_division` states the
+alternative explicitly: `ZeroDivision::Zero` scores the affected class zero and
+keeps it in the average, and `ZeroDivision::Skip` removes it from both the sum
+and the divisor.
+
 ## Deterministic splits
 
 `train_test_split` and `stratified_train_test_split` return validated `Split`

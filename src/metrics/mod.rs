@@ -3,13 +3,17 @@
 use std::error::Error;
 use std::fmt;
 
+mod averaging;
 mod classification;
+mod confusion;
 mod regression;
 
+pub use averaging::{Average, Averaging, ZeroDivision};
 pub use classification::{
     BinaryConfusionMatrix, accuracy_score, binary_confusion_matrix, brier_score, f1_score,
     log_loss, precision_score, recall_score, roc_auc_score,
 };
+pub use confusion::{ClassCounts, ConfusionMatrix};
 pub use regression::{mean_absolute_error, mean_squared_error, r2_score, root_mean_squared_error};
 
 /// Errors produced while evaluating predictions.
@@ -49,6 +53,13 @@ pub enum MetricError {
         /// Position of the invalid probability.
         index: usize,
     },
+    /// A binary-only average was requested for a wider label set.
+    NotBinary {
+        /// Number of distinct observed labels.
+        labels: usize,
+    },
+    /// An F-score beta was not finite and strictly positive.
+    InvalidBeta,
     /// The metric denominator or required class distribution is undefined.
     Undefined,
 }
@@ -77,6 +88,11 @@ impl fmt::Display for MetricError {
             Self::InvalidProbability { index } => {
                 write!(f, "probability at index {index} must be in 0..=1")
             }
+            Self::NotBinary { labels } => write!(
+                f,
+                "binary averaging requires labels 0 and 1, got {labels} distinct labels"
+            ),
+            Self::InvalidBeta => f.write_str("F-score beta must be finite and strictly positive"),
             Self::Undefined => f.write_str("metric is undefined for these observations"),
         }
     }
