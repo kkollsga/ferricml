@@ -161,36 +161,44 @@ impl LogisticRegression {
 
         let parameter_count = columns + usize::from(params.fit_intercept);
         let intercept_index = params.fit_intercept.then_some(columns);
+        let mut design = vec![0.0_f64; rows * parameter_count];
+        for (row, design_row) in data
+            .iter_rows()
+            .zip(design.chunks_exact_mut(parameter_count))
+        {
+            for column in 0..columns {
+                design_row[column] = (f64::from(row[column]) - means[column]) / scales[column];
+            }
+            if let Some(index) = intercept_index {
+                design_row[index] = 1.0;
+            }
+        }
         let mut theta = vec![0.0_f64; parameter_count];
+        let mut gradient = vec![0.0_f64; parameter_count];
+        let mut hessian = vec![0.0_f64; parameter_count * parameter_count];
         let lambda = 1.0 / f64::from(params.c);
         let mut iterations = 0;
         for iteration in 0..params.max_iter {
-            let mut gradient = vec![0.0_f64; parameter_count];
-            let mut hessian = vec![0.0_f64; parameter_count * parameter_count];
-            for (row_index, (row, &target)) in data.iter_rows().zip(targets.as_slice()).enumerate()
+            gradient.fill(0.0);
+            hessian.fill(0.0);
+            for (row_index, (design_row, &target)) in design
+                .chunks_exact(parameter_count)
+                .zip(targets.as_slice())
+                .enumerate()
             {
                 let sample_weight = sample_weight(sample_weights, row_index);
                 let mut score = intercept_index.map_or(0.0, |index| theta[index]);
                 for column in 0..columns {
-                    score +=
-                        theta[column] * (f64::from(row[column]) - means[column]) / scales[column];
+                    score += theta[column] * design_row[column];
                 }
                 let probability = sigmoid_f64(score);
                 let residual = sample_weight * (probability - f64::from(target));
                 let curvature = sample_weight * (probability * (1.0 - probability)).max(1.0e-12);
                 for left in 0..parameter_count {
-                    let left_value =
-                        design_value(row, left, columns, &means, &scales, params.fit_intercept);
+                    let left_value = design_row[left];
                     gradient[left] += residual * left_value;
                     for right in 0..=left {
-                        let right_value = design_value(
-                            row,
-                            right,
-                            columns,
-                            &means,
-                            &scales,
-                            params.fit_intercept,
-                        );
+                        let right_value = design_row[right];
                         hessian[left * parameter_count + right] +=
                             curvature * left_value * right_value;
                     }
@@ -605,21 +613,6 @@ fn validate_feature_width(data: &MatrixView<'_>, features: usize) -> Result<(), 
         });
     }
     Ok(())
-}
-
-fn design_value(
-    row: &[f32],
-    index: usize,
-    columns: usize,
-    means: &[f64],
-    scales: &[f64],
-    fit_intercept: bool,
-) -> f64 {
-    if fit_intercept && index == columns {
-        1.0
-    } else {
-        (f64::from(row[index]) - means[index]) / scales[index]
-    }
 }
 
 fn solve_positive_definite(
