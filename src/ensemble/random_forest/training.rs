@@ -263,7 +263,7 @@ impl<Y, O: Objective<Y>> TreeBuilder<'_, '_, Y, O> {
                 attachment: Attachment::Left(node_index),
             });
         }
-        PackedTree::from_build_nodes(self.nodes)
+        PackedTree::from_build_nodes(self.nodes, self.data.columns())
     }
 
     fn push_node(&mut self, node: BuildNode) -> Result<u32, ModelError> {

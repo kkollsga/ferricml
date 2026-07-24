@@ -36,6 +36,45 @@ fn classifier(
     .unwrap()
 }
 
+fn assert_any_classifier_errors_are_atomic(model: &AnyClassifier, data: &DenseMatrix) {
+    let mut labels = [7_u8; 3];
+    assert_eq!(
+        model.predict_into(&data.as_view(), &mut labels),
+        Err(ModelError::OutputLength {
+            expected: data.rows(),
+            actual: 3,
+        })
+    );
+    assert_eq!(labels, [7; 3]);
+    let mut probabilities = [7.0_f32; 7];
+    assert_eq!(
+        model.predict_proba_into(&data.as_view(), &mut probabilities),
+        Err(ModelError::OutputLength {
+            expected: data.rows() * model.classes().len(),
+            actual: 7,
+        })
+    );
+    assert_eq!(probabilities, [7.0; 7]);
+    let mut class = [7.0_f32; 4];
+    assert_eq!(
+        model.predict_class_proba_into(&data.as_view(), 9, &mut class),
+        Err(ModelError::UnknownClass { class: 9 })
+    );
+    assert_eq!(class, [7.0; 4]);
+}
+
+fn assert_any_regressor_errors_are_atomic(model: &AnyRegressor, data: &DenseMatrix) {
+    let mut output = [7.0_f32; 3];
+    assert_eq!(
+        model.predict_into(&data.as_view(), &mut output),
+        Err(ModelError::OutputLength {
+            expected: data.rows(),
+            actual: 3,
+        })
+    );
+    assert_eq!(output, [7.0; 3]);
+}
+
 #[test]
 fn binary_probabilities_are_row_major_in_sorted_class_order() {
     let data = matrix(&[0.0, 1.0, 2.0, 3.0], 4, 1);
@@ -211,10 +250,35 @@ fn object_safe_traits_and_owned_enums_dispatch_by_batch() {
         erased_classifier.predict_proba(&data.as_view()).unwrap(),
         expected_probabilities
     );
+    let mut labels_into = [9_u8; 4];
+    classifier
+        .predict_into(&data.as_view(), &mut labels_into)
+        .unwrap();
+    assert_eq!(labels_into.as_slice(), expected_labels.as_slice());
+    let mut probabilities_into = [9.0_f32; 8];
+    classifier
+        .predict_proba_into(&data.as_view(), &mut probabilities_into)
+        .unwrap();
+    assert_eq!(
+        probabilities_into.as_slice(),
+        expected_probabilities.as_slice()
+    );
+    let mut class_into = [9.0_f32; 4];
+    classifier
+        .predict_class_proba_into(&data.as_view(), 1, &mut class_into)
+        .unwrap();
+    assert_eq!(
+        class_into.as_slice(),
+        classifier
+            .predict_class_proba(&data.as_view(), 1)
+            .unwrap()
+            .as_slice()
+    );
     assert!(matches!(
         classifier.get_params(),
         AnyClassifierParams::RandomForest(_)
     ));
+    assert_any_classifier_errors_are_atomic(&classifier, &data);
 
     let logistic = LogisticRegression::fit(
         &data.as_view(),
@@ -225,10 +289,27 @@ fn object_safe_traits_and_owned_enums_dispatch_by_batch() {
     let expected = logistic.predict_proba(&data.as_view()).unwrap();
     let logistic: AnyClassifier = logistic.into();
     assert_eq!(logistic.predict_proba(&data.as_view()).unwrap(), expected);
+    let mut logistic_into = [9.0_f32; 8];
+    logistic
+        .predict_proba_into(&data.as_view(), &mut logistic_into)
+        .unwrap();
+    assert_eq!(logistic_into.as_slice(), expected.as_slice());
+    let mut logistic_class = [9.0_f32; 4];
+    logistic
+        .predict_class_proba_into(&data.as_view(), 1, &mut logistic_class)
+        .unwrap();
+    assert_eq!(
+        logistic_class.as_slice(),
+        logistic
+            .predict_class_proba(&data.as_view(), 1)
+            .unwrap()
+            .as_slice()
+    );
     assert!(matches!(
         logistic.get_params(),
         AnyClassifierParams::LogisticRegression(_)
     ));
+    assert_any_classifier_errors_are_atomic(&logistic, &data);
 
     let targets = RegressionTargets::new(vec![0.0, 1.0, 4.0, 9.0]).unwrap();
     let concrete_regressor = RandomForestRegressor::fit(
@@ -244,10 +325,16 @@ fn object_safe_traits_and_owned_enums_dispatch_by_batch() {
     let erased_regressor: &dyn Regressor = &regressor;
 
     assert_eq!(erased_regressor.predict(&data.as_view()).unwrap(), expected);
+    let mut regressor_into = [9.0_f32; 4];
+    regressor
+        .predict_into(&data.as_view(), &mut regressor_into)
+        .unwrap();
+    assert_eq!(regressor_into.as_slice(), expected.as_slice());
     assert!(matches!(
         regressor.get_params(),
         AnyRegressorParams::RandomForest(_)
     ));
+    assert_any_regressor_errors_are_atomic(&regressor, &data);
     assert_eq!(classifier.n_features_in(), regressor.n_features_in());
 
     let linear =
@@ -256,16 +343,28 @@ fn object_safe_traits_and_owned_enums_dispatch_by_batch() {
     let expected = linear.predict(&data.as_view()).unwrap();
     let linear: AnyRegressor = linear.into();
     assert_eq!(linear.predict(&data.as_view()).unwrap(), expected);
+    let mut linear_into = [9.0_f32; 4];
+    linear
+        .predict_into(&data.as_view(), &mut linear_into)
+        .unwrap();
+    assert_eq!(linear_into.as_slice(), expected.as_slice());
     assert!(matches!(
         linear.get_params(),
         AnyRegressorParams::LinearRegression(_)
     ));
+    assert_any_regressor_errors_are_atomic(&linear, &data);
 
     let ridge = Ridge::fit(&data.as_view(), &targets, RidgeParams::default()).unwrap();
     let expected = ridge.predict(&data.as_view()).unwrap();
     let ridge: AnyRegressor = ridge.into();
     assert_eq!(ridge.predict(&data.as_view()).unwrap(), expected);
+    let mut ridge_into = [9.0_f32; 4];
+    ridge
+        .predict_into(&data.as_view(), &mut ridge_into)
+        .unwrap();
+    assert_eq!(ridge_into.as_slice(), expected.as_slice());
     assert!(matches!(ridge.get_params(), AnyRegressorParams::Ridge(_)));
+    assert_any_regressor_errors_are_atomic(&ridge, &data);
 
     let boosted = HistGradientBoostingRegressor::fit(
         &data.as_view(),
@@ -279,10 +378,16 @@ fn object_safe_traits_and_owned_enums_dispatch_by_batch() {
     let expected = boosted.predict(&data.as_view()).unwrap();
     let boosted: AnyRegressor = boosted.into();
     assert_eq!(boosted.predict(&data.as_view()).unwrap(), expected);
+    let mut boosted_into = [9.0_f32; 4];
+    boosted
+        .predict_into(&data.as_view(), &mut boosted_into)
+        .unwrap();
+    assert_eq!(boosted_into.as_slice(), expected.as_slice());
     assert!(matches!(
         boosted.get_params(),
         AnyRegressorParams::HistGradientBoosting(_)
     ));
+    assert_any_regressor_errors_are_atomic(&boosted, &data);
 }
 
 #[test]

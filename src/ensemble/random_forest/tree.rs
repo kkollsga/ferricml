@@ -69,7 +69,11 @@ pub(super) struct PackedTree {
 }
 
 impl PackedTree {
-    pub(super) fn from_build_nodes(build: Vec<BuildNode>) -> Result<Self, ModelError> {
+    pub(super) fn from_build_nodes(
+        build: Vec<BuildNode>,
+        n_features: usize,
+    ) -> Result<Self, ModelError> {
+        validate_build_topology(&build, n_features)?;
         if build[0].is_leaf() {
             return Ok(Self {
                 nodes: Vec::new(),
@@ -110,10 +114,12 @@ impl PackedTree {
                 packed.right = branch_indices[node.right as usize];
             }
         }
-        Ok(Self {
+        let tree = Self {
             nodes,
             root_leaf: None,
-        })
+        };
+        debug_assert!(tree.has_valid_packed_topology(n_features));
+        Ok(tree)
     }
 
     #[inline(always)]
@@ -123,10 +129,13 @@ impl PackedTree {
         }
         let mut index = 0usize;
         loop {
-            // Tree construction validates every token before the fitted model
-            // becomes observable, and prediction validates the row width once
-            // per batch. Avoid repeating those bounds checks at every level.
+            // SAFETY: `from_build_nodes` validates every branch token against
+            // the immutable packed buffer before the model becomes observable.
+            // Each non-leaf child therefore remains a valid node index.
             let node = unsafe { self.nodes.get_unchecked(index) };
+            // SAFETY: construction validates every encoded feature against the
+            // fitted width, and public prediction validates `row` to that width
+            // before entering tree traversal.
             let value =
                 unsafe { *row.get_unchecked((node.feature_and_flags & FEATURE_MASK) as usize) };
             if value <= node.threshold {
@@ -141,5 +150,120 @@ impl PackedTree {
                 index = node.right as usize;
             }
         }
+    }
+
+    fn has_valid_packed_topology(&self, n_features: usize) -> bool {
+        if self.root_leaf.is_some() {
+            return self.nodes.is_empty() && self.root_leaf.is_some_and(f32::is_finite);
+        }
+        !self.nodes.is_empty()
+            && self.nodes.iter().all(|node| {
+                ((node.feature_and_flags & FEATURE_MASK) as usize) < n_features
+                    && node.threshold.is_finite()
+                    && child_is_valid(
+                        node.left,
+                        node.feature_and_flags & LEFT_IS_LEAF,
+                        self.nodes.len(),
+                    )
+                    && child_is_valid(
+                        node.right,
+                        node.feature_and_flags & RIGHT_IS_LEAF,
+                        self.nodes.len(),
+                    )
+            })
+    }
+}
+
+fn child_is_valid(value: u32, leaf_flag: u32, node_count: usize) -> bool {
+    if leaf_flag != 0 {
+        f32::from_bits(value).is_finite()
+    } else {
+        (value as usize) < node_count
+    }
+}
+
+fn validate_build_topology(build: &[BuildNode], n_features: usize) -> Result<(), ModelError> {
+    if build.is_empty() || n_features == 0 {
+        return Err(ModelError::TreeTooLarge);
+    }
+    let mut seen = vec![false; build.len()];
+    let mut stack = vec![0_usize];
+    while let Some(index) = stack.pop() {
+        if index >= build.len() || seen[index] {
+            return Err(ModelError::TreeTooLarge);
+        }
+        seen[index] = true;
+        let node = build[index];
+        if !node.payload.is_finite() {
+            return Err(ModelError::TreeTooLarge);
+        }
+        if node.is_leaf() {
+            if node.left != NO_CHILD || node.right != NO_CHILD {
+                return Err(ModelError::TreeTooLarge);
+            }
+            continue;
+        }
+        let left = node.left as usize;
+        let right = node.right as usize;
+        if node.feature as usize >= n_features
+            || left != index + 1
+            || right <= left
+            || right >= build.len()
+        {
+            return Err(ModelError::TreeTooLarge);
+        }
+        stack.push(right);
+        stack.push(left);
+    }
+    if seen.iter().any(|&visited| !visited) {
+        return Err(ModelError::TreeTooLarge);
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn rejects_invalid_builder_topologies_before_packing() {
+        assert_eq!(
+            PackedTree::from_build_nodes(Vec::new(), 1),
+            Err(ModelError::TreeTooLarge)
+        );
+        assert_eq!(
+            PackedTree::from_build_nodes(vec![BuildNode::leaf(0.0)], 0),
+            Err(ModelError::TreeTooLarge)
+        );
+
+        let invalid_feature = vec![
+            BuildNode {
+                feature: 1,
+                left: 1,
+                right: 2,
+                payload: 0.5,
+            },
+            BuildNode::leaf(0.0),
+            BuildNode::leaf(1.0),
+        ];
+        assert_eq!(
+            PackedTree::from_build_nodes(invalid_feature, 1),
+            Err(ModelError::TreeTooLarge)
+        );
+
+        let cycle = vec![
+            BuildNode {
+                feature: 0,
+                left: 0,
+                right: 2,
+                payload: 0.5,
+            },
+            BuildNode::leaf(0.0),
+            BuildNode::leaf(1.0),
+        ];
+        assert_eq!(
+            PackedTree::from_build_nodes(cycle, 1),
+            Err(ModelError::TreeTooLarge)
+        );
     }
 }
