@@ -27,10 +27,17 @@ estimator meaning follow the reference contract.
 - `ensemble` owns public ensemble estimators and parameter types; each private
   estimator family owns its validation, training, persistence conversion, and
   compact representation below the public facade.
-- `pipeline` composes a fitted `Transformer` and estimator generically. Its
+- `pipeline` composes fitted transformers and an estimator generically. Its
   `with_transformed` path uses caller-owned workspace and static dispatch.
-  Concrete standard-scaler pipelines provide allocation-free prediction and
-  explicit persistence for logistic, linear, and ridge estimators.
+  `Pipeline` holds one transformer; concrete standard-scaler pipelines provide
+  allocation-free prediction and explicit persistence for logistic, linear, and
+  ridge estimators. `StagedPipeline` holds two or more stages as a
+  `TransformerStack` tuple and can fit the whole composition in one pass, each
+  stage on the previous stage's output. Every handoff is validated before the
+  composition exists, and one caller-owned workspace is split into a disjoint
+  segment per stage, so multi-stage inference allocates nothing. Prediction
+  stays on the generic callback rather than per-category convenience methods,
+  which cannot coexist as inherent methods of one name.
 - `linear_model` separates estimator facades from private numerical seams.
 - `metrics` owns deterministic classification and regression measures with
   explicit errors for invalid or undefined inputs.
@@ -38,10 +45,15 @@ estimator meaning follow the reference contract.
   fold iterators, batch estimator scoring, and serial typed cross-validation.
   Splitters remain independent of estimator internals, while fitting stays in
   caller-provided closures.
-- `preprocessing` owns fitted transformer implementations and their state;
-  `StandardScaler` uses deterministic two-pass population statistics.
-  Training-time pipeline composition and more than one transform step remain
-  deliberately deferred until those use cases are real.
+- `preprocessing` owns fitted transformer implementations and their state.
+  `StandardScaler` uses deterministic two-pass population statistics and
+  accepts sample weights; `MinMaxScaler` and `MaxAbsScaler` fit order
+  statistics, which no per-sample weight can move, so they declare no weighted
+  entry point. Each carries a degenerate column explicitly — a constant column
+  scales by one and a zero-magnitude column passes through — rather than
+  dividing by an empty range. The shared non-finite preflight is stated once
+  for the family, so a finite input that scales to a non-finite `f32` is
+  reported at its first row-major location before anything is written.
 - `ranking` owns pair construction, the pairwise linear estimator, and
   denominator-safe rank metrics. It remains distinct from `Classifier`: raw
   ranking scores and pair margins are not probabilities.
@@ -71,3 +83,13 @@ while `capabilities` on a dispatch value reports the variant actually held.
 Capabilities a composition cannot have at all — weighted fitting, when the
 composition owns only already-fitted parts — are declared away structurally
 instead of being inherited.
+
+Artifact support composes through a bound rather than a list. A
+`StagedPipeline` declares persistence exactly where every stage and its
+estimator really have a schema-bound artifact, so one declaration covers every
+such composition and asking one that cannot persist is a compile error. That is
+possible because a staged composition uses a single artifact kind and records
+which concrete parts it holds inside the payload: order, estimator type, and
+stage count are all checked on decode, so one composition never decodes as
+another. `Pipeline`'s three concrete compositions predate that scheme and keep
+their own artifact kinds, so their declarations stay per composition.
