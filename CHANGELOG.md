@@ -16,6 +16,10 @@ and releases use [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Model-agnostic permutation feature importance over any fitted classifier or
   regressor, with a seeded permutation count, allocating and caller-owned entry
   points, and per-feature mean and dispersion of the scorer's quality loss.
+- A compile-time estimator capability descriptor, `api::Capabilities`, carried
+  by the `api::HasCapabilities` trait, so meta-layers query declared support
+  for weighted fitting and artifact persistence instead of matching on concrete
+  estimator types. The default declares nothing.
 
 ### Fixed
 

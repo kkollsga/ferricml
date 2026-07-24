@@ -1,0 +1,163 @@
+//! Declared, compile-time capability descriptors for fitted estimator types.
+
+use super::Estimator;
+
+/// What a fitted estimator type declares it can do.
+///
+/// The descriptor is a compile-time constant carried by [`HasCapabilities`], so
+/// meta-layers ask what an estimator supports instead of matching on its
+/// concrete type. It is deliberately small, and stays small by one rule: a
+/// capability belongs here only when it varies between estimator types *and* is
+/// not already guaranteed by the type system. Producing probabilities, for
+/// example, is required of every [`Classifier`](super::Classifier), and
+/// non-finite inputs are already impossible inside a
+/// [`MatrixView`](crate::data::MatrixView); neither is a field here.
+///
+/// Fields are private and read through `const` accessors so that declaring a
+/// further capability later stays a compatible change. Construction starts from
+/// [`Capabilities::NONE`] and opts in explicitly:
+///
+/// ```
+/// use ferricml::api::{Capabilities, Estimator, HasCapabilities};
+///
+/// struct MeanBaseline;
+///
+/// impl Estimator for MeanBaseline {
+///     fn n_features_in(&self) -> usize {
+///         1
+///     }
+/// }
+///
+/// impl HasCapabilities for MeanBaseline {
+///     const CAPABILITIES: Capabilities = Capabilities::NONE.with_sample_weights(true);
+/// }
+///
+/// assert!(MeanBaseline::CAPABILITIES.sample_weights());
+/// assert!(!MeanBaseline::CAPABILITIES.artifact());
+/// ```
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct Capabilities {
+    sample_weights: bool,
+    artifact: bool,
+}
+
+impl Capabilities {
+    /// A descriptor that declares nothing.
+    ///
+    /// This is the conservative starting point and the default for any type
+    /// that has not opted in, so an omitted declaration understates a type
+    /// rather than promising behavior it does not have.
+    pub const NONE: Self = Self {
+        sample_weights: false,
+        artifact: false,
+    };
+
+    /// Declares whether fitting accepts per-sample weights.
+    #[must_use]
+    pub const fn with_sample_weights(mut self, supported: bool) -> Self {
+        self.sample_weights = supported;
+        self
+    }
+
+    /// Declares whether fitted values round trip through a stable artifact.
+    #[must_use]
+    pub const fn with_artifact(mut self, supported: bool) -> Self {
+        self.artifact = supported;
+        self
+    }
+
+    /// Whether fitting accepts per-sample weights.
+    ///
+    /// A type declaring this offers a `fit_weighted` entry point whose fitted
+    /// result for unit weights matches its unweighted fit.
+    #[must_use]
+    pub const fn sample_weights(self) -> bool {
+        self.sample_weights
+    }
+
+    /// Whether fitted values encode to, and decode from, a stable artifact.
+    #[must_use]
+    pub const fn artifact(self) -> bool {
+        self.artifact
+    }
+
+    /// Capabilities declared by both descriptors.
+    ///
+    /// This is what a runtime dispatch enum or a fitted composition can promise
+    /// without knowing which variant or part it holds, so batch dispatch
+    /// validates once instead of per call site.
+    #[must_use]
+    pub const fn intersection(self, other: Self) -> Self {
+        Self {
+            sample_weights: self.sample_weights && other.sample_weights,
+            artifact: self.artifact && other.artifact,
+        }
+    }
+}
+
+/// Compile-time capability declaration for a fitted estimator type.
+///
+/// This is a separate generic trait rather than an associated constant on
+/// [`Estimator`] because a trait carrying an associated constant is not
+/// dyn-compatible, and the estimator categories must stay object-safe for
+/// batch-level dispatch. It complements them exactly as
+/// [`HasParams`](super::HasParams) does.
+///
+/// The default declares nothing, so every capability is an explicit opt-in and
+/// a type that never implements this trait is simply undeclared. The declared
+/// value is part of FerricML's public, semver-relevant contract: it is asserted
+/// against real behavior by the estimator conformance battery rather than
+/// maintained by inspection.
+pub trait HasCapabilities: Estimator {
+    /// Capabilities this estimator type declares.
+    const CAPABILITIES: Capabilities = Capabilities::NONE;
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_conservative_descriptor_declares_nothing() {
+        assert!(!Capabilities::NONE.sample_weights());
+        assert!(!Capabilities::NONE.artifact());
+    }
+
+    #[test]
+    fn declarations_are_independent_and_const_evaluable() {
+        const WEIGHTS: Capabilities = Capabilities::NONE.with_sample_weights(true);
+        const ARTIFACT: Capabilities = Capabilities::NONE.with_artifact(true);
+        const BOTH: Capabilities = WEIGHTS.with_artifact(true);
+
+        assert!(WEIGHTS.sample_weights() && !WEIGHTS.artifact());
+        assert!(!ARTIFACT.sample_weights() && ARTIFACT.artifact());
+        assert!(BOTH.sample_weights() && BOTH.artifact());
+        assert_eq!(BOTH.with_sample_weights(false), ARTIFACT);
+    }
+
+    #[test]
+    fn intersection_keeps_only_what_both_sides_declare() {
+        const WEIGHTS: Capabilities = Capabilities::NONE.with_sample_weights(true);
+        const BOTH: Capabilities = WEIGHTS.with_artifact(true);
+
+        assert_eq!(BOTH.intersection(BOTH), BOTH);
+        assert_eq!(BOTH.intersection(WEIGHTS), WEIGHTS);
+        assert_eq!(BOTH.intersection(Capabilities::NONE), Capabilities::NONE);
+        assert_eq!(WEIGHTS.intersection(BOTH), BOTH.intersection(WEIGHTS));
+    }
+
+    #[test]
+    fn an_undeclared_estimator_defaults_to_declaring_nothing() {
+        struct Undeclared;
+
+        impl Estimator for Undeclared {
+            fn n_features_in(&self) -> usize {
+                1
+            }
+        }
+
+        impl HasCapabilities for Undeclared {}
+
+        assert_eq!(Undeclared::CAPABILITIES, Capabilities::NONE);
+    }
+}

@@ -90,6 +90,23 @@ def inspection_uses_only_public_surfaces(root: Path) -> list[str]:
     ]
 
 
+def capability_descriptor_names_no_estimator(root: Path) -> list[str]:
+    """The capability descriptor is vocabulary, not a registry of estimators.
+
+    Each estimator declares its own capabilities next to its implementation.
+    Naming a concrete estimator module inside the descriptor is the observable
+    symptom of the reverse arrangement — a central table that every new
+    estimator has to be added to, which is the combinatorics problem the
+    descriptor exists to remove.
+    """
+    text = read_if_present(root / "src" / "api" / "capabilities.rs")
+    return [
+        f"capability descriptor names estimator module {module}"
+        for module in ESTIMATOR_MODULES
+        if f"crate::{module}" in text
+    ]
+
+
 RULES: tuple[tuple[str, Callable[[Path], list[str]]], ...] = (
     ("crate-root-lib-only", crate_root_is_lib_only),
     ("obsolete-root-implementations", obsolete_root_implementations_are_gone),
@@ -97,6 +114,7 @@ RULES: tuple[tuple[str, Callable[[Path], list[str]]], ...] = (
     ("ensemble-families-private", ensemble_families_stay_private),
     ("numeric-below-estimators", numeric_depends_on_no_estimator),
     ("inspection-public-surfaces-only", inspection_uses_only_public_surfaces),
+    ("capability-descriptor-neutral", capability_descriptor_names_no_estimator),
 )
 
 
@@ -119,6 +137,8 @@ def write_clean_tree(root: Path) -> Path:
         "numeric/rng.rs": "//! rng\n",
         "inspection/mod.rs": "//! inspection\nmod permutation;\n",
         "inspection/permutation.rs": "//! permutation\nuse crate::api::Regressor;\n",
+        "api/mod.rs": "//! api\nmod capabilities;\n",
+        "api/capabilities.rs": "//! capabilities\npub struct Capabilities;\n",
     }.items():
         path = source / relative
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -167,6 +187,14 @@ SYNTHETIC_VIOLATIONS: tuple[tuple[str, Callable[[Path], None], str], ...] = (
             "use crate::ensemble::RandomForestRegressor;\n",
         ),
         "inspection depends on non-public-surface module ensemble",
+    ),
+    (
+        "capability-descriptor-neutral",
+        lambda root: append(
+            root / "src" / "api" / "capabilities.rs",
+            "use crate::preprocessing::StandardScaler;\n",
+        ),
+        "capability descriptor names estimator module preprocessing",
     ),
 )
 

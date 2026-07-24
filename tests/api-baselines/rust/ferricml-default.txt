@@ -125,6 +125,14 @@ pub fn ferricml::ranking::PairwiseError::from(ferricml::api::ModelError) -> Self
 impl core::error::Error for ferricml::api::ModelError
 impl core::fmt::Display for ferricml::api::ModelError
 pub fn ferricml::api::ModelError::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+pub struct ferricml::api::Capabilities
+impl ferricml::api::Capabilities
+pub const ferricml::api::Capabilities::NONE: Self
+pub const fn ferricml::api::Capabilities::artifact(self) -> bool
+pub const fn ferricml::api::Capabilities::intersection(self, Self) -> Self
+pub const fn ferricml::api::Capabilities::sample_weights(self) -> bool
+pub const fn ferricml::api::Capabilities::with_artifact(self, bool) -> Self
+pub const fn ferricml::api::Capabilities::with_sample_weights(self, bool) -> Self
 pub trait ferricml::api::Classifier: ferricml::api::Estimator
 pub fn ferricml::api::Classifier::classes(&self) -> &[u8]
 pub fn ferricml::api::Classifier::predict(&self, &ferricml::data::MatrixView<'_>) -> core::result::Result<alloc::vec::Vec<u8>, ferricml::api::ModelError>
@@ -181,6 +189,8 @@ impl ferricml::api::Estimator for ferricml::ranking::PairwiseLinearRanker
 pub fn ferricml::ranking::PairwiseLinearRanker::n_features_in(&self) -> usize
 impl<T, E> ferricml::api::Estimator for ferricml::pipeline::Pipeline<T, E> where T: ferricml::api::Transformer, E: ferricml::api::Estimator
 pub fn ferricml::pipeline::Pipeline<T, E>::n_features_in(&self) -> usize
+pub trait ferricml::api::HasCapabilities: ferricml::api::Estimator
+pub const ferricml::api::HasCapabilities::CAPABILITIES: ferricml::api::Capabilities
 pub trait ferricml::api::HasParams
 pub type ferricml::api::HasParams::Params
 pub fn ferricml::api::HasParams::get_params(&self) -> &Self::Params

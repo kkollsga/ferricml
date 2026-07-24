@@ -17,7 +17,12 @@ estimator meaning follow the reference contract.
 ## Extension structure
 
 - `api` owns backend-independent estimator categories, errors, retained
-  parameter access, and batch-level runtime model enums.
+  parameter access, batch-level runtime model enums, and the compile-time
+  capability descriptor. `Capabilities` records only what varies between
+  estimator types and is not already guaranteed by the type system, so it never
+  becomes a second parameter system; it is carried by `HasCapabilities`, a
+  generic trait rather than an associated constant on the object-safe
+  categories, which must stay dyn-compatible.
 - `data` owns validated row-major inputs, targets, and sample weights.
 - `ensemble` owns public ensemble estimators and parameter types; each private
   estimator family owns its validation, training, persistence conversion, and
