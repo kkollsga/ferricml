@@ -17,8 +17,8 @@ use ferricml::api::{
     Capabilities, Classifier, Estimator, HasCapabilities, ModelError, Regressor, Transformer,
 };
 use ferricml::data::{BinaryTargets, DenseMatrix, MatrixView, RegressionTargets, SampleWeights};
+use std::cell::Cell;
 use std::collections::BTreeSet;
-use std::sync::atomic::{AtomicU32, Ordering};
 
 use support::conformance::{
     CLASSIFIER_OBLIGATIONS, ClassifierCase, REGRESSOR_OBLIGATIONS, RegressorCase, Report,
@@ -51,12 +51,59 @@ const NON_FINITE_ACCEPTED: u8 = 17;
 const SHAPE_IS_WRONG: u8 = 18;
 
 const BASE_THRESHOLD: f32 = 3.5;
+const BASE_OFFSET: f32 = 0.0;
+const BASE_SCALE: f32 = 2.0;
 const FABRICATED_ARTIFACT: &[u8] = b"probe";
 
 const fn probe_capabilities(fault: u8) -> Capabilities {
     Capabilities::NONE
         .with_sample_weights(fault != WEIGHT_HOOK_WITHOUT_DECLARATION)
         .with_artifact(fault != ARTIFACT_HOOK_WITHOUT_DECLARATION)
+}
+
+thread_local! {
+    /// How many times a `NONDETERMINISTIC_FIT` probe has been fitted *within
+    /// the report currently running on this thread*.
+    ///
+    /// Manufactured nondeterminism has to be scoped to one report. A
+    /// process-global counter would let two concurrently running tests that
+    /// both build such a probe advance each other's drift, which makes the
+    /// expected violation set depend on interleaving: `fit_weighted` reproduces
+    /// the *first* fit of a report, so it only stays consistent while the
+    /// count it is compared against is the one this report produced. Thread
+    /// local storage isolates concurrent tests, and [`nondeterministic`]
+    /// resets the cell so the outcome never depends on how many probes this
+    /// thread has already fitted.
+    static FIT_DRIFT: Cell<f32> = const { Cell::new(0.0) };
+}
+
+/// Returns the drift for this fit and advances it for the next one.
+fn next_drift() -> f32 {
+    FIT_DRIFT.with(|drift| {
+        let current = drift.get();
+        drift.set(current + 1.0);
+        current
+    })
+}
+
+/// The drift every `fit_weighted` reproduces: that of a report's first fit.
+const FIRST_DRIFT: f32 = 0.0;
+
+/// Runs one report for a probe whose fit is deliberately nondeterministic.
+///
+/// Resetting here is what makes the fault local to this invocation: the report
+/// always sees drift 0 for its first fit, 1 for its refit, and `fit_weighted`
+/// reproducing the first, whatever else the process has run. The trailing
+/// assertion keeps the fault from going quiet — a battery that stopped
+/// refitting would otherwise turn this probe into a test of nothing.
+fn nondeterministic(run: impl FnOnce() -> Report) -> Report {
+    FIT_DRIFT.with(|drift| drift.set(FIRST_DRIFT));
+    let report = run();
+    assert!(
+        FIT_DRIFT.with(Cell::get) >= 2.0,
+        "the nondeterministic probe was fitted fewer than twice, so its fault never applied"
+    );
+    report
 }
 
 fn sorted(report: &Report) -> Vec<&'static str> {
@@ -76,8 +123,6 @@ struct ClassifierProbe<const FAULT: u8> {
     classes: Vec<u8>,
     threshold: f32,
 }
-
-static CLASSIFIER_FITS: AtomicU32 = AtomicU32::new(0);
 
 impl<const FAULT: u8> ClassifierProbe<FAULT> {
     fn with_threshold(data: &MatrixView<'_>, threshold: f32) -> Self {
@@ -208,9 +253,9 @@ impl<const FAULT: u8> ClassifierCase for ClassifierProbeCase<FAULT> {
 
     fn fit(data: &MatrixView<'_>, _labels: &BinaryTargets) -> Self::Model {
         let drift = if FAULT == NONDETERMINISTIC_FIT {
-            f32::from(u16::try_from(CLASSIFIER_FITS.fetch_add(1, Ordering::SeqCst)).unwrap_or(0))
+            next_drift()
         } else {
-            0.0
+            FIRST_DRIFT
         };
         ClassifierProbe::with_threshold(data, BASE_THRESHOLD + drift)
     }
@@ -223,7 +268,10 @@ impl<const FAULT: u8> ClassifierCase for ClassifierProbeCase<FAULT> {
         match FAULT {
             WEIGHTS_DECLARED_WITHOUT_HOOK => None,
             WEIGHTED_FIT_DIFFERS => Some(ClassifierProbe::with_threshold(data, 0.0)),
-            _ => Some(ClassifierProbe::with_threshold(data, BASE_THRESHOLD)),
+            _ => Some(ClassifierProbe::with_threshold(
+                data,
+                BASE_THRESHOLD + FIRST_DRIFT,
+            )),
         }
     }
 
@@ -271,8 +319,6 @@ struct RegressorProbe<const FAULT: u8> {
     features: usize,
     offset: f32,
 }
-
-static REGRESSOR_FITS: AtomicU32 = AtomicU32::new(0);
 
 impl<const FAULT: u8> RegressorProbe<FAULT> {
     fn with_offset(data: &MatrixView<'_>, offset: f32) -> Self {
@@ -347,11 +393,11 @@ impl<const FAULT: u8> RegressorCase for RegressorProbeCase<FAULT> {
 
     fn fit(data: &MatrixView<'_>, _values: &RegressionTargets) -> Self::Model {
         let drift = if FAULT == NONDETERMINISTIC_FIT {
-            f32::from(u16::try_from(REGRESSOR_FITS.fetch_add(1, Ordering::SeqCst)).unwrap_or(0))
+            next_drift()
         } else {
-            0.0
+            FIRST_DRIFT
         };
-        RegressorProbe::with_offset(data, drift)
+        RegressorProbe::with_offset(data, BASE_OFFSET + drift)
     }
 
     fn fit_weighted(
@@ -362,7 +408,7 @@ impl<const FAULT: u8> RegressorCase for RegressorProbeCase<FAULT> {
         match FAULT {
             WEIGHTS_DECLARED_WITHOUT_HOOK => None,
             WEIGHTED_FIT_DIFFERS => Some(RegressorProbe::with_offset(data, 1.0)),
-            _ => Some(RegressorProbe::with_offset(data, 0.0)),
+            _ => Some(RegressorProbe::with_offset(data, BASE_OFFSET + FIRST_DRIFT)),
         }
     }
 
@@ -410,8 +456,6 @@ struct TransformerProbe<const FAULT: u8> {
     features: usize,
     scale: f32,
 }
-
-static TRANSFORMER_FITS: AtomicU32 = AtomicU32::new(0);
 
 impl<const FAULT: u8> TransformerProbe<FAULT> {
     fn with_scale(data: &MatrixView<'_>, scale: f32) -> Self {
@@ -509,18 +553,18 @@ impl<const FAULT: u8> TransformerCase for TransformerProbeCase<FAULT> {
 
     fn fit(data: &MatrixView<'_>) -> Self::Model {
         let drift = if FAULT == NONDETERMINISTIC_FIT {
-            f32::from(u16::try_from(TRANSFORMER_FITS.fetch_add(1, Ordering::SeqCst)).unwrap_or(0))
+            next_drift()
         } else {
-            0.0
+            FIRST_DRIFT
         };
-        TransformerProbe::with_scale(data, 2.0 + drift)
+        TransformerProbe::with_scale(data, BASE_SCALE + drift)
     }
 
     fn fit_weighted(data: &MatrixView<'_>, _weights: &SampleWeights) -> Option<Self::Model> {
         match FAULT {
             WEIGHTS_DECLARED_WITHOUT_HOOK => None,
             WEIGHTED_FIT_DIFFERS => Some(TransformerProbe::with_scale(data, 3.0)),
-            _ => Some(TransformerProbe::with_scale(data, 2.0)),
+            _ => Some(TransformerProbe::with_scale(data, BASE_SCALE + FIRST_DRIFT)),
         }
     }
 
@@ -612,7 +656,7 @@ violates!(
 );
 violates!(
     classifier_nondeterministic_fit,
-    classifier_report::<ClassifierProbeCase<NONDETERMINISTIC_FIT>>(),
+    nondeterministic(classifier_report::<ClassifierProbeCase<NONDETERMINISTIC_FIT>>),
     ["refit_is_deterministic"]
 );
 violates!(
@@ -683,7 +727,7 @@ violates!(
 );
 violates!(
     regressor_nondeterministic_fit,
-    regressor_report::<RegressorProbeCase<NONDETERMINISTIC_FIT>>(),
+    nondeterministic(regressor_report::<RegressorProbeCase<NONDETERMINISTIC_FIT>>),
     ["refit_is_deterministic"]
 );
 violates!(
@@ -739,7 +783,7 @@ violates!(
 );
 violates!(
     transformer_nondeterministic_fit,
-    transformer_report::<TransformerProbeCase<NONDETERMINISTIC_FIT>>(),
+    nondeterministic(transformer_report::<TransformerProbeCase<NONDETERMINISTIC_FIT>>),
     ["refit_is_deterministic"]
 );
 violates!(
@@ -752,6 +796,39 @@ violates!(
     transformer_report::<TransformerProbeCase<ARTIFACT_DECODES_DIFFERENTLY>>(),
     ["artifact_declaration_matches_behavior"]
 );
+
+/// A nondeterministic probe must report the same violation every time.
+///
+/// Regression test for a real defect in this file: the manufactured drift was
+/// a process-global counter, so the first fit of a *later* report no longer
+/// matched the fixed model `fit_weighted` returns, and
+/// `sample_weight_declaration_matches_behavior` tripped alongside
+/// `refit_is_deterministic`. Two tests building the probe concurrently hit the
+/// same cause through interleaving, which cannot be reproduced on demand;
+/// repeating the report on one thread reproduces it deterministically.
+#[test]
+fn a_nondeterministic_probe_reports_the_same_violations_on_every_invocation() {
+    for _ in 0..4 {
+        assert_eq!(
+            sorted(&nondeterministic(
+                classifier_report::<ClassifierProbeCase<NONDETERMINISTIC_FIT>>,
+            )),
+            ["refit_is_deterministic"]
+        );
+        assert_eq!(
+            sorted(&nondeterministic(
+                regressor_report::<RegressorProbeCase<NONDETERMINISTIC_FIT>>,
+            )),
+            ["refit_is_deterministic"]
+        );
+        assert_eq!(
+            sorted(&nondeterministic(
+                transformer_report::<TransformerProbeCase<NONDETERMINISTIC_FIT>>,
+            )),
+            ["refit_is_deterministic"]
+        );
+    }
+}
 
 /// Every declared obligation must have a probe that trips it.
 ///
@@ -788,9 +865,9 @@ fn every_declared_obligation_has_a_probe_that_trips_it() {
         sorted(&classifier_report::<
             ClassifierProbeCase<UNKNOWN_CLASS_ACCEPTED>,
         >()),
-        sorted(&classifier_report::<
-            ClassifierProbeCase<NONDETERMINISTIC_FIT>,
-        >()),
+        sorted(&nondeterministic(
+            classifier_report::<ClassifierProbeCase<NONDETERMINISTIC_FIT>>,
+        )),
         sorted(&classifier_report::<
             ClassifierProbeCase<WEIGHTS_DECLARED_WITHOUT_HOOK>,
         >()),
@@ -810,7 +887,9 @@ fn every_declared_obligation_has_a_probe_that_trips_it() {
         sorted(&regressor_report::<RegressorProbeCase<INTO_DISAGREES>>()),
         sorted(&regressor_report::<RegressorProbeCase<WIDTH_UNCHECKED>>()),
         sorted(&regressor_report::<RegressorProbeCase<LENGTH_UNCHECKED>>()),
-        sorted(&regressor_report::<RegressorProbeCase<NONDETERMINISTIC_FIT>>()),
+        sorted(&nondeterministic(
+            regressor_report::<RegressorProbeCase<NONDETERMINISTIC_FIT>>,
+        )),
         sorted(&regressor_report::<
             RegressorProbeCase<WEIGHTS_DECLARED_WITHOUT_HOOK>,
         >()),
@@ -831,9 +910,9 @@ fn every_declared_obligation_has_a_probe_that_trips_it() {
         sorted(&transformer_report::<TransformerProbeCase<SHAPE_IS_WRONG>>()),
         sorted(&transformer_report::<TransformerProbeCase<WIDTH_UNCHECKED>>()),
         sorted(&transformer_report::<TransformerProbeCase<LENGTH_UNCHECKED>>()),
-        sorted(&transformer_report::<
-            TransformerProbeCase<NONDETERMINISTIC_FIT>,
-        >()),
+        sorted(&nondeterministic(
+            transformer_report::<TransformerProbeCase<NONDETERMINISTIC_FIT>>,
+        )),
         sorted(&transformer_report::<
             TransformerProbeCase<WEIGHTS_DECLARED_WITHOUT_HOOK>,
         >()),
