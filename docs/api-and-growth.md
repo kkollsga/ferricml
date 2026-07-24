@@ -28,6 +28,12 @@ estimator meaning follow the reference contract.
   Concrete standard-scaler pipelines provide allocation-free prediction and
   explicit persistence for logistic, linear, and ridge estimators.
 - `linear_model` separates estimator facades from private numerical seams.
+- `metrics` owns deterministic classification and regression measures with
+  explicit errors for invalid or undefined inputs.
+- `model_selection` owns validated index partitions, deterministic holdout and
+  fold iterators, batch estimator scoring, and serial typed cross-validation.
+  Splitters remain independent of estimator internals, while fitting stays in
+  caller-provided closures.
 - `preprocessing` owns fitted transformer implementations and their state;
   `StandardScaler` uses deterministic two-pass population statistics.
   Training-time pipeline composition and more than one transform step remain

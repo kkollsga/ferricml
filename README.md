@@ -18,6 +18,8 @@ The core crate provides validated dense data and sample weights, weighted
 logistic regression with raw decision scores, minimum-norm linear and ridge regression,
 weighted standard scaling and typed serialized scaler/model pipelines,
 pairwise linear ranking and tie-aware rank metrics,
+validated classification and regression metrics, deterministic holdout and
+fold splitters, direct estimator scoring, serial typed cross-validation,
 deterministic random-forest classification and regression, compact histogram
 gradient-boosted regression, private packed
 trees, bounded parallel training, allocation-free batch prediction, and a
@@ -26,7 +28,9 @@ Its public estimator vocabulary and observable semantics follow FerricML's
 locked reference contract; typed Rust parameters and caller-owned `_into`
 methods preserve validation and performance. See
 [API and growth](docs/api-and-growth.md) and
-[the frozen reference contract](docs/reference-semantics.md).
+[the frozen reference contract](docs/reference-semantics.md). Evaluation
+semantics and examples are collected in
+[evaluation and model selection](docs/evaluation-and-model-selection.md).
 
 Logistic, linear, ridge, histogram-gradient-boosting, standard-scaler, and
 supported typed pipeline models support bounded, versioned, checksummed binary

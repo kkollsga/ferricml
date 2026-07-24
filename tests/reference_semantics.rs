@@ -846,38 +846,14 @@ fn regression_data(
     (train, train_targets, test, test_targets)
 }
 
-fn accuracy(expected: &[u8], actual: &[u8]) -> f64 {
-    expected
-        .iter()
-        .zip(actual)
-        .filter(|(left, right)| left == right)
-        .count() as f64
-        / expected.len() as f64
-}
-
-fn brier(expected: &[u8], probabilities: &[f32]) -> f64 {
-    expected
-        .iter()
-        .zip(probabilities)
-        .map(|(&label, &probability)| (f64::from(probability) - f64::from(label)).powi(2))
-        .sum::<f64>()
-        / expected.len() as f64
-}
-
-fn nrmse(expected: &[f32], actual: &[f32]) -> f64 {
+fn normalized_root_mean_squared_error(expected: &[f32], actual: &[f32]) -> f64 {
     let mean = expected.iter().copied().map(f64::from).sum::<f64>() / expected.len() as f64;
     let variance = expected
         .iter()
         .map(|&value| (f64::from(value) - mean).powi(2))
         .sum::<f64>()
         / expected.len() as f64;
-    let mse = expected
-        .iter()
-        .zip(actual)
-        .map(|(&expected, &actual)| (f64::from(actual) - f64::from(expected)).powi(2))
-        .sum::<f64>()
-        / expected.len() as f64;
-    mse.sqrt() / variance.sqrt()
+    root_mean_squared_error(expected, actual).unwrap() / variance.sqrt()
 }
 
 #[test]
@@ -901,11 +877,13 @@ fn five_seed_classification_quality_stays_within_approved_deltas() {
             )
             .unwrap();
             ferric_accuracy +=
-                accuracy(test_y.as_slice(), &model.predict(&test.as_view()).unwrap());
-            ferric_brier += brier(
+                accuracy_score(test_y.as_slice(), &model.predict(&test.as_view()).unwrap())
+                    .unwrap();
+            ferric_brier += brier_score(
                 test_y.as_slice(),
                 &model.predict_class_proba(&test.as_view(), 1).unwrap(),
-            );
+            )
+            .unwrap();
             let reference = reference::QUALITY_REFERENCES
                 .iter()
                 .find(|reference| reference.lane == lane && reference.seed == seed)
@@ -949,7 +927,10 @@ fn five_seed_regression_quality_stays_within_approved_delta() {
                 .with_random_state(seed),
         )
         .unwrap();
-        ferric_nrmse += nrmse(test_y.as_slice(), &model.predict(&test.as_view()).unwrap());
+        ferric_nrmse += normalized_root_mean_squared_error(
+            test_y.as_slice(),
+            &model.predict(&test.as_view()).unwrap(),
+        );
         baseline_nrmse += reference::QUALITY_REFERENCES
             .iter()
             .find(|reference| reference.lane == "regression" && reference.seed == seed)
@@ -985,7 +966,10 @@ fn histogram_boosting_multi_seed_quality_stays_near_frozen_baseline() {
                 .with_max_bins(64),
         )
         .unwrap();
-        ferric_nrmse += nrmse(test_y.as_slice(), &model.predict(&test.as_view()).unwrap());
+        ferric_nrmse += normalized_root_mean_squared_error(
+            test_y.as_slice(),
+            &model.predict(&test.as_view()).unwrap(),
+        );
         baseline_nrmse += reference::HGB_QUALITY_NRMSE[index];
     }
     ferric_nrmse /= HGB_QUALITY_SEEDS.len() as f64;

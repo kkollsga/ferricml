@@ -1,6 +1,10 @@
 use criterion::{BatchSize, BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
 use ferricml::data::{DenseMatrix, RegressionTargets};
 use ferricml::linear_model::{LinearRegression, LinearRegressionParams, Ridge, RidgeParams};
+use ferricml::metrics::{mean_squared_error, roc_auc_score};
+use ferricml::model_selection::{
+    HoldoutParams, KFold, RegressionScorer, TestSize, cross_validate_regressor, train_test_split,
+};
 use ferricml::pipeline::Pipeline;
 use ferricml::preprocessing::{StandardScaler, StandardScalerParams};
 use ferricml::ranking::{
@@ -12,6 +16,9 @@ const ROWS: usize = 2_048;
 const COLUMNS: usize = 48;
 const INFERENCE_ROWS: usize = 1_024;
 const PAIRS: usize = 1_024;
+const METRIC_ROWS: usize = 4_096;
+const CV_ROWS: usize = 256;
+const CV_COLUMNS: usize = 12;
 
 fn fixture(rows: usize, columns: usize) -> (DenseMatrix, RegressionTargets) {
     let mut state = 0x9e37_79b9_u32;
@@ -179,5 +186,76 @@ fn training(c: &mut Criterion) {
     group.finish();
 }
 
-criterion_group!(benches, inference, training);
+fn evaluation(c: &mut Criterion) {
+    let expected = (0..METRIC_ROWS)
+        .map(|index| ((index % 97) as f32 - 48.0) / 11.0)
+        .collect::<Vec<_>>();
+    let predicted = expected
+        .iter()
+        .enumerate()
+        .map(|(index, &value)| value + (index % 13) as f32 * 0.01)
+        .collect::<Vec<_>>();
+    let labels = (0..METRIC_ROWS)
+        .map(|index| u8::from(index % 3 == 0))
+        .collect::<Vec<_>>();
+    let scores = (0..METRIC_ROWS)
+        .map(|index| ((index.wrapping_mul(37) % 1_009) as f32) / 1_009.0)
+        .collect::<Vec<_>>();
+
+    let mut metrics = c.benchmark_group("ferricml_evaluation_v1_metrics_4096");
+    metrics.throughput(Throughput::Elements(METRIC_ROWS as u64));
+    metrics.bench_function(
+        BenchmarkId::from_parameter("mean_squared_error"),
+        |bencher| {
+            bencher.iter(|| {
+                black_box(mean_squared_error(black_box(&expected), black_box(&predicted)).unwrap());
+            });
+        },
+    );
+    metrics.bench_function(BenchmarkId::from_parameter("roc_auc"), |bencher| {
+        bencher.iter(|| {
+            black_box(roc_auc_score(black_box(&labels), black_box(&scores)).unwrap());
+        });
+    });
+    metrics.bench_function(BenchmarkId::from_parameter("holdout_split"), |bencher| {
+        bencher.iter(|| {
+            black_box(
+                train_test_split(
+                    METRIC_ROWS,
+                    HoldoutParams::default()
+                        .with_test_size(TestSize::Fraction(0.2))
+                        .with_random_state(19),
+                )
+                .unwrap(),
+            );
+        });
+    });
+    metrics.finish();
+
+    let (data, targets) = fixture(CV_ROWS, CV_COLUMNS);
+    let mut cross_validation = c.benchmark_group("ferricml_evaluation_v1_cv_256x12");
+    cross_validation.throughput(Throughput::Elements(CV_ROWS as u64));
+    cross_validation.bench_function(BenchmarkId::from_parameter("ridge_5_fold"), |bencher| {
+        bencher.iter(|| {
+            let splits = KFold::new(5)
+                .with_shuffle(true)
+                .with_random_state(23)
+                .split(CV_ROWS)
+                .unwrap();
+            black_box(
+                cross_validate_regressor(
+                    black_box(&data.as_view()),
+                    black_box(&targets),
+                    splits,
+                    RegressionScorer::MeanSquaredError,
+                    |train, train_targets| Ridge::fit(train, train_targets, RidgeParams::default()),
+                )
+                .unwrap(),
+            );
+        });
+    });
+    cross_validation.finish();
+}
+
+criterion_group!(benches, inference, training, evaluation);
 criterion_main!(benches);

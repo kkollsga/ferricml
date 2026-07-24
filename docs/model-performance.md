@@ -8,7 +8,9 @@ not shared-CI timing gates or comparisons with third-party crates.
 
 The `models` target measures 1,024-row caller-owned inference and 2,048x48 fit
 for linear regression, ridge, pairwise linear ranking, and a fitted
-standard-scaler/ridge pipeline. The `boosting` target measures single-row
+standard-scaler/ridge pipeline. It also measures MSE, tie-aware ROC AUC, and a
+seeded holdout over 4,096 rows plus five-fold ridge cross-validation over a
+256x12 fixture. The `boosting` target measures single-row
 prediction for 32x7, 64x7, 64x15, and 128x15 tree/leaf limits; 32-row and
 1,024-row caller-owned prediction for 64x7; and 2,048x48 fitting for 64x7.
 All data, targets, pair construction, parameters, and model schemas are fixed

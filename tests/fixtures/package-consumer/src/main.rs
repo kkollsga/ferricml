@@ -8,6 +8,11 @@ use ferricml::linear_model::{
     LinearRegression, LinearRegressionParams, LogisticRegression, LogisticRegressionParams, Ridge,
     RidgeParams,
 };
+use ferricml::metrics::accuracy_score;
+use ferricml::model_selection::{
+    HoldoutParams, KFold, RegressionScorer, TestSize, cross_validate_regressor,
+    train_test_split,
+};
 use ferricml::pipeline::Pipeline;
 use ferricml::preprocessing::{StandardScaler, StandardScalerParams};
 use ferricml::ranking::{
@@ -29,6 +34,16 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let probabilities = Classifier::predict_proba(&classifier, &features.as_view())?;
     assert_eq!(labels.len(), features.rows());
     assert_eq!(probabilities.len(), features.rows() * 2);
+    assert_eq!(accuracy_score(&[0, 0, 1, 1], &labels)?, 1.0);
+
+    let holdout = train_test_split(
+        features.rows(),
+        HoldoutParams::default()
+            .with_test_size(TestSize::Count(1))
+            .with_random_state(7),
+    )?;
+    assert_eq!(holdout.train_indices().len(), 3);
+    assert_eq!(holdout.test_indices().len(), 1);
 
     let logistic = LogisticRegression::fit_weighted(
         &features.as_view(),
@@ -69,6 +84,15 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         Ridge::from_artifact(&ridge_encoded, schema)?.predict(&features.as_view())?,
         ridge.predict(&features.as_view())?
     );
+    let cross_validation = cross_validate_regressor(
+        &features.as_view(),
+        &RegressionTargets::new(vec![0.0, 1.0, 4.0, 9.0])?,
+        KFold::new(2).split(features.rows())?,
+        RegressionScorer::RootMeanSquaredError,
+        |train, targets| Ridge::fit(train, targets, RidgeParams::default()),
+    )?;
+    assert_eq!(cross_validation.len(), 2);
+    assert!(cross_validation.mean().is_finite());
 
     let transformed_schema = [8; 32];
     let scaler = StandardScaler::fit(&features.as_view(), StandardScalerParams::default())?;
