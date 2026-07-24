@@ -1,19 +1,407 @@
+//! Prediction semantics.
+//!
+//! The obligations every fitted estimator shares are stated once in the generic
+//! conformance battery (`support::conformance`); this file registers each
+//! estimator into it and keeps only the semantics that belong to one estimator
+//! and cannot be expressed generically — how a tie is broken, how a single-class
+//! model is shaped, how a particular estimator is provoked into overflowing, and
+//! what runtime dispatch adds on top of the trait contract.
+//!
+//! Adding an estimator means adding one case implementation and one line to the
+//! registration list below. Do not add per-estimator repeats of a shared
+//! obligation here; add the obligation to the battery instead, together with the
+//! probe that proves it can fail.
+
+mod support;
+
 use ferricml::api::{
     AnyClassifier, AnyClassifierParams, AnyRegressor, AnyRegressorParams, Classifier, ModelError,
     Regressor,
 };
-use ferricml::data::{BinaryTargets, DenseMatrix, RegressionTargets};
+use ferricml::artifact::ArtifactError;
+use ferricml::data::{BinaryTargets, DenseMatrix, MatrixView, RegressionTargets, SampleWeights};
 use ferricml::ensemble::{
     HistGradientBoostingRegressor, HistGradientBoostingRegressorParams, MaxFeatures, NJobs,
     RandomForestClassifier, RandomForestClassifierParams, RandomForestRegressor,
     RandomForestRegressorParams,
 };
-use ferricml::linear_model::{LinearRegression, LinearRegressionParams, Ridge, RidgeParams};
-use ferricml::linear_model::{LogisticRegression, LogisticRegressionParams};
+use ferricml::linear_model::{
+    LinearRegression, LinearRegressionParams, LogisticRegression, LogisticRegressionParams, Ridge,
+    RidgeParams,
+};
+use ferricml::preprocessing::{StandardScaler, StandardScalerParams};
 use ferricml::ranking::{
     PairIndex, PairOutcome, PairwiseError, PairwiseLinearRanker, PairwiseLinearRankerParams,
     PairwiseObservation,
 };
+
+use support::conformance::{
+    ClassifierCase, RegressorCase, RoundTrip, SCHEMA, ScalarClassifierCase, ScalarRegressorCase,
+    TransformerCase, check_batch_only_classifier, check_batch_only_regressor, check_classifier,
+    check_regressor, check_transformer,
+};
+
+/// Second schema identity, for artifacts that bind an input and an output
+/// schema.
+const TRANSFORMED_SCHEMA: [u8; 32] = [43; 32];
+
+fn round_trip<M>(
+    encode: impl FnOnce() -> Result<Vec<u8>, ArtifactError>,
+    decode: impl FnOnce(&[u8]) -> Result<M, ArtifactError>,
+) -> RoundTrip<M> {
+    Some((|| {
+        let bytes = encode()?;
+        let decoded = decode(&bytes)?;
+        Ok((bytes, decoded))
+    })())
+}
+
+fn forest_classifier_params() -> RandomForestClassifierParams {
+    RandomForestClassifierParams::default()
+        .with_n_estimators(5)
+        .with_bootstrap(false)
+        .with_max_features(MaxFeatures::All)
+        .with_random_state(7)
+}
+
+fn forest_regressor_params() -> RandomForestRegressorParams {
+    RandomForestRegressorParams::default()
+        .with_n_estimators(5)
+        .with_bootstrap(false)
+        .with_max_features(MaxFeatures::All)
+        .with_random_state(7)
+}
+
+fn boosting_params() -> HistGradientBoostingRegressorParams {
+    HistGradientBoostingRegressorParams::default()
+        .with_max_iter(3)
+        .with_max_leaf_nodes(2)
+        .with_min_samples_leaf(1)
+}
+
+// ---------------------------------------------------------- registered cases
+
+struct RandomForestClassifierCase;
+
+impl ClassifierCase for RandomForestClassifierCase {
+    type Model = RandomForestClassifier;
+    const NAME: &'static str = "RandomForestClassifier";
+
+    fn fit(data: &MatrixView<'_>, labels: &BinaryTargets) -> Self::Model {
+        RandomForestClassifier::fit(data, labels, forest_classifier_params()).expect("fit")
+    }
+}
+
+impl ScalarClassifierCase for RandomForestClassifierCase {
+    fn predict_one(model: &Self::Model, row: &[f32]) -> Result<u8, ModelError> {
+        model.predict_one(row)
+    }
+}
+
+struct LogisticRegressionCase;
+
+impl ClassifierCase for LogisticRegressionCase {
+    type Model = LogisticRegression;
+    const NAME: &'static str = "LogisticRegression";
+
+    fn fit(data: &MatrixView<'_>, labels: &BinaryTargets) -> Self::Model {
+        LogisticRegression::fit(data, labels, LogisticRegressionParams::default()).expect("fit")
+    }
+
+    fn fit_weighted(
+        data: &MatrixView<'_>,
+        labels: &BinaryTargets,
+        weights: &SampleWeights,
+    ) -> Option<Self::Model> {
+        Some(
+            LogisticRegression::fit_weighted(
+                data,
+                labels,
+                weights,
+                LogisticRegressionParams::default(),
+            )
+            .expect("weighted fit"),
+        )
+    }
+
+    fn round_trip(model: &Self::Model) -> RoundTrip<Self::Model> {
+        round_trip(
+            || model.to_artifact(SCHEMA),
+            |bytes| LogisticRegression::from_artifact(bytes, SCHEMA),
+        )
+    }
+}
+
+impl ScalarClassifierCase for LogisticRegressionCase {
+    fn predict_one(model: &Self::Model, row: &[f32]) -> Result<u8, ModelError> {
+        model.predict_one(row)
+    }
+}
+
+struct AnyForestClassifierCase;
+
+impl ClassifierCase for AnyForestClassifierCase {
+    type Model = AnyClassifier;
+    const NAME: &'static str = "AnyClassifier::RandomForest";
+
+    fn fit(data: &MatrixView<'_>, labels: &BinaryTargets) -> Self::Model {
+        RandomForestClassifierCase::fit(data, labels).into()
+    }
+}
+
+struct AnyLogisticClassifierCase;
+
+impl ClassifierCase for AnyLogisticClassifierCase {
+    type Model = AnyClassifier;
+    const NAME: &'static str = "AnyClassifier::LogisticRegression";
+
+    fn fit(data: &MatrixView<'_>, labels: &BinaryTargets) -> Self::Model {
+        LogisticRegressionCase::fit(data, labels).into()
+    }
+}
+
+struct RandomForestRegressorCase;
+
+impl RegressorCase for RandomForestRegressorCase {
+    type Model = RandomForestRegressor;
+    const NAME: &'static str = "RandomForestRegressor";
+
+    fn fit(data: &MatrixView<'_>, values: &RegressionTargets) -> Self::Model {
+        RandomForestRegressor::fit(data, values, forest_regressor_params()).expect("fit")
+    }
+
+    fn round_trip(model: &Self::Model) -> RoundTrip<Self::Model> {
+        round_trip(
+            || model.to_artifact(SCHEMA),
+            |bytes| RandomForestRegressor::from_artifact(bytes, SCHEMA),
+        )
+    }
+}
+
+impl ScalarRegressorCase for RandomForestRegressorCase {
+    fn predict_one(model: &Self::Model, row: &[f32]) -> Result<f32, ModelError> {
+        model.predict_one(row)
+    }
+}
+
+struct LinearRegressionCase;
+
+impl RegressorCase for LinearRegressionCase {
+    type Model = LinearRegression;
+    const NAME: &'static str = "LinearRegression";
+
+    fn fit(data: &MatrixView<'_>, values: &RegressionTargets) -> Self::Model {
+        LinearRegression::fit(data, values, LinearRegressionParams::default()).expect("fit")
+    }
+
+    fn fit_weighted(
+        data: &MatrixView<'_>,
+        values: &RegressionTargets,
+        weights: &SampleWeights,
+    ) -> Option<Self::Model> {
+        Some(
+            LinearRegression::fit_weighted(
+                data,
+                values,
+                weights,
+                LinearRegressionParams::default(),
+            )
+            .expect("weighted fit"),
+        )
+    }
+
+    fn round_trip(model: &Self::Model) -> RoundTrip<Self::Model> {
+        round_trip(
+            || model.to_artifact(SCHEMA),
+            |bytes| LinearRegression::from_artifact(bytes, SCHEMA),
+        )
+    }
+}
+
+impl ScalarRegressorCase for LinearRegressionCase {
+    fn predict_one(model: &Self::Model, row: &[f32]) -> Result<f32, ModelError> {
+        model.predict_one(row)
+    }
+}
+
+struct RidgeCase;
+
+impl RegressorCase for RidgeCase {
+    type Model = Ridge;
+    const NAME: &'static str = "Ridge";
+
+    fn fit(data: &MatrixView<'_>, values: &RegressionTargets) -> Self::Model {
+        Ridge::fit(data, values, RidgeParams::default()).expect("fit")
+    }
+
+    fn fit_weighted(
+        data: &MatrixView<'_>,
+        values: &RegressionTargets,
+        weights: &SampleWeights,
+    ) -> Option<Self::Model> {
+        Some(
+            Ridge::fit_weighted(data, values, weights, RidgeParams::default())
+                .expect("weighted fit"),
+        )
+    }
+
+    fn round_trip(model: &Self::Model) -> RoundTrip<Self::Model> {
+        round_trip(
+            || model.to_artifact(SCHEMA),
+            |bytes| Ridge::from_artifact(bytes, SCHEMA),
+        )
+    }
+}
+
+impl ScalarRegressorCase for RidgeCase {
+    fn predict_one(model: &Self::Model, row: &[f32]) -> Result<f32, ModelError> {
+        model.predict_one(row)
+    }
+}
+
+struct HistGradientBoostingRegressorCase;
+
+impl RegressorCase for HistGradientBoostingRegressorCase {
+    type Model = HistGradientBoostingRegressor;
+    const NAME: &'static str = "HistGradientBoostingRegressor";
+
+    fn fit(data: &MatrixView<'_>, values: &RegressionTargets) -> Self::Model {
+        HistGradientBoostingRegressor::fit(data, values, boosting_params()).expect("fit")
+    }
+
+    fn round_trip(model: &Self::Model) -> RoundTrip<Self::Model> {
+        round_trip(
+            || model.to_artifact(SCHEMA),
+            |bytes| HistGradientBoostingRegressor::from_artifact(bytes, SCHEMA),
+        )
+    }
+}
+
+impl ScalarRegressorCase for HistGradientBoostingRegressorCase {
+    fn predict_one(model: &Self::Model, row: &[f32]) -> Result<f32, ModelError> {
+        model.predict_one(row)
+    }
+}
+
+macro_rules! any_regressor_case {
+    ($case:ident, $inner:ty, $name:literal) => {
+        struct $case;
+
+        impl RegressorCase for $case {
+            type Model = AnyRegressor;
+            const NAME: &'static str = $name;
+
+            fn fit(data: &MatrixView<'_>, values: &RegressionTargets) -> Self::Model {
+                <$inner as RegressorCase>::fit(data, values).into()
+            }
+
+            fn round_trip(model: &Self::Model) -> RoundTrip<Self::Model> {
+                round_trip(
+                    || model.to_artifact(SCHEMA),
+                    |bytes| AnyRegressor::from_artifact(bytes, SCHEMA),
+                )
+            }
+        }
+    };
+}
+
+any_regressor_case!(
+    AnyForestRegressorCase,
+    RandomForestRegressorCase,
+    "AnyRegressor::RandomForest"
+);
+any_regressor_case!(
+    AnyLinearRegressorCase,
+    LinearRegressionCase,
+    "AnyRegressor::LinearRegression"
+);
+any_regressor_case!(AnyRidgeRegressorCase, RidgeCase, "AnyRegressor::Ridge");
+any_regressor_case!(
+    AnyBoostedRegressorCase,
+    HistGradientBoostingRegressorCase,
+    "AnyRegressor::HistGradientBoosting"
+);
+
+struct StandardScalerCase;
+
+impl TransformerCase for StandardScalerCase {
+    type Model = StandardScaler;
+    const NAME: &'static str = "StandardScaler";
+
+    fn fit(data: &MatrixView<'_>) -> Self::Model {
+        StandardScaler::fit(data, StandardScalerParams::default()).expect("fit")
+    }
+
+    fn fit_weighted(data: &MatrixView<'_>, weights: &SampleWeights) -> Option<Self::Model> {
+        Some(
+            StandardScaler::fit_weighted(data, weights, StandardScalerParams::default())
+                .expect("weighted fit"),
+        )
+    }
+
+    fn round_trip(model: &Self::Model) -> RoundTrip<Self::Model> {
+        round_trip(
+            || model.to_artifact(SCHEMA, TRANSFORMED_SCHEMA),
+            |bytes| StandardScaler::from_artifact(bytes, SCHEMA, TRANSFORMED_SCHEMA),
+        )
+    }
+}
+
+// ----------------------------------------------------- registration list
+//
+// One line per estimator. `check_batch_only_*` is the weaker entry point and
+// exists only for the runtime dispatch enums, which have no scalar path.
+
+#[test]
+fn random_forest_classifier_conforms() {
+    check_classifier::<RandomForestClassifierCase>();
+}
+
+#[test]
+fn logistic_regression_conforms() {
+    check_classifier::<LogisticRegressionCase>();
+}
+
+#[test]
+fn any_classifier_conforms_for_every_variant() {
+    check_batch_only_classifier::<AnyForestClassifierCase>();
+    check_batch_only_classifier::<AnyLogisticClassifierCase>();
+}
+
+#[test]
+fn random_forest_regressor_conforms() {
+    check_regressor::<RandomForestRegressorCase>();
+}
+
+#[test]
+fn linear_regression_conforms() {
+    check_regressor::<LinearRegressionCase>();
+}
+
+#[test]
+fn ridge_conforms() {
+    check_regressor::<RidgeCase>();
+}
+
+#[test]
+fn hist_gradient_boosting_regressor_conforms() {
+    check_regressor::<HistGradientBoostingRegressorCase>();
+}
+
+#[test]
+fn any_regressor_conforms_for_every_variant() {
+    check_batch_only_regressor::<AnyForestRegressorCase>();
+    check_batch_only_regressor::<AnyLinearRegressorCase>();
+    check_batch_only_regressor::<AnyRidgeRegressorCase>();
+    check_batch_only_regressor::<AnyBoostedRegressorCase>();
+}
+
+#[test]
+fn standard_scaler_conforms() {
+    check_transformer::<StandardScalerCase>();
+}
+
+// -------------------------------------------------- estimator-specific tests
 
 fn matrix(values: &[f32], rows: usize, columns: usize) -> DenseMatrix {
     DenseMatrix::new(values.to_vec(), rows, columns).unwrap()
@@ -36,70 +424,10 @@ fn classifier(
     .unwrap()
 }
 
-fn assert_any_classifier_errors_are_atomic(model: &AnyClassifier, data: &DenseMatrix) {
-    let mut labels = [7_u8; 3];
-    assert_eq!(
-        model.predict_into(&data.as_view(), &mut labels),
-        Err(ModelError::OutputLength {
-            expected: data.rows(),
-            actual: 3,
-        })
-    );
-    assert_eq!(labels, [7; 3]);
-    let mut probabilities = [7.0_f32; 7];
-    assert_eq!(
-        model.predict_proba_into(&data.as_view(), &mut probabilities),
-        Err(ModelError::OutputLength {
-            expected: data.rows() * model.classes().len(),
-            actual: 7,
-        })
-    );
-    assert_eq!(probabilities, [7.0; 7]);
-    let mut class = [7.0_f32; 4];
-    assert_eq!(
-        model.predict_class_proba_into(&data.as_view(), 9, &mut class),
-        Err(ModelError::UnknownClass { class: 9 })
-    );
-    assert_eq!(class, [7.0; 4]);
-}
-
-fn assert_any_regressor_errors_are_atomic(model: &AnyRegressor, data: &DenseMatrix) {
-    let mut output = [7.0_f32; 3];
-    assert_eq!(
-        model.predict_into(&data.as_view(), &mut output),
-        Err(ModelError::OutputLength {
-            expected: data.rows(),
-            actual: 3,
-        })
-    );
-    assert_eq!(output, [7.0; 3]);
-}
-
-#[test]
-fn binary_probabilities_are_row_major_in_sorted_class_order() {
-    let data = matrix(&[0.0, 1.0, 2.0, 3.0], 4, 1);
-    let model = classifier(&data, vec![0, 0, 1, 1], 2);
-
-    assert_eq!(model.classes(), &[0, 1]);
-    assert_eq!(Classifier::classes(&model), &[0, 1]);
-    assert_eq!(model.n_features_in(), 1);
-
-    let probabilities = model.predict_proba(&data.as_view()).unwrap();
-    assert_eq!(probabilities.len(), data.rows() * model.classes().len());
-    for row in probabilities.chunks_exact(2) {
-        assert!((row[0] + row[1] - 1.0).abs() <= f32::EPSILON);
-    }
-
-    let positive = model.predict_class_proba(&data.as_view(), 1).unwrap();
-    let negative = model.predict_class_proba(&data.as_view(), 0).unwrap();
-    for ((row, &p1), &p0) in probabilities.chunks_exact(2).zip(&positive).zip(&negative) {
-        assert_eq!(row, [p0, p1]);
-    }
-    assert_eq!(model.predict(&data.as_view()).unwrap(), vec![0, 0, 1, 1]);
-}
-
 #[test]
 fn exact_probability_tie_selects_the_first_smaller_class() {
+    // The battery proves labels follow the probability argmax; only a fixture
+    // built to tie exactly can prove which side of a tie wins.
     let data = matrix(&[0.0, 1.0, 2.0, 3.0], 4, 1);
     let model = classifier(&data, vec![0, 1, 0, 1], 5);
 
@@ -110,6 +438,8 @@ fn exact_probability_tie_selects_the_first_smaller_class() {
 
 #[test]
 fn single_class_models_use_one_probability_column() {
+    // Only the forest can be fitted on a single observed class, so this shape
+    // cannot be exercised from the shared fixture.
     let data = matrix(&[0.0, 1.0, 2.0], 3, 1);
     for (label, absent) in [(0, 1), (1, 0)] {
         let model = classifier(&data, vec![label; 3], 2);
@@ -136,33 +466,11 @@ fn single_class_models_use_one_probability_column() {
 }
 
 #[test]
-fn output_validation_happens_before_writing() {
+fn scalar_probability_output_is_validated_before_writing() {
+    // `predict_proba_one_into` is a scalar probability path the shared
+    // `Classifier` contract does not have, so the battery cannot reach it.
     let data = matrix(&[0.0, 1.0, 2.0, 3.0], 4, 1);
     let model = classifier(&data, vec![0, 0, 1, 1], 2);
-
-    let mut labels = [9_u8; 3];
-    assert_eq!(
-        model
-            .predict_into(&data.as_view(), &mut labels)
-            .unwrap_err(),
-        ModelError::OutputLength {
-            expected: 4,
-            actual: 3
-        }
-    );
-    assert_eq!(labels, [9; 3]);
-
-    let mut probabilities = [9.0_f32; 7];
-    assert_eq!(
-        model
-            .predict_proba_into(&data.as_view(), &mut probabilities)
-            .unwrap_err(),
-        ModelError::OutputLength {
-            expected: 8,
-            actual: 7
-        }
-    );
-    assert_eq!(probabilities, [9.0; 7]);
 
     let mut one_row = [9.0_f32; 1];
     assert_eq!(
@@ -175,23 +483,12 @@ fn output_validation_happens_before_writing() {
         }
     );
     assert_eq!(one_row, [9.0]);
-
-    let wrong_width = matrix(&[0.0, 0.0, 1.0, 1.0], 2, 2);
-    let mut output = [9.0_f32; 4];
-    assert_eq!(
-        model
-            .predict_proba_into(&wrong_width.as_view(), &mut output)
-            .unwrap_err(),
-        ModelError::FeatureDimension {
-            expected: 1,
-            actual: 2
-        }
-    );
-    assert_eq!(output, [9.0; 4]);
 }
 
 #[test]
-fn scalar_batch_allocating_and_parallel_models_agree() {
+fn parallel_and_serial_forests_fit_identically() {
+    // Thread count is a forest parameter, so this determinism guarantee is
+    // narrower than the battery's same-parameters refit check.
     let data = matrix(
         &[
             0.0, 3.0, 1.0, 2.0, 2.0, 1.0, 3.0, 0.0, 4.0, 7.0, 5.0, 6.0, 6.0, 5.0, 7.0, 4.0,
@@ -221,98 +518,48 @@ fn scalar_batch_allocating_and_parallel_models_agree() {
         serial.predict_proba(&data.as_view()).unwrap(),
         parallel.predict_proba(&data.as_view()).unwrap()
     );
-
-    let batch_labels = serial.predict(&data.as_view()).unwrap();
-    let batch_probabilities = serial.predict_proba(&data.as_view()).unwrap();
-    for (index, row) in data.as_view().iter_rows().enumerate() {
-        assert_eq!(serial.predict_one(row).unwrap(), batch_labels[index]);
-        assert_eq!(
-            serial.predict_proba_one(row).unwrap(),
-            batch_probabilities[index * 2..index * 2 + 2]
-        );
-    }
 }
 
 #[test]
-fn object_safe_traits_and_owned_enums_dispatch_by_batch() {
+fn runtime_dispatch_preserves_predictions_and_parameter_identity() {
+    // The battery proves each dispatch variant satisfies the contract on its
+    // own; this proves dispatching does not change the answer or lose the
+    // concrete parameter type.
     let data = matrix(&[0.0, 1.0, 2.0, 3.0], 4, 1);
-    let concrete_classifier = classifier(&data, vec![0, 0, 1, 1], 2);
-    let expected_labels = concrete_classifier.predict(&data.as_view()).unwrap();
-    let expected_probabilities = concrete_classifier.predict_proba(&data.as_view()).unwrap();
-    let classifier: AnyClassifier = concrete_classifier.into();
-    let erased_classifier: &dyn Classifier = &classifier;
+    let binary = BinaryTargets::new(vec![0, 0, 1, 1]).unwrap();
+    let targets = RegressionTargets::new(vec![0.0, 1.0, 4.0, 9.0]).unwrap();
 
+    let concrete = classifier(&data, vec![0, 0, 1, 1], 2);
+    let expected_labels = concrete.predict(&data.as_view()).unwrap();
+    let expected_probabilities = concrete.predict_proba(&data.as_view()).unwrap();
+    let dispatched: AnyClassifier = concrete.into();
+    let erased: &dyn Classifier = &dispatched;
+    assert_eq!(erased.predict(&data.as_view()).unwrap(), expected_labels);
     assert_eq!(
-        erased_classifier.predict(&data.as_view()).unwrap(),
-        expected_labels
-    );
-    assert_eq!(
-        erased_classifier.predict_proba(&data.as_view()).unwrap(),
+        erased.predict_proba(&data.as_view()).unwrap(),
         expected_probabilities
     );
-    let mut labels_into = [9_u8; 4];
-    classifier
-        .predict_into(&data.as_view(), &mut labels_into)
-        .unwrap();
-    assert_eq!(labels_into.as_slice(), expected_labels.as_slice());
-    let mut probabilities_into = [9.0_f32; 8];
-    classifier
-        .predict_proba_into(&data.as_view(), &mut probabilities_into)
-        .unwrap();
-    assert_eq!(
-        probabilities_into.as_slice(),
-        expected_probabilities.as_slice()
-    );
-    let mut class_into = [9.0_f32; 4];
-    classifier
-        .predict_class_proba_into(&data.as_view(), 1, &mut class_into)
-        .unwrap();
-    assert_eq!(
-        class_into.as_slice(),
-        classifier
-            .predict_class_proba(&data.as_view(), 1)
-            .unwrap()
-            .as_slice()
-    );
     assert!(matches!(
-        classifier.get_params(),
+        dispatched.get_params(),
         AnyClassifierParams::RandomForest(_)
     ));
-    assert_any_classifier_errors_are_atomic(&classifier, &data);
 
     let logistic = LogisticRegression::fit(
         &data.as_view(),
-        &BinaryTargets::new(vec![0, 0, 1, 1]).unwrap(),
+        &binary,
         LogisticRegressionParams::default(),
     )
     .unwrap();
     let expected = logistic.predict_proba(&data.as_view()).unwrap();
-    let logistic: AnyClassifier = logistic.into();
-    assert_eq!(logistic.predict_proba(&data.as_view()).unwrap(), expected);
-    let mut logistic_into = [9.0_f32; 8];
-    logistic
-        .predict_proba_into(&data.as_view(), &mut logistic_into)
-        .unwrap();
-    assert_eq!(logistic_into.as_slice(), expected.as_slice());
-    let mut logistic_class = [9.0_f32; 4];
-    logistic
-        .predict_class_proba_into(&data.as_view(), 1, &mut logistic_class)
-        .unwrap();
-    assert_eq!(
-        logistic_class.as_slice(),
-        logistic
-            .predict_class_proba(&data.as_view(), 1)
-            .unwrap()
-            .as_slice()
-    );
+    let dispatched: AnyClassifier = logistic.into();
+    assert_eq!(dispatched.predict_proba(&data.as_view()).unwrap(), expected);
     assert!(matches!(
-        logistic.get_params(),
+        dispatched.get_params(),
         AnyClassifierParams::LogisticRegression(_)
     ));
-    assert_any_classifier_errors_are_atomic(&logistic, &data);
+    assert_eq!(dispatched.n_features_in(), data.columns());
 
-    let targets = RegressionTargets::new(vec![0.0, 1.0, 4.0, 9.0]).unwrap();
-    let concrete_regressor = RandomForestRegressor::fit(
+    let forest = RandomForestRegressor::fit(
         &data.as_view(),
         &targets,
         RandomForestRegressorParams::default()
@@ -320,108 +567,47 @@ fn object_safe_traits_and_owned_enums_dispatch_by_batch() {
             .with_bootstrap(false),
     )
     .unwrap();
-    let expected = concrete_regressor.predict(&data.as_view()).unwrap();
-    let regressor: AnyRegressor = concrete_regressor.into();
-    let erased_regressor: &dyn Regressor = &regressor;
-
-    assert_eq!(erased_regressor.predict(&data.as_view()).unwrap(), expected);
-    let mut regressor_into = [9.0_f32; 4];
-    regressor
-        .predict_into(&data.as_view(), &mut regressor_into)
-        .unwrap();
-    assert_eq!(regressor_into.as_slice(), expected.as_slice());
+    let expected = forest.predict(&data.as_view()).unwrap();
+    let dispatched: AnyRegressor = forest.into();
+    let erased: &dyn Regressor = &dispatched;
+    assert_eq!(erased.predict(&data.as_view()).unwrap(), expected);
     assert!(matches!(
-        regressor.get_params(),
+        dispatched.get_params(),
         AnyRegressorParams::RandomForest(_)
     ));
-    assert_any_regressor_errors_are_atomic(&regressor, &data);
-    assert_eq!(classifier.n_features_in(), regressor.n_features_in());
 
-    let linear =
+    let linear: AnyRegressor =
         LinearRegression::fit(&data.as_view(), &targets, LinearRegressionParams::default())
-            .unwrap();
-    let expected = linear.predict(&data.as_view()).unwrap();
-    let linear: AnyRegressor = linear.into();
-    assert_eq!(linear.predict(&data.as_view()).unwrap(), expected);
-    let mut linear_into = [9.0_f32; 4];
-    linear
-        .predict_into(&data.as_view(), &mut linear_into)
-        .unwrap();
-    assert_eq!(linear_into.as_slice(), expected.as_slice());
+            .unwrap()
+            .into();
     assert!(matches!(
         linear.get_params(),
         AnyRegressorParams::LinearRegression(_)
     ));
-    assert_any_regressor_errors_are_atomic(&linear, &data);
 
-    let ridge = Ridge::fit(&data.as_view(), &targets, RidgeParams::default()).unwrap();
-    let expected = ridge.predict(&data.as_view()).unwrap();
-    let ridge: AnyRegressor = ridge.into();
-    assert_eq!(ridge.predict(&data.as_view()).unwrap(), expected);
-    let mut ridge_into = [9.0_f32; 4];
-    ridge
-        .predict_into(&data.as_view(), &mut ridge_into)
-        .unwrap();
-    assert_eq!(ridge_into.as_slice(), expected.as_slice());
+    let ridge: AnyRegressor = Ridge::fit(&data.as_view(), &targets, RidgeParams::default())
+        .unwrap()
+        .into();
     assert!(matches!(ridge.get_params(), AnyRegressorParams::Ridge(_)));
-    assert_any_regressor_errors_are_atomic(&ridge, &data);
 
-    let boosted = HistGradientBoostingRegressor::fit(
-        &data.as_view(),
-        &targets,
-        HistGradientBoostingRegressorParams::default()
-            .with_max_iter(3)
-            .with_max_leaf_nodes(2)
-            .with_min_samples_leaf(1),
-    )
-    .unwrap();
-    let expected = boosted.predict(&data.as_view()).unwrap();
-    let boosted: AnyRegressor = boosted.into();
-    assert_eq!(boosted.predict(&data.as_view()).unwrap(), expected);
-    let mut boosted_into = [9.0_f32; 4];
-    boosted
-        .predict_into(&data.as_view(), &mut boosted_into)
-        .unwrap();
-    assert_eq!(boosted_into.as_slice(), expected.as_slice());
+    let boosted: AnyRegressor =
+        HistGradientBoostingRegressor::fit(&data.as_view(), &targets, boosting_params())
+            .unwrap()
+            .into();
     assert!(matches!(
         boosted.get_params(),
         AnyRegressorParams::HistGradientBoosting(_)
     ));
-    assert_any_regressor_errors_are_atomic(&boosted, &data);
-}
 
-#[test]
-fn regressor_scalar_batch_and_output_validation_agree() {
-    let data = matrix(&[0.0, 1.0, 2.0, 3.0], 4, 1);
-    let targets = RegressionTargets::new(vec![0.0, 1.0, 4.0, 9.0]).unwrap();
-    let model = RandomForestRegressor::fit(
-        &data.as_view(),
-        &targets,
-        RandomForestRegressorParams::default()
-            .with_n_estimators(3)
-            .with_bootstrap(false),
-    )
-    .unwrap();
-
-    let allocating = model.predict(&data.as_view()).unwrap();
-    let mut into = vec![0.0; data.rows()];
-    model.predict_into(&data.as_view(), &mut into).unwrap();
-    assert_eq!(allocating, into);
-    for (row, &batch_value) in data.as_view().iter_rows().zip(&allocating) {
-        assert_eq!(model.predict_one(row).unwrap(), batch_value);
+    for dispatched in [linear, ridge, boosted] {
+        assert!(
+            dispatched
+                .predict(&data.as_view())
+                .unwrap()
+                .iter()
+                .all(|value| value.is_finite())
+        );
     }
-
-    let mut too_short = [123.0_f32; 3];
-    assert_eq!(
-        model
-            .predict_into(&data.as_view(), &mut too_short)
-            .unwrap_err(),
-        ModelError::OutputLength {
-            expected: 4,
-            actual: 3
-        }
-    );
-    assert_eq!(too_short, [123.0; 3]);
 }
 
 #[test]
@@ -473,42 +659,21 @@ fn pairwise_scores_are_raw_antisymmetric_and_batch_validation_is_atomic() {
         })
     );
     assert_eq!(output, [99.0; 2]);
-}
 
-#[test]
-fn histogram_boosting_scalar_batch_and_output_validation_agree() {
-    let data = matrix(&[0.0, 1.0, 2.0, 3.0], 4, 1);
-    let targets = RegressionTargets::new(vec![0.0, 0.0, 4.0, 4.0]).unwrap();
-    let model = HistGradientBoostingRegressor::fit(
-        &data.as_view(),
-        &targets,
-        HistGradientBoostingRegressorParams::default()
-            .with_learning_rate(1.0)
-            .with_max_iter(1)
-            .with_max_leaf_nodes(2)
-            .with_min_samples_leaf(1),
-    )
-    .unwrap();
-    let allocating = model.predict(&data.as_view()).unwrap();
-    let mut output = vec![0.0; data.rows()];
-    model.predict_into(&data.as_view(), &mut output).unwrap();
-    assert_eq!(allocating, output);
-    for (row, &expected) in data.iter_rows().zip(&output) {
-        assert_eq!(model.predict_one(row).unwrap(), expected);
-    }
-    let mut untouched = [88.0; 3];
     assert_eq!(
-        model.predict_into(&data.as_view(), &mut untouched),
-        Err(ModelError::OutputLength {
-            expected: 4,
-            actual: 3,
-        })
+        model.score_one(&[f32::NAN, 0.0]),
+        Err(PairwiseError::Model(ModelError::NonFiniteFeature {
+            row: 0,
+            column: 0,
+        }))
     );
-    assert_eq!(untouched, [88.0; 3]);
 }
 
 #[test]
-fn scalar_prediction_rejects_non_finite_features_and_outputs() {
+fn finite_inputs_that_overflow_are_reported_rather_than_returned() {
+    // The battery proves non-finite *inputs* are rejected. Provoking a
+    // non-finite *result* from finite inputs is estimator-specific: the linear
+    // models overflow on an extreme feature, the forest on extreme leaves.
     let data = matrix(&[0.0, 1.0, 2.0, 3.0], 4, 1);
     let regression = RegressionTargets::new(vec![0.0, 2.0, 4.0, 6.0]).unwrap();
     let linear = LinearRegression::fit(
@@ -525,14 +690,6 @@ fn scalar_prediction_rejects_non_finite_features_and_outputs() {
             .with_fit_intercept(false),
     )
     .unwrap();
-    assert_eq!(
-        linear.predict_one(&[f32::NAN]),
-        Err(ModelError::NonFiniteFeature { row: 0, column: 0 })
-    );
-    assert_eq!(
-        ridge.predict_one(&[f32::INFINITY]),
-        Err(ModelError::NonFiniteFeature { row: 0, column: 0 })
-    );
     assert_eq!(
         linear.predict_one(&[f32::MAX]),
         Err(ModelError::NonFinitePrediction { row: 0 })
@@ -557,64 +714,13 @@ fn scalar_prediction_rejects_non_finite_features_and_outputs() {
         Err(ModelError::NonFiniteFeature { row: 0, column: 0 })
     );
     assert_eq!(
-        logistic.predict_one(&[f32::NAN]),
-        Err(ModelError::NonFiniteFeature { row: 0, column: 0 })
-    );
-    assert_eq!(
         logistic.decision_function_one(&[f32::MAX]),
         Err(ModelError::NonFinitePrediction { row: 0 })
     );
 
-    let items = matrix(&[0.0, 0.0, 1.0, 0.5, 2.0, 1.0, 3.0, 2.0], 4, 2);
-    let observations = [
-        PairwiseObservation::new(
-            PairIndex::new(3, 2).unwrap(),
-            PairOutcome::LeftPreferred,
-            1.0,
-        )
-        .unwrap(),
-        PairwiseObservation::new(
-            PairIndex::new(2, 1).unwrap(),
-            PairOutcome::LeftPreferred,
-            1.0,
-        )
-        .unwrap(),
-    ];
-    let ranker = PairwiseLinearRanker::fit(
-        &items.as_view(),
-        &observations,
-        PairwiseLinearRankerParams::default().with_c(4.0),
-    )
-    .unwrap();
-    assert_eq!(
-        ranker.score_one(&[f32::NAN, 0.0]),
-        Err(PairwiseError::Model(ModelError::NonFiniteFeature {
-            row: 0,
-            column: 0,
-        }))
-    );
-
-    let boosted = HistGradientBoostingRegressor::fit(
-        &data.as_view(),
-        &RegressionTargets::new(vec![0.0, 0.0, 4.0, 4.0]).unwrap(),
-        HistGradientBoostingRegressorParams::default()
-            .with_max_iter(1)
-            .with_max_leaf_nodes(2)
-            .with_min_samples_leaf(1),
-    )
-    .unwrap();
-    assert_eq!(
-        boosted.predict_one(&[f32::NAN]),
-        Err(ModelError::NonFiniteFeature { row: 0, column: 0 })
-    );
-}
-
-#[test]
-fn every_regressor_reports_a_non_finite_prediction_instead_of_returning_it() {
     // Averaging extreme leaf values overflows the f32 accumulator, which is
     // the forest's route to a non-finite prediction from finite inputs. Every
-    // regressor must surface that as an error rather than an infinity.
-    let data = matrix(&[0.0, 1.0, 2.0, 3.0], 4, 1);
+    // entry point must surface that as an error rather than an infinity.
     let extreme = RegressionTargets::new(vec![f32::MAX; 4]).unwrap();
     let forest = RandomForestRegressor::fit(
         &data.as_view(),
@@ -641,14 +747,13 @@ fn every_regressor_reports_a_non_finite_prediction_instead_of_returning_it() {
         Regressor::predict(&forest, &data.as_view()),
         Err(ModelError::NonFinitePrediction { row: 0 })
     );
-
     let erased: AnyRegressor = forest.into();
     assert_eq!(
         erased.predict(&data.as_view()),
         Err(ModelError::NonFinitePrediction { row: 0 })
     );
 
-    // A finitely-predicting forest keeps returning values, so the new check
+    // A finitely-predicting forest keeps returning values, so the check
     // rejects only the overflowing case.
     let ordinary = RandomForestRegressor::fit(
         &data.as_view(),
