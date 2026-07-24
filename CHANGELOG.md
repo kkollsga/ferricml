@@ -13,6 +13,9 @@ and releases use [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   logical trees and revalidate every decoded topology, count, and parameter.
 - `AnyRegressor` dispatch artifacts that record the fitted runtime variant and
   nest the estimator's own complete, independently validated artifact.
+- Model-agnostic permutation feature importance over any fitted classifier or
+  regressor, with a seeded permutation count, allocating and caller-owned entry
+  points, and per-feature mean and dispersion of the scorer's quality loss.
 
 ### Fixed
 

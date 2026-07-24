@@ -75,12 +75,28 @@ def numeric_depends_on_no_estimator(root: Path) -> list[str]:
     ]
 
 
+def inspection_uses_only_public_surfaces(root: Path) -> list[str]:
+    """Inspection must name no estimator family and no persistence internals.
+
+    Model-agnostic inspection is defined by working through the public
+    prediction and scoring contracts alone. Naming a concrete estimator or the
+    artifact layer is the observable symptom of it reaching past them.
+    """
+    text = directory_text(root / "src" / "inspection")
+    return [
+        f"inspection depends on non-public-surface module {module}"
+        for module in (*ESTIMATOR_MODULES, "artifact")
+        if f"crate::{module}" in text
+    ]
+
+
 RULES: tuple[tuple[str, Callable[[Path], list[str]]], ...] = (
     ("crate-root-lib-only", crate_root_is_lib_only),
     ("obsolete-root-implementations", obsolete_root_implementations_are_gone),
     ("artifact-runtime-neutral", artifact_is_runtime_neutral),
     ("ensemble-families-private", ensemble_families_stay_private),
     ("numeric-below-estimators", numeric_depends_on_no_estimator),
+    ("inspection-public-surfaces-only", inspection_uses_only_public_surfaces),
 )
 
 
@@ -101,6 +117,8 @@ def write_clean_tree(root: Path) -> Path:
         "ensemble/random_forest/mod.rs": "//! forest\n",
         "numeric/mod.rs": "//! numeric\npub(crate) fn kernel() {}\n",
         "numeric/rng.rs": "//! rng\n",
+        "inspection/mod.rs": "//! inspection\nmod permutation;\n",
+        "inspection/permutation.rs": "//! permutation\nuse crate::api::Regressor;\n",
     }.items():
         path = source / relative
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -141,6 +159,14 @@ SYNTHETIC_VIOLATIONS: tuple[tuple[str, Callable[[Path], None], str], ...] = (
             root / "src" / "numeric" / "rng.rs", "use crate::linear_model::Ridge;\n"
         ),
         "numeric kernels depend on estimator module linear_model",
+    ),
+    (
+        "inspection-public-surfaces-only",
+        lambda root: append(
+            root / "src" / "inspection" / "permutation.rs",
+            "use crate::ensemble::RandomForestRegressor;\n",
+        ),
+        "inspection depends on non-public-surface module ensemble",
     ),
 )
 

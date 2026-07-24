@@ -8,6 +8,7 @@ use ferricml::linear_model::{
     LinearRegression, LinearRegressionParams, LogisticRegression, LogisticRegressionParams, Ridge,
     RidgeParams,
 };
+use ferricml::inspection::{PermutationImportanceParams, permutation_importance_regressor};
 use ferricml::metrics::accuracy_score;
 use ferricml::model_selection::{
     HoldoutParams, KFold, RegressionScorer, TestSize, cross_validate_regressor,
@@ -202,5 +203,18 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     ));
     assert_eq!(dispatch_decoded.predict(&features.as_view())?, predictions);
     assert!(AnyRegressor::from_artifact(&forest_encoded, schema).is_err());
+
+    let importance = permutation_importance_regressor(
+        &dispatch_decoded,
+        &features.as_view(),
+        &RegressionTargets::new(vec![0.0, 1.0, 4.0, 9.0])?,
+        RegressionScorer::MeanSquaredError,
+        PermutationImportanceParams::default()
+            .with_n_repeats(3)
+            .with_random_state(1),
+    )?;
+    assert_eq!(importance.n_features(), features.columns());
+    assert_eq!(importance.ranked().len(), features.columns());
+    assert!(importance.means().iter().all(|value| value.is_finite()));
     Ok(())
 }

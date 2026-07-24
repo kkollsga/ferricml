@@ -42,6 +42,11 @@ estimator meaning follow the reference contract.
   ranking scores and pair margins are not probabilities.
 - `artifact` owns stable envelope identity, bounded decoding primitives, and
   artifact errors. It does not expose backend tree layouts.
+- `inspection` owns model-agnostic attribution. Permutation importance works
+  through the public batch prediction and scoring contracts only, so it needs
+  no estimator cooperation and exposes no model internals. Its per-feature
+  values are quality losses, oriented so a larger number always means a more
+  important feature whichever direction the underlying metric improves in.
 
 `AnyClassifier` and `AnyRegressor` remain the owned runtime-swap layer. They
 match once per batch; the regressor variants cover forests, linear regression,

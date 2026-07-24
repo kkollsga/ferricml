@@ -485,6 +485,35 @@ pub fn ferricml::ensemble::RandomForestRegressorParams::with_n_jobs(self, ferric
 pub fn ferricml::ensemble::RandomForestRegressorParams::with_random_state(self, u64) -> Self
 impl core::default::Default for ferricml::ensemble::RandomForestRegressorParams
 pub fn ferricml::ensemble::RandomForestRegressorParams::default() -> Self
+pub mod ferricml::inspection
+#[non_exhaustive] pub enum ferricml::inspection::InspectionError
+pub ferricml::inspection::InspectionError::InvalidRepeatCount
+pub ferricml::inspection::InspectionError::OutputLength
+pub ferricml::inspection::InspectionError::OutputLength::actual: usize
+pub ferricml::inspection::InspectionError::OutputLength::expected: usize
+pub ferricml::inspection::InspectionError::Scoring(ferricml::model_selection::ScoringError)
+impl core::error::Error for ferricml::inspection::InspectionError
+pub fn ferricml::inspection::InspectionError::source(&self) -> core::option::Option<&(dyn core::error::Error + 'static)>
+impl core::fmt::Display for ferricml::inspection::InspectionError
+pub fn ferricml::inspection::InspectionError::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+pub struct ferricml::inspection::PermutationImportance
+impl ferricml::inspection::PermutationImportance
+pub fn ferricml::inspection::PermutationImportance::means(&self) -> &[f64]
+pub fn ferricml::inspection::PermutationImportance::n_features(&self) -> usize
+pub fn ferricml::inspection::PermutationImportance::ranked(&self) -> alloc::vec::Vec<usize>
+pub fn ferricml::inspection::PermutationImportance::std_devs(&self) -> &[f64]
+pub struct ferricml::inspection::PermutationImportanceParams
+impl ferricml::inspection::PermutationImportanceParams
+pub const fn ferricml::inspection::PermutationImportanceParams::n_repeats(&self) -> usize
+pub const fn ferricml::inspection::PermutationImportanceParams::random_state(&self) -> u64
+pub fn ferricml::inspection::PermutationImportanceParams::with_n_repeats(self, usize) -> Self
+pub fn ferricml::inspection::PermutationImportanceParams::with_random_state(self, u64) -> Self
+impl core::default::Default for ferricml::inspection::PermutationImportanceParams
+pub fn ferricml::inspection::PermutationImportanceParams::default() -> Self
+pub fn ferricml::inspection::permutation_importance_classifier(&dyn ferricml::api::Classifier, &ferricml::data::MatrixView<'_>, &ferricml::data::BinaryTargets, ferricml::model_selection::ClassificationScorer, ferricml::inspection::PermutationImportanceParams) -> core::result::Result<ferricml::inspection::PermutationImportance, ferricml::inspection::InspectionError>
+pub fn ferricml::inspection::permutation_importance_classifier_into(&dyn ferricml::api::Classifier, &ferricml::data::MatrixView<'_>, &ferricml::data::BinaryTargets, ferricml::model_selection::ClassificationScorer, ferricml::inspection::PermutationImportanceParams, &mut [f64], &mut [f64]) -> core::result::Result<(), ferricml::inspection::InspectionError>
+pub fn ferricml::inspection::permutation_importance_regressor(&dyn ferricml::api::Regressor, &ferricml::data::MatrixView<'_>, &ferricml::data::RegressionTargets, ferricml::model_selection::RegressionScorer, ferricml::inspection::PermutationImportanceParams) -> core::result::Result<ferricml::inspection::PermutationImportance, ferricml::inspection::InspectionError>
+pub fn ferricml::inspection::permutation_importance_regressor_into(&dyn ferricml::api::Regressor, &ferricml::data::MatrixView<'_>, &ferricml::data::RegressionTargets, ferricml::model_selection::RegressionScorer, ferricml::inspection::PermutationImportanceParams, &mut [f64], &mut [f64]) -> core::result::Result<(), ferricml::inspection::InspectionError>
 pub mod ferricml::linear_model
 pub struct ferricml::linear_model::LinearRegression
 impl ferricml::linear_model::LinearRegression
