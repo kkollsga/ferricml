@@ -182,12 +182,7 @@ impl LogisticRegression {
         for iteration in 0..params.max_iter {
             gradient.fill(0.0);
             hessian.fill(0.0);
-            for (row_index, (design_row, &target)) in design
-                .chunks_exact(parameter_count)
-                .zip(targets.as_slice())
-                .enumerate()
-            {
-                let sample_weight = sample_weight(sample_weights, row_index);
+            let mut accumulate_row = |design_row: &[f64], target: u8, sample_weight: f64| {
                 let mut score = intercept_index.map_or(0.0, |index| theta[index]);
                 for column in 0..columns {
                     score += theta[column] * design_row[column];
@@ -204,6 +199,21 @@ impl LogisticRegression {
                     for (slot, &right_value) in hessian_row.iter_mut().zip(design_row) {
                         *slot += scaled_left * right_value;
                     }
+                }
+            };
+            if let Some(weights) = sample_weights {
+                for ((design_row, &target), &sample_weight) in design
+                    .chunks_exact(parameter_count)
+                    .zip(targets.as_slice())
+                    .zip(weights.as_slice())
+                {
+                    accumulate_row(design_row, target, f64::from(sample_weight));
+                }
+            } else {
+                for (design_row, &target) in
+                    design.chunks_exact(parameter_count).zip(targets.as_slice())
+                {
+                    accumulate_row(design_row, target, 1.0);
                 }
             }
             for column in 0..columns {
