@@ -45,6 +45,8 @@ MODEL_FIT = (
     "ferricml_models_v1_fit_2048x48/ranker_1024_pairs",
     "ferricml_models_v1_fit_2048x48/scaler_ridge_pipeline",
     "ferricml_boosting_v1_fit_2048x48_64t7l/ferricml",
+    "ferricml_models_v2_logistic_fit_2048x48/ferricml",
+    "ferricml_models_v2_scaler_fit_2048x48/ferricml",
 )
 MODEL_INFERENCE = (
     "ferricml_models_v1_into_1024x48/linear",
@@ -57,6 +59,8 @@ MODEL_INFERENCE = (
     "ferricml_boosting_v1_predict_one_128t15l/predict",
     "ferricml_boosting_v1_into_32x48_64t7l/predict",
     "ferricml_boosting_v1_into_1024x48_64t7l/predict",
+    "ferricml_models_v2_logistic_into_1024x48/proba",
+    "ferricml_models_v2_scaler_into_1024x48/transform",
 )
 BENCH_TARGETS = ("forest", "models", "boosting")
 
@@ -444,6 +448,7 @@ def capture(args: argparse.Namespace) -> int:
                 for prefix in (
                     "forest_historical_",
                     "ferricml_models_v1_",
+                    "ferricml_models_v2_",
                     "ferricml_boosting_v1_",
                 )
             ):

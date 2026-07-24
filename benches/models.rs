@@ -1,6 +1,10 @@
 use criterion::{BatchSize, BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
-use ferricml::data::{DenseMatrix, RegressionTargets};
-use ferricml::linear_model::{LinearRegression, LinearRegressionParams, Ridge, RidgeParams};
+use ferricml::api::Classifier;
+use ferricml::data::{BinaryTargets, DenseMatrix, RegressionTargets};
+use ferricml::linear_model::{
+    LinearRegression, LinearRegressionParams, LogisticRegression, LogisticRegressionParams, Ridge,
+    RidgeParams,
+};
 use ferricml::metrics::{mean_squared_error, roc_auc_score};
 use ferricml::model_selection::{
     HoldoutParams, KFold, RegressionScorer, TestSize, cross_validate_regressor, train_test_split,
@@ -186,6 +190,90 @@ fn training(c: &mut Criterion) {
     group.finish();
 }
 
+fn logistic_and_scaler(c: &mut Criterion) {
+    let (training, regression_targets) = fixture(ROWS, COLUMNS);
+    let labels = BinaryTargets::new(
+        regression_targets
+            .as_slice()
+            .iter()
+            .map(|&target| u8::from(target > 0.0))
+            .collect(),
+    )
+    .unwrap();
+    let logistic_params = LogisticRegressionParams::default().with_max_iter(25);
+    let logistic =
+        LogisticRegression::fit(&training.as_view(), &labels, logistic_params.clone()).unwrap();
+    let scaler = StandardScaler::fit(&training.as_view(), StandardScalerParams::default()).unwrap();
+    let inference = DenseMatrix::new(
+        training.as_slice()[..INFERENCE_ROWS * COLUMNS].to_vec(),
+        INFERENCE_ROWS,
+        COLUMNS,
+    )
+    .unwrap();
+
+    eprintln!(
+        "FERRICML_BENCH_METADATA {{\"suite\":\"models-v2\",\"rows\":{ROWS},\"features\":{COLUMNS},\"logistic_max_iter\":25}}"
+    );
+
+    let mut probabilities = vec![0.0; INFERENCE_ROWS * logistic.classes().len()];
+    let mut logistic_group = c.benchmark_group("ferricml_models_v2_logistic_into_1024x48");
+    logistic_group.throughput(Throughput::Elements(INFERENCE_ROWS as u64));
+    logistic_group.bench_function(BenchmarkId::from_parameter("proba"), |bencher| {
+        bencher.iter(|| {
+            logistic
+                .predict_proba_into(
+                    black_box(&inference.as_view()),
+                    black_box(&mut probabilities),
+                )
+                .unwrap();
+            black_box(&probabilities);
+        });
+    });
+    logistic_group.finish();
+
+    let mut transformed = vec![0.0; INFERENCE_ROWS * COLUMNS];
+    let mut scaler_group = c.benchmark_group("ferricml_models_v2_scaler_into_1024x48");
+    scaler_group.throughput(Throughput::Elements(INFERENCE_ROWS as u64));
+    scaler_group.bench_function(BenchmarkId::from_parameter("transform"), |bencher| {
+        bencher.iter(|| {
+            black_box(
+                scaler
+                    .transform_into(black_box(&inference.as_view()), black_box(&mut transformed))
+                    .unwrap(),
+            );
+        });
+    });
+    scaler_group.finish();
+
+    let mut logistic_fit = c.benchmark_group("ferricml_models_v2_logistic_fit_2048x48");
+    logistic_fit.throughput(Throughput::Elements(ROWS as u64));
+    logistic_fit.bench_function(BenchmarkId::from_parameter("ferricml"), |bencher| {
+        bencher.iter_batched(
+            || logistic_params.clone(),
+            |params| {
+                black_box(LogisticRegression::fit(&training.as_view(), &labels, params).unwrap());
+            },
+            BatchSize::SmallInput,
+        );
+    });
+    logistic_fit.finish();
+
+    let mut scaler_fit = c.benchmark_group("ferricml_models_v2_scaler_fit_2048x48");
+    scaler_fit.throughput(Throughput::Elements(ROWS as u64));
+    scaler_fit.bench_function(BenchmarkId::from_parameter("ferricml"), |bencher| {
+        bencher.iter(|| {
+            black_box(
+                StandardScaler::fit(
+                    black_box(&training.as_view()),
+                    StandardScalerParams::default(),
+                )
+                .unwrap(),
+            );
+        });
+    });
+    scaler_fit.finish();
+}
+
 fn evaluation(c: &mut Criterion) {
     let expected = (0..METRIC_ROWS)
         .map(|index| ((index % 97) as f32 - 48.0) / 11.0)
@@ -257,5 +345,11 @@ fn evaluation(c: &mut Criterion) {
     cross_validation.finish();
 }
 
-criterion_group!(benches, inference, training, evaluation);
+criterion_group!(
+    benches,
+    inference,
+    training,
+    logistic_and_scaler,
+    evaluation
+);
 criterion_main!(benches);

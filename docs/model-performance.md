@@ -8,7 +8,9 @@ not shared-CI timing gates or comparisons with third-party crates.
 
 The `models` target measures 1,024-row caller-owned inference and 2,048x48 fit
 for linear regression, ridge, pairwise linear ranking, and a fitted
-standard-scaler/ridge pipeline. It also measures MSE, tie-aware ROC AUC, and a
+standard-scaler/ridge pipeline. Stable v2 lanes additionally measure logistic
+fit/probability prediction and standalone standard-scaler fit/transform. The
+target also measures MSE, tie-aware ROC AUC, and a
 seeded holdout over 4,096 rows plus five-fold ridge cross-validation over a
 256x12 fixture. The `boosting` target measures single-row
 prediction for 32x7, 64x7, 64x15, and 128x15 tree/leaf limits; 32-row and
@@ -47,7 +49,8 @@ Machine-readable results and raw Criterion output remain in the local
 `scripts/performance_history.py` records named suites. `forest-v1` retains
 compatibility with the release-0.1 `forest-history-v1` record, while
 `ferricml-models-v1` begins a separate history. Comparisons operate on matching
-suite protocols and metric intersections. A new or missing lane is reported as
+suite protocols and metric intersections. The v2 lanes extend the compatible
+model suite without renaming existing identifiers. A new or missing lane is reported as
 `insufficient_history`, never as a pass; shared lanes still expose any real
 regression. Each suite independently checks the prior release and, once three
 compatible earlier records exist, an approximately three-release anchor.
