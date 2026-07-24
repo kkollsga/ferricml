@@ -572,6 +572,12 @@ impl RandomForestRegressor {
         }
         Ok(())
     }
+
+    /// Internal bytes used only for deterministic implementation tests.
+    #[cfg(test)]
+    pub(crate) fn to_bytes(&self) -> Vec<u8> {
+        packed_model_bytes(self.n_features_in, &self.trees, b"FRFR")
+    }
 }
 
 impl Estimator for RandomForestRegressor {
@@ -1108,6 +1114,7 @@ fn packed_model_bytes(n_features: usize, trees: &[PackedTree], magic: &[u8; 4]) 
 mod tests {
     use super::*;
     use crate::data::{BinaryTargets, DenseMatrix, RegressionTargets};
+    use sha2::{Digest, Sha256};
 
     fn matrix(rows: &[&[f32]]) -> DenseMatrix {
         let cols = rows.first().map_or(0, |row| row.len());
@@ -1285,6 +1292,64 @@ mod tests {
         let parallel = RandomForestClassifier::fit(&x.as_view(), &y, parallel_config).unwrap();
         assert_eq!(one.to_bytes(), repeat.to_bytes());
         assert_eq!(one.to_bytes(), parallel.to_bytes());
+    }
+
+    #[test]
+    fn packed_classifier_and_regressor_fingerprints_are_frozen() {
+        let x = matrix(&[
+            &[0.0, 3.0],
+            &[1.0, 2.0],
+            &[2.0, 1.0],
+            &[3.0, 0.0],
+            &[4.0, 7.0],
+            &[5.0, 6.0],
+            &[6.0, 5.0],
+            &[7.0, 4.0],
+        ]);
+        let classifier = RandomForestClassifier::fit(
+            &x.as_view(),
+            &BinaryTargets::new(vec![0, 1, 1, 0, 1, 0, 0, 1]).unwrap(),
+            classifier_params(123),
+        )
+        .unwrap();
+        let regressor = RandomForestRegressor::fit(
+            &x.as_view(),
+            &RegressionTargets::new(vec![0.0, 1.0, 1.5, 2.5, 8.0, 7.0, 6.0, 5.0]).unwrap(),
+            regressor_params(123),
+        )
+        .unwrap();
+        let regressor_repeat = RandomForestRegressor::fit(
+            &x.as_view(),
+            &RegressionTargets::new(vec![0.0, 1.0, 1.5, 2.5, 8.0, 7.0, 6.0, 5.0]).unwrap(),
+            regressor_params(123),
+        )
+        .unwrap();
+        assert_eq!(regressor.to_bytes(), regressor_repeat.to_bytes());
+
+        for (name, bytes, expected_len, expected_digest) in [
+            (
+                "classifier",
+                classifier.to_bytes(),
+                1595,
+                [
+                    180, 124, 71, 225, 4, 107, 44, 127, 181, 142, 154, 67, 201, 35, 134, 98, 57,
+                    65, 187, 73, 172, 213, 231, 42, 36, 177, 233, 251, 92, 178, 60, 101,
+                ],
+            ),
+            (
+                "regressor",
+                regressor.to_bytes(),
+                2587,
+                [
+                    100, 242, 214, 182, 27, 5, 82, 121, 64, 157, 253, 240, 23, 181, 188, 179, 232,
+                    105, 178, 228, 17, 225, 213, 116, 97, 196, 21, 239, 13, 206, 129, 77,
+                ],
+            ),
+        ] {
+            assert_eq!(bytes.len(), expected_len, "{name} packed bytes changed");
+            let digest: [u8; 32] = Sha256::digest(&bytes).into();
+            assert_eq!(digest, expected_digest, "{name} packed bytes changed");
+        }
     }
 
     #[test]
