@@ -137,6 +137,26 @@ def baselines_depend_on_no_estimator(root: Path) -> list[str]:
     ]
 
 
+def composition_families_stay_private(root: Path) -> list[str]:
+    """Transformer families and pipeline internals stay behind their facades.
+
+    `preprocessing` and `pipeline` each grew from one file into a directory of
+    per-family and per-concern child modules. Exposing one as `pub mod` would
+    make its internal layout — fitted state, stage order, artifact component
+    encoding — part of the public API, which is exactly what the facades exist
+    to prevent. Only re-exported types cross the boundary.
+    """
+    findings = []
+    for facade in ("preprocessing", "pipeline"):
+        text = read_if_present(root / "src" / facade / "mod.rs")
+        findings.extend(
+            f"{facade} facade exposes child module: {line.strip()}"
+            for line in text.splitlines()
+            if line.strip().startswith("pub mod ")
+        )
+    return findings
+
+
 RULES: tuple[tuple[str, Callable[[Path], list[str]]], ...] = (
     ("crate-root-lib-only", crate_root_is_lib_only),
     ("obsolete-root-implementations", obsolete_root_implementations_are_gone),
@@ -147,6 +167,7 @@ RULES: tuple[tuple[str, Callable[[Path], list[str]]], ...] = (
     ("loss-below-estimators", loss_depends_on_no_estimator),
     ("capability-descriptor-neutral", capability_descriptor_names_no_estimator),
     ("baselines-independent", baselines_depend_on_no_estimator),
+    ("composition-families-private", composition_families_stay_private),
 )
 
 
@@ -175,6 +196,10 @@ def write_clean_tree(root: Path) -> Path:
         "api/capabilities.rs": "//! capabilities\npub struct Capabilities;\n",
         "dummy/mod.rs": "//! dummy\nmod classifier;\n",
         "dummy/classifier.rs": "//! baseline\nuse crate::api::Classifier;\n",
+        "preprocessing/mod.rs": "//! preprocessing\nmod standard_scaler;\n",
+        "preprocessing/standard_scaler/mod.rs": "//! scaler\n",
+        "pipeline/mod.rs": "//! pipeline\nmod staged;\npub use staged::StagedPipeline;\n",
+        "pipeline/staged.rs": "//! staged\npub struct StagedPipeline;\n",
     }.items():
         path = source / relative
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -247,6 +272,13 @@ SYNTHETIC_VIOLATIONS: tuple[tuple[str, Callable[[Path], None], str], ...] = (
             "use crate::ensemble::RandomForestClassifier;\n",
         ),
         "baseline estimators depend on estimator module ensemble",
+    ),
+    (
+        "composition-families-private",
+        lambda root: append(
+            root / "src" / "preprocessing" / "mod.rs", "pub mod standard_scaler;\n"
+        ),
+        "preprocessing facade exposes child module",
     ),
 )
 
