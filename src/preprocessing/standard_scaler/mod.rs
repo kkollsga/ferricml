@@ -1,19 +1,13 @@
 //! Deterministic dense standardization.
 
 use crate::api::{Capabilities, Estimator, HasCapabilities, HasParams, ModelError, Transformer};
-use crate::artifact::{
-    ArtifactError, ArtifactPayloadWriter, MODEL_ARTIFACT_VERSION, STANDARD_SCALER_ARTIFACT_KIND,
-    SchemaRole, artifact_version, decode_component, decode_v2_envelope, encode_component,
-    encode_v2_envelope,
-};
+use crate::artifact::{ArtifactError, STANDARD_SCALER_ARTIFACT_KIND};
 use crate::data::{MatrixView, SampleWeights};
 
-use super::scaling::{transform_preflighted, validate_transform_request};
-
-const MAX_ARTIFACT_FEATURES: usize = 1_000_000;
-const PAYLOAD_VERSION: u16 = 1;
-const STATE_COMPONENT_KIND: u16 = 1;
-const STATE_COMPONENT_VERSION: u16 = 1;
+use super::scaling::{
+    decode_flag, decode_scaler_artifact, encode_scaler_artifact, transform_preflighted,
+    validate_transform_request,
+};
 
 /// Parameters for [`StandardScaler`].
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -196,34 +190,21 @@ impl StandardScaler {
         input_schema: [u8; 32],
         transformed_schema: [u8; 32],
     ) -> Result<Vec<u8>, ArtifactError> {
-        if self.n_features_in > MAX_ARTIFACT_FEATURES {
-            return Err(ArtifactError::InvalidPayload);
-        }
-        let count = u32::try_from(self.n_features_in).map_err(|_| ArtifactError::InvalidPayload)?;
-        let mut state = ArtifactPayloadWriter::with_capacity(16 + self.n_features_in * 24);
-        state.u32(count);
-        state.u32(u32::from(self.params.with_mean));
-        state.u32(u32::from(self.params.with_std));
-        state.u32(count);
-        for ((&mean, &variance), &scale) in self.means.iter().zip(&self.variances).zip(&self.scales)
-        {
-            state.f64(mean);
-            state.f64(variance);
-            state.f64(scale);
-        }
-        let component = encode_component(
-            STATE_COMPONENT_KIND,
-            STATE_COMPONENT_VERSION,
-            &state.finish(),
-        )?;
-        encode_v2_envelope(
+        encode_scaler_artifact(
             STANDARD_SCALER_ARTIFACT_KIND,
-            PAYLOAD_VERSION,
+            input_schema,
+            transformed_schema,
+            self.n_features_in,
             &[
-                (SchemaRole::Input, input_schema),
-                (SchemaRole::Transformed, transformed_schema),
+                u32::from(self.params.with_mean),
+                u32::from(self.params.with_std),
             ],
-            &component,
+            3,
+            |feature, state| {
+                state.f64(self.means[feature]);
+                state.f64(self.variances[feature]);
+                state.f64(self.scales[feature]);
+            },
         )
     }
 
@@ -233,35 +214,19 @@ impl StandardScaler {
         input_schema: [u8; 32],
         transformed_schema: [u8; 32],
     ) -> Result<Self, ArtifactError> {
-        let version = artifact_version(bytes)?;
-        if version != MODEL_ARTIFACT_VERSION {
-            return Err(ArtifactError::UnsupportedVersion { found: version });
-        }
-        let mut envelope = decode_v2_envelope(
+        let (n_features_in, flags, mut state) = decode_scaler_artifact(
             bytes,
             STANDARD_SCALER_ARTIFACT_KIND,
-            PAYLOAD_VERSION,
-            &[
-                (SchemaRole::Input, input_schema),
-                (SchemaRole::Transformed, transformed_schema),
-            ],
+            input_schema,
+            transformed_schema,
+            2,
         )?;
-        let mut state =
-            decode_component(&mut envelope, STATE_COMPONENT_KIND, STATE_COMPONENT_VERSION)?;
-        if !envelope.is_empty() {
-            return Err(ArtifactError::TrailingBytes);
-        }
-        let n_features_in = state.u32()? as usize;
-        let with_mean = decode_bool(state.u32()?)?;
-        let with_std = decode_bool(state.u32()?)?;
-        let count = state.u32()? as usize;
-        if n_features_in == 0 || n_features_in > MAX_ARTIFACT_FEATURES || count != n_features_in {
-            return Err(ArtifactError::InvalidPayload);
-        }
-        let mut means = Vec::with_capacity(count);
-        let mut variances = Vec::with_capacity(count);
-        let mut scales = Vec::with_capacity(count);
-        for _ in 0..count {
+        let with_mean = decode_flag(flags[0])?;
+        let with_std = decode_flag(flags[1])?;
+        let mut means = Vec::with_capacity(n_features_in);
+        let mut variances = Vec::with_capacity(n_features_in);
+        let mut scales = Vec::with_capacity(n_features_in);
+        for _ in 0..n_features_in {
             let mean = state.f64()?;
             let variance = state.f64()?;
             let scale = state.f64()?;
@@ -304,14 +269,6 @@ impl StandardScaler {
             transformed /= self.scales[column];
         }
         transformed as f32
-    }
-}
-
-fn decode_bool(value: u32) -> Result<bool, ArtifactError> {
-    match value {
-        0 => Ok(false),
-        1 => Ok(true),
-        _ => Err(ArtifactError::InvalidPayload),
     }
 }
 

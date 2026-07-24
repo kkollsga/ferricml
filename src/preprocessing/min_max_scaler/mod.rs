@@ -1,19 +1,13 @@
 //! Deterministic dense scaling onto the unit interval.
 
 use crate::api::{Capabilities, Estimator, HasCapabilities, HasParams, ModelError, Transformer};
-use crate::artifact::{
-    ArtifactError, ArtifactPayloadWriter, MIN_MAX_SCALER_ARTIFACT_KIND, MODEL_ARTIFACT_VERSION,
-    SchemaRole, artifact_version, decode_component, decode_v2_envelope, encode_component,
-    encode_v2_envelope,
-};
+use crate::artifact::{ArtifactError, MIN_MAX_SCALER_ARTIFACT_KIND};
 use crate::data::MatrixView;
 
-use super::scaling::{transform_preflighted, validate_transform_request};
-
-const MAX_ARTIFACT_FEATURES: usize = 1_000_000;
-const PAYLOAD_VERSION: u16 = 1;
-const STATE_COMPONENT_KIND: u16 = 1;
-const STATE_COMPONENT_VERSION: u16 = 1;
+use super::scaling::{
+    decode_flag, decode_scaler_artifact, encode_scaler_artifact, transform_preflighted,
+    validate_transform_request,
+};
 
 /// Parameters for [`MinMaxScaler`].
 ///
@@ -150,31 +144,17 @@ impl MinMaxScaler {
         input_schema: [u8; 32],
         transformed_schema: [u8; 32],
     ) -> Result<Vec<u8>, ArtifactError> {
-        if self.n_features_in > MAX_ARTIFACT_FEATURES {
-            return Err(ArtifactError::InvalidPayload);
-        }
-        let count = u32::try_from(self.n_features_in).map_err(|_| ArtifactError::InvalidPayload)?;
-        let mut state = ArtifactPayloadWriter::with_capacity(12 + self.n_features_in * 16);
-        state.u32(count);
-        state.u32(u32::from(self.params.clip));
-        state.u32(count);
-        for (&minimum, &maximum) in self.data_min.iter().zip(&self.data_max) {
-            state.f64(minimum);
-            state.f64(maximum);
-        }
-        let component = encode_component(
-            STATE_COMPONENT_KIND,
-            STATE_COMPONENT_VERSION,
-            &state.finish(),
-        )?;
-        encode_v2_envelope(
+        encode_scaler_artifact(
             MIN_MAX_SCALER_ARTIFACT_KIND,
-            PAYLOAD_VERSION,
-            &[
-                (SchemaRole::Input, input_schema),
-                (SchemaRole::Transformed, transformed_schema),
-            ],
-            &component,
+            input_schema,
+            transformed_schema,
+            self.n_features_in,
+            &[u32::from(self.params.clip)],
+            2,
+            |feature, state| {
+                state.f64(self.data_min[feature]);
+                state.f64(self.data_max[feature]);
+            },
         )
     }
 
@@ -184,39 +164,19 @@ impl MinMaxScaler {
         input_schema: [u8; 32],
         transformed_schema: [u8; 32],
     ) -> Result<Self, ArtifactError> {
-        let version = artifact_version(bytes)?;
-        if version != MODEL_ARTIFACT_VERSION {
-            return Err(ArtifactError::UnsupportedVersion { found: version });
-        }
-        let mut envelope = decode_v2_envelope(
+        let (n_features_in, flags, mut state) = decode_scaler_artifact(
             bytes,
             MIN_MAX_SCALER_ARTIFACT_KIND,
-            PAYLOAD_VERSION,
-            &[
-                (SchemaRole::Input, input_schema),
-                (SchemaRole::Transformed, transformed_schema),
-            ],
+            input_schema,
+            transformed_schema,
+            1,
         )?;
-        let mut state =
-            decode_component(&mut envelope, STATE_COMPONENT_KIND, STATE_COMPONENT_VERSION)?;
-        if !envelope.is_empty() {
-            return Err(ArtifactError::TrailingBytes);
-        }
-        let n_features_in = state.u32()? as usize;
-        let clip = match state.u32()? {
-            0 => false,
-            1 => true,
-            _ => return Err(ArtifactError::InvalidPayload),
-        };
-        let count = state.u32()? as usize;
-        if n_features_in == 0 || n_features_in > MAX_ARTIFACT_FEATURES || count != n_features_in {
-            return Err(ArtifactError::InvalidPayload);
-        }
-        let mut data_min = Vec::with_capacity(count);
-        let mut data_max = Vec::with_capacity(count);
-        let mut scales = Vec::with_capacity(count);
-        let mut offsets = Vec::with_capacity(count);
-        for _ in 0..count {
+        let clip = decode_flag(flags[0])?;
+        let mut data_min = Vec::with_capacity(n_features_in);
+        let mut data_max = Vec::with_capacity(n_features_in);
+        let mut scales = Vec::with_capacity(n_features_in);
+        let mut offsets = Vec::with_capacity(n_features_in);
+        for _ in 0..n_features_in {
             let minimum = state.f64()?;
             let maximum = state.f64()?;
             if !minimum.is_finite() || !maximum.is_finite() || maximum < minimum {

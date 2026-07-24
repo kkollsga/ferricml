@@ -1,19 +1,13 @@
 //! Deterministic dense scaling by each feature's largest magnitude.
 
 use crate::api::{Capabilities, Estimator, HasCapabilities, HasParams, ModelError, Transformer};
-use crate::artifact::{
-    ArtifactError, ArtifactPayloadWriter, MAX_ABS_SCALER_ARTIFACT_KIND, MODEL_ARTIFACT_VERSION,
-    SchemaRole, artifact_version, decode_component, decode_v2_envelope, encode_component,
-    encode_v2_envelope,
-};
+use crate::artifact::{ArtifactError, MAX_ABS_SCALER_ARTIFACT_KIND};
 use crate::data::MatrixView;
 
-use super::scaling::{transform_preflighted, validate_transform_request};
-
-const MAX_ARTIFACT_FEATURES: usize = 1_000_000;
-const PAYLOAD_VERSION: u16 = 1;
-const STATE_COMPONENT_KIND: u16 = 1;
-const STATE_COMPONENT_VERSION: u16 = 1;
+use super::scaling::{
+    decode_scaler_artifact, encode_scaler_artifact, transform_preflighted,
+    validate_transform_request,
+};
 
 /// Parameters for [`MaxAbsScaler`].
 ///
@@ -102,29 +96,14 @@ impl MaxAbsScaler {
         input_schema: [u8; 32],
         transformed_schema: [u8; 32],
     ) -> Result<Vec<u8>, ArtifactError> {
-        if self.n_features_in > MAX_ARTIFACT_FEATURES {
-            return Err(ArtifactError::InvalidPayload);
-        }
-        let count = u32::try_from(self.n_features_in).map_err(|_| ArtifactError::InvalidPayload)?;
-        let mut state = ArtifactPayloadWriter::with_capacity(8 + self.n_features_in * 8);
-        state.u32(count);
-        state.u32(count);
-        for &largest in &self.max_abs {
-            state.f64(largest);
-        }
-        let component = encode_component(
-            STATE_COMPONENT_KIND,
-            STATE_COMPONENT_VERSION,
-            &state.finish(),
-        )?;
-        encode_v2_envelope(
+        encode_scaler_artifact(
             MAX_ABS_SCALER_ARTIFACT_KIND,
-            PAYLOAD_VERSION,
-            &[
-                (SchemaRole::Input, input_schema),
-                (SchemaRole::Transformed, transformed_schema),
-            ],
-            &component,
+            input_schema,
+            transformed_schema,
+            self.n_features_in,
+            &[],
+            1,
+            |feature, state| state.f64(self.max_abs[feature]),
         )
     }
 
@@ -134,32 +113,16 @@ impl MaxAbsScaler {
         input_schema: [u8; 32],
         transformed_schema: [u8; 32],
     ) -> Result<Self, ArtifactError> {
-        let version = artifact_version(bytes)?;
-        if version != MODEL_ARTIFACT_VERSION {
-            return Err(ArtifactError::UnsupportedVersion { found: version });
-        }
-        let mut envelope = decode_v2_envelope(
+        let (n_features_in, _, mut state) = decode_scaler_artifact(
             bytes,
             MAX_ABS_SCALER_ARTIFACT_KIND,
-            PAYLOAD_VERSION,
-            &[
-                (SchemaRole::Input, input_schema),
-                (SchemaRole::Transformed, transformed_schema),
-            ],
+            input_schema,
+            transformed_schema,
+            0,
         )?;
-        let mut state =
-            decode_component(&mut envelope, STATE_COMPONENT_KIND, STATE_COMPONENT_VERSION)?;
-        if !envelope.is_empty() {
-            return Err(ArtifactError::TrailingBytes);
-        }
-        let n_features_in = state.u32()? as usize;
-        let count = state.u32()? as usize;
-        if n_features_in == 0 || n_features_in > MAX_ARTIFACT_FEATURES || count != n_features_in {
-            return Err(ArtifactError::InvalidPayload);
-        }
-        let mut max_abs = Vec::with_capacity(count);
-        let mut scales = Vec::with_capacity(count);
-        for _ in 0..count {
+        let mut max_abs = Vec::with_capacity(n_features_in);
+        let mut scales = Vec::with_capacity(n_features_in);
+        for _ in 0..n_features_in {
             let largest = state.f64()?;
             if !largest.is_finite() || largest < 0.0 {
                 return Err(ArtifactError::InvalidPayload);
