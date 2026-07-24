@@ -1,5 +1,6 @@
 //! Deterministic validated dataset partitions.
 
+use std::collections::BinaryHeap;
 use std::error::Error;
 use std::fmt;
 
@@ -723,19 +724,53 @@ fn split_from_test_membership(test_membership: &[u8], test_count: usize) -> Spli
 fn stratified_test_quotas(counts: &[usize; 256], test_count: usize) -> [usize; 256] {
     let mut quotas = counts.map(|count| usize::from(count > 0));
     let mut remaining = test_count - quotas.iter().sum::<usize>();
-    while remaining > 0 {
-        let label = (0..quotas.len())
-            .filter(|&label| quotas[label] + 1 < counts[label])
-            .min_by(|&left, &right| {
-                let left_ratio = (quotas[left] as u128) * (counts[right] as u128);
-                let right_ratio = (quotas[right] as u128) * (counts[left] as u128);
-                left_ratio.cmp(&right_ratio).then_with(|| left.cmp(&right))
+    let mut candidates = counts
+        .iter()
+        .copied()
+        .enumerate()
+        .filter_map(|(label, count)| {
+            (count > 2).then_some(QuotaCandidate {
+                label,
+                quota: 1,
+                count,
             })
+        })
+        .collect::<BinaryHeap<_>>();
+    while remaining > 0 {
+        let mut candidate = candidates
+            .pop()
             .expect("validated train partition leaves class capacity");
-        quotas[label] += 1;
+        candidate.quota += 1;
+        quotas[candidate.label] = candidate.quota;
         remaining -= 1;
+        if candidate.quota + 1 < candidate.count {
+            candidates.push(candidate);
+        }
     }
     quotas
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct QuotaCandidate {
+    label: usize,
+    quota: usize,
+    count: usize,
+}
+
+impl Ord for QuotaCandidate {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        let self_ratio = (self.quota as u128) * (other.count as u128);
+        let other_ratio = (other.quota as u128) * (self.count as u128);
+        other_ratio
+            .cmp(&self_ratio)
+            .then_with(|| other.label.cmp(&self.label))
+    }
+}
+
+impl PartialOrd for QuotaCandidate {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
 }
 
 fn stable_shuffle(values: &mut [usize], seed: u64) {
@@ -846,7 +881,7 @@ mod tests {
         for index in order {
             buckets[labels[index] as usize].push(index);
         }
-        let quotas = stratified_test_quotas(&counts, test_count);
+        let quotas = legacy_stratified_test_quotas(&counts, test_count);
         let mut train_indices = Vec::with_capacity(train_count);
         let mut test_indices = Vec::with_capacity(test_count);
         for (label, bucket) in buckets.into_iter().enumerate() {
@@ -860,6 +895,24 @@ mod tests {
             train_indices,
             test_indices,
         })
+    }
+
+    fn legacy_stratified_test_quotas(counts: &[usize; 256], test_count: usize) -> [usize; 256] {
+        let mut quotas = counts.map(|count| usize::from(count > 0));
+        let mut remaining = test_count - quotas.iter().sum::<usize>();
+        while remaining > 0 {
+            let label = (0..quotas.len())
+                .filter(|&label| quotas[label] + 1 < counts[label])
+                .min_by(|&left, &right| {
+                    let left_ratio = (quotas[left] as u128) * (counts[right] as u128);
+                    let right_ratio = (quotas[right] as u128) * (counts[left] as u128);
+                    left_ratio.cmp(&right_ratio).then_with(|| left.cmp(&right))
+                })
+                .expect("validated train partition leaves class capacity");
+            quotas[label] += 1;
+            remaining -= 1;
+        }
+        quotas
     }
 
     #[test]
