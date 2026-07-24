@@ -22,10 +22,11 @@ deterministic random-forest classification and regression, compact histogram
 gradient-boosted regression, private packed
 trees, bounded parallel training, allocation-free batch prediction, and a
 generic fitted pipeline seam.
-Its public estimator vocabulary and observable semantics follow a locked subset
-of scikit-learn; typed Rust parameters and caller-owned `_into` methods preserve
-validation and performance. See [API and growth](docs/api-and-growth.md) and
-[the conformance contract](docs/sklearn-conformance.md).
+Its public estimator vocabulary and observable semantics follow FerricML's
+locked reference contract; typed Rust parameters and caller-owned `_into`
+methods preserve validation and performance. See
+[API and growth](docs/api-and-growth.md) and
+[the frozen reference contract](docs/reference-semantics.md).
 
 Logistic, linear, ridge, histogram-gradient-boosting, standard-scaler, and
 supported typed pipeline models support bounded, versioned, checksummed binary
@@ -60,10 +61,11 @@ diff. `make semver-check` is an informational comparison
 with the latest crates.io release and cleanly reports when no first-release
 baseline exists.
 
-The pinned scikit-learn script is a separate correctness/API verifier:
+The frozen behavior, shape, validation, and quality contract has a dedicated
+Rust gate:
 
 ```console
-dev-docs/temp/sklearn-1.9/bin/python scripts/sklearn_conformance.py
+make reference-check
 ```
 
 Third-party Rust performance comparisons are never part of root tests or CI.
@@ -90,7 +92,7 @@ machine. The matched Rafor protocol and thresholds are documented in
 ## Contributing and releases
 
 GitHub Actions checks formatting, clippy, default and all-feature tests,
-documentation, package assembly, and the pinned scikit-learn conformance
-fixture. Competitor performance benchmarks remain manual-only and are not part
-of CI. See [RELEASING.md](RELEASING.md) for the token-gated crates.io and GitHub
-release process.
+documentation, package assembly, and the frozen reference contract. Competitor
+performance benchmarks remain manual-only and are not part of CI. See
+[RELEASING.md](RELEASING.md) for the token-gated crates.io and GitHub release
+process.

@@ -28,9 +28,9 @@ argument, workflow log, or GitHub release description.
    ```console
    make gate-full
    make api-check
+   make reference-check
    make package-check
    make semver-check
-   python3 scripts/sklearn_conformance.py
    ```
 
    For performance-sensitive changes, run `make bench-history` on the
@@ -66,7 +66,7 @@ argument, workflow log, or GitHub release description.
    boundary.
 5. The release workflow independently requires the tag commit to equal the
    current remote `main` tip, then runs `gate-full`, `package-check`, exact API,
-   and pinned scikit checks. The crates token is available only to the publish
+   and frozen reference checks. The crates token is available only to the publish
    job; only the final GitHub-release job receives `contents: write`.
 6. Poll the workflow and verify the exact version on crates.io, the GitHub
    release, and its source commit. Then run worktree-aware cleanup and doctrine

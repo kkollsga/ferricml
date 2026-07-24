@@ -13,9 +13,8 @@ depth, and bins have hard bounds before training work begins.
 
 Public fitting and prediction live in the `ensemble` facade. Private
 `boosting` modules separately own fitted bin thresholds, training-only mutable
-growth, and canonical compact prediction trees. This mirrors the responsibility
-boundaries of the scikit-learn reference without copying its implementation or
-exposing runtime tree layout.
+growth, and canonical compact prediction trees. This separation keeps the
+public estimator contract independent of private training and storage details.
 
 Fitted models support deterministic, schema-bound, checksummed artifacts and
 owned runtime switching through `AnyRegressor`. Persistence uses canonical

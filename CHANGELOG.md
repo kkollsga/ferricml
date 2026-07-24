@@ -7,6 +7,11 @@ and releases use [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Changed
+
+- Keep third-party provenance and regeneration tooling in local development
+  state while retaining FerricML-owned frozen behavior and quality contracts.
+
 ## [0.1.1] - 2026-07-23
 
 ### Added
@@ -41,12 +46,11 @@ and releases use [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Validated dense `f32` matrices and classification/regression targets.
 - Deterministic random-forest classifiers and regressors with allocation-free
   batch inference.
-- Deterministic logistic regression with scikit-style parameters and
+- Deterministic logistic regression with stable typed parameters and
   allocation-free prediction.
 - Versioned, checksummed logistic-regression artifacts with strict feature
   schema verification.
-- Scikit-learn-compatible estimator and prediction semantics for the supported
-  API subset.
+- Frozen estimator and prediction semantics for the supported API subset.
 - Generic static-dispatch pipeline and transformer growth seams.
 - Frozen correctness fixtures and an on-demand Rust implementation benchmark.
 

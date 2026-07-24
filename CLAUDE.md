@@ -34,7 +34,7 @@ inbox maps live in `dev-docs/README.md` and `inbox/README.md`;
 - `src/artifact.rs` owns fitted-model persistence and compatibility checks.
 - `default = []` is a product boundary. Comparison dependencies must not enter
   the default dependency graph.
-- The public model API follows the locked scikit-learn semantic subset while
+- The public model API follows FerricML's locked semantic contract while
   retaining Rust-native typed parameters and caller-owned `_into` fast paths.
   Exact public API snapshots, behavioral tests, and reference fixtures are
   separate contracts; one cannot substitute for another.
@@ -48,7 +48,7 @@ make gate
 ```
 
 The heavier named entry points are `gate-full`, `api-check`, `api-refresh`,
-`package-check`, `semver-check`, `bench-self`, `bench-history`, and
+`reference-check`, `package-check`, `semver-check`, `bench-self`, `bench-history`, and
 `bench-rafor`. Do not invent substitutes for these contracts.
 
 Run heavier checks only when their surface is touched:
@@ -59,8 +59,8 @@ Run heavier checks only when their surface is touched:
   snapshot delta in the same commit.
 - Packaging changes: build the crate archive and exercise it from an external
   consumer using only extracted contents.
-- Reference-semantic changes: regenerate and review the pinned scikit-learn
-  fixtures, then run Rust conformance tests.
+- Reference-semantic changes: regenerate and review the frozen fixtures through
+  the local `dev-docs` reference workspace, then run `reference-check`.
 - Performance-sensitive changes: follow the performance protocol below.
 
 CI remains authoritative for its parallel matrix. Competitor crates and timing

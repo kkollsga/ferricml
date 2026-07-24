@@ -4,7 +4,7 @@
 SHELL := /bin/bash
 PYTHON ?= python3
 
-.PHONY: gate gate-full api-check api-refresh package-check semver-check bench-self bench-history bench-diagnostic bench-rafor
+.PHONY: gate gate-full api-check api-refresh reference-check package-check semver-check bench-self bench-history bench-diagnostic bench-rafor
 
 ## Ordinary pre-push gate: formatting, default lint/tests, dependency isolation,
 ## and the extracted-package external-consumer contract.
@@ -16,7 +16,7 @@ gate:
 	$(PYTHON) scripts/check_release_workflow.py
 	$(MAKE) package-check
 
-## Complete Rust gate. Public API, scikit, and performance checks remain
+## Complete Rust gate. Public API, reference, and performance checks remain
 ## separately named because they require pinned tools or reference environments.
 gate-full: gate
 	cargo clippy --locked --all-features --all-targets -- -D warnings
@@ -30,6 +30,10 @@ api-check:
 ## Refresh exact API snapshots only when their complete content input changed.
 api-refresh:
 	$(PYTHON) scripts/rust_api_profiles.py refresh --skip-if-unchanged
+
+## Verify FerricML's frozen behavior, shape, validation, and quality contract.
+reference-check:
+	cargo test --locked --test reference_semantics
 
 ## Build the crates.io archive and run a public-API consumer against its extract.
 package-check:

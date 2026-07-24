@@ -15,7 +15,7 @@ sampling, square-root feature selection, 100 prediction trees, and seed 42.
 Fit uses 2,048 rows and 20 trees. Inference locks 1, 32, and 1,024 rows.
 Their owned RNGs and split implementations produce different tree topologies,
 so this is an end-to-end public-operation contract, not a per-branch kernel
-comparison. Quality remains locked separately against scikit-learn.
+comparison. Quality remains locked separately by frozen reference fixtures.
 
 Operations are compared by returned meaning and shape:
 

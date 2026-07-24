@@ -30,7 +30,7 @@ def main() -> int:
         "validate-tag",
         "rust-and-package",
         "public-api",
-        "sklearn-conformance",
+        "reference-contract",
         "publish-crate",
         "github-release",
     }
@@ -60,8 +60,8 @@ def main() -> int:
         fail("release validation must run package-check explicitly")
     if "make api-check" not in jobs["public-api"]:
         fail("release validation must run the exact API check")
-    if "scripts/sklearn_conformance.py" not in jobs["sklearn-conformance"]:
-        fail("release validation must run pinned scikit conformance")
+    if "make reference-check" not in jobs["reference-contract"]:
+        fail("release validation must run the frozen reference contract")
     if "cargo publish --locked" not in jobs["publish-crate"]:
         fail("publish job is missing cargo publish --locked")
 

@@ -1,18 +1,18 @@
 # API and growth structure
 
-FerricML follows scikit-learn's estimator vocabulary where it maps cleanly to
-safe, typed Rust: fitted estimators expose `n_features_in`, exact retained
+FerricML uses a stable estimator vocabulary expressed as safe, typed Rust:
+fitted estimators expose `n_features_in`, exact retained
 parameters through `get_params`, and the operations `fit`, `predict`,
 `predict_proba`, and `transform`. Allocating convenience methods delegate to
 caller-owned `_into` primitives. Classification probabilities are row-major,
 with one column per sorted entry in `classes`.
 
-The supported compatibility subset and deliberate differences are frozen in
-[`sklearn-conformance.md`](sklearn-conformance.md). FerricML does not imitate
-Python object mutation, NumPy coercion, pickle, or magic parameter strings.
-Typed parameter builders and validated dense `f32` containers are intentional
-Rust interfaces, while their names and observable estimator meaning follow the
-reference contract.
+The supported contract and deliberate differences are frozen in
+[`reference-semantics.md`](reference-semantics.md). FerricML avoids dynamic
+object mutation, implicit numeric coercion, backend-native persistence, and
+magic parameter strings. Typed parameter builders and validated dense `f32`
+containers are intentional Rust interfaces, while their names and observable
+estimator meaning follow the reference contract.
 
 ## Extension structure
 
