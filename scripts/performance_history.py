@@ -315,6 +315,8 @@ def parse_model_metadata(console: str) -> dict[str, dict[str, Any]]:
         if prefix not in line:
             continue
         payload = json.loads(line.split(prefix, 1)[1])
+        if "model" not in payload:
+            continue
         name = payload.pop("model")
         if not isinstance(name, str) or name in result:
             raise RuntimeError(f"invalid or repeated benchmark model metadata: {name!r}")
@@ -521,9 +523,14 @@ def legacy_forest_fixture(version: str) -> dict[str, Any]:
 
 def self_test() -> int:
     metadata = "\n".join(
-        f'FERRICML_BENCH_METADATA {{"model":"{name}","trees":1,'
-        '"max_leaf_nodes":2,"logical_nodes":3,"artifact_bytes":4}'
-        for name in ("32t7l", "64t7l", "64t15l", "128t15l")
+        (
+            'FERRICML_BENCH_METADATA {"suite":"models-v2","rows":2048}',
+            *(
+                f'FERRICML_BENCH_METADATA {{"model":"{name}","trees":1,'
+                '"max_leaf_nodes":2,"logical_nodes":3,"artifact_bytes":4}'
+                for name in ("32t7l", "64t7l", "64t15l", "128t15l")
+            ),
+        )
     )
     assert set(parse_model_metadata(metadata)) == {
         "32t7l",
