@@ -29,9 +29,9 @@ inbox maps live in `dev-docs/README.md` and `inbox/README.md`;
   allocation-free batch contracts.
 - `src/ensemble/` owns public ensemble facades and their private estimator
   families. Callers must not depend on forest tree layout.
-- `src/pipeline.rs` owns fitted preprocessing/model composition without
+- `src/pipeline/` owns fitted preprocessing/model composition without
   per-row dynamic dispatch.
-- `src/artifact.rs` owns fitted-model persistence and compatibility checks.
+- `src/artifact/` owns fitted-model persistence and compatibility checks.
 - `default = []` is a product boundary. Comparison dependencies must not enter
   the default dependency graph.
 - The public model API follows FerricML's locked semantic contract while
