@@ -27,8 +27,8 @@ inbox maps live in `dev-docs/README.md` and `inbox/README.md`;
 - `src/data/` owns validated dense inputs and target types.
 - `src/api/` owns estimator vocabulary, typed errors, model swapping, and
   allocation-free batch contracts.
-- `src/ensemble/` is the public ensemble namespace. Private forest machinery
-  remains in `src/forest.rs`; callers must not depend on tree layout.
+- `src/ensemble/` owns public ensemble facades and their private estimator
+  families. Callers must not depend on forest tree layout.
 - `src/pipeline.rs` owns fitted preprocessing/model composition without
   per-row dynamic dispatch.
 - `src/artifact.rs` owns fitted-model persistence and compatibility checks.

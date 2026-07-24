@@ -19,8 +19,9 @@ estimator meaning follow the reference contract.
 - `api` owns backend-independent estimator categories, errors, retained
   parameter access, and batch-level runtime model enums.
 - `data` owns validated row-major inputs, targets, and sample weights.
-- `ensemble` owns public forest estimators and parameter types; private tree
-  training and packed representation stay outside the public module tree. The
+- `ensemble` owns public forest estimators and parameter types; each private
+  estimator family owns its training and packed representation below the
+  public facade. The
   histogram-boosting facade validates and orchestrates while private `boosting`
   modules own binning, mutable growth, and compact prediction separately.
 - `pipeline` composes a fitted `Transformer` and estimator generically. Its

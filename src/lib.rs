@@ -15,4 +15,3 @@ pub mod preprocessing;
 pub mod ranking;
 
 mod boosting;
-mod forest;

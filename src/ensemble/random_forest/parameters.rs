@@ -1,6 +1,4 @@
-//! Random-forest public parameters and fitted models.
-
-pub use crate::forest::{RandomForestClassifier, RandomForestRegressor};
+//! Public random-forest parameter types.
 
 /// How many randomly selected features are considered at each split.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
