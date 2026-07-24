@@ -10,8 +10,11 @@ is split between `metrics`, which evaluates predictions, and
 Classification includes exact accuracy, a binary confusion matrix, precision,
 recall, F1, Brier score, binary logarithmic loss, and tie-aware ROC AUC.
 Regression includes mean absolute error, mean squared error, root mean squared
-error, and R2. Calculations promote `f32` inputs to deterministic `f64`
-accumulation.
+error, R2, median absolute error, explained variance, and mean absolute
+percentage error. Calculations promote `f32` inputs to deterministic `f64`
+accumulation. Explained variance ignores a constant prediction offset that R2
+penalizes, and percentage error reports `MetricError::Undefined` when any
+expected value is zero rather than clamping the denominator.
 
 `roc_curve`, `precision_recall_curve`, and `average_precision_score` sweep the
 decision threshold over the same score ordering ROC AUC uses, so the curves and

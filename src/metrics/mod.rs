@@ -18,7 +18,10 @@ pub use confusion::{ClassCounts, ConfusionMatrix};
 pub use ranking::{
     PrecisionRecallCurve, RocCurve, average_precision_score, precision_recall_curve, roc_curve,
 };
-pub use regression::{mean_absolute_error, mean_squared_error, r2_score, root_mean_squared_error};
+pub use regression::{
+    explained_variance_score, mean_absolute_error, mean_absolute_percentage_error,
+    mean_squared_error, median_absolute_error, r2_score, root_mean_squared_error,
+};
 
 /// Errors produced while evaluating predictions.
 ///

@@ -888,10 +888,13 @@ pub fn ferricml::metrics::accuracy_score(&[u8], &[u8]) -> core::result::Result<f
 pub fn ferricml::metrics::average_precision_score(&[u8], &[f32]) -> core::result::Result<f64, ferricml::metrics::MetricError>
 pub fn ferricml::metrics::binary_confusion_matrix(&[u8], &[u8]) -> core::result::Result<ferricml::metrics::BinaryConfusionMatrix, ferricml::metrics::MetricError>
 pub fn ferricml::metrics::brier_score(&[u8], &[f32]) -> core::result::Result<f64, ferricml::metrics::MetricError>
+pub fn ferricml::metrics::explained_variance_score(&[f32], &[f32]) -> core::result::Result<f64, ferricml::metrics::MetricError>
 pub fn ferricml::metrics::f1_score(&[u8], &[u8]) -> core::result::Result<f64, ferricml::metrics::MetricError>
 pub fn ferricml::metrics::log_loss(&[u8], &[f32]) -> core::result::Result<f64, ferricml::metrics::MetricError>
 pub fn ferricml::metrics::mean_absolute_error(&[f32], &[f32]) -> core::result::Result<f64, ferricml::metrics::MetricError>
+pub fn ferricml::metrics::mean_absolute_percentage_error(&[f32], &[f32]) -> core::result::Result<f64, ferricml::metrics::MetricError>
 pub fn ferricml::metrics::mean_squared_error(&[f32], &[f32]) -> core::result::Result<f64, ferricml::metrics::MetricError>
+pub fn ferricml::metrics::median_absolute_error(&[f32], &[f32]) -> core::result::Result<f64, ferricml::metrics::MetricError>
 pub fn ferricml::metrics::precision_recall_curve(&[u8], &[f32]) -> core::result::Result<ferricml::metrics::PrecisionRecallCurve, ferricml::metrics::MetricError>
 pub fn ferricml::metrics::precision_score(&[u8], &[u8]) -> core::result::Result<f64, ferricml::metrics::MetricError>
 pub fn ferricml::metrics::r2_score(&[f32], &[f32]) -> core::result::Result<f64, ferricml::metrics::MetricError>

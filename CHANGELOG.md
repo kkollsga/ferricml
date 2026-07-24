@@ -71,6 +71,10 @@ and releases use [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   `metrics::average_precision_score`, which sweep the decision threshold over
   the same tie-aware score ordering ROC AUC uses, so curve and scalar results
   agree by construction.
+- `metrics::median_absolute_error`, `metrics::explained_variance_score`, and
+  `metrics::mean_absolute_percentage_error`. The percentage error treats every
+  expected value as a denominator, so a single expected zero is
+  `MetricError::Undefined` rather than a silently clamped floor.
 
 ### Fixed
 
