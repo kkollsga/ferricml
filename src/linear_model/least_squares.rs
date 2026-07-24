@@ -139,15 +139,29 @@ fn preprocess(
         }
         target_mean /= total_weight;
     }
-    let mut matrix = DMatrix::zeros(rows, columns);
-    let mut target_vector = DVector::zeros(rows);
-    for (row_index, (row, &target)) in data.iter_rows().zip(targets).enumerate() {
-        let weight_sqrt = sample_weight(sample_weights, row_index).sqrt();
-        for (column, &value) in row.iter().enumerate() {
-            matrix[(row_index, column)] = weight_sqrt * (f64::from(value) - feature_means[column]);
+    let weight_sqrts = sample_weights.map(|weights| {
+        weights
+            .as_slice()
+            .iter()
+            .map(|&weight| f64::from(weight).sqrt())
+            .collect::<Vec<_>>()
+    });
+    let row_scale = |row: usize| weight_sqrts.as_ref().map_or(1.0, |weights| weights[row]);
+    let mut matrix_values = Vec::with_capacity(rows * columns);
+    for (column, &mean) in feature_means.iter().enumerate() {
+        for row in 0..rows {
+            let value = data.as_slice()[row * columns + column];
+            matrix_values.push(row_scale(row) * (f64::from(value) - mean));
         }
-        target_vector[row_index] = weight_sqrt * (f64::from(target) - target_mean);
     }
+    let matrix = DMatrix::from_vec(rows, columns, matrix_values);
+    let target_vector = DVector::from_iterator(
+        rows,
+        targets
+            .iter()
+            .enumerate()
+            .map(|(row, &target)| row_scale(row) * (f64::from(target) - target_mean)),
+    );
     PreprocessedDense {
         matrix,
         targets: target_vector,
