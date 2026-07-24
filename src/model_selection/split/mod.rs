@@ -1,3 +1,5 @@
+//! Deterministic validated dataset partitions.
+
 use std::error::Error;
 use std::fmt;
 
