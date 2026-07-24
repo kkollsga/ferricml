@@ -1,10 +1,16 @@
 //! Generic fitted preprocessing pipelines.
 //!
-//! The initial seam composes one fitted transformer with one fitted estimator.
-//! Both types remain concrete, so transformation and the callback passed to
-//! [`Pipeline::with_transformed`] are statically dispatched. Training-time
-//! composition and multi-step pipelines will be added with the first concrete
-//! preprocessing estimator rather than guessed in advance.
+//! [`Pipeline`] composes one fitted transformer with one fitted estimator.
+//! [`StagedPipeline`] composes two or more transform stages, and can fit the
+//! whole composition in one pass. Every part stays a concrete type, so
+//! transformation and the callback passed to `with_transformed` are statically
+//! dispatched and no stage is reached through a trait object.
+
+mod stack;
+mod staged;
+
+pub use stack::TransformerStack;
+pub use staged::StagedPipeline;
 
 use crate::api::Classifier;
 use crate::api::{

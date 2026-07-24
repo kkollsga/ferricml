@@ -33,6 +33,15 @@ and releases use [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - `preprocessing::MaxAbsScaler`, a schema-bound transformer that divides each
   fitted feature by its largest observed magnitude, preserving sign and zeros,
   and passing an all-zero column through unchanged instead of dividing by zero.
+- `pipeline::StagedPipeline`, a trainable multi-stage typed pipeline composing
+  two or more fitted transform stages with one fitted estimator. `fit` trains
+  every part in order on the previous stage's output, `new` validates every
+  feature-width handoff before the composition exists, and inference runs
+  through one caller-owned workspace that every stage writes a disjoint
+  segment of.
+- `pipeline::TransformerStack`, the statically dispatched stage-list contract
+  `StagedPipeline` composes over, implemented for tuples of two and three
+  fitted transformers.
 - `AnyClassifier::capabilities` and `AnyRegressor::capabilities`, reporting the
   selected runtime variant's capabilities. The declared constant on each
   dispatch enum and each concrete pipeline is composed from its variants or

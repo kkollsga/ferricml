@@ -209,6 +209,8 @@ impl ferricml::api::Estimator for ferricml::preprocessing::StandardScaler
 pub fn ferricml::preprocessing::StandardScaler::n_features_in(&self) -> usize
 impl ferricml::api::Estimator for ferricml::ranking::PairwiseLinearRanker
 pub fn ferricml::ranking::PairwiseLinearRanker::n_features_in(&self) -> usize
+impl<S, E> ferricml::api::Estimator for ferricml::pipeline::StagedPipeline<S, E> where S: ferricml::pipeline::TransformerStack, E: ferricml::api::Estimator
+pub fn ferricml::pipeline::StagedPipeline<S, E>::n_features_in(&self) -> usize
 impl<T, E> ferricml::api::Estimator for ferricml::pipeline::Pipeline<T, E> where T: ferricml::api::Transformer, E: ferricml::api::Estimator
 pub fn ferricml::pipeline::Pipeline<T, E>::n_features_in(&self) -> usize
 pub trait ferricml::api::HasCapabilities: ferricml::api::Estimator
@@ -998,6 +1000,38 @@ impl ferricml::api::HasCapabilities for ferricml::pipeline::Pipeline<ferricml::p
 pub const ferricml::pipeline::Pipeline<ferricml::preprocessing::StandardScaler, ferricml::linear_model::Ridge>::CAPABILITIES: ferricml::api::Capabilities
 impl<T, E> ferricml::api::Estimator for ferricml::pipeline::Pipeline<T, E> where T: ferricml::api::Transformer, E: ferricml::api::Estimator
 pub fn ferricml::pipeline::Pipeline<T, E>::n_features_in(&self) -> usize
+pub struct ferricml::pipeline::StagedPipeline<S, E>
+impl<A, B, E> ferricml::pipeline::StagedPipeline<(A, B), E> where A: ferricml::api::Transformer, B: ferricml::api::Transformer, E: ferricml::api::Estimator
+pub fn ferricml::pipeline::StagedPipeline<(A, B), E>::fit(&ferricml::data::MatrixView<'_>, impl core::ops::function::FnOnce(&ferricml::data::MatrixView<'_>) -> core::result::Result<A, ferricml::api::ModelError>, impl core::ops::function::FnOnce(&ferricml::data::MatrixView<'_>) -> core::result::Result<B, ferricml::api::ModelError>, impl core::ops::function::FnOnce(&ferricml::data::MatrixView<'_>) -> core::result::Result<E, ferricml::api::ModelError>) -> core::result::Result<Self, ferricml::api::ModelError>
+impl<S, E> ferricml::pipeline::StagedPipeline<S, E> where S: ferricml::pipeline::TransformerStack, E: ferricml::api::Estimator
+pub const fn ferricml::pipeline::StagedPipeline<S, E>::estimator(&self) -> &E
+pub fn ferricml::pipeline::StagedPipeline<S, E>::into_parts(self) -> (S, E)
+pub fn ferricml::pipeline::StagedPipeline<S, E>::new(S, E) -> core::result::Result<Self, ferricml::api::ModelError>
+pub const fn ferricml::pipeline::StagedPipeline<S, E>::stages(&self) -> &S
+pub fn ferricml::pipeline::StagedPipeline<S, E>::transform(&self, &ferricml::data::MatrixView<'_>) -> core::result::Result<ferricml::data::DenseMatrix, ferricml::api::ModelError>
+pub fn ferricml::pipeline::StagedPipeline<S, E>::transform_into<'workspace>(&self, &ferricml::data::MatrixView<'_>, &'workspace mut [f32]) -> core::result::Result<ferricml::data::MatrixView<'workspace>, ferricml::api::ModelError>
+pub fn ferricml::pipeline::StagedPipeline<S, E>::with_transformed<R>(&self, &ferricml::data::MatrixView<'_>, &mut [f32], impl core::ops::function::FnOnce(&E, &ferricml::data::MatrixView<'_>) -> core::result::Result<R, ferricml::api::ModelError>) -> core::result::Result<R, ferricml::api::ModelError>
+pub fn ferricml::pipeline::StagedPipeline<S, E>::workspace_len(&self, usize) -> core::result::Result<usize, ferricml::api::ModelError>
+impl<S, E> ferricml::api::Estimator for ferricml::pipeline::StagedPipeline<S, E> where S: ferricml::pipeline::TransformerStack, E: ferricml::api::Estimator
+pub fn ferricml::pipeline::StagedPipeline<S, E>::n_features_in(&self) -> usize
+pub trait ferricml::pipeline::TransformerStack
+pub fn ferricml::pipeline::TransformerStack::n_features_in(&self) -> usize
+pub fn ferricml::pipeline::TransformerStack::n_features_out(&self) -> usize
+pub fn ferricml::pipeline::TransformerStack::transform_into<'workspace>(&self, &ferricml::data::MatrixView<'_>, &'workspace mut [f32]) -> core::result::Result<ferricml::data::MatrixView<'workspace>, ferricml::api::ModelError>
+pub fn ferricml::pipeline::TransformerStack::validate_handoff(&self) -> core::result::Result<(), ferricml::api::ModelError>
+pub fn ferricml::pipeline::TransformerStack::workspace_len(&self, usize) -> core::result::Result<usize, ferricml::api::ModelError>
+impl<A, B, C> ferricml::pipeline::TransformerStack for (A, B, C) where A: ferricml::api::Transformer, B: ferricml::api::Transformer, C: ferricml::api::Transformer
+pub fn (A, B, C)::n_features_in(&self) -> usize
+pub fn (A, B, C)::n_features_out(&self) -> usize
+pub fn (A, B, C)::transform_into<'workspace>(&self, &ferricml::data::MatrixView<'_>, &'workspace mut [f32]) -> core::result::Result<ferricml::data::MatrixView<'workspace>, ferricml::api::ModelError>
+pub fn (A, B, C)::validate_handoff(&self) -> core::result::Result<(), ferricml::api::ModelError>
+pub fn (A, B, C)::workspace_len(&self, usize) -> core::result::Result<usize, ferricml::api::ModelError>
+impl<A, B> ferricml::pipeline::TransformerStack for (A, B) where A: ferricml::api::Transformer, B: ferricml::api::Transformer
+pub fn (A, B)::n_features_in(&self) -> usize
+pub fn (A, B)::n_features_out(&self) -> usize
+pub fn (A, B)::transform_into<'workspace>(&self, &ferricml::data::MatrixView<'_>, &'workspace mut [f32]) -> core::result::Result<ferricml::data::MatrixView<'workspace>, ferricml::api::ModelError>
+pub fn (A, B)::validate_handoff(&self) -> core::result::Result<(), ferricml::api::ModelError>
+pub fn (A, B)::workspace_len(&self, usize) -> core::result::Result<usize, ferricml::api::ModelError>
 pub mod ferricml::preprocessing
 pub struct ferricml::preprocessing::MaxAbsScaler
 impl ferricml::preprocessing::MaxAbsScaler
