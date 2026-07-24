@@ -181,5 +181,16 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let predictions = Regressor::predict(&regressor, &features.as_view())?;
     assert_eq!(predictions.len(), features.rows());
     assert!(predictions.iter().all(|value| value.is_finite()));
+
+    let forest_encoded = regressor.to_artifact(schema)?;
+    assert_eq!(forest_encoded, regressor.to_artifact(schema)?);
+    let forest_decoded = RandomForestRegressor::from_artifact(&forest_encoded, schema)?;
+    assert_eq!(forest_decoded.n_features_in(), regressor.n_features_in());
+    assert_eq!(forest_decoded.get_params(), regressor.get_params());
+    assert_eq!(
+        Regressor::predict(&forest_decoded, &features.as_view())?,
+        predictions
+    );
+    assert!(RandomForestRegressor::from_artifact(&forest_encoded, transformed_schema).is_err());
     Ok(())
 }

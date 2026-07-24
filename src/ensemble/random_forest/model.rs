@@ -1,8 +1,39 @@
-use super::parameters::{MaxFeatures, RandomForestClassifierParams, RandomForestRegressorParams};
+use super::parameters::{
+    MaxFeatures, NJobs, RandomForestClassifierParams, RandomForestRegressorParams,
+};
 use super::training::{Classification, ForestConfig, Regression, train_forest};
 use super::tree::{FEATURE_MASK, PackedTree};
 use crate::api::{Classifier, Estimator, HasParams, ModelError, Regressor, validate_prediction};
+use crate::artifact::{
+    ArtifactError, ArtifactPayloadWriter, RANDOM_FOREST_REGRESSOR_ARTIFACT_KIND, SchemaRole,
+    decode_component, decode_logical_tree, decode_v2_envelope, encode_component,
+    encode_logical_tree, encode_v2_envelope,
+};
 use crate::data::{BinaryTargets, MatrixView, RegressionTargets};
+
+const REGRESSOR_PAYLOAD_VERSION: u16 = 1;
+const METADATA_COMPONENT_KIND: u16 = 1;
+const TREE_COMPONENT_KIND: u16 = 2;
+const COMPONENT_VERSION: u16 = 1;
+const REGRESSOR_OBJECTIVE_VERSION: u32 = 1;
+const METADATA_BYTES: usize = 13 * 4 + 8;
+
+/// Ceilings applied identically when encoding and decoding, so an artifact
+/// that this crate produced always decodes and a hostile one allocates
+/// nothing unbounded.
+const MAX_ARTIFACT_FEATURES: usize = 1_000_000;
+const MAX_ARTIFACT_TREES: usize = 4_096;
+const MAX_ARTIFACT_TOTAL_NODES: usize = 1_048_576;
+
+// A decoded feature index must never reach the packed layout's flag bits.
+const _: () = assert!(MAX_ARTIFACT_FEATURES < FEATURE_MASK as usize);
+
+const MAX_FEATURES_ALL: u32 = 1;
+const MAX_FEATURES_SQRT: u32 = 2;
+const MAX_FEATURES_COUNT: u32 = 3;
+const N_JOBS_SERIAL: u32 = 1;
+const N_JOBS_ALL: u32 = 2;
+const N_JOBS_COUNT: u32 = 3;
 
 /// A random-forest binary classifier.
 ///
@@ -384,11 +415,232 @@ impl RandomForestRegressor {
         Ok(())
     }
 
+    /// Encodes the fitted parameters and canonical logical trees.
+    ///
+    /// The private packed inference layout is never serialized. Each tree is
+    /// expanded into stable logical records first, so the compact runtime
+    /// representation stays free to change.
+    pub fn to_artifact(&self, schema: [u8; 32]) -> Result<Vec<u8>, ArtifactError> {
+        let n_features =
+            u32::try_from(self.n_features_in).map_err(|_| ArtifactError::InvalidPayload)?;
+        let n_estimators =
+            u32::try_from(self.params.n_estimators()).map_err(|_| ArtifactError::InvalidPayload)?;
+        let max_depth = self
+            .params
+            .max_depth()
+            .map(u32::try_from)
+            .transpose()
+            .map_err(|_| ArtifactError::InvalidPayload)?
+            .unwrap_or(0);
+        let min_samples_split = u32::try_from(self.params.min_samples_split())
+            .map_err(|_| ArtifactError::InvalidPayload)?;
+        let min_samples_leaf = u32::try_from(self.params.min_samples_leaf())
+            .map_err(|_| ArtifactError::InvalidPayload)?;
+        let (max_features_tag, max_features_count) =
+            encode_max_features(self.params.max_features())?;
+        let (n_jobs_tag, n_jobs_count) = encode_n_jobs(self.params.n_jobs())?;
+        let tree_count =
+            u32::try_from(self.trees.len()).map_err(|_| ArtifactError::InvalidPayload)?;
+        let total_nodes = self.trees.iter().try_fold(0_usize, |total, tree| {
+            total
+                .checked_add(tree.logical_node_count())
+                .ok_or(ArtifactError::InvalidPayload)
+        })?;
+        if self.trees.len() > MAX_ARTIFACT_TREES
+            || total_nodes > MAX_ARTIFACT_TOTAL_NODES
+            || self.n_features_in > MAX_ARTIFACT_FEATURES
+            || !prediction_bound_is_finite(&self.trees)
+        {
+            return Err(ArtifactError::InvalidPayload);
+        }
+        let total_nodes = u32::try_from(total_nodes).map_err(|_| ArtifactError::InvalidPayload)?;
+
+        let mut metadata = ArtifactPayloadWriter::with_capacity(METADATA_BYTES);
+        metadata.u32(REGRESSOR_OBJECTIVE_VERSION);
+        metadata.u32(n_features);
+        metadata.u32(n_estimators);
+        metadata.u32(max_depth);
+        metadata.u32(min_samples_split);
+        metadata.u32(min_samples_leaf);
+        metadata.u32(max_features_tag);
+        metadata.u32(max_features_count);
+        metadata.u32(u32::from(self.params.bootstrap()));
+        metadata.u64(self.params.random_state());
+        metadata.u32(n_jobs_tag);
+        metadata.u32(n_jobs_count);
+        metadata.u32(tree_count);
+        metadata.u32(total_nodes);
+        let mut payload = encode_component(
+            METADATA_COMPONENT_KIND,
+            COMPONENT_VERSION,
+            &metadata.finish(),
+        )?;
+        for tree in &self.trees {
+            payload.extend_from_slice(&encode_component(
+                TREE_COMPONENT_KIND,
+                COMPONENT_VERSION,
+                &encode_logical_tree(&tree.to_logical_nodes())?,
+            )?);
+        }
+        encode_v2_envelope(
+            RANDOM_FOREST_REGRESSOR_ARTIFACT_KIND,
+            REGRESSOR_PAYLOAD_VERSION,
+            &[(SchemaRole::Input, schema)],
+            &payload,
+        )
+    }
+
+    /// Decodes and revalidates logical trees before building runtime state.
+    ///
+    /// Counts and parameters are checked before any tree is read, and each
+    /// decoded tree is rebuilt through the same topology validator that
+    /// fitting uses, so the encoded bytes are never trusted.
+    pub fn from_artifact(bytes: &[u8], schema: [u8; 32]) -> Result<Self, ArtifactError> {
+        let mut envelope = decode_v2_envelope(
+            bytes,
+            RANDOM_FOREST_REGRESSOR_ARTIFACT_KIND,
+            REGRESSOR_PAYLOAD_VERSION,
+            &[(SchemaRole::Input, schema)],
+        )?;
+        let mut metadata =
+            decode_component(&mut envelope, METADATA_COMPONENT_KIND, COMPONENT_VERSION)?;
+        let objective_version = metadata.u32()?;
+        let n_features_in = metadata.u32()? as usize;
+        let n_estimators = metadata.u32()? as usize;
+        let encoded_depth = metadata.u32()? as usize;
+        let min_samples_split = metadata.u32()? as usize;
+        let min_samples_leaf = metadata.u32()? as usize;
+        let max_features_tag = metadata.u32()?;
+        let max_features_count = metadata.u32()?;
+        let bootstrap = metadata.u32()?;
+        let random_state = metadata.u64()?;
+        let n_jobs_tag = metadata.u32()?;
+        let n_jobs_count = metadata.u32()?;
+        let tree_count = metadata.u32()? as usize;
+        let declared_total_nodes = metadata.u32()? as usize;
+        if !metadata.is_empty()
+            || objective_version != REGRESSOR_OBJECTIVE_VERSION
+            || n_features_in == 0
+            || n_features_in > MAX_ARTIFACT_FEATURES
+            || n_estimators == 0
+            || n_estimators != tree_count
+            || tree_count > MAX_ARTIFACT_TREES
+            || encoded_depth > MAX_ARTIFACT_TOTAL_NODES
+            || min_samples_split < 2
+            || min_samples_leaf == 0
+            || bootstrap > 1
+            || declared_total_nodes < tree_count
+            || declared_total_nodes > MAX_ARTIFACT_TOTAL_NODES
+        {
+            return Err(ArtifactError::InvalidPayload);
+        }
+        let (Some(max_features), Some(n_jobs)) = (
+            decode_max_features(max_features_tag, max_features_count, n_features_in),
+            decode_n_jobs(n_jobs_tag, n_jobs_count),
+        ) else {
+            return Err(ArtifactError::InvalidPayload);
+        };
+        let params = RandomForestRegressorParams::default()
+            .with_n_estimators(n_estimators)
+            .with_max_depth((encoded_depth != 0).then_some(encoded_depth))
+            .with_min_samples_split(min_samples_split)
+            .with_min_samples_leaf(min_samples_leaf)
+            .with_max_features(max_features)
+            .with_bootstrap(bootstrap == 1)
+            .with_random_state(random_state)
+            .with_n_jobs(n_jobs);
+
+        let mut trees = Vec::with_capacity(tree_count);
+        let mut actual_total_nodes = 0_usize;
+        for _ in 0..tree_count {
+            let logical = decode_logical_tree(decode_component(
+                &mut envelope,
+                TREE_COMPONENT_KIND,
+                COMPONENT_VERSION,
+            )?)?;
+            actual_total_nodes = actual_total_nodes
+                .checked_add(logical.len())
+                .ok_or(ArtifactError::InvalidPayload)?;
+            if actual_total_nodes > declared_total_nodes {
+                return Err(ArtifactError::InvalidPayload);
+            }
+            trees.push(PackedTree::from_logical_nodes(&logical, n_features_in)?);
+        }
+        if !envelope.is_empty() {
+            return Err(ArtifactError::TrailingBytes);
+        }
+        if actual_total_nodes != declared_total_nodes || !prediction_bound_is_finite(&trees) {
+            return Err(ArtifactError::InvalidPayload);
+        }
+        Ok(Self {
+            n_features_in,
+            params,
+            trees,
+        })
+    }
+
     /// Internal bytes used only for deterministic implementation tests.
     #[cfg(test)]
     pub(crate) fn to_bytes(&self) -> Vec<u8> {
         packed_model_bytes(self.n_features_in, &self.trees, b"FRFR")
     }
+}
+
+fn encode_max_features(value: MaxFeatures) -> Result<(u32, u32), ArtifactError> {
+    Ok(match value {
+        MaxFeatures::All => (MAX_FEATURES_ALL, 0),
+        MaxFeatures::Sqrt => (MAX_FEATURES_SQRT, 0),
+        MaxFeatures::Count(count) => (
+            MAX_FEATURES_COUNT,
+            u32::try_from(count).map_err(|_| ArtifactError::InvalidPayload)?,
+        ),
+    })
+}
+
+fn decode_max_features(tag: u32, count: u32, n_features: usize) -> Option<MaxFeatures> {
+    match tag {
+        MAX_FEATURES_ALL if count == 0 => Some(MaxFeatures::All),
+        MAX_FEATURES_SQRT if count == 0 => Some(MaxFeatures::Sqrt),
+        MAX_FEATURES_COUNT if count != 0 && count as usize <= n_features => {
+            Some(MaxFeatures::Count(count as usize))
+        }
+        _ => None,
+    }
+}
+
+fn encode_n_jobs(value: NJobs) -> Result<(u32, u32), ArtifactError> {
+    Ok(match value {
+        NJobs::Serial => (N_JOBS_SERIAL, 0),
+        NJobs::All => (N_JOBS_ALL, 0),
+        NJobs::Count(count) => (
+            N_JOBS_COUNT,
+            u32::try_from(count).map_err(|_| ArtifactError::InvalidPayload)?,
+        ),
+    })
+}
+
+fn decode_n_jobs(tag: u32, count: u32) -> Option<NJobs> {
+    match tag {
+        N_JOBS_SERIAL if count == 0 => Some(NJobs::Serial),
+        N_JOBS_ALL if count == 0 => Some(NJobs::All),
+        N_JOBS_COUNT if count != 0 => Some(NJobs::Count(count as usize)),
+        _ => None,
+    }
+}
+
+/// Whether averaging every tree can stay inside `f32`.
+///
+/// Prediction sums leaf values before dividing by the tree count, so the
+/// bound is the sum of per-tree leaf magnitudes rather than their mean.
+fn prediction_bound_is_finite(trees: &[PackedTree]) -> bool {
+    let mut bound = 0.0_f64;
+    for tree in trees {
+        bound += f64::from(tree.max_abs_leaf());
+        if !bound.is_finite() || bound > f64::from(f32::MAX) {
+            return false;
+        }
+    }
+    true
 }
 
 impl Estimator for RandomForestRegressor {

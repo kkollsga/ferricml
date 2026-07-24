@@ -183,10 +183,36 @@ impl PackedTree {
 /// keeps only branch nodes in `nodes`. Encoding therefore *synthesizes* the
 /// leaf records, and decoding never trusts the logical bytes — it rebuilds
 /// [`BuildNode`]s and re-runs the same topology validator that fitting uses.
-// The consumer is the forest-regressor artifact, which lands in the next
-// commit; the conversion is proven here on its own.
-#[allow(dead_code)]
 impl PackedTree {
+    /// Number of records [`PackedTree::to_logical_nodes`] will produce.
+    ///
+    /// Every branch has exactly two children, so a tree with `b` stored
+    /// branches expands to `b` branch records and `b + 1` synthesized leaves.
+    pub(super) fn logical_node_count(&self) -> usize {
+        if self.root_leaf.is_some() {
+            1
+        } else {
+            self.nodes.len() * 2 + 1
+        }
+    }
+
+    /// Largest absolute leaf value, including inline and root leaves.
+    pub(super) fn max_abs_leaf(&self) -> f32 {
+        if let Some(value) = self.root_leaf {
+            return value.abs();
+        }
+        self.nodes.iter().fold(0.0_f32, |largest, node| {
+            let mut largest = largest;
+            if node.feature_and_flags & LEFT_IS_LEAF != 0 {
+                largest = largest.max(f32::from_bits(node.left).abs());
+            }
+            if node.feature_and_flags & RIGHT_IS_LEAF != 0 {
+                largest = largest.max(f32::from_bits(node.right).abs());
+            }
+            largest
+        })
+    }
+
     /// Expands the packed tree into pre-order logical records.
     ///
     /// The result satisfies the logical-tree contract: node `0` is the root,

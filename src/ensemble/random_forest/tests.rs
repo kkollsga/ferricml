@@ -1,6 +1,9 @@
 use super::*;
 use crate::api::ModelError;
+use crate::artifact::{ArtifactError, RANDOM_FOREST_REGRESSOR_ARTIFACT_KIND};
 use crate::data::{BinaryTargets, DenseMatrix, RegressionTargets};
+use crate::ensemble::HistGradientBoostingRegressor;
+use crate::linear_model::Ridge;
 use sha2::{Digest, Sha256};
 
 fn matrix(rows: &[&[f32]]) -> DenseMatrix {
@@ -340,4 +343,283 @@ fn pathological_deep_tree_uses_an_explicit_builder_stack() {
         .with_max_features(MaxFeatures::All);
     let forest = RandomForestClassifier::fit(&x.as_view(), &y, cfg).unwrap();
     assert_eq!(forest.trees[0].nodes.len(), ROWS - 1);
+}
+
+/// Offsets into a version-2 envelope carrying one input schema: the fixed
+/// header is 24 bytes, one schema record is 36, and each component adds an
+/// 8-byte header.
+const PAYLOAD_START: usize = 24 + 36;
+const METADATA_START: usize = PAYLOAD_START + 8;
+const METADATA_FIELD_BYTES: usize = 13 * 4 + 8;
+const FIRST_TREE_START: usize = METADATA_START + METADATA_FIELD_BYTES;
+
+// Byte offsets of each metadata field, relative to the component payload.
+// `RANDOM_STATE` is the only 64-bit field, so later offsets are not multiples
+// of four.
+const OBJECTIVE_VERSION: usize = 0;
+const N_FEATURES: usize = 4;
+const N_ESTIMATORS: usize = 8;
+const MAX_DEPTH: usize = 12;
+const MIN_SAMPLES_SPLIT: usize = 16;
+const MIN_SAMPLES_LEAF: usize = 20;
+const MAX_FEATURES_TAG: usize = 24;
+const MAX_FEATURES_COUNT: usize = 28;
+const BOOTSTRAP: usize = 32;
+const N_JOBS_TAG: usize = 44;
+const N_JOBS_COUNT: usize = 48;
+const TREE_COUNT: usize = 52;
+const TOTAL_NODES: usize = 56;
+
+fn write_metadata_u32(bytes: &mut [u8], offset: usize, value: u32) {
+    let offset = METADATA_START + offset;
+    bytes[offset..offset + 4].copy_from_slice(&value.to_le_bytes());
+}
+
+fn metadata_u32(bytes: &mut [u8], offset: usize, value: u32) {
+    write_metadata_u32(bytes, offset, value);
+    resign(bytes);
+}
+
+fn resign(bytes: &mut [u8]) {
+    let checksum_offset = bytes.len() - 32;
+    let checksum = Sha256::digest(&bytes[..checksum_offset]);
+    bytes[checksum_offset..].copy_from_slice(&checksum);
+}
+
+fn artifact_fixture() -> (DenseMatrix, RandomForestRegressor) {
+    let x = matrix(&[
+        &[0.0, 3.0],
+        &[1.0, 2.0],
+        &[2.0, 1.0],
+        &[3.0, 0.0],
+        &[4.0, 7.0],
+        &[5.0, 6.0],
+        &[6.0, 5.0],
+        &[7.0, 4.0],
+    ]);
+    let y = RegressionTargets::new(vec![0.0, 1.0, 1.5, 2.5, 8.0, 7.0, 6.0, 5.0]).unwrap();
+    let model = RandomForestRegressor::fit(
+        &x.as_view(),
+        &y,
+        RandomForestRegressorParams::default()
+            .with_n_estimators(4)
+            .with_max_depth(Some(4))
+            .with_max_features(MaxFeatures::All)
+            .with_random_state(5),
+    )
+    .unwrap();
+    (x, model)
+}
+
+#[test]
+fn regressor_artifact_round_trip_is_deterministic_schema_bound_and_kind_isolated() {
+    let (x, model) = artifact_fixture();
+    let schema = [17; 32];
+    let left = model.to_artifact(schema).unwrap();
+    assert_eq!(left, model.to_artifact(schema).unwrap());
+
+    let decoded = RandomForestRegressor::from_artifact(&left, schema).unwrap();
+    assert_eq!(decoded, model);
+    assert_eq!(decoded.to_bytes(), model.to_bytes());
+    assert_eq!(
+        decoded.predict(&x.as_view()).unwrap(),
+        model.predict(&x.as_view()).unwrap()
+    );
+    assert_eq!(decoded.to_artifact(schema).unwrap(), left);
+
+    assert_eq!(
+        RandomForestRegressor::from_artifact(&left, [18; 32]).unwrap_err(),
+        ArtifactError::FeatureSchemaMismatch
+    );
+    assert_eq!(
+        Ridge::from_artifact(&left, schema).unwrap_err(),
+        ArtifactError::UnsupportedModelKind {
+            found: RANDOM_FOREST_REGRESSOR_ARTIFACT_KIND,
+        }
+    );
+    assert_eq!(
+        HistGradientBoostingRegressor::from_artifact(&left, schema).unwrap_err(),
+        ArtifactError::UnsupportedModelKind {
+            found: RANDOM_FOREST_REGRESSOR_ARTIFACT_KIND,
+        }
+    );
+
+    let mut corrupted = left;
+    corrupted[FIRST_TREE_START + 20] ^= 1;
+    assert_eq!(
+        RandomForestRegressor::from_artifact(&corrupted, schema).unwrap_err(),
+        ArtifactError::ChecksumMismatch
+    );
+}
+
+#[test]
+fn regressor_artifact_restores_every_retained_parameter() {
+    let x = matrix(&[&[0.0, 1.0], &[1.0, 0.0], &[2.0, 3.0], &[3.0, 2.0]]);
+    let y = RegressionTargets::new(vec![0.0, 1.0, 4.0, 9.0]).unwrap();
+    let schema = [2; 32];
+    for params in [
+        RandomForestRegressorParams::default().with_n_estimators(3),
+        RandomForestRegressorParams::default()
+            .with_n_estimators(2)
+            .with_max_depth(None)
+            .with_min_samples_split(3)
+            .with_min_samples_leaf(2)
+            .with_max_features(MaxFeatures::Sqrt)
+            .with_bootstrap(false)
+            .with_random_state(u64::MAX)
+            .with_n_jobs(NJobs::Count(2)),
+        RandomForestRegressorParams::default()
+            .with_n_estimators(2)
+            .with_max_depth(Some(1))
+            .with_max_features(MaxFeatures::Count(2))
+            .with_n_jobs(NJobs::All),
+    ] {
+        let model = RandomForestRegressor::fit(&x.as_view(), &y, params.clone()).unwrap();
+        let decoded =
+            RandomForestRegressor::from_artifact(&model.to_artifact(schema).unwrap(), schema)
+                .unwrap();
+        assert_eq!(decoded.get_params(), &params);
+        assert_eq!(decoded.n_features_in(), model.n_features_in());
+        assert_eq!(decoded, model);
+    }
+}
+
+#[test]
+fn regressor_artifact_round_trips_single_leaf_trees() {
+    let x = matrix(&[&[1.0], &[1.0], &[1.0], &[1.0]]);
+    let y = RegressionTargets::new(vec![2.5, 2.5, 2.5, 2.5]).unwrap();
+    let model = RandomForestRegressor::fit(
+        &x.as_view(),
+        &y,
+        RandomForestRegressorParams::default().with_n_estimators(3),
+    )
+    .unwrap();
+    let schema = [6; 32];
+    let bytes = model.to_artifact(schema).unwrap();
+    // Three one-node logical trees: every tree collapsed to a root leaf.
+    let total_nodes = u32::from_le_bytes(
+        bytes[METADATA_START + TOTAL_NODES..METADATA_START + TOTAL_NODES + 4]
+            .try_into()
+            .unwrap(),
+    );
+    assert_eq!(total_nodes, 3);
+    let decoded = RandomForestRegressor::from_artifact(&bytes, schema).unwrap();
+    assert_eq!(decoded, model);
+    assert_eq!(decoded.predict_one(&[1.0]).unwrap(), 2.5);
+}
+
+#[test]
+fn regressor_artifact_rejects_invalid_metadata_tree_records_and_framing() {
+    let (_, model) = artifact_fixture();
+    let schema = [29; 32];
+    let bytes = model.to_artifact(schema).unwrap();
+    assert!(RandomForestRegressor::from_artifact(&bytes, schema).is_ok());
+
+    // Metadata field offset, and the value that breaks it.
+    for (name, offset, value) in [
+        ("objective version", OBJECTIVE_VERSION, 2),
+        ("zero feature width", N_FEATURES, 0),
+        ("feature width beyond the ceiling", N_FEATURES, 1_000_001),
+        (
+            "estimator count disagreeing with the trees",
+            N_ESTIMATORS,
+            3,
+        ),
+        ("max_depth beyond the ceiling", MAX_DEPTH, 1_048_577),
+        ("min_samples_split below two", MIN_SAMPLES_SPLIT, 1),
+        ("zero min_samples_leaf", MIN_SAMPLES_LEAF, 0),
+        ("unknown max_features tag", MAX_FEATURES_TAG, 9),
+        (
+            "max_features count set for the All tag",
+            MAX_FEATURES_COUNT,
+            3,
+        ),
+        ("non-boolean bootstrap flag", BOOTSTRAP, 2),
+        ("unknown n_jobs tag", N_JOBS_TAG, 9),
+        ("n_jobs count set for the Serial tag", N_JOBS_COUNT, 1),
+        ("tree count disagreeing with the estimators", TREE_COUNT, 3),
+        ("declared node total below the tree count", TOTAL_NODES, 3),
+        (
+            "declared node total beyond the ceiling",
+            TOTAL_NODES,
+            1_048_577,
+        ),
+    ] {
+        let mut corrupted = bytes.clone();
+        metadata_u32(&mut corrupted, offset, value);
+        assert_eq!(
+            RandomForestRegressor::from_artifact(&corrupted, schema).unwrap_err(),
+            ArtifactError::InvalidPayload,
+            "{name} was accepted"
+        );
+    }
+
+    // A max_features count must stay inside the fitted width.
+    let mut inconsistent = bytes.clone();
+    write_metadata_u32(&mut inconsistent, MAX_FEATURES_TAG, 3);
+    write_metadata_u32(&mut inconsistent, MAX_FEATURES_COUNT, 3);
+    resign(&mut inconsistent);
+    assert_eq!(
+        RandomForestRegressor::from_artifact(&inconsistent, schema).unwrap_err(),
+        ArtifactError::InvalidPayload
+    );
+
+    let mut component_kind = bytes.clone();
+    component_kind[FIRST_TREE_START..FIRST_TREE_START + 2].copy_from_slice(&3_u16.to_le_bytes());
+    resign(&mut component_kind);
+    assert_eq!(
+        RandomForestRegressor::from_artifact(&component_kind, schema).unwrap_err(),
+        ArtifactError::InvalidPayload
+    );
+
+    // The first logical record of the first tree: tag, then feature index.
+    let record = FIRST_TREE_START + 8 + 12;
+    assert_eq!(
+        u32::from_le_bytes(bytes[record..record + 4].try_into().unwrap()),
+        1,
+        "fixture must start with a branch record"
+    );
+    let mut feature = bytes.clone();
+    feature[record + 4..record + 8].copy_from_slice(&7_u32.to_le_bytes());
+    resign(&mut feature);
+    assert_eq!(
+        RandomForestRegressor::from_artifact(&feature, schema).unwrap_err(),
+        ArtifactError::InvalidPayload
+    );
+
+    assert_eq!(
+        RandomForestRegressor::from_artifact(&bytes[..bytes.len() - 1], schema).unwrap_err(),
+        ArtifactError::ChecksumMismatch
+    );
+
+    let mut trailing = bytes.clone();
+    trailing.insert(bytes.len() - 32, 0);
+    resign(&mut trailing);
+    assert_eq!(
+        RandomForestRegressor::from_artifact(&trailing, schema).unwrap_err(),
+        ArtifactError::TrailingBytes
+    );
+
+    assert_eq!(
+        RandomForestRegressor::from_artifact(&[], schema).unwrap_err(),
+        ArtifactError::Truncated
+    );
+}
+
+#[test]
+fn regressor_artifact_refuses_models_whose_averaged_prediction_overflows() {
+    let x = matrix(&[&[0.0], &[1.0], &[2.0], &[3.0]]);
+    let y = RegressionTargets::new(vec![f32::MAX; 4]).unwrap();
+    let model = RandomForestRegressor::fit(
+        &x.as_view(),
+        &y,
+        RandomForestRegressorParams::default()
+            .with_n_estimators(4)
+            .with_bootstrap(false),
+    )
+    .unwrap();
+    assert_eq!(
+        model.to_artifact([1; 32]).unwrap_err(),
+        ArtifactError::InvalidPayload
+    );
 }

@@ -1,10 +1,11 @@
 # Model artifact envelope
 
 FerricML writes artifact envelope version 2 for fitted logistic, linear, ridge,
-histogram-gradient-boosting, standard-scaler, and supported typed pipeline
-models. It continues to read the legacy version-1 logistic format. The private
-forest representation remains outside the persistence contract; no byte
-sequence produced from packed forest trees is a compatibility promise.
+histogram-gradient-boosting, random-forest regression, standard-scaler, and
+supported typed pipeline models. It continues to read the legacy version-1
+logistic format. The private packed forest representation remains outside the
+persistence contract: forests persist as backend-neutral logical trees, and no
+byte sequence produced from packed forest nodes is a compatibility promise.
 
 `LogisticRegression::to_artifact` writes, in little-endian order:
 
@@ -56,6 +57,19 @@ and rejects unreachable, repeated, cyclic, over-depth, truncated, or trailing
 records before constructing compact runtime trees. The private compact node
 representation and traversal layout remain free to change.
 
+`RandomForestRegressor` artifacts use the same logical-tree records. Their
+metadata component freezes the averaging objective, feature width, every
+retained parameter — estimator count, depth and sample-size limits, the
+feature-selection policy, bootstrap flag, deterministic seed, and requested
+training parallelism — plus the tree count and total logical-node count. The
+packed layout stores leaves inline in their parent's flag bits, so encoding
+synthesizes the leaf records and decoding rebuilds builder nodes that re-enter
+the same topology validator fitting uses. The reader bounds feature width, tree
+count, and aggregate node count before allocating, rejects parameter tags and
+counts it does not recognize, and refuses a forest whose averaged prediction
+could not stay finite. Classifier persistence remains unsupported until the
+multiclass leaf and probability semantics are frozen.
+
 Additional estimator payloads must carry:
 
 - a never-reused estimator kind and independent payload version;
@@ -79,5 +93,5 @@ Field IDs and migration rules for additional estimator kinds remain open until
 their first reader/writer is implemented.
 
 The private compact forest-node layout remains explicitly unfrozen. Histogram
-boosting persists the logical tree contract described above, never its compact
-runtime representation; random-forest persistence remains unsupported.
+boosting and random-forest regression both persist the logical tree contract
+described above, never their compact runtime representations.

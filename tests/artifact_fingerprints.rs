@@ -1,5 +1,8 @@
 use ferricml::data::{BinaryTargets, DenseMatrix, RegressionTargets};
-use ferricml::ensemble::{HistGradientBoostingRegressor, HistGradientBoostingRegressorParams};
+use ferricml::ensemble::{
+    HistGradientBoostingRegressor, HistGradientBoostingRegressorParams, MaxFeatures,
+    RandomForestRegressor, RandomForestRegressorParams,
+};
 use ferricml::linear_model::{
     LinearRegression, LinearRegressionParams, LogisticRegression, LogisticRegressionParams, Ridge,
     RidgeParams,
@@ -196,6 +199,27 @@ fn fitted_artifact_fingerprints_are_frozen() {
         [
             113, 238, 99, 34, 64, 238, 241, 189, 162, 243, 18, 101, 151, 94, 20, 11, 136, 11, 11,
             45, 74, 88, 55, 16, 252, 131, 234, 252, 147, 96, 194, 153,
+        ],
+    );
+
+    let forest = RandomForestRegressor::fit(
+        &data.as_view(),
+        &regression,
+        RandomForestRegressorParams::default()
+            .with_n_estimators(3)
+            .with_max_depth(Some(4))
+            .with_max_features(MaxFeatures::All)
+            .with_random_state(11),
+    )
+    .unwrap();
+    assert_fingerprint(
+        "forest-regressor",
+        forest.to_artifact([5; 32]).unwrap(),
+        forest.to_artifact([5; 32]).unwrap(),
+        480,
+        [
+            72, 150, 95, 114, 217, 38, 109, 10, 241, 113, 80, 81, 84, 36, 151, 137, 108, 208, 36,
+            188, 169, 255, 246, 212, 233, 192, 21, 124, 241, 7, 33, 217,
         ],
     );
 }

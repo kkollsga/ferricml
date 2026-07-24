@@ -7,6 +7,11 @@ and releases use [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+
+- Schema-bound `RandomForestRegressor` artifacts that persist backend-neutral
+  logical trees and revalidate every decoded topology, count, and parameter.
+
 ### Fixed
 
 - Report `ModelError::NonFinitePrediction` from `RandomForestRegressor` instead
