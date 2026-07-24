@@ -1,7 +1,8 @@
 //! Binary logistic regression.
 
 use crate::api::{
-    Classifier, Estimator, HasParams, ModelError, validate_prediction, validate_scalar_row,
+    Capabilities, Classifier, Estimator, HasCapabilities, HasParams, ModelError,
+    validate_prediction, validate_scalar_row,
 };
 use crate::artifact::{
     ArtifactError, ArtifactPayloadWriter, LOGISTIC_ARTIFACT_KIND, MODEL_ARTIFACT_VERSION,
@@ -485,6 +486,12 @@ impl Estimator for LogisticRegression {
     fn n_features_in(&self) -> usize {
         self.n_features_in
     }
+}
+
+impl HasCapabilities for LogisticRegression {
+    const CAPABILITIES: Capabilities = Capabilities::NONE
+        .with_sample_weights(true)
+        .with_artifact(true);
 }
 
 impl HasParams for LogisticRegression {

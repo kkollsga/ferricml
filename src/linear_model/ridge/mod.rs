@@ -2,7 +2,8 @@
 
 use super::least_squares;
 use crate::api::{
-    Estimator, HasParams, ModelError, Regressor, validate_prediction, validate_scalar_row,
+    Capabilities, Estimator, HasCapabilities, HasParams, ModelError, Regressor,
+    validate_prediction, validate_scalar_row,
 };
 use crate::artifact::{
     ArtifactCursor, ArtifactError, ArtifactPayloadWriter, MODEL_ARTIFACT_VERSION,
@@ -263,6 +264,12 @@ impl Estimator for Ridge {
     fn n_features_in(&self) -> usize {
         self.n_features_in
     }
+}
+
+impl HasCapabilities for Ridge {
+    const CAPABILITIES: Capabilities = Capabilities::NONE
+        .with_sample_weights(true)
+        .with_artifact(true);
 }
 
 impl HasParams for Ridge {

@@ -20,6 +20,9 @@ and releases use [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   by the `api::HasCapabilities` trait, so meta-layers query declared support
   for weighted fitting and artifact persistence instead of matching on concrete
   estimator types. The default declares nothing.
+- Capability declarations on every fitted estimator and transformer FerricML
+  ships, so callers can ask a type whether it supports weighted fitting or
+  artifact persistence without matching on its concrete type.
 
 ### Fixed
 

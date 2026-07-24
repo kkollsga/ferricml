@@ -8,7 +8,8 @@ use self::error::{
 use self::grower::{GrowConfig, grow_tree};
 use self::predictor::CompactTree;
 use crate::api::{
-    Estimator, HasParams, ModelError, Regressor, validate_prediction, validate_scalar_row,
+    Capabilities, Estimator, HasCapabilities, HasParams, ModelError, Regressor,
+    validate_prediction, validate_scalar_row,
 };
 use crate::artifact::{
     ArtifactError, ArtifactPayloadWriter, HIST_GRADIENT_BOOSTING_REGRESSOR_ARTIFACT_KIND,
@@ -390,6 +391,10 @@ impl Estimator for HistGradientBoostingRegressor {
     fn n_features_in(&self) -> usize {
         self.n_features_in
     }
+}
+
+impl HasCapabilities for HistGradientBoostingRegressor {
+    const CAPABILITIES: Capabilities = Capabilities::NONE.with_artifact(true);
 }
 
 impl HasParams for HistGradientBoostingRegressor {

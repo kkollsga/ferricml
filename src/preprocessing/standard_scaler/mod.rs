@@ -1,6 +1,6 @@
 //! Deterministic dense standardization.
 
-use crate::api::{Estimator, HasParams, ModelError, Transformer};
+use crate::api::{Capabilities, Estimator, HasCapabilities, HasParams, ModelError, Transformer};
 use crate::artifact::{
     ArtifactError, ArtifactPayloadWriter, MODEL_ARTIFACT_VERSION, STANDARD_SCALER_ARTIFACT_KIND,
     SchemaRole, artifact_version, decode_component, decode_v2_envelope, encode_component,
@@ -370,6 +370,12 @@ impl Estimator for StandardScaler {
     fn n_features_in(&self) -> usize {
         self.n_features_in
     }
+}
+
+impl HasCapabilities for StandardScaler {
+    const CAPABILITIES: Capabilities = Capabilities::NONE
+        .with_sample_weights(true)
+        .with_artifact(true);
 }
 
 impl HasParams for StandardScaler {

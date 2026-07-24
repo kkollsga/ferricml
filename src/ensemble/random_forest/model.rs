@@ -3,7 +3,10 @@ use super::parameters::{
 };
 use super::training::{Classification, ForestConfig, Regression, train_forest};
 use super::tree::{FEATURE_MASK, PackedTree};
-use crate::api::{Classifier, Estimator, HasParams, ModelError, Regressor, validate_prediction};
+use crate::api::{
+    Capabilities, Classifier, Estimator, HasCapabilities, HasParams, ModelError, Regressor,
+    validate_prediction,
+};
 use crate::artifact::{
     ArtifactError, ArtifactPayloadWriter, RANDOM_FOREST_REGRESSOR_ARTIFACT_KIND, SchemaRole,
     decode_component, decode_logical_tree, decode_v2_envelope, encode_component,
@@ -354,6 +357,11 @@ impl HasParams for RandomForestClassifier {
     }
 }
 
+/// Declares nothing: bootstrap resampling has no weighted entry point yet, and
+/// the classifier has no artifact kind until leaf probability semantics are
+/// frozen.
+impl HasCapabilities for RandomForestClassifier {}
+
 impl RandomForestRegressor {
     /// Returns the feature width required by this model.
     #[inline]
@@ -661,6 +669,10 @@ impl HasParams for RandomForestRegressor {
     fn get_params(&self) -> &Self::Params {
         &self.params
     }
+}
+
+impl HasCapabilities for RandomForestRegressor {
+    const CAPABILITIES: Capabilities = Capabilities::NONE.with_artifact(true);
 }
 
 fn mean_tree_prediction(trees: &[PackedTree], row: &[f32]) -> f32 {
