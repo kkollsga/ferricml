@@ -1,5 +1,12 @@
 //! Deterministic dense histogram gradient-boosted regression.
 
+use self::binning::Binner;
+use self::error::{
+    BoostingError, MAX_BINS, MAX_TOTAL_NODES, MAX_TREE_DEPTH, MAX_TREE_LEAVES, MAX_TREE_NODES,
+    MAX_TREES,
+};
+use self::grower::{GrowConfig, grow_tree};
+use self::predictor::CompactTree;
 use crate::api::{
     Estimator, HasParams, ModelError, Regressor, validate_prediction, validate_scalar_row,
 };
@@ -8,12 +15,6 @@ use crate::artifact::{
     SchemaRole, decode_component, decode_logical_tree, decode_v2_envelope, encode_component,
     encode_logical_tree, encode_v2_envelope,
 };
-use crate::boosting::binning::Binner;
-use crate::boosting::grower::{GrowConfig, grow_tree};
-use crate::boosting::predictor::CompactTree;
-use crate::boosting::{
-    BoostingError, MAX_BINS, MAX_TOTAL_NODES, MAX_TREE_DEPTH, MAX_TREE_LEAVES, MAX_TREES,
-};
 use crate::data::{MatrixView, RegressionTargets};
 
 const ARTIFACT_PAYLOAD_VERSION: u16 = 1;
@@ -21,6 +22,11 @@ const METADATA_COMPONENT_KIND: u16 = 1;
 const TREE_COMPONENT_KIND: u16 = 2;
 const COMPONENT_VERSION: u16 = 1;
 const OBJECTIVE_VERSION: u32 = 1;
+
+mod binning;
+mod error;
+mod grower;
+mod predictor;
 
 /// Parameters for [`HistGradientBoostingRegressor`].
 #[derive(Clone, Debug, PartialEq)]
@@ -288,7 +294,7 @@ impl HistGradientBoostingRegressor {
             payload.extend_from_slice(&encode_component(
                 TREE_COMPONENT_KIND,
                 COMPONENT_VERSION,
-                &encode_logical_tree(tree)?,
+                &encode_logical_tree(&tree.to_logical_nodes())?,
             )?);
         }
         encode_v2_envelope(
@@ -348,10 +354,12 @@ impl HistGradientBoostingRegressor {
         let mut trees = Vec::with_capacity(tree_count);
         let mut actual_total_nodes = 0_usize;
         for _ in 0..tree_count {
-            let tree = decode_logical_tree(
-                decode_component(&mut envelope, TREE_COMPONENT_KIND, COMPONENT_VERSION)?,
-                n_features_in,
-            )?;
+            let logical_nodes = decode_logical_tree(decode_component(
+                &mut envelope,
+                TREE_COMPONENT_KIND,
+                COMPONENT_VERSION,
+            )?)?;
+            let tree = CompactTree::from_logical_nodes(logical_nodes, n_features_in)?;
             actual_total_nodes = actual_total_nodes
                 .checked_add(tree.nodes().len())
                 .ok_or(ArtifactError::InvalidPayload)?;

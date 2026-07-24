@@ -19,11 +19,9 @@ estimator meaning follow the reference contract.
 - `api` owns backend-independent estimator categories, errors, retained
   parameter access, and batch-level runtime model enums.
 - `data` owns validated row-major inputs, targets, and sample weights.
-- `ensemble` owns public forest estimators and parameter types; each private
-  estimator family owns its training and packed representation below the
-  public facade. The
-  histogram-boosting facade validates and orchestrates while private `boosting`
-  modules own binning, mutable growth, and compact prediction separately.
+- `ensemble` owns public ensemble estimators and parameter types; each private
+  estimator family owns its validation, training, persistence conversion, and
+  compact representation below the public facade.
 - `pipeline` composes a fitted `Transformer` and estimator generically. Its
   `with_transformed` path uses caller-owned workspace and static dispatch.
   Concrete standard-scaler pipelines provide allocation-free prediction and

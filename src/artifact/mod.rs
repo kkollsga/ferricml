@@ -16,7 +16,7 @@ pub(crate) use envelope::{
     STANDARD_SCALER_RIDGE_PIPELINE_ARTIFACT_KIND, SchemaRole, artifact_version, decode_component,
     decode_legacy_envelope, decode_v2_envelope, encode_component, encode_v2_envelope,
 };
-pub(crate) use logical_tree::{decode_logical_tree, encode_logical_tree};
+pub(crate) use logical_tree::{LogicalTreeNode, decode_logical_tree, encode_logical_tree};
 
 /// Current FerricML binary model artifact version.
 pub const MODEL_ARTIFACT_VERSION: u16 = 2;

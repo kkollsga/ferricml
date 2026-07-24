@@ -13,5 +13,3 @@ pub mod model_selection;
 pub mod pipeline;
 pub mod preprocessing;
 pub mod ranking;
-
-mod boosting;

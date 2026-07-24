@@ -1,5 +1,6 @@
 //! Immutable compact prediction trees.
 
+use crate::artifact::{ArtifactError, LogicalTreeNode};
 use crate::data::MatrixView;
 
 use super::{BoostingError, MAX_TREE_DEPTH, MAX_TREE_NODES};
@@ -23,6 +24,30 @@ pub(crate) struct CompactTree {
 }
 
 impl CompactTree {
+    pub(crate) fn from_logical_nodes(
+        nodes: Vec<LogicalTreeNode>,
+        n_features: usize,
+    ) -> Result<Self, ArtifactError> {
+        let nodes = nodes
+            .into_iter()
+            .map(|node| match node {
+                LogicalTreeNode::Leaf { value } => CompactNode::Leaf { value },
+                LogicalTreeNode::Branch {
+                    feature,
+                    threshold,
+                    left,
+                    right,
+                } => CompactNode::Branch {
+                    feature,
+                    threshold,
+                    left,
+                    right,
+                },
+            })
+            .collect();
+        Self::from_nodes(nodes, n_features).map_err(|_| ArtifactError::InvalidPayload)
+    }
+
     pub(crate) fn from_nodes(
         nodes: Vec<CompactNode>,
         n_features: usize,
@@ -100,6 +125,27 @@ impl CompactTree {
 
     pub(crate) fn nodes(&self) -> &[CompactNode] {
         &self.nodes
+    }
+
+    pub(crate) fn to_logical_nodes(&self) -> Vec<LogicalTreeNode> {
+        self.nodes
+            .iter()
+            .copied()
+            .map(|node| match node {
+                CompactNode::Leaf { value } => LogicalTreeNode::Leaf { value },
+                CompactNode::Branch {
+                    feature,
+                    threshold,
+                    left,
+                    right,
+                } => LogicalTreeNode::Branch {
+                    feature,
+                    threshold,
+                    left,
+                    right,
+                },
+            })
+            .collect()
     }
 
     pub(crate) fn max_abs_leaf(&self) -> f32 {

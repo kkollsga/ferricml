@@ -1,8 +1,4 @@
-//! Private histogram-boosting runtime boundaries.
-
-pub(crate) mod binning;
-pub(crate) mod grower;
-pub(crate) mod predictor;
+//! Private histogram-boosting errors and implementation bounds.
 
 use std::error::Error;
 use std::fmt;

@@ -11,10 +11,11 @@ The supported typed parameters are `learning_rate`, `max_iter`,
 and L2 regularization applies only to leaf denominators. Iterations, leaves,
 depth, and bins have hard bounds before training work begins.
 
-Public fitting and prediction live in the `ensemble` facade. Private
-`boosting` modules separately own fitted bin thresholds, training-only mutable
-growth, and canonical compact prediction trees. This separation keeps the
-public estimator contract independent of private training and storage details.
+Public fitting and prediction live in the `ensemble` facade. The private
+histogram-boosting estimator family separately owns fitted bin thresholds,
+training-only mutable growth, persistence conversion, and compact prediction
+trees. This separation keeps the public estimator contract independent of
+private training and storage details.
 
 Fitted models support deterministic, schema-bound, checksummed artifacts and
 owned runtime switching through `AnyRegressor`. Persistence uses canonical
