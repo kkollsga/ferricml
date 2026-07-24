@@ -54,6 +54,18 @@ impl<'a> MatrixView<'a> {
         })
     }
 
+    /// Builds a view over storage whose shape and values were already
+    /// validated by a crate-owned producer.
+    pub(crate) fn from_validated_parts(values: &'a [f32], rows: usize, columns: usize) -> Self {
+        debug_assert_eq!(values.len(), rows.saturating_mul(columns));
+        debug_assert!(values.iter().all(|value| value.is_finite()));
+        Self {
+            values,
+            rows,
+            columns,
+        }
+    }
+
     /// Returns the number of rows.
     #[inline]
     pub const fn rows(&self) -> usize {

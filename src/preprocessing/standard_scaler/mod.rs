@@ -368,8 +368,11 @@ impl Transformer for StandardScaler {
         for (index, (&value, slot)) in data.as_slice().iter().zip(output.iter_mut()).enumerate() {
             *slot = self.transformed_value(value, index % self.n_features_in);
         }
-        MatrixView::new(output, data.rows(), self.n_features_in)
-            .map_err(|_| ModelError::NonFiniteTransform { row: 0, column: 0 })
+        Ok(MatrixView::from_validated_parts(
+            output,
+            data.rows(),
+            self.n_features_in,
+        ))
     }
 }
 
