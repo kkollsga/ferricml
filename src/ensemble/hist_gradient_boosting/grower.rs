@@ -3,6 +3,9 @@
 use super::binning::{BinnedMatrix, Binner};
 use super::predictor::{CompactNode, CompactTree};
 use super::{BoostingError, MAX_BINS, MAX_TREE_LEAVES, MAX_TREE_NODES};
+use crate::loss::{
+    Objective, constant_hessian_total, negative_gradient_sum, newton_leaf_value, newton_split_score,
+};
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub(crate) struct GrowConfig {
@@ -54,20 +57,33 @@ struct SplitCandidate {
     gain: f64,
 }
 
-pub(crate) fn grow_tree(
+/// Grows one tree against the negative gradients of `O`.
+///
+/// The tree searches histograms; the objective supplies every derivative. For
+/// squared error the negative gradients are the familiar residuals, which is
+/// why this function's error variants keep that name.
+///
+/// `O` must declare a constant hessian: the split search carries one histogram
+/// of gradient sums plus a row count, and a per-sample hessian cannot be
+/// recovered from a count. That is a compile-time requirement, not a runtime
+/// check.
+pub(crate) fn grow_tree<O: Objective>(
     binned: &BinnedMatrix,
     binner: &Binner,
-    residuals: &[f32],
+    negative_gradients: &[f32],
     config: GrowConfig,
 ) -> Result<CompactTree, BoostingError> {
     config.validate()?;
-    if residuals.len() != binned.rows() {
+    if negative_gradients.len() != binned.rows() {
         return Err(BoostingError::ResidualLength {
             rows: binned.rows(),
-            residuals: residuals.len(),
+            residuals: negative_gradients.len(),
         });
     }
-    if let Some(index) = residuals.iter().position(|value| !value.is_finite()) {
+    if let Some(index) = negative_gradients
+        .iter()
+        .position(|value| !value.is_finite())
+    {
         return Err(BoostingError::NonFiniteResidual { index });
     }
     if binned.columns() != binner.n_features_in() {
@@ -78,9 +94,15 @@ pub(crate) fn grow_tree(
     }
 
     let root_samples = (0..binned.rows()).collect::<Vec<_>>();
-    let root_value = leaf_value(&root_samples, residuals, config.l2_regularization);
+    let root_value = leaf_value::<O>(&root_samples, negative_gradients, config.l2_regularization);
     let mut workspace = SplitWorkspace::new();
-    let root_candidate = best_split(binned, residuals, &root_samples, config, &mut workspace);
+    let root_candidate = best_split::<O>(
+        binned,
+        negative_gradients,
+        &root_samples,
+        config,
+        &mut workspace,
+    );
     let mut nodes = vec![GrowingNode {
         samples: root_samples,
         depth: 0,
@@ -137,15 +159,29 @@ pub(crate) fn grow_tree(
         let depth = nodes[node_index].depth + 1;
         let left = nodes.len();
         let right = left + 1;
-        let left_value = leaf_value(&left_samples, residuals, config.l2_regularization);
-        let right_value = leaf_value(&right_samples, residuals, config.l2_regularization);
+        let left_value =
+            leaf_value::<O>(&left_samples, negative_gradients, config.l2_regularization);
+        let right_value =
+            leaf_value::<O>(&right_samples, negative_gradients, config.l2_regularization);
         let left_candidate = if config.max_depth.is_none_or(|max_depth| depth < max_depth) {
-            best_split(binned, residuals, &left_samples, config, &mut workspace)
+            best_split::<O>(
+                binned,
+                negative_gradients,
+                &left_samples,
+                config,
+                &mut workspace,
+            )
         } else {
             None
         };
         let right_candidate = if config.max_depth.is_none_or(|max_depth| depth < max_depth) {
-            best_split(binned, residuals, &right_samples, config, &mut workspace)
+            best_split::<O>(
+                binned,
+                negative_gradients,
+                &right_samples,
+                config,
+                &mut workspace,
+            )
         } else {
             None
         };
@@ -175,9 +211,9 @@ pub(crate) fn grow_tree(
     compile_tree(&nodes, binner)
 }
 
-fn best_split(
+fn best_split<O: Objective>(
     binned: &BinnedMatrix,
-    residuals: &[f32],
+    negative_gradients: &[f32],
     samples: &[usize],
     config: GrowConfig,
     workspace: &mut SplitWorkspace,
@@ -185,11 +221,8 @@ fn best_split(
     if samples.len() < config.min_samples_leaf.checked_mul(2)? {
         return None;
     }
-    let total_sum = samples
-        .iter()
-        .map(|&sample| f64::from(residuals[sample]))
-        .sum::<f64>();
-    let parent_score = score(total_sum, samples.len(), config.l2_regularization);
+    let total_sum = negative_gradient_sum(samples, negative_gradients);
+    let parent_score = score::<O>(total_sum, samples.len(), config.l2_regularization);
     let mut best = None;
     for feature in 0..binned.columns() {
         let max_bin = samples
@@ -213,7 +246,7 @@ fn best_split(
                     .expect("validated binned sample"),
             );
             counts[bin] += 1;
-            sums[bin] += f64::from(residuals[sample]);
+            sums[bin] += f64::from(negative_gradients[sample]);
         }
         let mut left_count = 0_usize;
         let mut left_sum = 0.0_f64;
@@ -225,8 +258,8 @@ fn best_split(
                 continue;
             }
             let right_sum = total_sum - left_sum;
-            let gain = score(left_sum, left_count, config.l2_regularization)
-                + score(right_sum, right_count, config.l2_regularization)
+            let gain = score::<O>(left_sum, left_count, config.l2_regularization)
+                + score::<O>(right_sum, right_count, config.l2_regularization)
                 - parent_score;
             if gain > 0.0
                 && best
@@ -267,16 +300,20 @@ impl SplitWorkspace {
     }
 }
 
-fn score(sum: f64, count: usize, l2_regularization: f32) -> f64 {
-    sum * sum / (count as f64 + f64::from(l2_regularization))
+fn score<O: Objective>(sum: f64, count: usize, l2_regularization: f32) -> f64 {
+    newton_split_score(sum, constant_hessian_total::<O>(count), l2_regularization)
 }
 
-fn leaf_value(samples: &[usize], residuals: &[f32], l2_regularization: f32) -> f32 {
-    let sum = samples
-        .iter()
-        .map(|&sample| f64::from(residuals[sample]))
-        .sum::<f64>();
-    (sum / (samples.len() as f64 + f64::from(l2_regularization))) as f32
+fn leaf_value<O: Objective>(
+    samples: &[usize],
+    negative_gradients: &[f32],
+    l2_regularization: f32,
+) -> f32 {
+    newton_leaf_value(
+        negative_gradient_sum(samples, negative_gradients),
+        constant_hessian_total::<O>(samples.len()),
+        l2_regularization,
+    )
 }
 
 fn compile_tree(nodes: &[GrowingNode], binner: &Binner) -> Result<CompactTree, BoostingError> {
@@ -319,6 +356,7 @@ fn compile_tree(nodes: &[GrowingNode], binner: &Binner) -> Result<CompactTree, B
 mod tests {
     use super::*;
     use crate::data::DenseMatrix;
+    use crate::loss::SquaredError;
 
     fn data() -> DenseMatrix {
         DenseMatrix::new((0..8).map(|value| value as f32).collect(), 8, 1).unwrap()
@@ -339,8 +377,8 @@ mod tests {
         let binner = Binner::fit(&data.as_view(), 8).unwrap();
         let binned = binner.transform(&data.as_view()).unwrap();
         let residuals = [-2.0, -2.0, -2.0, -2.0, 3.0, 3.0, 3.0, 3.0];
-        let first = grow_tree(&binned, &binner, &residuals, config()).unwrap();
-        let second = grow_tree(&binned, &binner, &residuals, config()).unwrap();
+        let first = grow_tree::<SquaredError>(&binned, &binner, &residuals, config()).unwrap();
+        let second = grow_tree::<SquaredError>(&binned, &binner, &residuals, config()).unwrap();
         assert_eq!(first, second);
         assert_eq!(first.nodes().len(), 3);
         assert_eq!(first.predict_one(&[0.0]), -2.0);
@@ -361,7 +399,7 @@ mod tests {
         let data = DenseMatrix::new(vec![0.0, 0.0, 0.0, 0.0, 1.0, 1.0, 1.0, 1.0], 4, 2).unwrap();
         let binner = Binner::fit(&data.as_view(), 4).unwrap();
         let binned = binner.transform(&data.as_view()).unwrap();
-        let tree = grow_tree(
+        let tree = grow_tree::<SquaredError>(
             &binned,
             &binner,
             &[-1.0, -1.0, 1.0, 1.0],
@@ -383,7 +421,7 @@ mod tests {
         let binner = Binner::fit(&data.as_view(), 4).unwrap();
         let binned = binner.transform(&data.as_view()).unwrap();
         let residuals = [-4.0, -3.0, -2.0, -1.0, 1.0, 2.0, 3.0, 4.0];
-        let tree = grow_tree(
+        let tree = grow_tree::<SquaredError>(
             &binned,
             &binner,
             &residuals,
@@ -406,7 +444,7 @@ mod tests {
         let binner = Binner::fit(&data.as_view(), 4).unwrap();
         let binned = binner.transform(&data.as_view()).unwrap();
         assert_eq!(
-            grow_tree(&binned, &binner, &[1.0], config()),
+            grow_tree::<SquaredError>(&binned, &binner, &[1.0], config()),
             Err(BoostingError::ResidualLength {
                 rows: 8,
                 residuals: 1
@@ -415,11 +453,11 @@ mod tests {
         let mut residuals = [0.0; 8];
         residuals[3] = f32::NAN;
         assert_eq!(
-            grow_tree(&binned, &binner, &residuals, config()),
+            grow_tree::<SquaredError>(&binned, &binner, &residuals, config()),
             Err(BoostingError::NonFiniteResidual { index: 3 })
         );
         assert_eq!(
-            grow_tree(
+            grow_tree::<SquaredError>(
                 &binned,
                 &binner,
                 &[0.0; 8],

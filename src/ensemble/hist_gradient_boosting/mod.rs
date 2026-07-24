@@ -17,6 +17,8 @@ use crate::artifact::{
     encode_logical_tree, encode_v2_envelope,
 };
 use crate::data::{MatrixView, RegressionTargets};
+use crate::loss::{Objective, SquaredError};
+use crate::numeric::sum_in_order;
 
 const ARTIFACT_PAYLOAD_VERSION: u16 = 1;
 const METADATA_COMPONENT_KIND: u16 = 1;
@@ -160,11 +162,7 @@ impl HistGradientBoostingRegressor {
         validate_fit(data, targets, &params)?;
         let binner = Binner::fit(data, params.max_bins).map_err(map_boosting_error)?;
         let binned = binner.transform(data).map_err(map_boosting_error)?;
-        let baseline = (targets
-            .as_slice()
-            .iter()
-            .map(|&target| f64::from(target))
-            .sum::<f64>()
+        let baseline = (sum_in_order(targets.as_slice().iter().map(|&target| f64::from(target)))
             / targets.len() as f64) as f32;
         if !baseline.is_finite() {
             return Err(ModelError::NumericalOverflow);
@@ -179,8 +177,8 @@ impl HistGradientBoostingRegressor {
             l2_regularization: params.l2_regularization,
         };
         for _ in 0..params.max_iter {
-            let tree =
-                grow_tree(&binned, &binner, &residuals, config).map_err(map_boosting_error)?;
+            let tree = grow_tree::<SquaredError>(&binned, &binner, &residuals, config)
+                .map_err(map_boosting_error)?;
             tree.add_predictions(data, params.learning_rate, &mut predictions);
             if predictions.iter().any(|value| !value.is_finite()) {
                 return Err(ModelError::NumericalOverflow);
@@ -426,10 +424,16 @@ impl Regressor for HistGradientBoostingRegressor {
     }
 }
 
+/// Negative gradients of the fitted objective at the current predictions.
+///
+/// For squared error these are the residuals `target - prediction`, taken from
+/// the objective rather than restated here so the next tree always descends the
+/// loss the model claims to minimize.
 fn compute_residuals(targets: &[f32], predictions: &[f32]) -> Result<Vec<f32>, ModelError> {
     let mut residuals = Vec::with_capacity(targets.len());
     for (&target, &prediction) in targets.iter().zip(predictions) {
-        let residual = (f64::from(target) - f64::from(prediction)) as f32;
+        let residual =
+            SquaredError::negative_gradient(f64::from(prediction), f64::from(target)) as f32;
         if !residual.is_finite() {
             return Err(ModelError::NumericalOverflow);
         }

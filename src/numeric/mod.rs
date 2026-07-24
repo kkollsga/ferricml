@@ -28,7 +28,10 @@
 //!    training partitions work so each partition's result depends only on its
 //!    own index — the forest derives tree `i`'s seed from `i` alone and sorts
 //!    the finished trees back into index order — and combines partition
-//!    results in that fixed index order.
+//!    results in that fixed index order. [`sum_in_order`] is this rule written
+//!    as code: a path that reduces a sequence of `f64` terms names it instead
+//!    of reaching for whichever fold reads well locally, so the guarantee is
+//!    visible at the call site rather than inferred from it.
 //! 3. **Inference may accumulate in the storage width** when the number of
 //!    terms is bounded by the fitted model (one term per tree, one per
 //!    boosting iteration, one per feature) and the result is validated finite
@@ -39,7 +42,10 @@
 //!    an unbounded number of terms *and* widening to `f64` is unavailable —
 //!    for instance a future `f64` streaming statistic. No path in the crate
 //!    meets both conditions today, so the compensated helper lands with its
-//!    first real consumer rather than speculatively.
+//!    first real consumer rather than speculatively. [`sum_in_order`] does not
+//!    compensate, and deliberately so: every reduction it serves widens `f32`
+//!    terms under rule 1, where compensation would buy accuracy the fitted
+//!    `f32` result cannot represent while changing every frozen artifact.
 //! 5. **Saturation is explicit and happens at the boundary that produces the
 //!    value.** Probabilities are clamped into `[0, 1]` by the routine that
 //!    computes them, not by their consumer, so every downstream metric and
@@ -77,6 +83,22 @@ pub(crate) fn sigmoid_f32(value: f32) -> f32 {
         let exp = value.exp();
         exp / (1.0 + exp)
     }
+}
+
+/// Sum of a sequence of `f64` terms in the order the sequence produces them.
+///
+/// This is the crate's one reduction primitive over an unbounded number of
+/// terms, and it exists to make rule 2 of the accumulation policy above
+/// checkable rather than conventional: the accumulator starts at `0.0` and each
+/// term is added exactly once, in sequence order. Nothing here reassociates,
+/// vectorizes, or compensates, so two runs over the same terms in the same
+/// order produce the same bits on the same target.
+///
+/// A caller that needs a different order sorts or indexes its terms before
+/// calling; the ordering decision belongs to the caller, because it is part of
+/// what that caller's fitted artifact is frozen against.
+pub(crate) fn sum_in_order(terms: impl IntoIterator<Item = f64>) -> f64 {
+    terms.into_iter().fold(0.0, |total, term: f64| total + term)
 }
 
 /// Natural logarithm of a sum of exponentials, without forming the sum.
@@ -191,6 +213,46 @@ mod tests {
         // The complement of a saturated value is exact rather than negative.
         assert_eq!(1.0 - sigmoid_f64(37.0), 0.0);
         assert_eq!(1.0 - sigmoid_f32(17.0), 0.0);
+    }
+
+    #[test]
+    fn sum_in_order_matches_a_sequential_fold_and_is_repeatable() {
+        let terms = (0..1_000)
+            .map(|step| f64::from(step) * 0.1 - 37.5)
+            .collect::<Vec<_>>();
+        let expected = terms
+            .iter()
+            .copied()
+            .fold(0.0_f64, |total, term| total + term);
+        assert_eq!(
+            sum_in_order(terms.iter().copied()).to_bits(),
+            expected.to_bits()
+        );
+        assert_eq!(
+            sum_in_order(terms.iter().copied()).to_bits(),
+            sum_in_order(terms.iter().copied()).to_bits()
+        );
+        assert_eq!(sum_in_order(std::iter::empty()), 0.0);
+        assert!(sum_in_order(std::iter::empty()).is_sign_positive());
+    }
+
+    #[test]
+    fn sum_in_order_is_order_sensitive_rather_than_reassociating() {
+        // Cancellation makes the order observable, which is exactly why the
+        // policy fixes it. A helper that reassociated would hide this.
+        let ascending = [1.0_f64, 1.0e16, -1.0e16];
+        let descending = [1.0e16_f64, -1.0e16, 1.0];
+        assert_eq!(sum_in_order(ascending), 0.0);
+        assert_eq!(sum_in_order(descending), 1.0);
+    }
+
+    #[test]
+    fn sum_in_order_widens_narrow_terms_without_an_intermediate_rounding() {
+        let terms = [1.0_f32, f32::EPSILON / 4.0, f32::EPSILON / 4.0];
+        let widened = sum_in_order(terms.iter().map(|&term| f64::from(term)));
+        assert!(widened > 1.0, "f64 accumulation keeps the small terms");
+        let narrow = terms.iter().fold(0.0_f32, |total, &term| total + term);
+        assert_eq!(narrow, 1.0, "f32 accumulation would have dropped them");
     }
 
     fn naive_log_sum_exp(values: &[f64]) -> f64 {

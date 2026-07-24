@@ -27,6 +27,11 @@ use super::link::Link;
 ///   second derivatives of `value` with respect to `raw`, on exactly that
 ///   per-sample scale. This is what makes finite differences over `value` a
 ///   complete proof of both.
+/// - [`Objective::negative_gradient`] is `-gradient`, written in whatever form
+///   avoids a signed-zero flip. It is a separate member rather than a negation
+///   at the call site because `-(a - b)` and `b - a` differ in the sign of zero
+///   when `a == b`, and a fitted leaf value of `-0.0` is a different artifact
+///   byte pattern from `0.0`.
 /// - [`Objective::gradient_and_curvature`] is the solver-facing pair. Its
 ///   second element is the curvature a solver may consume, which is the
 ///   hessian floored at [`Objective::CURVATURE_FLOOR`]; the floor keeps a
@@ -34,6 +39,13 @@ use super::link::Link;
 pub(crate) trait Objective {
     /// The mean function this objective compares its target against.
     type Link: Link;
+
+    /// Whether the hessian is the same for every sample and every raw score.
+    ///
+    /// A consumer that accumulates node statistics uses this to replace a
+    /// per-sample hessian sum with a row count times the constant, which is
+    /// both cheaper and exactly equal.
+    const CONSTANT_HESSIAN: bool;
 
     /// Whether the curvature a solver consumes may differ from the exact
     /// second derivative.
@@ -69,6 +81,9 @@ pub(crate) trait Objective {
 
     /// Second derivative of [`Objective::value`] with respect to `raw`.
     fn hessian(raw: f64, target: f64) -> f64;
+
+    /// `-gradient`, in the form that keeps the sign of an exact zero positive.
+    fn negative_gradient(raw: f64, target: f64) -> f64;
 
     /// The gradient and the floored curvature, evaluated together.
     ///
@@ -139,10 +154,30 @@ pub(crate) mod proof {
             "an approximate hessian is declared exactly when the curvature is floored"
         );
         assert!(!O::IS_MULTICLASS, "no multiclass objective exists yet");
+        let mut constant_hessian = None;
         for &target in targets {
             for &raw in raws {
                 let gradient = O::gradient(raw, target);
                 let hessian = O::hessian(raw, target);
+                let negative = O::negative_gradient(raw, target);
+                assert_eq!(
+                    negative, -gradient,
+                    "negative gradient at raw={raw} target={target}"
+                );
+                if negative == 0.0 {
+                    assert!(
+                        negative.is_sign_positive(),
+                        "an exactly zero negative gradient stays positively signed"
+                    );
+                }
+                if O::CONSTANT_HESSIAN {
+                    let first = *constant_hessian.get_or_insert(hessian);
+                    assert_eq!(
+                        hessian.to_bits(),
+                        first.to_bits(),
+                        "a constant hessian must not vary at raw={raw} target={target}"
+                    );
+                }
                 let (paired_gradient, curvature) = O::gradient_and_curvature(raw, target);
                 assert_eq!(
                     paired_gradient.to_bits(),

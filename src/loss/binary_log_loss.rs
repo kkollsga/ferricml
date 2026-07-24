@@ -20,6 +20,7 @@ pub(crate) enum BinaryLogLoss {}
 impl Objective for BinaryLogLoss {
     type Link = Logit;
 
+    const CONSTANT_HESSIAN: bool = false;
     const APPROX_HESSIAN: bool = true;
     const IS_MULTICLASS: bool = false;
     /// The curvature `p * (1 - p)` collapses to zero once the fitted score
@@ -39,6 +40,10 @@ impl Objective for BinaryLogLoss {
     fn hessian(raw: f64, _target: f64) -> f64 {
         let probability = Self::Link::inverse(raw);
         probability * (1.0 - probability)
+    }
+
+    fn negative_gradient(raw: f64, target: f64) -> f64 {
+        target - Self::Link::inverse(raw)
     }
 
     fn gradient_and_curvature(raw: f64, target: f64) -> (f64, f64) {

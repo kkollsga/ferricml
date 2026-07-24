@@ -18,6 +18,15 @@ pub(crate) trait Link {
     fn inverse(raw: f64) -> f64;
 }
 
+/// The identity link, used by a loss that compares raw scores directly.
+pub(crate) enum Identity {}
+
+impl Link for Identity {
+    fn inverse(raw: f64) -> f64 {
+        raw
+    }
+}
+
 /// The logit link, whose inverse is the logistic sigmoid.
 ///
 /// Saturation is the sigmoid's documented `0`/`1` boundary, so a raw score of
@@ -43,6 +52,13 @@ mod tests {
         }
         for &raw in &[f64::MAX, -f64::MAX, 1.0e300, -1.0e300, 0.0] {
             assert_eq!(Logit::inverse(raw).to_bits(), sigmoid_f64(raw).to_bits());
+        }
+    }
+
+    #[test]
+    fn identity_returns_its_argument_bit_for_bit() {
+        for &raw in &[0.0, -0.0, 1.0, -7.25, f64::MAX, f64::MIN, 1.0e-320] {
+            assert_eq!(Identity::inverse(raw).to_bits(), raw.to_bits());
         }
     }
 }
