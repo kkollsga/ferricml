@@ -1,6 +1,9 @@
 use criterion::{BatchSize, BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
 use ferricml::api::Classifier;
 use ferricml::data::{BinaryTargets, DenseMatrix, RegressionTargets};
+use ferricml::dummy::{
+    DummyClassifier, DummyClassifierParams, DummyRegressor, DummyRegressorParams,
+};
 use ferricml::ensemble::{MaxFeatures, RandomForestRegressor, RandomForestRegressorParams};
 use ferricml::inspection::{PermutationImportanceParams, permutation_importance_regressor_into};
 use ferricml::linear_model::{
@@ -486,8 +489,48 @@ fn inspection(c: &mut Criterion) {
     group.finish();
 }
 
+/// Baseline inference is the floor every other inference lane is read
+/// against: it walks the same batch entry points while doing no per-row work,
+/// so a real model's lane can be separated from the contract around it.
+fn baselines(c: &mut Criterion) {
+    let (data, targets) = fixture(INFERENCE_ROWS, COLUMNS);
+    let labels = BinaryTargets::new(
+        targets
+            .as_slice()
+            .iter()
+            .map(|&value| u8::from(value > 0.0))
+            .collect(),
+    )
+    .unwrap();
+    let classifier = DummyClassifier::fit(&data.as_view(), &labels, DummyClassifierParams).unwrap();
+    let regressor = DummyRegressor::fit(&data.as_view(), &targets, DummyRegressorParams).unwrap();
+
+    let mut labels_out = vec![0_u8; INFERENCE_ROWS];
+    let mut values_out = vec![0.0_f32; INFERENCE_ROWS];
+    let mut group = c.benchmark_group("ferricml_baselines_v1_into_1024x48");
+    group.throughput(Throughput::Elements(INFERENCE_ROWS as u64));
+    group.bench_function(BenchmarkId::from_parameter("dummy_classifier"), |bencher| {
+        bencher.iter(|| {
+            classifier
+                .predict_into(black_box(&data.as_view()), black_box(&mut labels_out))
+                .unwrap();
+            black_box(&labels_out);
+        });
+    });
+    group.bench_function(BenchmarkId::from_parameter("dummy_regressor"), |bencher| {
+        bencher.iter(|| {
+            regressor
+                .predict_into(black_box(&data.as_view()), black_box(&mut values_out))
+                .unwrap();
+            black_box(&values_out);
+        });
+    });
+    group.finish();
+}
+
 criterion_group!(
     benches,
+    baselines,
     inference,
     training,
     logistic_and_scaler,

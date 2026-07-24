@@ -20,6 +20,9 @@ use ferricml::api::{
 };
 use ferricml::artifact::ArtifactError;
 use ferricml::data::{BinaryTargets, DenseMatrix, MatrixView, RegressionTargets, SampleWeights};
+use ferricml::dummy::{
+    DummyClassifier, DummyClassifierParams, DummyRegressor, DummyRegressorParams,
+};
 use ferricml::ensemble::{
     HistGradientBoostingRegressor, HistGradientBoostingRegressorParams, MaxFeatures, NJobs,
     RandomForestClassifier, RandomForestClassifierParams, RandomForestRegressor,
@@ -322,6 +325,40 @@ any_regressor_case!(
     "AnyRegressor::HistGradientBoosting"
 );
 
+struct DummyClassifierCase;
+
+impl ClassifierCase for DummyClassifierCase {
+    type Model = DummyClassifier;
+    const NAME: &'static str = "DummyClassifier";
+
+    fn fit(data: &MatrixView<'_>, labels: &BinaryTargets) -> Self::Model {
+        DummyClassifier::fit(data, labels, DummyClassifierParams).expect("fit")
+    }
+}
+
+impl ScalarClassifierCase for DummyClassifierCase {
+    fn predict_one(model: &Self::Model, row: &[f32]) -> Result<u8, ModelError> {
+        model.predict_one(row)
+    }
+}
+
+struct DummyRegressorCase;
+
+impl RegressorCase for DummyRegressorCase {
+    type Model = DummyRegressor;
+    const NAME: &'static str = "DummyRegressor";
+
+    fn fit(data: &MatrixView<'_>, values: &RegressionTargets) -> Self::Model {
+        DummyRegressor::fit(data, values, DummyRegressorParams).expect("fit")
+    }
+}
+
+impl ScalarRegressorCase for DummyRegressorCase {
+    fn predict_one(model: &Self::Model, row: &[f32]) -> Result<f32, ModelError> {
+        model.predict_one(row)
+    }
+}
+
 struct StandardScalerCase;
 
 impl TransformerCase for StandardScalerCase {
@@ -394,6 +431,16 @@ fn any_regressor_conforms_for_every_variant() {
     check_batch_only_regressor::<AnyLinearRegressorCase>();
     check_batch_only_regressor::<AnyRidgeRegressorCase>();
     check_batch_only_regressor::<AnyBoostedRegressorCase>();
+}
+
+#[test]
+fn dummy_classifier_conforms() {
+    check_classifier::<DummyClassifierCase>();
+}
+
+#[test]
+fn dummy_regressor_conforms() {
+    check_regressor::<DummyRegressorCase>();
 }
 
 #[test]

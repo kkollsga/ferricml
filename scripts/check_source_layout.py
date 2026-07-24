@@ -107,6 +107,20 @@ def capability_descriptor_names_no_estimator(root: Path) -> list[str]:
     ]
 
 
+def baselines_depend_on_no_estimator(root: Path) -> list[str]:
+    """A baseline must be an independent quality floor.
+
+    Reusing a real estimator's machinery would make the floor move with the
+    thing it is supposed to measure, so the baselines name no estimator module.
+    """
+    text = directory_text(root / "src" / "dummy")
+    return [
+        f"baseline estimators depend on estimator module {module}"
+        for module in ESTIMATOR_MODULES
+        if f"crate::{module}" in text
+    ]
+
+
 RULES: tuple[tuple[str, Callable[[Path], list[str]]], ...] = (
     ("crate-root-lib-only", crate_root_is_lib_only),
     ("obsolete-root-implementations", obsolete_root_implementations_are_gone),
@@ -115,6 +129,7 @@ RULES: tuple[tuple[str, Callable[[Path], list[str]]], ...] = (
     ("numeric-below-estimators", numeric_depends_on_no_estimator),
     ("inspection-public-surfaces-only", inspection_uses_only_public_surfaces),
     ("capability-descriptor-neutral", capability_descriptor_names_no_estimator),
+    ("baselines-independent", baselines_depend_on_no_estimator),
 )
 
 
@@ -139,6 +154,8 @@ def write_clean_tree(root: Path) -> Path:
         "inspection/permutation.rs": "//! permutation\nuse crate::api::Regressor;\n",
         "api/mod.rs": "//! api\nmod capabilities;\n",
         "api/capabilities.rs": "//! capabilities\npub struct Capabilities;\n",
+        "dummy/mod.rs": "//! dummy\nmod classifier;\n",
+        "dummy/classifier.rs": "//! baseline\nuse crate::api::Classifier;\n",
     }.items():
         path = source / relative
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -195,6 +212,14 @@ SYNTHETIC_VIOLATIONS: tuple[tuple[str, Callable[[Path], None], str], ...] = (
             "use crate::preprocessing::StandardScaler;\n",
         ),
         "capability descriptor names estimator module preprocessing",
+    ),
+    (
+        "baselines-independent",
+        lambda root: append(
+            root / "src" / "dummy" / "classifier.rs",
+            "use crate::ensemble::RandomForestClassifier;\n",
+        ),
+        "baseline estimators depend on estimator module ensemble",
     ),
 )
 

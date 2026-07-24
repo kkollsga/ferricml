@@ -47,6 +47,12 @@ estimator meaning follow the reference contract.
   ranking scores and pair margins are not probabilities.
 - `artifact` owns stable envelope identity, bounded decoding primitives, and
   artifact errors. It does not expose backend tree layouts.
+- `dummy` owns baseline estimators that ignore their features: the
+  majority-class classifier, whose probabilities are the observed class
+  frequencies, and the mean regressor. They are the quality floor a real
+  estimator has to beat and the reference implementation of the estimator
+  contract, so they carry no tunable behavior, no weighted entry point, and no
+  artifact kind.
 - `inspection` owns model-agnostic attribution. Permutation importance works
   through the public batch prediction and scoring contracts only, so it needs
   no estimator cooperation and exposes no model internals. Its per-feature

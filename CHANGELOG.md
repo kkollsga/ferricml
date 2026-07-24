@@ -23,6 +23,9 @@ and releases use [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Capability declarations on every fitted estimator and transformer FerricML
   ships, so callers can ask a type whether it supports weighted fitting or
   artifact persistence without matching on its concrete type.
+- `dummy::DummyClassifier` and `dummy::DummyRegressor`, baseline estimators
+  that ignore their features and predict the majority class or the training
+  mean. They give a quality floor to compare a real estimator against.
 - `AnyClassifier::capabilities` and `AnyRegressor::capabilities`, reporting the
   selected runtime variant's capabilities. The declared constant on each
   dispatch enum and each concrete pipeline is composed from its variants or

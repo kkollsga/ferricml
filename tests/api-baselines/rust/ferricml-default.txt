@@ -155,6 +155,14 @@ pub fn ferricml::api::AnyClassifier::predict_class_proba_into(&self, &ferricml::
 pub fn ferricml::api::AnyClassifier::predict_into(&self, &ferricml::data::MatrixView<'_>, &mut [u8]) -> core::result::Result<(), ferricml::api::ModelError>
 pub fn ferricml::api::AnyClassifier::predict_proba(&self, &ferricml::data::MatrixView<'_>) -> core::result::Result<alloc::vec::Vec<f32>, ferricml::api::ModelError>
 pub fn ferricml::api::AnyClassifier::predict_proba_into(&self, &ferricml::data::MatrixView<'_>, &mut [f32]) -> core::result::Result<(), ferricml::api::ModelError>
+impl ferricml::api::Classifier for ferricml::dummy::DummyClassifier
+pub fn ferricml::dummy::DummyClassifier::classes(&self) -> &[u8]
+pub fn ferricml::dummy::DummyClassifier::predict(&self, &ferricml::data::MatrixView<'_>) -> core::result::Result<alloc::vec::Vec<u8>, ferricml::api::ModelError>
+pub fn ferricml::dummy::DummyClassifier::predict_class_proba(&self, &ferricml::data::MatrixView<'_>, u8) -> core::result::Result<alloc::vec::Vec<f32>, ferricml::api::ModelError>
+pub fn ferricml::dummy::DummyClassifier::predict_class_proba_into(&self, &ferricml::data::MatrixView<'_>, u8, &mut [f32]) -> core::result::Result<(), ferricml::api::ModelError>
+pub fn ferricml::dummy::DummyClassifier::predict_into(&self, &ferricml::data::MatrixView<'_>, &mut [u8]) -> core::result::Result<(), ferricml::api::ModelError>
+pub fn ferricml::dummy::DummyClassifier::predict_proba(&self, &ferricml::data::MatrixView<'_>) -> core::result::Result<alloc::vec::Vec<f32>, ferricml::api::ModelError>
+pub fn ferricml::dummy::DummyClassifier::predict_proba_into(&self, &ferricml::data::MatrixView<'_>, &mut [f32]) -> core::result::Result<(), ferricml::api::ModelError>
 impl ferricml::api::Classifier for ferricml::ensemble::RandomForestClassifier
 pub fn ferricml::ensemble::RandomForestClassifier::classes(&self) -> &[u8]
 pub fn ferricml::ensemble::RandomForestClassifier::predict(&self, &ferricml::data::MatrixView<'_>) -> core::result::Result<alloc::vec::Vec<u8>, ferricml::api::ModelError>
@@ -177,6 +185,10 @@ impl ferricml::api::Estimator for ferricml::api::AnyClassifier
 pub fn ferricml::api::AnyClassifier::n_features_in(&self) -> usize
 impl ferricml::api::Estimator for ferricml::api::AnyRegressor
 pub fn ferricml::api::AnyRegressor::n_features_in(&self) -> usize
+impl ferricml::api::Estimator for ferricml::dummy::DummyClassifier
+pub fn ferricml::dummy::DummyClassifier::n_features_in(&self) -> usize
+impl ferricml::api::Estimator for ferricml::dummy::DummyRegressor
+pub fn ferricml::dummy::DummyRegressor::n_features_in(&self) -> usize
 impl ferricml::api::Estimator for ferricml::ensemble::HistGradientBoostingRegressor
 pub fn ferricml::ensemble::HistGradientBoostingRegressor::n_features_in(&self) -> usize
 impl ferricml::api::Estimator for ferricml::ensemble::RandomForestClassifier
@@ -201,6 +213,10 @@ impl ferricml::api::HasCapabilities for ferricml::api::AnyClassifier
 pub const ferricml::api::AnyClassifier::CAPABILITIES: ferricml::api::Capabilities
 impl ferricml::api::HasCapabilities for ferricml::api::AnyRegressor
 pub const ferricml::api::AnyRegressor::CAPABILITIES: ferricml::api::Capabilities
+impl ferricml::api::HasCapabilities for ferricml::dummy::DummyClassifier
+pub const ferricml::dummy::DummyClassifier::CAPABILITIES: ferricml::api::Capabilities
+impl ferricml::api::HasCapabilities for ferricml::dummy::DummyRegressor
+pub const ferricml::dummy::DummyRegressor::CAPABILITIES: ferricml::api::Capabilities
 impl ferricml::api::HasCapabilities for ferricml::ensemble::HistGradientBoostingRegressor
 pub const ferricml::ensemble::HistGradientBoostingRegressor::CAPABILITIES: ferricml::api::Capabilities
 impl ferricml::api::HasCapabilities for ferricml::ensemble::RandomForestClassifier
@@ -224,6 +240,12 @@ pub const ferricml::preprocessing::StandardScaler::CAPABILITIES: ferricml::api::
 pub trait ferricml::api::HasParams
 pub type ferricml::api::HasParams::Params
 pub fn ferricml::api::HasParams::get_params(&self) -> &Self::Params
+impl ferricml::api::HasParams for ferricml::dummy::DummyClassifier
+pub type ferricml::dummy::DummyClassifier::Params = ferricml::dummy::DummyClassifierParams
+pub fn ferricml::dummy::DummyClassifier::get_params(&self) -> &Self::Params
+impl ferricml::api::HasParams for ferricml::dummy::DummyRegressor
+pub type ferricml::dummy::DummyRegressor::Params = ferricml::dummy::DummyRegressorParams
+pub fn ferricml::dummy::DummyRegressor::get_params(&self) -> &Self::Params
 impl ferricml::api::HasParams for ferricml::ensemble::HistGradientBoostingRegressor
 pub type ferricml::ensemble::HistGradientBoostingRegressor::Params = ferricml::ensemble::HistGradientBoostingRegressorParams
 pub fn ferricml::ensemble::HistGradientBoostingRegressor::get_params(&self) -> &Self::Params
@@ -254,6 +276,9 @@ pub fn ferricml::api::Regressor::predict_into(&self, &ferricml::data::MatrixView
 impl ferricml::api::Regressor for ferricml::api::AnyRegressor
 pub fn ferricml::api::AnyRegressor::predict(&self, &ferricml::data::MatrixView<'_>) -> core::result::Result<alloc::vec::Vec<f32>, ferricml::api::ModelError>
 pub fn ferricml::api::AnyRegressor::predict_into(&self, &ferricml::data::MatrixView<'_>, &mut [f32]) -> core::result::Result<(), ferricml::api::ModelError>
+impl ferricml::api::Regressor for ferricml::dummy::DummyRegressor
+pub fn ferricml::dummy::DummyRegressor::predict(&self, &ferricml::data::MatrixView<'_>) -> core::result::Result<alloc::vec::Vec<f32>, ferricml::api::ModelError>
+pub fn ferricml::dummy::DummyRegressor::predict_into(&self, &ferricml::data::MatrixView<'_>, &mut [f32]) -> core::result::Result<(), ferricml::api::ModelError>
 impl ferricml::api::Regressor for ferricml::ensemble::HistGradientBoostingRegressor
 pub fn ferricml::ensemble::HistGradientBoostingRegressor::predict(&self, &ferricml::data::MatrixView<'_>) -> core::result::Result<alloc::vec::Vec<f32>, ferricml::api::ModelError>
 pub fn ferricml::ensemble::HistGradientBoostingRegressor::predict_into(&self, &ferricml::data::MatrixView<'_>, &mut [f32]) -> core::result::Result<(), ferricml::api::ModelError>
@@ -383,6 +408,57 @@ pub fn ferricml::data::SampleWeights::is_empty(&self) -> bool
 pub fn ferricml::data::SampleWeights::len(&self) -> usize
 pub fn ferricml::data::SampleWeights::new(alloc::vec::Vec<f32>) -> core::result::Result<Self, ferricml::data::DataError>
 pub const fn ferricml::data::SampleWeights::total(&self) -> f64
+pub mod ferricml::dummy
+pub struct ferricml::dummy::DummyClassifier
+impl ferricml::dummy::DummyClassifier
+pub fn ferricml::dummy::DummyClassifier::class_priors(&self) -> &[f32]
+pub fn ferricml::dummy::DummyClassifier::classes(&self) -> &[u8]
+pub fn ferricml::dummy::DummyClassifier::fit(&ferricml::data::MatrixView<'_>, &ferricml::data::BinaryTargets, ferricml::dummy::DummyClassifierParams) -> core::result::Result<Self, ferricml::api::ModelError>
+pub const fn ferricml::dummy::DummyClassifier::get_params(&self) -> &ferricml::dummy::DummyClassifierParams
+pub const fn ferricml::dummy::DummyClassifier::n_features_in(&self) -> usize
+pub fn ferricml::dummy::DummyClassifier::predict(&self, &ferricml::data::MatrixView<'_>) -> core::result::Result<alloc::vec::Vec<u8>, ferricml::api::ModelError>
+pub fn ferricml::dummy::DummyClassifier::predict_class_proba(&self, &ferricml::data::MatrixView<'_>, u8) -> core::result::Result<alloc::vec::Vec<f32>, ferricml::api::ModelError>
+pub fn ferricml::dummy::DummyClassifier::predict_class_proba_into(&self, &ferricml::data::MatrixView<'_>, u8, &mut [f32]) -> core::result::Result<(), ferricml::api::ModelError>
+pub fn ferricml::dummy::DummyClassifier::predict_into(&self, &ferricml::data::MatrixView<'_>, &mut [u8]) -> core::result::Result<(), ferricml::api::ModelError>
+pub fn ferricml::dummy::DummyClassifier::predict_one(&self, &[f32]) -> core::result::Result<u8, ferricml::api::ModelError>
+pub fn ferricml::dummy::DummyClassifier::predict_proba(&self, &ferricml::data::MatrixView<'_>) -> core::result::Result<alloc::vec::Vec<f32>, ferricml::api::ModelError>
+pub fn ferricml::dummy::DummyClassifier::predict_proba_into(&self, &ferricml::data::MatrixView<'_>, &mut [f32]) -> core::result::Result<(), ferricml::api::ModelError>
+impl ferricml::api::Classifier for ferricml::dummy::DummyClassifier
+pub fn ferricml::dummy::DummyClassifier::classes(&self) -> &[u8]
+pub fn ferricml::dummy::DummyClassifier::predict(&self, &ferricml::data::MatrixView<'_>) -> core::result::Result<alloc::vec::Vec<u8>, ferricml::api::ModelError>
+pub fn ferricml::dummy::DummyClassifier::predict_class_proba(&self, &ferricml::data::MatrixView<'_>, u8) -> core::result::Result<alloc::vec::Vec<f32>, ferricml::api::ModelError>
+pub fn ferricml::dummy::DummyClassifier::predict_class_proba_into(&self, &ferricml::data::MatrixView<'_>, u8, &mut [f32]) -> core::result::Result<(), ferricml::api::ModelError>
+pub fn ferricml::dummy::DummyClassifier::predict_into(&self, &ferricml::data::MatrixView<'_>, &mut [u8]) -> core::result::Result<(), ferricml::api::ModelError>
+pub fn ferricml::dummy::DummyClassifier::predict_proba(&self, &ferricml::data::MatrixView<'_>) -> core::result::Result<alloc::vec::Vec<f32>, ferricml::api::ModelError>
+pub fn ferricml::dummy::DummyClassifier::predict_proba_into(&self, &ferricml::data::MatrixView<'_>, &mut [f32]) -> core::result::Result<(), ferricml::api::ModelError>
+impl ferricml::api::Estimator for ferricml::dummy::DummyClassifier
+pub fn ferricml::dummy::DummyClassifier::n_features_in(&self) -> usize
+impl ferricml::api::HasCapabilities for ferricml::dummy::DummyClassifier
+pub const ferricml::dummy::DummyClassifier::CAPABILITIES: ferricml::api::Capabilities
+impl ferricml::api::HasParams for ferricml::dummy::DummyClassifier
+pub type ferricml::dummy::DummyClassifier::Params = ferricml::dummy::DummyClassifierParams
+pub fn ferricml::dummy::DummyClassifier::get_params(&self) -> &Self::Params
+pub struct ferricml::dummy::DummyClassifierParams
+pub struct ferricml::dummy::DummyRegressor
+impl ferricml::dummy::DummyRegressor
+pub fn ferricml::dummy::DummyRegressor::fit(&ferricml::data::MatrixView<'_>, &ferricml::data::RegressionTargets, ferricml::dummy::DummyRegressorParams) -> core::result::Result<Self, ferricml::api::ModelError>
+pub const fn ferricml::dummy::DummyRegressor::get_params(&self) -> &ferricml::dummy::DummyRegressorParams
+pub const fn ferricml::dummy::DummyRegressor::mean(&self) -> f32
+pub const fn ferricml::dummy::DummyRegressor::n_features_in(&self) -> usize
+pub fn ferricml::dummy::DummyRegressor::predict(&self, &ferricml::data::MatrixView<'_>) -> core::result::Result<alloc::vec::Vec<f32>, ferricml::api::ModelError>
+pub fn ferricml::dummy::DummyRegressor::predict_into(&self, &ferricml::data::MatrixView<'_>, &mut [f32]) -> core::result::Result<(), ferricml::api::ModelError>
+pub fn ferricml::dummy::DummyRegressor::predict_one(&self, &[f32]) -> core::result::Result<f32, ferricml::api::ModelError>
+impl ferricml::api::Estimator for ferricml::dummy::DummyRegressor
+pub fn ferricml::dummy::DummyRegressor::n_features_in(&self) -> usize
+impl ferricml::api::HasCapabilities for ferricml::dummy::DummyRegressor
+pub const ferricml::dummy::DummyRegressor::CAPABILITIES: ferricml::api::Capabilities
+impl ferricml::api::HasParams for ferricml::dummy::DummyRegressor
+pub type ferricml::dummy::DummyRegressor::Params = ferricml::dummy::DummyRegressorParams
+pub fn ferricml::dummy::DummyRegressor::get_params(&self) -> &Self::Params
+impl ferricml::api::Regressor for ferricml::dummy::DummyRegressor
+pub fn ferricml::dummy::DummyRegressor::predict(&self, &ferricml::data::MatrixView<'_>) -> core::result::Result<alloc::vec::Vec<f32>, ferricml::api::ModelError>
+pub fn ferricml::dummy::DummyRegressor::predict_into(&self, &ferricml::data::MatrixView<'_>, &mut [f32]) -> core::result::Result<(), ferricml::api::ModelError>
+pub struct ferricml::dummy::DummyRegressorParams
 pub mod ferricml::ensemble
 pub enum ferricml::ensemble::MaxFeatures
 pub ferricml::ensemble::MaxFeatures::All

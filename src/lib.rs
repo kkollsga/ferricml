@@ -6,6 +6,7 @@
 pub mod api;
 pub mod artifact;
 pub mod data;
+pub mod dummy;
 pub mod ensemble;
 pub mod inspection;
 pub mod linear_model;

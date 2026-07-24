@@ -12,6 +12,7 @@
 
 use ferricml::api::{AnyClassifier, AnyRegressor, Capabilities, HasCapabilities};
 use ferricml::data::{BinaryTargets, DenseMatrix, RegressionTargets};
+use ferricml::dummy::{DummyClassifier, DummyRegressor};
 use ferricml::ensemble::{
     HistGradientBoostingRegressor, RandomForestClassifier, RandomForestClassifierParams,
     RandomForestRegressor,
@@ -51,6 +52,14 @@ fn the_forest_classifier_declares_nothing_yet() {
     // No weighted entry point, and no artifact kind until leaf probability
     // semantics are frozen. The conservative default is the honest answer.
     assert_eq!(RandomForestClassifier::CAPABILITIES, Capabilities::NONE);
+}
+
+#[test]
+fn baseline_estimators_declare_nothing() {
+    // A baseline is refitted rather than persisted and has no weighted entry
+    // point, so the conservative default is the whole truth.
+    assert_eq!(DummyClassifier::CAPABILITIES, Capabilities::NONE);
+    assert_eq!(DummyRegressor::CAPABILITIES, Capabilities::NONE);
 }
 
 #[test]
