@@ -2,7 +2,7 @@
 
 use super::binning::{BinnedMatrix, Binner};
 use super::predictor::{CompactNode, CompactTree};
-use super::{BoostingError, MAX_TREE_LEAVES, MAX_TREE_NODES};
+use super::{BoostingError, MAX_BINS, MAX_TREE_LEAVES, MAX_TREE_NODES};
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub(crate) struct GrowConfig {
@@ -36,6 +36,7 @@ struct GrowingNode {
     depth: usize,
     value: f32,
     split: Option<GrownSplit>,
+    candidate: Option<SplitCandidate>,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -78,11 +79,14 @@ pub(crate) fn grow_tree(
 
     let root_samples = (0..binned.rows()).collect::<Vec<_>>();
     let root_value = leaf_value(&root_samples, residuals, config.l2_regularization);
+    let mut workspace = SplitWorkspace::new();
+    let root_candidate = best_split(binned, residuals, &root_samples, config, &mut workspace);
     let mut nodes = vec![GrowingNode {
         samples: root_samples,
         depth: 0,
         value: root_value,
         split: None,
+        candidate: root_candidate,
     }];
     let mut leaf_count = 1_usize;
 
@@ -96,7 +100,7 @@ pub(crate) fn grow_tree(
             {
                 continue;
             }
-            if let Some(candidate) = best_split(binned, residuals, &node.samples, config)
+            if let Some(candidate) = node.candidate
                 && selected
                     .as_ref()
                     .is_none_or(|(_, current)| candidate.gain > current.gain)
@@ -135,17 +139,29 @@ pub(crate) fn grow_tree(
         let right = left + 1;
         let left_value = leaf_value(&left_samples, residuals, config.l2_regularization);
         let right_value = leaf_value(&right_samples, residuals, config.l2_regularization);
+        let left_candidate = if config.max_depth.is_none_or(|max_depth| depth < max_depth) {
+            best_split(binned, residuals, &left_samples, config, &mut workspace)
+        } else {
+            None
+        };
+        let right_candidate = if config.max_depth.is_none_or(|max_depth| depth < max_depth) {
+            best_split(binned, residuals, &right_samples, config, &mut workspace)
+        } else {
+            None
+        };
         nodes.push(GrowingNode {
             samples: left_samples,
             depth,
             value: left_value,
             split: None,
+            candidate: left_candidate,
         });
         nodes.push(GrowingNode {
             samples: right_samples,
             depth,
             value: right_value,
             split: None,
+            candidate: right_candidate,
         });
         nodes[node_index].split = Some(GrownSplit {
             feature: candidate.feature,
@@ -164,6 +180,7 @@ fn best_split(
     residuals: &[f32],
     samples: &[usize],
     config: GrowConfig,
+    workspace: &mut SplitWorkspace,
 ) -> Option<SplitCandidate> {
     if samples.len() < config.min_samples_leaf.checked_mul(2)? {
         return None;
@@ -188,8 +205,7 @@ fn best_split(
             continue;
         }
         let bin_count = usize::from(max_bin) + 1;
-        let mut counts = vec![0_usize; bin_count];
-        let mut sums = vec![0.0_f64; bin_count];
+        let (counts, sums) = workspace.reset(bin_count);
         for &sample in samples {
             let bin = usize::from(
                 binned
@@ -226,6 +242,29 @@ fn best_split(
         }
     }
     best
+}
+
+struct SplitWorkspace {
+    counts: Vec<usize>,
+    sums: Vec<f64>,
+}
+
+impl SplitWorkspace {
+    fn new() -> Self {
+        Self {
+            counts: vec![0; MAX_BINS],
+            sums: vec![0.0; MAX_BINS],
+        }
+    }
+
+    fn reset(&mut self, bin_count: usize) -> (&mut [usize], &mut [f64]) {
+        debug_assert!(bin_count <= MAX_BINS);
+        let counts = &mut self.counts[..bin_count];
+        let sums = &mut self.sums[..bin_count];
+        counts.fill(0);
+        sums.fill(0.0);
+        (counts, sums)
+    }
 }
 
 fn score(sum: f64, count: usize, l2_regularization: f32) -> f64 {
