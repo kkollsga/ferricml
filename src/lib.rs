@@ -10,6 +10,7 @@ pub mod dummy;
 pub mod ensemble;
 pub mod inspection;
 pub mod linear_model;
+mod loss;
 pub mod metrics;
 pub mod model_selection;
 mod numeric;

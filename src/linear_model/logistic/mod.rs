@@ -10,7 +10,8 @@ use crate::artifact::{
     encode_component, encode_v2_envelope,
 };
 use crate::data::{BinaryTargets, MatrixView, SampleWeights};
-use crate::numeric::{sigmoid_f32, sigmoid_f64};
+use crate::loss::{BinaryLogLoss, accumulate_newton_row, raw_score};
+use crate::numeric::sigmoid_f32;
 
 const BINARY_CLASSES: [u8; 2] = [0, 1];
 const MAX_ARTIFACT_FEATURES: usize = 1_000_000;
@@ -185,23 +186,15 @@ impl LogisticRegression {
             gradient.fill(0.0);
             hessian.fill(0.0);
             let mut accumulate_row = |design_row: &[f64], target: u8, sample_weight: f64| {
-                let mut score = intercept_index.map_or(0.0, |index| theta[index]);
-                for column in 0..columns {
-                    score += theta[column] * design_row[column];
-                }
-                let probability = sigmoid_f64(score);
-                let residual = sample_weight * (probability - f64::from(target));
-                let curvature = sample_weight * (probability * (1.0 - probability)).max(1.0e-12);
-                for left in 0..parameter_count {
-                    let left_value = design_row[left];
-                    gradient[left] += residual * left_value;
-                    let scaled_left = curvature * left_value;
-                    let hessian_row =
-                        &mut hessian[left * parameter_count..left * parameter_count + left + 1];
-                    for (slot, &right_value) in hessian_row.iter_mut().zip(design_row) {
-                        *slot += scaled_left * right_value;
-                    }
-                }
+                let score = raw_score(&theta, design_row, columns, intercept_index);
+                accumulate_newton_row::<BinaryLogLoss>(
+                    design_row,
+                    score,
+                    f64::from(target),
+                    sample_weight,
+                    &mut gradient,
+                    &mut hessian,
+                );
             };
             if let Some(weights) = sample_weights {
                 for ((design_row, &target), &sample_weight) in design

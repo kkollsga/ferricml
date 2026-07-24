@@ -79,6 +79,42 @@ pub(crate) fn sigmoid_f32(value: f32) -> f32 {
     }
 }
 
+/// Natural logarithm of a sum of exponentials, without forming the sum.
+///
+/// The naive `values.iter().map(f64::exp).sum().ln()` overflows to `inf` for
+/// arguments above roughly `710` and underflows to `-inf` below roughly
+/// `-746`, in both cases destroying a result that is perfectly representable.
+/// Shifting by the maximum keeps every exponential in `(0, 1]` and makes the
+/// largest term exactly `1`, so the sum is at least `1` and its logarithm is
+/// always defined.
+///
+/// The reduction visits its terms in ascending index order, per rule 2 of the
+/// accumulation policy above; the caller's ordering of `values` is therefore
+/// part of the result.
+///
+/// Boundary cases are exact rather than approximate: an empty slice and an
+/// all-`-inf` slice both return `-inf` (the identity of the underlying sum), a
+/// slice containing `+inf` returns `+inf`, and a `NaN` anywhere propagates.
+pub(crate) fn log_sum_exp(values: &[f64]) -> f64 {
+    let mut max = f64::NEG_INFINITY;
+    for &value in values {
+        if value.is_nan() {
+            return f64::NAN;
+        }
+        if value > max {
+            max = value;
+        }
+    }
+    if !max.is_finite() {
+        return max;
+    }
+    let mut total = 0.0_f64;
+    for &value in values {
+        total += (value - max).exp();
+    }
+    max + total.ln()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -155,5 +191,92 @@ mod tests {
         // The complement of a saturated value is exact rather than negative.
         assert_eq!(1.0 - sigmoid_f64(37.0), 0.0);
         assert_eq!(1.0 - sigmoid_f32(17.0), 0.0);
+    }
+
+    fn naive_log_sum_exp(values: &[f64]) -> f64 {
+        values.iter().map(|value| value.exp()).sum::<f64>().ln()
+    }
+
+    #[test]
+    fn log_sum_exp_agrees_with_the_naive_formulation_in_its_safe_range() {
+        for left in -30..=30 {
+            for right in -30..=30 {
+                let values = [f64::from(left) / 2.0, f64::from(right) / 2.0];
+                let stable = log_sum_exp(&values);
+                let naive = naive_log_sum_exp(&values);
+                assert!(
+                    (stable - naive).abs() <= 1.0e-12 * naive.abs().max(1.0),
+                    "log_sum_exp{values:?}: {stable} vs {naive}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn log_sum_exp_survives_extreme_magnitudes_in_both_signs() {
+        // `exp` overflows above roughly 709.8 and underflows below roughly
+        // -745.2, so past those bounds the naive formulation returns an
+        // infinity for a result that is perfectly representable. The shifted
+        // reduction stays within an ulp of the exact answer in both signs.
+        for &magnitude in &[300.0_f64, 750.0, 1.0e5, 1.0e300] {
+            for &value in &[magnitude, -magnitude] {
+                let doubled = log_sum_exp(&[value, value]);
+                assert!(
+                    (doubled - (value + std::f64::consts::LN_2)).abs()
+                        <= 1.0e-12 * value.abs().max(1.0),
+                    "log_sum_exp of a repeated {value}: {doubled}"
+                );
+            }
+            if magnitude > 750.0 {
+                assert!(
+                    !naive_log_sum_exp(&[magnitude, magnitude]).is_finite(),
+                    "naive formulation unexpectedly survived +{magnitude}"
+                );
+                assert!(
+                    !naive_log_sum_exp(&[-magnitude, -magnitude]).is_finite(),
+                    "naive formulation unexpectedly survived -{magnitude}"
+                );
+            }
+        }
+        // The first magnitude past each boundary, stated exactly.
+        assert!(!naive_log_sum_exp(&[710.0, 710.0]).is_finite());
+        assert!(!naive_log_sum_exp(&[-746.0, -746.0]).is_finite());
+        assert!((log_sum_exp(&[710.0, 710.0]) - (710.0 + std::f64::consts::LN_2)).abs() <= 1.0e-9);
+        assert!(
+            (log_sum_exp(&[-746.0, -746.0]) - (-746.0 + std::f64::consts::LN_2)).abs() <= 1.0e-9
+        );
+    }
+
+    #[test]
+    fn log_sum_exp_dominated_by_one_term_returns_that_term() {
+        for &value in &[0.0_f64, 50.0, -50.0, 1.0e6, -1.0e6] {
+            assert_eq!(log_sum_exp(&[value]), value);
+            assert_eq!(log_sum_exp(&[value, value - 1.0e6]), value);
+        }
+        assert_eq!(log_sum_exp(&[0.0, 0.0]), std::f64::consts::LN_2);
+    }
+
+    #[test]
+    fn log_sum_exp_boundary_inputs_are_exact() {
+        assert_eq!(log_sum_exp(&[]), f64::NEG_INFINITY);
+        assert_eq!(
+            log_sum_exp(&[f64::NEG_INFINITY, f64::NEG_INFINITY]),
+            f64::NEG_INFINITY
+        );
+        assert_eq!(log_sum_exp(&[f64::NEG_INFINITY, 2.0]), 2.0);
+        assert_eq!(log_sum_exp(&[f64::INFINITY, 0.0]), f64::INFINITY);
+        assert!(log_sum_exp(&[f64::NAN, 0.0]).is_nan());
+        assert!(log_sum_exp(&[0.0, f64::NAN]).is_nan());
+    }
+
+    #[test]
+    fn log_sum_exp_is_monotone_in_each_argument() {
+        let mut previous = f64::NEG_INFINITY;
+        for step in -1_000..=1_000 {
+            let value = log_sum_exp(&[0.0, f64::from(step) / 10.0]);
+            assert!(value >= previous, "monotonicity at step {step}");
+            assert!(value >= 0.0, "softplus stays non-negative at step {step}");
+            previous = value;
+        }
     }
 }
