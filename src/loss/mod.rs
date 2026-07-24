@@ -21,6 +21,12 @@
 //! - Reductions over rows stay with the caller. Fitted artifacts depend on
 //!   accumulation order, and only the solver knows the order its determinism
 //!   guarantee is written against.
+//! - The non-generic helpers a solver calls once per row or per candidate split
+//!   are marked `#[inline]`. That is not tuning: each one replaces arithmetic
+//!   that used to sit inside the solver's own loop body, and the attribute
+//!   restores the inlining opportunity the move across a module boundary would
+//!   otherwise have removed. The generic entry points need no attribute,
+//!   being instantiated in the caller's own codegen unit.
 
 mod binary_log_loss;
 mod boosting;

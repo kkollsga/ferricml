@@ -14,6 +14,7 @@ use crate::numeric::sum_in_order;
 /// The reduction visits `samples` in the order the caller holds them, which is
 /// ascending row order for a freshly split node, and widens each `f32` term
 /// under rule 1 of the accumulation policy in [`crate::numeric`].
+#[inline]
 pub(crate) fn negative_gradient_sum(samples: &[usize], negative_gradients: &[f32]) -> f64 {
     sum_in_order(
         samples
@@ -45,6 +46,7 @@ pub(crate) fn constant_hessian_total<O: Objective>(rows: usize) -> f64 {
 /// Minimizing the objective's second-order expansion over a leaf gives
 /// `-G / (H + lambda)`, written here with the negated gradient sum so an
 /// exactly zero leaf keeps a positively signed zero.
+#[inline]
 pub(crate) fn newton_leaf_value(
     negative_gradient_sum: f64,
     hessian_total: f64,
@@ -59,6 +61,7 @@ pub(crate) fn newton_leaf_value(
 /// the factor of one half that is common to every term of a gain and therefore
 /// never affects which split wins. A split's gain is the two child scores minus
 /// the parent's.
+#[inline]
 pub(crate) fn newton_split_score(
     negative_gradient_sum: f64,
     hessian_total: f64,

@@ -14,6 +14,7 @@ use super::objective::Objective;
 /// fitted coefficients are the fixed point of an iteration over these scores,
 /// so reordering the reduction would move the fitted artifact. See the
 /// accumulation policy in [`crate::numeric`].
+#[inline]
 pub(crate) fn raw_score(
     theta: &[f64],
     design_row: &[f64],

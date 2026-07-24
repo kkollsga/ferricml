@@ -105,6 +105,7 @@ pub(crate) fn sigmoid_f32(value: f32) -> f32 {
 /// what that caller's fitted artifact is frozen against.
 ///
 /// [`Sum`]: std::iter::Sum
+#[inline]
 pub(crate) fn sum_in_order(terms: impl IntoIterator<Item = f64>) -> f64 {
     terms
         .into_iter()
