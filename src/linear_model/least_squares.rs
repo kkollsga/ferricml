@@ -139,18 +139,18 @@ fn preprocess(
         }
         target_mean /= total_weight;
     }
-    let mut matrix_values = Vec::with_capacity(rows * columns);
-    let mut target_values = Vec::with_capacity(rows);
+    let mut matrix = DMatrix::zeros(rows, columns);
+    let mut target_vector = DVector::zeros(rows);
     for (row_index, (row, &target)) in data.iter_rows().zip(targets).enumerate() {
         let weight_sqrt = sample_weight(sample_weights, row_index).sqrt();
         for (column, &value) in row.iter().enumerate() {
-            matrix_values.push(weight_sqrt * (f64::from(value) - feature_means[column]));
+            matrix[(row_index, column)] = weight_sqrt * (f64::from(value) - feature_means[column]);
         }
-        target_values.push(weight_sqrt * (f64::from(target) - target_mean));
+        target_vector[row_index] = weight_sqrt * (f64::from(target) - target_mean);
     }
     PreprocessedDense {
-        matrix: DMatrix::from_row_slice(rows, columns, &matrix_values),
-        targets: DVector::from_vec(target_values),
+        matrix,
+        targets: target_vector,
         feature_means,
         target_mean,
     }
