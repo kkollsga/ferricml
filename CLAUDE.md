@@ -24,7 +24,7 @@ inbox maps live in `dev-docs/README.md` and `inbox/README.md`;
 
 ## Architecture and feature boundaries
 
-- `src/data.rs` owns validated dense inputs and target types.
+- `src/data/` owns validated dense inputs and target types.
 - `src/api/` owns estimator vocabulary, typed errors, model swapping, and
   allocation-free batch contracts.
 - `src/ensemble/` is the public ensemble namespace. Private forest machinery
