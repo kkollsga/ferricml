@@ -67,6 +67,10 @@ and releases use [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   true rows, and `ConfusionMatrix::matthews_correlation`, which correlates
   expected and predicted labels over any number of classes and is undefined
   rather than zero when either side is constant.
+- `metrics::roc_curve`, `metrics::precision_recall_curve`, and
+  `metrics::average_precision_score`, which sweep the decision threshold over
+  the same tie-aware score ordering ROC AUC uses, so curve and scalar results
+  agree by construction.
 
 ### Fixed
 

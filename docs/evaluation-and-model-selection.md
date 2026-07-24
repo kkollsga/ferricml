@@ -13,6 +13,15 @@ Regression includes mean absolute error, mean squared error, root mean squared
 error, and R2. Calculations promote `f32` inputs to deterministic `f64`
 accumulation.
 
+`roc_curve`, `precision_recall_curve`, and `average_precision_score` sweep the
+decision threshold over the same score ordering ROC AUC uses, so the curves and
+the scalar scores agree by construction. Both curves are ordered by decreasing
+threshold, one point per distinct score however many rows share it; `RocCurve`
+additionally starts at the operating point that predicts nothing positive,
+whose threshold is above every score and is reported as `f32::INFINITY`.
+Average precision sums each threshold's precision weighted by the recall it
+gained, without interpolating between operating points.
+
 Every metric rejects empty or mismatched inputs. Binary metrics reject labels
 outside zero and one; probability metrics also reject non-finite values and
 values outside `0..=1`. Precision, recall, F1, R2, and ROC AUC return

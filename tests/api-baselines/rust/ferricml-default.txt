@@ -870,17 +870,34 @@ pub fn ferricml::metrics::ConfusionMatrix::new(&[u8], &[u8]) -> core::result::Re
 pub fn ferricml::metrics::ConfusionMatrix::precision(&self, impl core::convert::Into<ferricml::metrics::Averaging>) -> core::result::Result<f64, ferricml::metrics::MetricError>
 pub fn ferricml::metrics::ConfusionMatrix::recall(&self, impl core::convert::Into<ferricml::metrics::Averaging>) -> core::result::Result<f64, ferricml::metrics::MetricError>
 pub const fn ferricml::metrics::ConfusionMatrix::total(&self) -> u64
+pub struct ferricml::metrics::PrecisionRecallCurve
+impl ferricml::metrics::PrecisionRecallCurve
+pub fn ferricml::metrics::PrecisionRecallCurve::is_empty(&self) -> bool
+pub fn ferricml::metrics::PrecisionRecallCurve::len(&self) -> usize
+pub fn ferricml::metrics::PrecisionRecallCurve::precisions(&self) -> &[f64]
+pub fn ferricml::metrics::PrecisionRecallCurve::recalls(&self) -> &[f64]
+pub fn ferricml::metrics::PrecisionRecallCurve::thresholds(&self) -> &[f32]
+pub struct ferricml::metrics::RocCurve
+impl ferricml::metrics::RocCurve
+pub fn ferricml::metrics::RocCurve::false_positive_rates(&self) -> &[f64]
+pub fn ferricml::metrics::RocCurve::is_empty(&self) -> bool
+pub fn ferricml::metrics::RocCurve::len(&self) -> usize
+pub fn ferricml::metrics::RocCurve::thresholds(&self) -> &[f32]
+pub fn ferricml::metrics::RocCurve::true_positive_rates(&self) -> &[f64]
 pub fn ferricml::metrics::accuracy_score(&[u8], &[u8]) -> core::result::Result<f64, ferricml::metrics::MetricError>
+pub fn ferricml::metrics::average_precision_score(&[u8], &[f32]) -> core::result::Result<f64, ferricml::metrics::MetricError>
 pub fn ferricml::metrics::binary_confusion_matrix(&[u8], &[u8]) -> core::result::Result<ferricml::metrics::BinaryConfusionMatrix, ferricml::metrics::MetricError>
 pub fn ferricml::metrics::brier_score(&[u8], &[f32]) -> core::result::Result<f64, ferricml::metrics::MetricError>
 pub fn ferricml::metrics::f1_score(&[u8], &[u8]) -> core::result::Result<f64, ferricml::metrics::MetricError>
 pub fn ferricml::metrics::log_loss(&[u8], &[f32]) -> core::result::Result<f64, ferricml::metrics::MetricError>
 pub fn ferricml::metrics::mean_absolute_error(&[f32], &[f32]) -> core::result::Result<f64, ferricml::metrics::MetricError>
 pub fn ferricml::metrics::mean_squared_error(&[f32], &[f32]) -> core::result::Result<f64, ferricml::metrics::MetricError>
+pub fn ferricml::metrics::precision_recall_curve(&[u8], &[f32]) -> core::result::Result<ferricml::metrics::PrecisionRecallCurve, ferricml::metrics::MetricError>
 pub fn ferricml::metrics::precision_score(&[u8], &[u8]) -> core::result::Result<f64, ferricml::metrics::MetricError>
 pub fn ferricml::metrics::r2_score(&[f32], &[f32]) -> core::result::Result<f64, ferricml::metrics::MetricError>
 pub fn ferricml::metrics::recall_score(&[u8], &[u8]) -> core::result::Result<f64, ferricml::metrics::MetricError>
 pub fn ferricml::metrics::roc_auc_score(&[u8], &[f32]) -> core::result::Result<f64, ferricml::metrics::MetricError>
+pub fn ferricml::metrics::roc_curve(&[u8], &[f32]) -> core::result::Result<ferricml::metrics::RocCurve, ferricml::metrics::MetricError>
 pub fn ferricml::metrics::root_mean_squared_error(&[f32], &[f32]) -> core::result::Result<f64, ferricml::metrics::MetricError>
 pub mod ferricml::model_selection
 #[non_exhaustive] pub enum ferricml::model_selection::ClassificationScorer

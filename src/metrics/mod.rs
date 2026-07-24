@@ -6,6 +6,7 @@ use std::fmt;
 mod averaging;
 mod classification;
 mod confusion;
+mod ranking;
 mod regression;
 
 pub use averaging::{Average, Averaging, ZeroDivision};
@@ -14,6 +15,9 @@ pub use classification::{
     log_loss, precision_score, recall_score, roc_auc_score,
 };
 pub use confusion::{ClassCounts, ConfusionMatrix};
+pub use ranking::{
+    PrecisionRecallCurve, RocCurve, average_precision_score, precision_recall_curve, roc_curve,
+};
 pub use regression::{mean_absolute_error, mean_squared_error, r2_score, root_mean_squared_error};
 
 /// Errors produced while evaluating predictions.

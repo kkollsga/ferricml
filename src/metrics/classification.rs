@@ -150,27 +150,15 @@ pub fn roc_auc_score(expected: &[u8], scores: &[f32]) -> Result<f64, MetricError
         return Err(MetricError::Undefined);
     }
 
-    let mut order = (0..scores.len()).collect::<Vec<_>>();
-    order.sort_unstable_by(|&left, &right| {
-        scores[left]
-            .total_cmp(&scores[right])
-            .then_with(|| left.cmp(&right))
-    });
-
+    let order = super::ranking::ascending_score_order(scores);
     let mut positive_rank_sum = 0.0_f64;
-    let mut start = 0;
-    while start < order.len() {
-        let mut end = start + 1;
-        while end < order.len() && scores[order[end]] == scores[order[start]] {
-            end += 1;
-        }
+    for (start, end) in super::ranking::tie_groups(scores, &order) {
         let average_rank = (start + 1 + end) as f64 / 2.0;
         let tied_positives = order[start..end]
             .iter()
             .filter(|&&index| expected[index] == 1)
             .count();
         positive_rank_sum += average_rank * tied_positives as f64;
-        start = end;
     }
 
     let positives = positives as f64;
