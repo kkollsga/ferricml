@@ -683,6 +683,53 @@ mod tests {
         )
     }
 
+    #[test]
+    fn weighted_and_intercept_fit_bits_are_frozen() {
+        let data = DenseMatrix::new(
+            vec![0.0, 1.0, 2.0, 1.0, 1.0, 0.0, 3.0, 2.0, 4.0, 1.0, 5.0, 3.0],
+            6,
+            2,
+        )
+        .unwrap();
+        let targets = BinaryTargets::new(vec![0, 0, 0, 1, 1, 1]).unwrap();
+        let weights = SampleWeights::new(vec![1.0, 2.0, 0.5, 1.5, 3.0, 2.0]).unwrap();
+        let cases = [
+            (
+                false,
+                true,
+                [1_065_531_399, 1_055_929_814],
+                3_225_976_169,
+                5,
+            ),
+            (false, false, [1_052_252_415, 3_160_061_965], 0, 4),
+            (true, true, [1_067_926_424, 1_055_849_859], 3_228_471_089, 5),
+            (true, false, [1_057_229_716, 3_189_823_142], 0, 5),
+        ];
+        for (weighted, fit_intercept, expected_coefficients, expected_intercept, expected_iter) in
+            cases
+        {
+            let params = LogisticRegressionParams::default()
+                .with_fit_intercept(fit_intercept)
+                .with_max_iter(25);
+            let model = if weighted {
+                LogisticRegression::fit_weighted(&data.as_view(), &targets, &weights, params)
+                    .unwrap()
+            } else {
+                LogisticRegression::fit(&data.as_view(), &targets, params).unwrap()
+            };
+            assert_eq!(
+                model
+                    .coefficients()
+                    .iter()
+                    .map(|value| value.to_bits())
+                    .collect::<Vec<_>>(),
+                expected_coefficients
+            );
+            assert_eq!(model.intercept().to_bits(), expected_intercept);
+            assert_eq!(model.n_iter(), expected_iter);
+        }
+    }
+
     fn phase_zero_artifact() -> (LogisticRegression, [u8; 32], Vec<u8>) {
         let model = LogisticRegression {
             n_features_in: 2,

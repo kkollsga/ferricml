@@ -7,7 +7,8 @@ use ferricml::linear_model::{
 };
 use ferricml::metrics::{mean_squared_error, roc_auc_score};
 use ferricml::model_selection::{
-    HoldoutParams, KFold, RegressionScorer, TestSize, cross_validate_regressor, train_test_split,
+    HoldoutParams, KFold, RegressionScorer, TestSize, cross_validate_regressor,
+    stratified_train_test_split, train_test_split,
 };
 use ferricml::pipeline::Pipeline;
 use ferricml::preprocessing::{StandardScaler, StandardScalerParams};
@@ -23,6 +24,8 @@ const PAIRS: usize = 1_024;
 const METRIC_ROWS: usize = 4_096;
 const CV_ROWS: usize = 256;
 const CV_COLUMNS: usize = 12;
+const HOLDOUT_ROWS: usize = 1_000_000;
+const MANY_CLASS_ROWS: usize = 262_144;
 
 fn fixture(rows: usize, columns: usize) -> (DenseMatrix, RegressionTargets) {
     let mut state = 0x9e37_79b9_u32;
@@ -345,11 +348,88 @@ fn evaluation(c: &mut Criterion) {
     cross_validation.finish();
 }
 
+fn split_workloads(c: &mut Criterion) {
+    let four_class_labels = (0..HOLDOUT_ROWS)
+        .map(|index| (index % 4) as u8)
+        .collect::<Vec<_>>();
+    let many_class_labels = (0..MANY_CLASS_ROWS)
+        .map(|index| (index % 256) as u8)
+        .collect::<Vec<_>>();
+
+    let mut holdout = c.benchmark_group("ferricml_model_selection_v2_holdout_1000000");
+    holdout.throughput(Throughput::Elements(HOLDOUT_ROWS as u64));
+    for (name, params) in [
+        (
+            "ordinary_shuffled_20pct",
+            HoldoutParams::default()
+                .with_test_size(TestSize::Fraction(0.2))
+                .with_random_state(19),
+        ),
+        (
+            "ordinary_shuffled_80pct",
+            HoldoutParams::default()
+                .with_test_size(TestSize::Fraction(0.8))
+                .with_random_state(19),
+        ),
+        (
+            "ordinary_unshuffled_20pct",
+            HoldoutParams::default()
+                .with_test_size(TestSize::Fraction(0.2))
+                .with_shuffle(false),
+        ),
+    ] {
+        holdout.bench_function(BenchmarkId::from_parameter(name), |bencher| {
+            bencher.iter(|| {
+                black_box(train_test_split(black_box(HOLDOUT_ROWS), black_box(params)).unwrap());
+            });
+        });
+    }
+    holdout.bench_function(
+        BenchmarkId::from_parameter("stratified_4_class_20pct"),
+        |bencher| {
+            bencher.iter(|| {
+                black_box(
+                    stratified_train_test_split(
+                        black_box(&four_class_labels),
+                        black_box(
+                            HoldoutParams::default()
+                                .with_test_size(TestSize::Fraction(0.2))
+                                .with_random_state(19),
+                        ),
+                    )
+                    .unwrap(),
+                );
+            });
+        },
+    );
+    holdout.finish();
+
+    let mut many_class = c.benchmark_group("ferricml_model_selection_v2_stratified_262144");
+    many_class.throughput(Throughput::Elements(MANY_CLASS_ROWS as u64));
+    many_class.bench_function(BenchmarkId::from_parameter("256_class_50pct"), |bencher| {
+        bencher.iter(|| {
+            black_box(
+                stratified_train_test_split(
+                    black_box(&many_class_labels),
+                    black_box(
+                        HoldoutParams::default()
+                            .with_test_size(TestSize::Fraction(0.5))
+                            .with_random_state(19),
+                    ),
+                )
+                .unwrap(),
+            );
+        });
+    });
+    many_class.finish();
+}
+
 criterion_group!(
     benches,
     inference,
     training,
     logistic_and_scaler,
-    evaluation
+    evaluation,
+    split_workloads
 );
 criterion_main!(benches);

@@ -754,6 +754,80 @@ fn mix64(mut value: u64) -> u64 {
 mod tests {
     use super::*;
 
+    fn legacy_train_test_split(samples: usize, params: HoldoutParams) -> Result<Split, SplitError> {
+        let test_count = resolve_test_count(samples, params.test_size)?;
+        let mut order = (0..samples).collect::<Vec<_>>();
+        if params.shuffle {
+            stable_shuffle(&mut order, params.random_state);
+        }
+        let train_count = samples - test_count;
+        let mut train_indices = order[..train_count].to_vec();
+        let mut test_indices = order[train_count..].to_vec();
+        train_indices.sort_unstable();
+        test_indices.sort_unstable();
+        Ok(Split {
+            train_indices,
+            test_indices,
+        })
+    }
+
+    fn legacy_stratified_train_test_split(
+        labels: &[u8],
+        params: HoldoutParams,
+    ) -> Result<Split, SplitError> {
+        let samples = labels.len();
+        let test_count = resolve_test_count(samples, params.test_size)?;
+        let counts = class_counts(labels);
+        let classes = counts.iter().filter(|&&count| count > 0).count();
+        let train_count = samples - test_count;
+        if test_count < classes {
+            return Err(SplitError::PartitionTooSmallForClasses {
+                partition: SplitPartition::Test,
+                rows: test_count,
+                classes,
+            });
+        }
+        if train_count < classes {
+            return Err(SplitError::PartitionTooSmallForClasses {
+                partition: SplitPartition::Train,
+                rows: train_count,
+                classes,
+            });
+        }
+        for (label, &count) in counts.iter().enumerate().filter(|(_, count)| **count > 0) {
+            if count < 2 {
+                return Err(SplitError::InsufficientClassMembers {
+                    label: label as u8,
+                    count,
+                    partitions: 2,
+                });
+            }
+        }
+
+        let mut order = (0..samples).collect::<Vec<_>>();
+        if params.shuffle {
+            stable_shuffle(&mut order, params.random_state);
+        }
+        let mut buckets = (0..=u8::MAX).map(|_| Vec::new()).collect::<Vec<_>>();
+        for index in order {
+            buckets[labels[index] as usize].push(index);
+        }
+        let quotas = stratified_test_quotas(&counts, test_count);
+        let mut train_indices = Vec::with_capacity(train_count);
+        let mut test_indices = Vec::with_capacity(test_count);
+        for (label, bucket) in buckets.into_iter().enumerate() {
+            let test_start = bucket.len().saturating_sub(quotas[label]);
+            train_indices.extend_from_slice(&bucket[..test_start]);
+            test_indices.extend_from_slice(&bucket[test_start..]);
+        }
+        train_indices.sort_unstable();
+        test_indices.sort_unstable();
+        Ok(Split {
+            train_indices,
+            test_indices,
+        })
+    }
+
     #[test]
     fn custom_split_validates_complete_disjoint_coverage() {
         assert_eq!(
@@ -812,6 +886,27 @@ mod tests {
         .unwrap();
         assert_eq!(shuffled.train_indices(), &[0, 4, 5, 6, 7, 8, 9]);
         assert_eq!(shuffled.test_indices(), &[1, 2, 3]);
+    }
+
+    #[test]
+    fn holdout_membership_matches_legacy_for_all_small_partitions() {
+        for samples in 2..=128 {
+            for test_count in 1..samples {
+                for shuffle in [false, true] {
+                    for seed in [0, 1, 42, u64::MAX] {
+                        let params = HoldoutParams::default()
+                            .with_test_size(TestSize::Count(test_count))
+                            .with_shuffle(shuffle)
+                            .with_random_state(seed);
+                        assert_eq!(
+                            train_test_split(samples, params),
+                            legacy_train_test_split(samples, params),
+                            "samples={samples}, test={test_count}, shuffle={shuffle}, seed={seed}"
+                        );
+                    }
+                }
+            }
+        }
     }
 
     #[test]
@@ -945,6 +1040,57 @@ mod tests {
                     .iter()
                     .any(|&index| labels[index] == label)
             );
+        }
+    }
+
+    #[test]
+    fn stratified_holdout_membership_matches_legacy_across_class_shapes() {
+        let mut cases = vec![
+            (0_u8..4)
+                .flat_map(|label| std::iter::repeat_n(label, 8))
+                .collect::<Vec<_>>(),
+            [2_usize, 3, 7, 11]
+                .into_iter()
+                .enumerate()
+                .flat_map(|(label, count)| std::iter::repeat_n(label as u8, count))
+                .collect(),
+            [(0_u8, 5_usize), (17, 9), (255, 4)]
+                .into_iter()
+                .flat_map(|(label, count)| std::iter::repeat_n(label, count))
+                .collect(),
+        ];
+        cases.push(
+            (0_u8..=254)
+                .flat_map(|label| std::iter::repeat_n(label, 2))
+                .collect(),
+        );
+        cases.push(
+            (0_u8..=u8::MAX)
+                .flat_map(|label| std::iter::repeat_n(label, 2))
+                .collect(),
+        );
+
+        for labels in cases {
+            let classes = class_counts(&labels)
+                .into_iter()
+                .filter(|&count| count > 0)
+                .count();
+            for test_count in classes..=labels.len() - classes {
+                for shuffle in [false, true] {
+                    for seed in [0, 1, 42, u64::MAX] {
+                        let params = HoldoutParams::default()
+                            .with_test_size(TestSize::Count(test_count))
+                            .with_shuffle(shuffle)
+                            .with_random_state(seed);
+                        assert_eq!(
+                            stratified_train_test_split(&labels, params),
+                            legacy_stratified_train_test_split(&labels, params),
+                            "rows={}, classes={classes}, test={test_count}, shuffle={shuffle}, seed={seed}",
+                            labels.len()
+                        );
+                    }
+                }
+            }
         }
     }
 

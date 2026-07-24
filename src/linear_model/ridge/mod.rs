@@ -332,6 +332,42 @@ mod tests {
     }
 
     #[test]
+    fn weighted_and_intercept_fit_bits_are_frozen() {
+        let data = DenseMatrix::new(
+            vec![0.0, 1.0, 2.0, 1.0, 1.0, 0.0, 3.0, 2.0, 4.0, 1.0, 5.0, 3.0],
+            6,
+            2,
+        )
+        .unwrap();
+        let targets = RegressionTargets::new(vec![0.5, 1.5, 1.0, 3.5, 4.0, 5.5]).unwrap();
+        let weights = SampleWeights::new(vec![1.0, 2.0, 0.5, 1.5, 3.0, 2.0]).unwrap();
+
+        let cases = [
+            (false, true, [1_062_563_850, 1_052_534_438], 1_035_716_202),
+            (false, false, [1_062_832_872, 1_053_127_666], 0),
+            (true, true, [1_063_562_964, 1_052_156_503], 3_181_533_034),
+            (true, false, [1_063_313_837, 1_051_753_503], 0),
+        ];
+        for (weighted, fit_intercept, expected_coefficients, expected_intercept) in cases {
+            let params = RidgeParams::default().with_fit_intercept(fit_intercept);
+            let model = if weighted {
+                Ridge::fit_weighted(&data.as_view(), &targets, &weights, params).unwrap()
+            } else {
+                Ridge::fit(&data.as_view(), &targets, params).unwrap()
+            };
+            assert_eq!(
+                model
+                    .coefficients()
+                    .iter()
+                    .map(|value| value.to_bits())
+                    .collect::<Vec<_>>(),
+                expected_coefficients
+            );
+            assert_eq!(model.intercept().to_bits(), expected_intercept);
+        }
+    }
+
+    #[test]
     fn fits_default_ridge_and_excludes_intercept_from_penalty() {
         let data = DenseMatrix::new(vec![0.0, 0.0, 1.0, 0.0, 0.0, 1.0, 2.0, 3.0], 4, 2).unwrap();
         let targets = RegressionTargets::new(vec![3.0, 4.0, 5.0, 11.0]).unwrap();

@@ -385,6 +385,14 @@ mod tests {
         DenseMatrix::new(vec![1.0, 2.0, 5.0, 3.0, 4.0, 5.0, 5.0, 6.0, 5.0], 3, 3).unwrap()
     }
 
+    fn legacy_transform(scaler: &StandardScaler, data: &MatrixView<'_>) -> Vec<f32> {
+        data.as_slice()
+            .iter()
+            .enumerate()
+            .map(|(index, &value)| scaler.transformed_value(value, index % data.columns()))
+            .collect()
+    }
+
     #[test]
     fn fits_population_statistics_and_constant_scale() {
         let scaler =
@@ -413,6 +421,35 @@ mod tests {
             first.transform(&matrix().as_view()).unwrap().get(0, 0),
             Some(1.0 / 2.0_f32.sqrt())
         );
+    }
+
+    #[test]
+    fn every_transform_mode_matches_the_legacy_bit_pattern() {
+        let data = matrix();
+        for with_mean in [false, true] {
+            for with_std in [false, true] {
+                let scaler = StandardScaler::fit(
+                    &data.as_view(),
+                    StandardScalerParams::default()
+                        .with_mean(with_mean)
+                        .with_std(with_std),
+                )
+                .unwrap();
+                let expected = legacy_transform(&scaler, &data.as_view());
+                let actual = scaler.transform(&data.as_view()).unwrap();
+                assert_eq!(
+                    actual
+                        .as_slice()
+                        .iter()
+                        .map(|value| value.to_bits())
+                        .collect::<Vec<_>>(),
+                    expected
+                        .iter()
+                        .map(|value| value.to_bits())
+                        .collect::<Vec<_>>()
+                );
+            }
+        }
     }
 
     #[test]
@@ -448,6 +485,23 @@ mod tests {
             ModelError::NonFiniteTransform { row: 0, column: 0 }
         );
         assert_eq!(output, [73.0]);
+    }
+
+    #[test]
+    fn overflow_reports_the_first_row_major_location_without_partial_writes() {
+        let fitted =
+            DenseMatrix::new(vec![1.0, 1.0, 1.0 + f32::EPSILON, 1.0 + f32::EPSILON], 2, 2).unwrap();
+        let scaler =
+            StandardScaler::fit(&fitted.as_view(), StandardScalerParams::default()).unwrap();
+        let extreme = DenseMatrix::new(vec![1.0, 1.0, 1.0, f32::MAX], 2, 2).unwrap();
+        let mut output = [73.0; 4];
+        assert_eq!(
+            scaler
+                .transform_into(&extreme.as_view(), &mut output)
+                .unwrap_err(),
+            ModelError::NonFiniteTransform { row: 1, column: 1 }
+        );
+        assert_eq!(output, [73.0; 4]);
     }
 
     #[test]
