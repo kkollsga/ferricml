@@ -1,7 +1,7 @@
 use super::parameters::{MaxFeatures, RandomForestClassifierParams, RandomForestRegressorParams};
 use super::training::{Classification, ForestConfig, Regression, train_forest};
 use super::tree::{FEATURE_MASK, PackedTree};
-use crate::api::{Classifier, Estimator, HasParams, ModelError, Regressor};
+use crate::api::{Classifier, Estimator, HasParams, ModelError, Regressor, validate_prediction};
 use crate::data::{BinaryTargets, MatrixView, RegressionTargets};
 
 /// A random-forest binary classifier.
@@ -359,7 +359,7 @@ impl RandomForestRegressor {
     /// Predicts one regression value for one sample.
     pub fn predict_one(&self, row: &[f32]) -> Result<f32, ModelError> {
         check_row(row, self.n_features_in)?;
-        Ok(mean_tree_prediction(&self.trees, row))
+        validate_prediction(mean_tree_prediction(&self.trees, row), 0)
     }
 
     /// Predicts one value per row, allocating the output vector.
@@ -376,8 +376,10 @@ impl RandomForestRegressor {
     ) -> Result<(), ModelError> {
         check_prediction_data(data, output.len(), data.rows(), self.n_features_in)?;
         for (index, slot) in output.iter_mut().enumerate() {
-            *slot =
-                mean_tree_prediction(&self.trees, data.row(index).expect("validated row index"));
+            *slot = validate_prediction(
+                mean_tree_prediction(&self.trees, data.row(index).expect("validated row index")),
+                index,
+            )?;
         }
         Ok(())
     }

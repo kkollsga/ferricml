@@ -7,6 +7,12 @@ and releases use [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Fixed
+
+- Report `ModelError::NonFinitePrediction` from `RandomForestRegressor` instead
+  of returning a non-finite averaged prediction, matching every other
+  regressor.
+
 ## [0.1.2] - 2026-07-24
 
 ### Added

@@ -608,3 +608,61 @@ fn scalar_prediction_rejects_non_finite_features_and_outputs() {
         Err(ModelError::NonFiniteFeature { row: 0, column: 0 })
     );
 }
+
+#[test]
+fn every_regressor_reports_a_non_finite_prediction_instead_of_returning_it() {
+    // Averaging extreme leaf values overflows the f32 accumulator, which is
+    // the forest's route to a non-finite prediction from finite inputs. Every
+    // regressor must surface that as an error rather than an infinity.
+    let data = matrix(&[0.0, 1.0, 2.0, 3.0], 4, 1);
+    let extreme = RegressionTargets::new(vec![f32::MAX; 4]).unwrap();
+    let forest = RandomForestRegressor::fit(
+        &data.as_view(),
+        &extreme,
+        RandomForestRegressorParams::default()
+            .with_n_estimators(4)
+            .with_bootstrap(false),
+    )
+    .unwrap();
+    assert_eq!(
+        forest.predict_one(&[1.0]),
+        Err(ModelError::NonFinitePrediction { row: 0 })
+    );
+    assert_eq!(
+        forest.predict(&data.as_view()),
+        Err(ModelError::NonFinitePrediction { row: 0 })
+    );
+    let mut output = [7.0; 4];
+    assert_eq!(
+        forest.predict_into(&data.as_view(), &mut output),
+        Err(ModelError::NonFinitePrediction { row: 0 })
+    );
+    assert_eq!(
+        Regressor::predict(&forest, &data.as_view()),
+        Err(ModelError::NonFinitePrediction { row: 0 })
+    );
+
+    let erased: AnyRegressor = forest.into();
+    assert_eq!(
+        erased.predict(&data.as_view()),
+        Err(ModelError::NonFinitePrediction { row: 0 })
+    );
+
+    // A finitely-predicting forest keeps returning values, so the new check
+    // rejects only the overflowing case.
+    let ordinary = RandomForestRegressor::fit(
+        &data.as_view(),
+        &RegressionTargets::new(vec![0.0, 1.0, 4.0, 9.0]).unwrap(),
+        RandomForestRegressorParams::default()
+            .with_n_estimators(4)
+            .with_bootstrap(false),
+    )
+    .unwrap();
+    assert!(
+        ordinary
+            .predict(&data.as_view())
+            .unwrap()
+            .iter()
+            .all(|value| value.is_finite())
+    );
+}
