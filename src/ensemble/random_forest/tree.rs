@@ -1,4 +1,5 @@
 use crate::api::ModelError;
+use crate::artifact::{ArtifactError, LogicalTreeNode};
 
 pub(super) const LEAF_FEATURE: u32 = u32::MAX;
 pub(super) const NO_CHILD: u32 = u32::MAX;
@@ -174,6 +175,109 @@ impl PackedTree {
     }
 }
 
+/// Conversion between the private inference layout and the stable logical
+/// tree records used by artifacts.
+///
+/// The packed layout is deliberately not a serialization format: it stores
+/// leaves inline in their parent's child slots as flagged `f32` bits, and it
+/// keeps only branch nodes in `nodes`. Encoding therefore *synthesizes* the
+/// leaf records, and decoding never trusts the logical bytes — it rebuilds
+/// [`BuildNode`]s and re-runs the same topology validator that fitting uses.
+// The consumer is the forest-regressor artifact, which lands in the next
+// commit; the conversion is proven here on its own.
+#[allow(dead_code)]
+impl PackedTree {
+    /// Expands the packed tree into pre-order logical records.
+    ///
+    /// The result satisfies the logical-tree contract: node `0` is the root,
+    /// a branch's left child is always the next record, and a tree with `L`
+    /// leaves has exactly `2L - 1` records. A `root_leaf` tree becomes the
+    /// single-node logical tree.
+    pub(super) fn to_logical_nodes(&self) -> Vec<LogicalTreeNode> {
+        if let Some(value) = self.root_leaf {
+            return vec![LogicalTreeNode::Leaf { value }];
+        }
+        // Every branch contributes one record and every branch has exactly two
+        // children, so a tree with `b` branches has `b + 1` leaves.
+        let mut nodes = Vec::with_capacity(self.nodes.len() * 2 + 1);
+        let mut pending = vec![Emit::Branch(0)];
+        while let Some(task) = pending.pop() {
+            match task {
+                Emit::Leaf(value) => nodes.push(LogicalTreeNode::Leaf { value }),
+                Emit::AttachRight(parent) => {
+                    let right = u32::try_from(nodes.len()).expect("bounded node count");
+                    match &mut nodes[parent] {
+                        LogicalTreeNode::Branch { right: slot, .. } => *slot = right,
+                        LogicalTreeNode::Leaf { .. } => unreachable!("branch record"),
+                    }
+                }
+                Emit::Branch(packed_index) => {
+                    let node = self.nodes[packed_index];
+                    let index = nodes.len();
+                    let left = u32::try_from(index + 1).expect("bounded node count");
+                    nodes.push(LogicalTreeNode::Branch {
+                        feature: node.feature_and_flags & FEATURE_MASK,
+                        threshold: node.threshold,
+                        left,
+                        // Patched once the left subtree has been emitted.
+                        right: 0,
+                    });
+                    // Popped in reverse: left subtree, then the right index
+                    // patch, then the right subtree.
+                    pending.push(child(node.right, node.feature_and_flags & RIGHT_IS_LEAF));
+                    pending.push(Emit::AttachRight(index));
+                    pending.push(child(node.left, node.feature_and_flags & LEFT_IS_LEAF));
+                }
+            }
+        }
+        nodes
+    }
+
+    /// Rebuilds a packed tree from validated logical records.
+    ///
+    /// Decoded records are turned back into [`BuildNode`]s and handed to
+    /// [`PackedTree::from_build_nodes`], so an artifact goes through exactly
+    /// the topology, feature-width, and finiteness checks that a freshly
+    /// fitted tree does.
+    pub(super) fn from_logical_nodes(
+        nodes: &[LogicalTreeNode],
+        n_features: usize,
+    ) -> Result<Self, ArtifactError> {
+        let build = nodes
+            .iter()
+            .map(|&node| match node {
+                LogicalTreeNode::Leaf { value } => BuildNode::leaf(value),
+                LogicalTreeNode::Branch {
+                    feature,
+                    threshold,
+                    left,
+                    right,
+                } => BuildNode {
+                    feature,
+                    left,
+                    right,
+                    payload: threshold,
+                },
+            })
+            .collect();
+        Self::from_build_nodes(build, n_features).map_err(|_| ArtifactError::InvalidPayload)
+    }
+}
+
+enum Emit {
+    Branch(usize),
+    Leaf(f32),
+    AttachRight(usize),
+}
+
+fn child(value: u32, leaf_flag: u32) -> Emit {
+    if leaf_flag != 0 {
+        Emit::Leaf(f32::from_bits(value))
+    } else {
+        Emit::Branch(value as usize)
+    }
+}
+
 fn child_is_valid(value: u32, leaf_flag: u32, node_count: usize) -> bool {
     if leaf_flag != 0 {
         f32::from_bits(value).is_finite()
@@ -265,5 +369,183 @@ mod tests {
             PackedTree::from_build_nodes(cycle, 1),
             Err(ModelError::TreeTooLarge)
         );
+    }
+
+    fn branch(feature: u32, threshold: f32, left: u32, right: u32) -> BuildNode {
+        BuildNode {
+            feature,
+            left,
+            right,
+            payload: threshold,
+        }
+    }
+
+    /// Pre-order build nodes for
+    /// `f0 <= 1 ? (f1 <= 2 ? -1 : 3) : (f0 <= 5 ? 7 : (f1 <= 0 ? 11 : 13))`.
+    fn mixed_depth_build() -> Vec<BuildNode> {
+        vec![
+            branch(0, 1.0, 1, 4),
+            branch(1, 2.0, 2, 3),
+            BuildNode::leaf(-1.0),
+            BuildNode::leaf(3.0),
+            branch(0, 5.0, 5, 6),
+            BuildNode::leaf(7.0),
+            branch(1, 0.0, 7, 8),
+            BuildNode::leaf(11.0),
+            BuildNode::leaf(13.0),
+        ]
+    }
+
+    #[test]
+    fn logical_records_synthesize_inline_leaves_and_round_trip_to_the_same_tree() {
+        let build = mixed_depth_build();
+        let tree = PackedTree::from_build_nodes(build.clone(), 2).unwrap();
+        // Four branches are stored; the five leaves live inline in flag bits.
+        assert_eq!(tree.nodes.len(), 4);
+
+        let logical = tree.to_logical_nodes();
+        assert_eq!(logical.len(), build.len());
+        assert_eq!(
+            logical
+                .iter()
+                .filter(|node| matches!(node, LogicalTreeNode::Leaf { .. }))
+                .count(),
+            5
+        );
+        for (index, (&logical_node, build_node)) in logical.iter().zip(&build).enumerate() {
+            let expected = if build_node.is_leaf() {
+                LogicalTreeNode::Leaf {
+                    value: build_node.value(),
+                }
+            } else {
+                LogicalTreeNode::Branch {
+                    feature: build_node.feature,
+                    threshold: build_node.threshold(),
+                    left: build_node.left,
+                    right: build_node.right,
+                }
+            };
+            assert_eq!(logical_node, expected, "record {index}");
+        }
+
+        let restored = PackedTree::from_logical_nodes(&logical, 2).unwrap();
+        assert_eq!(restored, tree);
+        assert_eq!(restored.to_logical_nodes(), logical);
+        for row in [[0.0, 0.0], [0.0, 9.0], [3.0, 0.0], [9.0, -1.0], [9.0, 9.0]] {
+            assert_eq!(restored.predict(&row), tree.predict(&row));
+        }
+    }
+
+    #[test]
+    fn a_root_leaf_tree_maps_to_the_one_node_logical_tree() {
+        let tree = PackedTree::from_build_nodes(vec![BuildNode::leaf(2.5)], 3).unwrap();
+        assert!(tree.nodes.is_empty());
+        let logical = tree.to_logical_nodes();
+        assert_eq!(logical, vec![LogicalTreeNode::Leaf { value: 2.5 }]);
+        let restored = PackedTree::from_logical_nodes(&logical, 3).unwrap();
+        assert_eq!(restored.root_leaf, Some(2.5));
+        assert_eq!(restored, tree);
+    }
+
+    #[test]
+    fn logical_records_are_revalidated_instead_of_trusted() {
+        let valid = PackedTree::from_build_nodes(mixed_depth_build(), 2)
+            .unwrap()
+            .to_logical_nodes();
+        assert!(PackedTree::from_logical_nodes(&valid, 2).is_ok());
+
+        let cases: [(&str, Vec<LogicalTreeNode>, usize); 5] = [
+            ("empty", Vec::new(), 2),
+            (
+                "feature beyond the fitted width",
+                vec![
+                    LogicalTreeNode::Branch {
+                        feature: 2,
+                        threshold: 1.0,
+                        left: 1,
+                        right: 2,
+                    },
+                    LogicalTreeNode::Leaf { value: 0.0 },
+                    LogicalTreeNode::Leaf { value: 1.0 },
+                ],
+                2,
+            ),
+            (
+                "leaf sentinel smuggled in as a branch feature",
+                vec![
+                    LogicalTreeNode::Branch {
+                        feature: LEAF_FEATURE,
+                        threshold: 1.0,
+                        left: 1,
+                        right: 2,
+                    },
+                    LogicalTreeNode::Leaf { value: 0.0 },
+                    LogicalTreeNode::Leaf { value: 1.0 },
+                ],
+                2,
+            ),
+            (
+                "non-finite leaf value",
+                vec![
+                    LogicalTreeNode::Branch {
+                        feature: 0,
+                        threshold: 1.0,
+                        left: 1,
+                        right: 2,
+                    },
+                    LogicalTreeNode::Leaf {
+                        value: f32::INFINITY,
+                    },
+                    LogicalTreeNode::Leaf { value: 1.0 },
+                ],
+                2,
+            ),
+            (
+                "unreachable trailing record",
+                vec![
+                    LogicalTreeNode::Branch {
+                        feature: 0,
+                        threshold: 1.0,
+                        left: 1,
+                        right: 2,
+                    },
+                    LogicalTreeNode::Leaf { value: 0.0 },
+                    LogicalTreeNode::Leaf { value: 1.0 },
+                    LogicalTreeNode::Leaf { value: 2.0 },
+                ],
+                2,
+            ),
+        ];
+        for (name, nodes, n_features) in cases {
+            assert_eq!(
+                PackedTree::from_logical_nodes(&nodes, n_features),
+                Err(ArtifactError::InvalidPayload),
+                "{name} was accepted"
+            );
+        }
+        assert_eq!(
+            PackedTree::from_logical_nodes(&valid, 0),
+            Err(ArtifactError::InvalidPayload)
+        );
+    }
+
+    #[test]
+    fn deep_left_spines_convert_without_recursing() {
+        let depth = 4_096;
+        let mut build = Vec::with_capacity(depth * 2 + 1);
+        for index in 0..depth {
+            build.push(branch(
+                0,
+                0.5,
+                (index + 1) as u32,
+                (depth * 2 - index) as u32,
+            ));
+        }
+        build.push(BuildNode::leaf(7.0));
+        build.extend((0..depth).map(|_| BuildNode::leaf(-1.0)));
+        let tree = PackedTree::from_build_nodes(build, 1).unwrap();
+        let logical = tree.to_logical_nodes();
+        assert_eq!(logical.len(), depth * 2 + 1);
+        assert_eq!(PackedTree::from_logical_nodes(&logical, 1).unwrap(), tree);
     }
 }
