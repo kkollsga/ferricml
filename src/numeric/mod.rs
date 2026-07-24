@@ -89,16 +89,26 @@ pub(crate) fn sigmoid_f32(value: f32) -> f32 {
 ///
 /// This is the crate's one reduction primitive over an unbounded number of
 /// terms, and it exists to make rule 2 of the accumulation policy above
-/// checkable rather than conventional: the accumulator starts at `0.0` and each
-/// term is added exactly once, in sequence order. Nothing here reassociates,
-/// vectorizes, or compensates, so two runs over the same terms in the same
-/// order produce the same bits on the same target.
+/// checkable rather than conventional: each term is added exactly once, in
+/// sequence order. Nothing here reassociates, vectorizes, or compensates, so
+/// two runs over the same terms in the same order produce the same bits on the
+/// same target.
+///
+/// The accumulator starts at `-0.0`, which is IEEE addition's true identity:
+/// `x + -0.0` is `x` for every `x` including `-0.0`, whereas seeding with
+/// `+0.0` would turn a sum of negative zeros into a positive zero and change
+/// the bits of any fitted value derived from it. `f64`'s own [`Sum`] uses the
+/// same seed, so this helper is a bit-for-bit substitute for it.
 ///
 /// A caller that needs a different order sorts or indexes its terms before
 /// calling; the ordering decision belongs to the caller, because it is part of
 /// what that caller's fitted artifact is frozen against.
+///
+/// [`Sum`]: std::iter::Sum
 pub(crate) fn sum_in_order(terms: impl IntoIterator<Item = f64>) -> f64 {
-    terms.into_iter().fold(0.0, |total, term: f64| total + term)
+    terms
+        .into_iter()
+        .fold(-0.0, |total, term: f64| total + term)
 }
 
 /// Natural logarithm of a sum of exponentials, without forming the sum.
@@ -223,7 +233,7 @@ mod tests {
         let expected = terms
             .iter()
             .copied()
-            .fold(0.0_f64, |total, term| total + term);
+            .fold(-0.0_f64, |total, term| total + term);
         assert_eq!(
             sum_in_order(terms.iter().copied()).to_bits(),
             expected.to_bits()
@@ -232,8 +242,31 @@ mod tests {
             sum_in_order(terms.iter().copied()).to_bits(),
             sum_in_order(terms.iter().copied()).to_bits()
         );
+    }
+
+    #[test]
+    fn sum_in_order_is_a_bit_for_bit_substitute_for_the_standard_sum() {
+        // Seeding the accumulator with `+0.0` instead of IEEE addition's true
+        // identity would silently flip the sign of a zero result, and a fitted
+        // `-0.0` is a different artifact byte pattern from `0.0`.
+        let cases: [Vec<f64>; 7] = [
+            vec![],
+            vec![-0.0],
+            vec![-0.0; 8],
+            vec![0.0; 8],
+            vec![0.0, -0.0],
+            vec![-0.0, 0.0],
+            vec![1.0, -1.0, 2.5, -2.5],
+        ];
+        for terms in &cases {
+            assert_eq!(
+                sum_in_order(terms.iter().copied()).to_bits(),
+                terms.iter().copied().sum::<f64>().to_bits(),
+                "sum of {terms:?}"
+            );
+        }
+        assert!(sum_in_order(std::iter::empty()).is_sign_negative());
         assert_eq!(sum_in_order(std::iter::empty()), 0.0);
-        assert!(sum_in_order(std::iter::empty()).is_sign_positive());
     }
 
     #[test]

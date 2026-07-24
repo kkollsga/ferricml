@@ -557,6 +557,29 @@ mod tests {
     }
 
     #[test]
+    fn an_all_negative_zero_target_keeps_its_negatively_signed_baseline() {
+        // The baseline is a reduction over the targets, and IEEE addition's
+        // identity is `-0.0`, not `+0.0`. A reduction seeded with the wrong
+        // one returns `0.0` here, which is a different artifact byte pattern
+        // for a model that is otherwise unchanged.
+        let data = DenseMatrix::new((0..8).map(|value| value as f32).collect(), 8, 1).unwrap();
+        for (targets, expected) in [
+            (vec![-0.0_f32; 8], (-0.0_f32).to_bits()),
+            (vec![0.0_f32; 8], 0.0_f32.to_bits()),
+            (
+                vec![0.0_f32, -0.0, 0.0, -0.0, 0.0, -0.0, 0.0, -0.0],
+                0.0_f32.to_bits(),
+            ),
+        ] {
+            let targets = RegressionTargets::new(targets).unwrap();
+            let model =
+                HistGradientBoostingRegressor::fit(&data.as_view(), &targets, one_tree_params())
+                    .unwrap();
+            assert_eq!(model.baseline().to_bits(), expected);
+        }
+    }
+
+    #[test]
     fn one_boosting_update_matches_baseline_residual_and_leaf_values() {
         let (data, targets) = piecewise();
         let model =
