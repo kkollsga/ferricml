@@ -176,6 +176,7 @@ impl LogisticRegression {
         let mut theta = vec![0.0_f64; parameter_count];
         let mut gradient = vec![0.0_f64; parameter_count];
         let mut hessian = vec![0.0_f64; parameter_count * parameter_count];
+        let mut update = vec![0.0_f64; parameter_count];
         let lambda = 1.0 / f64::from(params.c);
         let mut iterations = 0;
         for iteration in 0..params.max_iter {
@@ -197,10 +198,11 @@ impl LogisticRegression {
                 for left in 0..parameter_count {
                     let left_value = design_row[left];
                     gradient[left] += residual * left_value;
-                    for right in 0..=left {
-                        let right_value = design_row[right];
-                        hessian[left * parameter_count + right] +=
-                            curvature * left_value * right_value;
+                    let scaled_left = curvature * left_value;
+                    let hessian_row =
+                        &mut hessian[left * parameter_count..left * parameter_count + left + 1];
+                    for (slot, &right_value) in hessian_row.iter_mut().zip(design_row) {
+                        *slot += scaled_left * right_value;
                     }
                 }
             }
@@ -209,17 +211,11 @@ impl LogisticRegression {
                 gradient[column] += scaled_penalty * theta[column];
                 hessian[column * parameter_count + column] += scaled_penalty;
             }
-            for left in 0..parameter_count {
-                for right in 0..left {
-                    hessian[right * parameter_count + left] =
-                        hessian[left * parameter_count + right];
-                }
-            }
-            let update = solve_positive_definite(&mut hessian, &gradient, parameter_count)?;
+            solve_positive_definite(&mut hessian, &gradient, &mut update, parameter_count)?;
             let max_update = update
                 .iter()
                 .fold(0.0_f64, |max, value| max.max(value.abs()));
-            for (value, update) in theta.iter_mut().zip(update) {
+            for (value, &update) in theta.iter_mut().zip(&update) {
                 *value -= update;
             }
             iterations = iteration + 1;
@@ -618,8 +614,9 @@ fn validate_feature_width(data: &MatrixView<'_>, features: usize) -> Result<(), 
 fn solve_positive_definite(
     matrix: &mut [f64],
     right: &[f64],
+    solution: &mut [f64],
     size: usize,
-) -> Result<Vec<f64>, ModelError> {
+) -> Result<(), ModelError> {
     for row in 0..size {
         for column in 0..=row {
             let mut value = matrix[row * size + column];
@@ -636,7 +633,7 @@ fn solve_positive_definite(
             }
         }
     }
-    let mut solution = right.to_vec();
+    solution.copy_from_slice(right);
     for row in 0..size {
         for column in 0..row {
             solution[row] -= matrix[row * size + column] * solution[column];
@@ -649,7 +646,7 @@ fn solve_positive_definite(
         }
         solution[row] /= matrix[row * size + row];
     }
-    Ok(solution)
+    Ok(())
 }
 
 fn sigmoid_f64(value: f64) -> f64 {
