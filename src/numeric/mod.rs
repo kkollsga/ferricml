@@ -44,6 +44,13 @@
 //!    value.** Probabilities are clamped into `[0, 1]` by the routine that
 //!    computes them, not by their consumer, so every downstream metric and
 //!    artifact observes the same value.
+//! 6. **One seeded generator serves the crate.** Reproducible randomness comes
+//!    from [`OwnedRng`]; a module must not define its own generator, because a
+//!    seed has to mean the same thing in every estimator and in inspection.
+
+mod rng;
+
+pub(crate) use rng::{OwnedRng, derive_tree_seed};
 
 /// Logistic sigmoid over `f64`.
 ///

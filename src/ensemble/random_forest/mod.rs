@@ -2,7 +2,6 @@
 
 mod model;
 mod parameters;
-mod rng;
 mod training;
 mod tree;
 

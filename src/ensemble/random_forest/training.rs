@@ -1,8 +1,8 @@
 use super::parameters::{MaxFeatures, RandomForestClassifierParams, RandomForestRegressorParams};
-use super::rng::{OwnedRng, derive_tree_seed};
 use super::tree::{BuildNode, NO_CHILD, PackedTree};
 use crate::api::ModelError;
 use crate::data::MatrixView;
+use crate::numeric::{OwnedRng, derive_tree_seed};
 use std::thread;
 
 #[derive(Clone, Debug, PartialEq, Eq)]

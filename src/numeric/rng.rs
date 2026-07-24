@@ -1,0 +1,185 @@
+//! The crate's shared deterministic pseudo-random source.
+//!
+//! One SplitMix64 generator serves every module that needs reproducible
+//! randomness — bootstrap sampling and feature subsetting in the forests
+//! today, permutation-based inspection next — so a seed means the same thing
+//! everywhere and no consumer has to reach into another module's internals.
+//!
+//! The stream is part of FerricML's determinism contract: for a given seed the
+//! sequence of `next_u64` values, and therefore every fitted artifact derived
+//! from it, is frozen. Changing the mixing constants or the rejection bound
+//! would change fitted models, so those bytes are covered by a frozen-stream
+//! test below as well as by the forests' packed fingerprints.
+
+/// SplitMix64 with rejection-sampled bounded integers.
+pub(crate) struct OwnedRng {
+    state: u64,
+}
+
+impl OwnedRng {
+    pub(crate) fn new(seed: u64) -> Self {
+        Self { state: seed }
+    }
+
+    pub(crate) fn next_u64(&mut self) -> u64 {
+        self.state = self.state.wrapping_add(0x9e37_79b9_7f4a_7c15);
+        mix64(self.state)
+    }
+
+    pub(crate) fn index(&mut self, upper: usize) -> usize {
+        debug_assert!(upper > 0);
+        let bound = upper as u64;
+        let reject_below = bound.wrapping_neg() % bound;
+        loop {
+            let value = self.next_u64();
+            if value >= reject_below {
+                return (value % bound) as usize;
+            }
+        }
+    }
+}
+
+fn mix64(mut value: u64) -> u64 {
+    value = (value ^ (value >> 30)).wrapping_mul(0xbf58_476d_1ce4_e5b9);
+    value = (value ^ (value >> 27)).wrapping_mul(0x94d0_49bb_1331_11eb);
+    value ^ (value >> 31)
+}
+
+pub(crate) fn derive_tree_seed(global_seed: u64, tree_index: u64) -> u64 {
+    mix64(global_seed ^ tree_index.wrapping_mul(0xd1b5_4a32_d192_ed03))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Streams captured from the pre-promotion implementation in
+    /// `ensemble::random_forest::rng`. They are the proof that moving the
+    /// generator into `numeric` did not perturb a single fitted model.
+    #[test]
+    fn stream_matches_the_pre_promotion_forest_generator() {
+        let expected: [(u64, [u64; 8]); 4] = [
+            (
+                0,
+                [
+                    16294208416658607535,
+                    7960286522194355700,
+                    487617019471545679,
+                    17909611376780542444,
+                    1961750202426094747,
+                    6038094601263162090,
+                    3207296026000306913,
+                    14232521865600346940,
+                ],
+            ),
+            (
+                1,
+                [
+                    10451216379200822465,
+                    13757245211066428519,
+                    17911839290282890590,
+                    8196980753821780235,
+                    8195237237126968761,
+                    14072917602864530048,
+                    16184226688143867045,
+                    9648886400068060533,
+                ],
+            ),
+            (
+                42,
+                [
+                    13679457532755275413,
+                    2949826092126892291,
+                    5139283748462763858,
+                    6349198060258255764,
+                    701532786141963250,
+                    16015981125662989062,
+                    4028864712777624925,
+                    14769051326987775908,
+                ],
+            ),
+            (
+                u64::MAX,
+                [
+                    16490336266968443936,
+                    16834447057089888969,
+                    4048727598324417001,
+                    7862637804313477842,
+                    13015481187462834606,
+                    15212506146343009075,
+                    17388166129998380965,
+                    4638043754431676516,
+                ],
+            ),
+        ];
+        for (seed, stream) in expected {
+            let mut rng = OwnedRng::new(seed);
+            let actual: Vec<u64> = (0..stream.len()).map(|_| rng.next_u64()).collect();
+            assert_eq!(actual, stream, "stream changed for seed {seed}");
+        }
+    }
+
+    #[test]
+    fn bounded_indices_match_the_pre_promotion_forest_generator() {
+        let expected: [(u64, [usize; 12]); 3] = [
+            (0, [5, 0, 9, 4, 7, 0, 3, 0, 9, 0, 1, 6]),
+            (7, [7, 4, 6, 3, 4, 5, 8, 2, 5, 5, 3, 6]),
+            (u64::MAX, [6, 9, 1, 2, 6, 5, 5, 6, 0, 2, 9, 7]),
+        ];
+        for (seed, indices) in expected {
+            let mut rng = OwnedRng::new(seed);
+            let actual: Vec<usize> = (0..indices.len()).map(|_| rng.index(10)).collect();
+            assert_eq!(actual, indices, "indices changed for seed {seed}");
+        }
+
+        // A single-element bound is the degenerate case every caller hits when
+        // a node or feature set has exactly one candidate.
+        let mut rng = OwnedRng::new(3);
+        assert_eq!((0..8).map(|_| rng.index(1)).collect::<Vec<_>>(), vec![0; 8]);
+    }
+
+    #[test]
+    fn derived_tree_seeds_match_the_pre_promotion_forest_generator() {
+        assert_eq!(
+            (0..6).map(|i| derive_tree_seed(0, i)).collect::<Vec<_>>(),
+            vec![
+                0,
+                9370218965779684112,
+                7792259576135971849,
+                6957767622843056530,
+                8786639878720926469,
+                8577097995239418960,
+            ]
+        );
+        assert_eq!(
+            (0..6)
+                .map(|i| derive_tree_seed(0xdead_beef, i))
+                .collect::<Vec<_>>(),
+            vec![
+                5622224078331092714,
+                12620482824835280752,
+                8826565329999008893,
+                9691975008012567232,
+                17013454048661918233,
+                16161299606447644327,
+            ]
+        );
+    }
+
+    #[test]
+    fn bounded_indices_stay_in_range_and_reject_uniformly_at_awkward_bounds() {
+        // A bound that does not divide 2^64 exercises the rejection branch.
+        for upper in [3_usize, 7, 10, 1000] {
+            let mut rng = OwnedRng::new(u64::from(upper as u32));
+            let mut seen = vec![false; upper.min(16)];
+            for _ in 0..4_000 {
+                let index = rng.index(upper);
+                assert!(index < upper, "index {index} escaped bound {upper}");
+                if index < seen.len() {
+                    seen[index] = true;
+                }
+            }
+            assert!(seen.iter().all(|&hit| hit), "unreachable index for {upper}");
+        }
+    }
+}
