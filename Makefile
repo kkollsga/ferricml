@@ -15,6 +15,7 @@ gate:
 	$(PYTHON) scripts/check_reference_isolation.py
 	$(PYTHON) scripts/check_source_layout.py
 	$(PYTHON) scripts/check_release_workflow.py
+	$(PYTHON) scripts/performance_history.py self-test
 	$(MAKE) package-check
 
 ## Complete Rust gate. Public API, reference, and performance checks remain

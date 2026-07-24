@@ -5,6 +5,7 @@ use std::hint::black_box;
 
 const TRAIN_ROWS: usize = 2_048;
 const COLUMNS: usize = 48;
+const SCALAR_REPETITIONS: usize = 256;
 
 fn fixture(rows: usize, columns: usize) -> (DenseMatrix, RegressionTargets) {
     let mut state = 0x243f_6a88_u32;
@@ -96,6 +97,24 @@ fn inference(c: &mut Criterion) {
         ));
         group.bench_function(BenchmarkId::from_parameter("predict"), |bencher| {
             bencher.iter(|| black_box(model.predict_one(black_box(row)).unwrap()));
+        });
+        group.finish();
+
+        let scalar_rows = training
+            .as_slice()
+            .chunks_exact(COLUMNS)
+            .take(SCALAR_REPETITIONS)
+            .collect::<Vec<_>>();
+        let mut group = c.benchmark_group(format!(
+            "ferricml_boosting_v2_predict_one_256x_{trees}t{leaves}l"
+        ));
+        group.throughput(Throughput::Elements(SCALAR_REPETITIONS as u64));
+        group.bench_function(BenchmarkId::from_parameter("predict"), |bencher| {
+            bencher.iter(|| {
+                for row in &scalar_rows {
+                    black_box(model.predict_one(black_box(row)).unwrap());
+                }
+            });
         });
         group.finish();
 

@@ -28,7 +28,8 @@ DEFAULT_OUT = ROOT / "dev-docs" / "bench" / "out"
 RUNNER_CONFIG = ROOT / "dev-docs" / "bench" / "runner.json"
 MULTI_SUITE_PROTOCOL = "ferricml-history-v2"
 FOREST_PROTOCOL = "forest-history-v1"
-FERRICML_MODELS_PROTOCOL = "ferricml-models-v1"
+FERRICML_MODELS_PROTOCOL = "ferricml-models-v2"
+FERRICML_MODELS_SUITE = "ferricml-models-v2"
 FIT_LIMIT = 1.15
 INFERENCE_LIMIT = 1.10
 
@@ -53,14 +54,19 @@ MODEL_INFERENCE = (
     "ferricml_models_v1_into_1024x48/ridge",
     "ferricml_models_v1_into_1024x48/ranker_scores",
     "ferricml_models_v1_into_1024x48/scaler_ridge_pipeline",
-    "ferricml_boosting_v1_predict_one_32t7l/predict",
-    "ferricml_boosting_v1_predict_one_64t7l/predict",
-    "ferricml_boosting_v1_predict_one_64t15l/predict",
-    "ferricml_boosting_v1_predict_one_128t15l/predict",
+    "ferricml_boosting_v2_predict_one_256x_32t7l/predict",
+    "ferricml_boosting_v2_predict_one_256x_64t7l/predict",
+    "ferricml_boosting_v2_predict_one_256x_64t15l/predict",
+    "ferricml_boosting_v2_predict_one_256x_128t15l/predict",
     "ferricml_boosting_v1_into_32x48_64t7l/predict",
     "ferricml_boosting_v1_into_1024x48_64t7l/predict",
     "ferricml_models_v2_logistic_into_1024x48/proba",
     "ferricml_models_v2_scaler_into_1024x48/transform",
+    "ferricml_model_selection_v2_holdout_1000000/ordinary_shuffled_20pct",
+    "ferricml_model_selection_v2_holdout_1000000/ordinary_shuffled_80pct",
+    "ferricml_model_selection_v2_holdout_1000000/ordinary_unshuffled_20pct",
+    "ferricml_model_selection_v2_holdout_1000000/stratified_4_class_20pct",
+    "ferricml_model_selection_v2_stratified_262144/256_class_50pct",
 )
 BENCH_TARGETS = ("forest", "models", "boosting")
 
@@ -77,7 +83,7 @@ SUITE_SPECS = {
         "benchmarks": (FIT, *INFERENCE),
         "limits": limits((FIT,), INFERENCE),
     },
-    "ferricml-models-v1": {
+    FERRICML_MODELS_SUITE: {
         "protocol": FERRICML_MODELS_PROTOCOL,
         "benchmarks": (*MODEL_FIT, *MODEL_INFERENCE),
         "limits": limits(MODEL_FIT, MODEL_INFERENCE),
@@ -452,6 +458,7 @@ def capture(args: argparse.Namespace) -> int:
                     "ferricml_models_v1_",
                     "ferricml_models_v2_",
                     "ferricml_boosting_v1_",
+                    "ferricml_boosting_v2_",
                 )
             ):
                 continue
@@ -502,9 +509,9 @@ def fixture(
     if include_models:
         model_metrics = {name: fit for name in MODEL_FIT}
         model_metrics.update({name: inference for name in MODEL_INFERENCE})
-        record["suites"]["ferricml-models-v1"] = {
+        record["suites"][FERRICML_MODELS_SUITE] = {
             "protocol": FERRICML_MODELS_PROTOCOL,
-            "limits": dict(SUITE_SPECS["ferricml-models-v1"]["limits"]),
+            "limits": dict(SUITE_SPECS[FERRICML_MODELS_SUITE]["limits"]),
             "metrics": model_metrics,
         }
     return record
@@ -519,6 +526,14 @@ def legacy_forest_fixture(version: str) -> dict[str, Any]:
         "runner": {"id": "self-test"},
         "metrics": current["suites"]["forest-v1"]["metrics"],
     }
+
+
+def legacy_models_fixture(version: str) -> dict[str, Any]:
+    record = fixture(version, include_models=True)
+    suite = record["suites"].pop(FERRICML_MODELS_SUITE)
+    suite["protocol"] = "ferricml-models-v1"
+    record["suites"]["ferricml-models-v1"] = suite
+    return record
 
 
 def self_test() -> int:
@@ -548,11 +563,12 @@ def self_test() -> int:
         assert forest["anchor"]["status"] == "insufficient_history"
 
         (history / "v0.1.0.json").write_text(json.dumps(legacy_forest_fixture("0.1.0")))
+        (history / "v0.1.1.json").write_text(json.dumps(legacy_models_fixture("0.1.1")))
         mixed = fixture("0.2.0", include_models=True)
         result = comparisons(mixed, history)
         assert result["suites"]["forest-v1"]["previous_release"]["status"] == "pass"
         assert (
-            result["suites"]["ferricml-models-v1"]["previous_release"]["status"]
+            result["suites"][FERRICML_MODELS_SUITE]["previous_release"]["status"]
             == "insufficient_history"
         )
 
@@ -578,7 +594,7 @@ def self_test() -> int:
         result = comparisons(fourth, history)
         assert result["verdict"] == "pass"
         assert (
-            result["suites"]["forest-v1"]["anchor"]["reference_version"] == "0.1.0"
+            result["suites"]["forest-v1"]["anchor"]["reference_version"] == "0.1.1"
         )
 
         regressed = fixture("0.4.0", fit=115.1, inference=110.1)
@@ -595,6 +611,25 @@ def self_test() -> int:
             result["suites"]["forest-v1"]["previous_release"]["status"]
             == "insufficient_history"
         )
+
+        for version in ("1.0.0", "1.1.0", "1.2.0"):
+            (history / f"v{version}.json").write_text(
+                json.dumps(fixture(version, include_models=True))
+            )
+        model_current = fixture("1.3.0", include_models=True)
+        result = comparisons(model_current, history)
+        models = result["suites"][FERRICML_MODELS_SUITE]
+        assert models["previous_release"]["status"] == "pass"
+        assert models["anchor"]["status"] == "pass"
+        assert models["anchor"]["reference_version"] == "1.0.0"
+
+        model_regressed = fixture(
+            "1.3.0", fit=115.1, inference=110.1, include_models=True
+        )
+        result = comparisons(model_regressed, history)
+        models = result["suites"][FERRICML_MODELS_SUITE]
+        assert models["previous_release"]["status"] == "regression"
+        assert models["anchor"]["status"] == "regression"
     print(
         "performance history self-test passed "
         "(mixed protocols, missing/new lanes, prior, anchor, regression)"
