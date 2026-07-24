@@ -1,6 +1,8 @@
 //! Deterministic dense histogram gradient-boosted regression.
 
-use crate::api::{Estimator, HasParams, ModelError, Regressor};
+use crate::api::{
+    Estimator, HasParams, ModelError, Regressor, validate_prediction, validate_scalar_row,
+};
 use crate::artifact::{
     ArtifactError, ArtifactPayloadWriter, HIST_GRADIENT_BOOSTING_REGRESSOR_ARTIFACT_KIND,
     SchemaRole, decode_component, decode_logical_tree, decode_v2_envelope, encode_component,
@@ -212,19 +214,14 @@ impl HistGradientBoostingRegressor {
 
     /// Predicts one regression value.
     pub fn predict_one(&self, row: &[f32]) -> Result<f32, ModelError> {
-        if row.len() != self.n_features_in {
-            return Err(ModelError::FeatureDimension {
-                expected: self.n_features_in,
-                actual: row.len(),
-            });
-        }
-        let prediction = self.trees.iter().fold(self.baseline, |prediction, tree| {
+        validate_scalar_row(row, self.n_features_in)?;
+        validate_prediction(self.predict_value(row), 0)
+    }
+
+    fn predict_value(&self, row: &[f32]) -> f32 {
+        self.trees.iter().fold(self.baseline, |prediction, tree| {
             prediction + self.params.learning_rate * tree.predict_one(row)
-        });
-        if !prediction.is_finite() {
-            return Err(ModelError::NonFinitePrediction { row: 0 });
-        }
-        Ok(prediction)
+        })
     }
 
     /// Predicts one value per row, allocating the output.
@@ -410,13 +407,7 @@ impl Regressor for HistGradientBoostingRegressor {
             });
         }
         for (row_index, (row, slot)) in data.iter_rows().zip(output).enumerate() {
-            let prediction = self.trees.iter().fold(self.baseline, |prediction, tree| {
-                prediction + self.params.learning_rate * tree.predict_one(row)
-            });
-            if !prediction.is_finite() {
-                return Err(ModelError::NonFinitePrediction { row: row_index });
-            }
-            *slot = prediction;
+            *slot = validate_prediction(self.predict_value(row), row_index)?;
         }
         Ok(())
     }

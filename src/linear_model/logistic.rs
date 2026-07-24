@@ -1,6 +1,8 @@
 //! Binary logistic regression.
 
-use crate::api::{Classifier, Estimator, HasParams, ModelError};
+use crate::api::{
+    Classifier, Estimator, HasParams, ModelError, validate_prediction, validate_scalar_row,
+};
 use crate::artifact::{
     ArtifactError, ArtifactPayloadWriter, LOGISTIC_ARTIFACT_KIND, MODEL_ARTIFACT_VERSION,
     SchemaRole, artifact_version, decode_component, decode_legacy_envelope, decode_v2_envelope,
@@ -264,18 +266,16 @@ impl LogisticRegression {
 
     /// Returns the raw linear decision score for one row.
     pub fn decision_function_one(&self, row: &[f32]) -> Result<f32, ModelError> {
-        if row.len() != self.n_features_in {
-            return Err(ModelError::FeatureDimension {
-                expected: self.n_features_in,
-                actual: row.len(),
-            });
-        }
-        Ok(row
-            .iter()
+        validate_scalar_row(row, self.n_features_in)?;
+        validate_prediction(self.decision_value(row), 0)
+    }
+
+    fn decision_value(&self, row: &[f32]) -> f32 {
+        row.iter()
             .zip(&self.coefficients)
             .fold(self.intercept, |sum, (&value, &coefficient)| {
                 sum + value * coefficient
-            }))
+            })
     }
 
     /// Returns one raw linear decision score per row.
@@ -292,8 +292,8 @@ impl LogisticRegression {
         output: &mut [f32],
     ) -> Result<(), ModelError> {
         validate_predict(data, output.len(), self.n_features_in)?;
-        for (row, slot) in data.iter_rows().zip(output) {
-            *slot = self.decision_function_one(row)?;
+        for (row_index, (row, slot)) in data.iter_rows().zip(output).enumerate() {
+            *slot = validate_prediction(self.decision_value(row), row_index)?;
         }
         Ok(())
     }
@@ -487,8 +487,9 @@ impl Classifier for LogisticRegression {
 
     fn predict_into(&self, data: &MatrixView<'_>, output: &mut [u8]) -> Result<(), ModelError> {
         validate_predict(data, output.len(), self.n_features_in)?;
-        for (row, slot) in data.iter_rows().zip(output) {
-            *slot = self.predict_one(row)?;
+        for (row_index, (row, slot)) in data.iter_rows().zip(output).enumerate() {
+            let decision = validate_prediction(self.decision_value(row), row_index)?;
+            *slot = u8::from(sigmoid_f32(decision) > 0.5);
         }
         Ok(())
     }
@@ -512,8 +513,11 @@ impl Classifier for LogisticRegression {
                 actual: output.len(),
             });
         }
-        for (row, probabilities) in data.iter_rows().zip(output.chunks_exact_mut(2)) {
-            let positive = self.predict_positive_proba(row)?;
+        for (row_index, (row, probabilities)) in
+            data.iter_rows().zip(output.chunks_exact_mut(2)).enumerate()
+        {
+            let decision = validate_prediction(self.decision_value(row), row_index)?;
+            let positive = sigmoid_f32(decision);
             probabilities[0] = 1.0 - positive;
             probabilities[1] = positive;
         }
@@ -530,8 +534,9 @@ impl Classifier for LogisticRegression {
             return Err(ModelError::UnknownClass { class });
         }
         validate_predict(data, output.len(), self.n_features_in)?;
-        for (row, slot) in data.iter_rows().zip(output) {
-            let positive = self.predict_positive_proba(row)?;
+        for (row_index, (row, slot)) in data.iter_rows().zip(output).enumerate() {
+            let decision = validate_prediction(self.decision_value(row), row_index)?;
+            let positive = sigmoid_f32(decision);
             *slot = if class == 1 { positive } else { 1.0 - positive };
         }
         Ok(())

@@ -22,6 +22,12 @@ and releases use [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Keep third-party provenance and regeneration tooling in local development
   state while retaining FerricML-owned frozen behavior and quality contracts.
 
+### Fixed
+
+- Reject non-finite scalar prediction features and non-finite accumulated
+  outputs consistently across linear, ridge, logistic, pairwise-ranking, and
+  histogram-boosting models.
+
 ## [0.1.1] - 2026-07-23
 
 ### Added

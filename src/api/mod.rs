@@ -7,8 +7,10 @@
 mod any;
 mod error;
 mod traits;
+mod validation;
 
 pub use any::{AnyClassifier, AnyClassifierParams, AnyRegressor, AnyRegressorParams};
 pub use error::ModelError;
 pub(crate) use traits::validate_transformed_shape;
 pub use traits::{Classifier, Estimator, HasParams, Regressor, Transformer};
+pub(crate) use validation::{validate_prediction, validate_scalar_row};

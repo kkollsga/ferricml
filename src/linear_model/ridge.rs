@@ -1,7 +1,9 @@
 //! Dense L2-regularized linear regression.
 
 use super::least_squares;
-use crate::api::{Estimator, HasParams, ModelError, Regressor};
+use crate::api::{
+    Estimator, HasParams, ModelError, Regressor, validate_prediction, validate_scalar_row,
+};
 use crate::artifact::{
     ArtifactCursor, ArtifactError, ArtifactPayloadWriter, MODEL_ARTIFACT_VERSION,
     RIDGE_ARTIFACT_KIND, SchemaRole, artifact_version, decode_component, decode_v2_envelope,
@@ -139,18 +141,16 @@ impl Ridge {
 
     /// Predicts one regression value.
     pub fn predict_one(&self, row: &[f32]) -> Result<f32, ModelError> {
-        if row.len() != self.n_features_in {
-            return Err(ModelError::FeatureDimension {
-                expected: self.n_features_in,
-                actual: row.len(),
-            });
-        }
-        Ok(row
-            .iter()
+        validate_scalar_row(row, self.n_features_in)?;
+        validate_prediction(self.predict_value(row), 0)
+    }
+
+    fn predict_value(&self, row: &[f32]) -> f32 {
+        row.iter()
             .zip(&self.coefficients)
             .fold(self.intercept, |sum, (&value, &coefficient)| {
                 sum + value * coefficient
-            }))
+            })
     }
 
     /// Allocating batch prediction.
@@ -286,8 +286,8 @@ impl Regressor for Ridge {
                 actual: output.len(),
             });
         }
-        for (row, slot) in data.iter_rows().zip(output) {
-            *slot = self.predict_one(row)?;
+        for (row_index, (row, slot)) in data.iter_rows().zip(output).enumerate() {
+            *slot = validate_prediction(self.predict_value(row), row_index)?;
         }
         Ok(())
     }

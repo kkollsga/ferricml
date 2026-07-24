@@ -401,3 +401,105 @@ fn histogram_boosting_scalar_batch_and_output_validation_agree() {
     );
     assert_eq!(untouched, [88.0; 3]);
 }
+
+#[test]
+fn scalar_prediction_rejects_non_finite_features_and_outputs() {
+    let data = matrix(&[0.0, 1.0, 2.0, 3.0], 4, 1);
+    let regression = RegressionTargets::new(vec![0.0, 2.0, 4.0, 6.0]).unwrap();
+    let linear = LinearRegression::fit(
+        &data.as_view(),
+        &regression,
+        LinearRegressionParams::default().with_fit_intercept(false),
+    )
+    .unwrap();
+    let ridge = Ridge::fit(
+        &data.as_view(),
+        &regression,
+        RidgeParams::default()
+            .with_alpha(0.0)
+            .with_fit_intercept(false),
+    )
+    .unwrap();
+    assert_eq!(
+        linear.predict_one(&[f32::NAN]),
+        Err(ModelError::NonFiniteFeature { row: 0, column: 0 })
+    );
+    assert_eq!(
+        ridge.predict_one(&[f32::INFINITY]),
+        Err(ModelError::NonFiniteFeature { row: 0, column: 0 })
+    );
+    assert_eq!(
+        linear.predict_one(&[f32::MAX]),
+        Err(ModelError::NonFinitePrediction { row: 0 })
+    );
+    assert_eq!(
+        ridge.predict_one(&[f32::MAX]),
+        Err(ModelError::NonFinitePrediction { row: 0 })
+    );
+
+    let logistic = LogisticRegression::fit(
+        &data.as_view(),
+        &BinaryTargets::new(vec![0, 0, 1, 1]).unwrap(),
+        LogisticRegressionParams::default().with_c(100.0),
+    )
+    .unwrap();
+    assert_eq!(
+        logistic.decision_function_one(&[f32::NEG_INFINITY]),
+        Err(ModelError::NonFiniteFeature { row: 0, column: 0 })
+    );
+    assert_eq!(
+        logistic.predict_positive_proba(&[f32::NAN]),
+        Err(ModelError::NonFiniteFeature { row: 0, column: 0 })
+    );
+    assert_eq!(
+        logistic.predict_one(&[f32::NAN]),
+        Err(ModelError::NonFiniteFeature { row: 0, column: 0 })
+    );
+    assert_eq!(
+        logistic.decision_function_one(&[f32::MAX]),
+        Err(ModelError::NonFinitePrediction { row: 0 })
+    );
+
+    let items = matrix(&[0.0, 0.0, 1.0, 0.5, 2.0, 1.0, 3.0, 2.0], 4, 2);
+    let observations = [
+        PairwiseObservation::new(
+            PairIndex::new(3, 2).unwrap(),
+            PairOutcome::LeftPreferred,
+            1.0,
+        )
+        .unwrap(),
+        PairwiseObservation::new(
+            PairIndex::new(2, 1).unwrap(),
+            PairOutcome::LeftPreferred,
+            1.0,
+        )
+        .unwrap(),
+    ];
+    let ranker = PairwiseLinearRanker::fit(
+        &items.as_view(),
+        &observations,
+        PairwiseLinearRankerParams::default().with_c(4.0),
+    )
+    .unwrap();
+    assert_eq!(
+        ranker.score_one(&[f32::NAN, 0.0]),
+        Err(PairwiseError::Model(ModelError::NonFiniteFeature {
+            row: 0,
+            column: 0,
+        }))
+    );
+
+    let boosted = HistGradientBoostingRegressor::fit(
+        &data.as_view(),
+        &RegressionTargets::new(vec![0.0, 0.0, 4.0, 4.0]).unwrap(),
+        HistGradientBoostingRegressorParams::default()
+            .with_max_iter(1)
+            .with_max_leaf_nodes(2)
+            .with_min_samples_leaf(1),
+    )
+    .unwrap();
+    assert_eq!(
+        boosted.predict_one(&[f32::NAN]),
+        Err(ModelError::NonFiniteFeature { row: 0, column: 0 })
+    );
+}
