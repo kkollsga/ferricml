@@ -67,6 +67,8 @@ MODEL_INFERENCE = (
     "ferricml_model_selection_v2_holdout_1000000/ordinary_unshuffled_20pct",
     "ferricml_model_selection_v2_holdout_1000000/stratified_4_class_20pct",
     "ferricml_model_selection_v2_stratified_262144/256_class_50pct",
+    "ferricml_forest_v1_regressor_into_32x64_100t/predict",
+    "ferricml_forest_v1_regressor_into_1024x64_100t/predict",
     "ferricml_artifact_v1_forest_regressor_512x16_32t/encode",
     "ferricml_artifact_v1_forest_regressor_512x16_32t/decode",
     "ferricml_inspection_v1_permutation_256x8_3r/forest_mse",

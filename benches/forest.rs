@@ -26,6 +26,41 @@ fn fixture(rows: usize, columns: usize) -> (DenseMatrix, BinaryTargets) {
     )
 }
 
+/// Regression targets derived from the shared fixture's separable score, so
+/// the regressor lanes measure the same dataset the classifier lanes use.
+fn regression_targets(labels: &BinaryTargets) -> RegressionTargets {
+    RegressionTargets::new(
+        labels
+            .as_slice()
+            .iter()
+            .enumerate()
+            .map(|(row, &label)| f32::from(label) * 4.0 + (row % 11) as f32)
+            .collect(),
+    )
+    .unwrap()
+}
+
+fn regressor(
+    rows: usize,
+    columns: usize,
+    trees: usize,
+    max_depth: usize,
+) -> (DenseMatrix, RandomForestRegressor) {
+    let (data, labels) = fixture(rows, columns);
+    let targets = regression_targets(&labels);
+    let model = RandomForestRegressor::fit(
+        &data.as_view(),
+        &targets,
+        RandomForestRegressorParams::default()
+            .with_n_estimators(trees)
+            .with_max_depth(Some(max_depth))
+            .with_max_features(MaxFeatures::All)
+            .with_random_state(42),
+    )
+    .unwrap();
+    (data, model)
+}
+
 fn classifier(rows: usize, columns: usize, trees: usize) -> (DenseMatrix, RandomForestClassifier) {
     let (data, targets) = fixture(rows, columns);
     let params = RandomForestClassifierParams::default()
@@ -116,27 +151,7 @@ fn training(c: &mut Criterion) {
 /// packed tree into logical records, and decoding revalidates each one before
 /// rebuilding the packed layout.
 fn artifact(c: &mut Criterion) {
-    let (rows, columns, trees) = (512, 16, 32);
-    let (data, labels) = fixture(rows, columns);
-    let targets = RegressionTargets::new(
-        labels
-            .as_slice()
-            .iter()
-            .enumerate()
-            .map(|(row, &label)| f32::from(label) * 4.0 + (row % 11) as f32)
-            .collect(),
-    )
-    .unwrap();
-    let model = RandomForestRegressor::fit(
-        &data.as_view(),
-        &targets,
-        RandomForestRegressorParams::default()
-            .with_n_estimators(trees)
-            .with_max_depth(Some(8))
-            .with_max_features(MaxFeatures::All)
-            .with_random_state(42),
-    )
-    .unwrap();
+    let (_, model) = regressor(512, 16, 32, 8);
     let schema = [42; 32];
     let encoded = model.to_artifact(schema).unwrap();
 
@@ -155,5 +170,33 @@ fn artifact(c: &mut Criterion) {
     group.finish();
 }
 
-criterion_group!(benches, inference, training, artifact);
+/// Caller-owned batch regression inference.
+///
+/// The classifier lanes above cover label and probability prediction, but the
+/// regressor averaging path had no lane at all. Averaging is validated once
+/// per row, so this measures that check inside the loop rather than around it.
+fn regressor_inference(c: &mut Criterion) {
+    let columns = 64;
+    let trees = 100;
+    let (data, model) = regressor(2048, columns, trees, 12);
+    for rows in [32, 1024] {
+        let input_values = data.as_slice()[..rows * columns].to_vec();
+        let input = DenseMatrix::new(input_values, rows, columns).unwrap();
+        let mut predictions = vec![0.0; rows];
+        let mut group =
+            c.benchmark_group(format!("ferricml_forest_v1_regressor_into_{rows}x64_100t"));
+        group.throughput(Throughput::Elements(rows as u64));
+        group.bench_function(BenchmarkId::from_parameter("predict"), |bencher| {
+            bencher.iter(|| {
+                model
+                    .predict_into(black_box(&input.as_view()), black_box(&mut predictions))
+                    .unwrap();
+                black_box(&predictions);
+            });
+        });
+        group.finish();
+    }
+}
+
+criterion_group!(benches, inference, training, artifact, regressor_inference);
 criterion_main!(benches);
