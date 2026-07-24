@@ -6,9 +6,11 @@
 //! transformation and the callback passed to `with_transformed` are statically
 //! dispatched and no stage is reached through a trait object.
 
+mod artifact;
 mod stack;
 mod staged;
 
+pub use artifact::{ModelArtifact, PersistedStack, StageArtifact};
 pub use stack::TransformerStack;
 pub use staged::StagedPipeline;
 

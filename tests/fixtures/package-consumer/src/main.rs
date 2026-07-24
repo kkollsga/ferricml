@@ -14,8 +14,11 @@ use ferricml::model_selection::{
     HoldoutParams, KFold, RegressionScorer, TestSize, cross_validate_regressor,
     train_test_split,
 };
-use ferricml::pipeline::Pipeline;
-use ferricml::preprocessing::{StandardScaler, StandardScalerParams};
+use ferricml::pipeline::{Pipeline, StagedPipeline};
+use ferricml::preprocessing::{
+    MaxAbsScaler, MaxAbsScalerParams, MinMaxScaler, MinMaxScalerParams, StandardScaler,
+    StandardScalerParams,
+};
 use ferricml::ranking::{
     PairIndex, PairOutcome, PairwiseLinearRanker, PairwiseLinearRankerParams,
     PairwiseObservation, kendall_tau_b,
@@ -118,6 +121,43 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         &mut pipeline_predictions,
     )?;
     assert!(pipeline_predictions.iter().all(|value| value.is_finite()));
+
+    let staged_targets = RegressionTargets::new(vec![0.0, 1.0, 4.0, 9.0])?;
+    let staged: StagedPipeline<(MinMaxScaler, StandardScaler), Ridge> = StagedPipeline::fit(
+        &features.as_view(),
+        |batch| MinMaxScaler::fit(batch, MinMaxScalerParams::default()),
+        |batch| StandardScaler::fit(batch, StandardScalerParams::default()),
+        |batch| Ridge::fit(batch, &staged_targets, RidgeParams::default()),
+    )?;
+    let mut staged_workspace = vec![0.0; staged.workspace_len(features.rows())?];
+    let mut staged_predictions = vec![0.0; features.rows()];
+    staged.with_transformed(&features.as_view(), &mut staged_workspace, |model, batch| {
+        model.predict_into(batch, &mut staged_predictions)
+    })?;
+    let staged_encoded = staged.to_artifact(schema, transformed_schema)?;
+    assert_eq!(staged_encoded, staged.to_artifact(schema, transformed_schema)?);
+    let staged_decoded = StagedPipeline::<(MinMaxScaler, StandardScaler), Ridge>::from_artifact(
+        &staged_encoded,
+        schema,
+        transformed_schema,
+    )?;
+    let mut decoded_predictions = vec![0.0; features.rows()];
+    staged_decoded.with_transformed(
+        &features.as_view(),
+        &mut staged_workspace,
+        |model, batch| model.predict_into(batch, &mut decoded_predictions),
+    )?;
+    assert_eq!(decoded_predictions, staged_predictions);
+    // A different composition never decodes another one's bytes.
+    assert!(
+        StagedPipeline::<(MinMaxScaler, MaxAbsScaler), Ridge>::from_artifact(
+            &staged_encoded,
+            schema,
+            transformed_schema
+        )
+        .is_err()
+    );
+    let _ = MaxAbsScaler::fit(&features.as_view(), MaxAbsScalerParams)?;
 
     let pair_observations = [
         PairwiseObservation::new(

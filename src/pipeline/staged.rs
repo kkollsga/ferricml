@@ -5,10 +5,21 @@
 //! composition is monomorphized: there is no per-row dynamic dispatch, no
 //! parameter erasure, and no string registry of stages.
 
-use crate::api::{Estimator, ModelError, Transformer};
+use crate::api::{Capabilities, Estimator, HasCapabilities, ModelError, Transformer};
+use crate::artifact::{
+    ArtifactError, ArtifactPayloadWriter, MODEL_ARTIFACT_VERSION, STAGED_PIPELINE_ARTIFACT_KIND,
+    SchemaRole, artifact_version, decode_component, decode_v2_envelope, encode_component,
+    encode_v2_envelope,
+};
 use crate::data::{DenseMatrix, MatrixView};
 
-use super::TransformerStack;
+use super::{ModelArtifact, PersistedStack, TransformerStack};
+
+const PAYLOAD_VERSION: u16 = 1;
+const METADATA_COMPONENT_KIND: u16 = 1;
+const STAGE_COMPONENT_KIND: u16 = 2;
+const ESTIMATOR_COMPONENT_KIND: u16 = 3;
+const COMPONENT_VERSION: u16 = 1;
 
 /// Two or more fitted transform stages followed by one fitted estimator.
 ///
@@ -163,12 +174,148 @@ where
     }
 }
 
+/// A composition persists exactly when every one of its parts does.
+///
+/// The bound is what makes this declaration honest for *every* composition
+/// rather than for a hand-listed few: an impl exists only where each stage and
+/// the estimator really have a schema-bound artifact, so asking a composition
+/// that cannot persist is a compile error rather than a wrong answer.
+///
+/// Weighted fitting is declared away structurally. `StagedPipeline` has no
+/// `fit_weighted` of its own — weights reach the parts through the fitting
+/// closures a caller writes — so accepting weights is a property of fitting
+/// each part, never of the composition.
+impl<S, E> HasCapabilities for StagedPipeline<S, E>
+where
+    S: TransformerStack + PersistedStack,
+    E: Estimator + ModelArtifact,
+{
+    const CAPABILITIES: Capabilities = Capabilities::NONE.with_artifact(true);
+}
+
+impl<S, E> StagedPipeline<S, E>
+where
+    S: TransformerStack + PersistedStack,
+    E: Estimator + ModelArtifact,
+{
+    /// Encodes the whole composition and both schema identities.
+    ///
+    /// The payload records which concrete stage types the composition holds,
+    /// in order, plus its estimator type, so a composition never decodes as a
+    /// different one.
+    pub fn to_artifact(
+        &self,
+        input_schema: [u8; 32],
+        transformed_schema: [u8; 32],
+    ) -> Result<Vec<u8>, ArtifactError> {
+        let stages = self
+            .stages
+            .encode_stages(input_schema, transformed_schema)?;
+        if stages.len() != S::STAGE_TAGS.len() {
+            return Err(ArtifactError::InvalidPayload);
+        }
+        let count = u32::try_from(stages.len()).map_err(|_| ArtifactError::InvalidPayload)?;
+
+        let mut metadata = ArtifactPayloadWriter::with_capacity(8 + stages.len() * 4);
+        metadata.u32(count);
+        metadata.u32(u32::from(E::MODEL_TAG));
+        for &tag in S::STAGE_TAGS {
+            metadata.u32(u32::from(tag));
+        }
+
+        let mut payload = encode_component(
+            METADATA_COMPONENT_KIND,
+            COMPONENT_VERSION,
+            &metadata.finish(),
+        )?;
+        for stage in &stages {
+            payload.extend_from_slice(&encode_component(
+                STAGE_COMPONENT_KIND,
+                COMPONENT_VERSION,
+                stage,
+            )?);
+        }
+        payload.extend_from_slice(&encode_component(
+            ESTIMATOR_COMPONENT_KIND,
+            COMPONENT_VERSION,
+            &self.estimator.to_model_artifact(transformed_schema)?,
+        )?);
+
+        encode_v2_envelope(
+            STAGED_PIPELINE_ARTIFACT_KIND,
+            PAYLOAD_VERSION,
+            &[
+                (SchemaRole::Input, input_schema),
+                (SchemaRole::Transformed, transformed_schema),
+            ],
+            &payload,
+        )
+    }
+
+    /// Decodes the whole composition and revalidates every width handoff.
+    ///
+    /// Bytes are never trusted: the recorded stage count, stage tags, and
+    /// estimator tag must all match the composition being decoded into, every
+    /// part revalidates its own payload, and the reconstructed composition
+    /// goes back through [`StagedPipeline::new`].
+    pub fn from_artifact(
+        bytes: &[u8],
+        input_schema: [u8; 32],
+        transformed_schema: [u8; 32],
+    ) -> Result<Self, ArtifactError> {
+        let version = artifact_version(bytes)?;
+        if version != MODEL_ARTIFACT_VERSION {
+            return Err(ArtifactError::UnsupportedVersion { found: version });
+        }
+        let mut envelope = decode_v2_envelope(
+            bytes,
+            STAGED_PIPELINE_ARTIFACT_KIND,
+            PAYLOAD_VERSION,
+            &[
+                (SchemaRole::Input, input_schema),
+                (SchemaRole::Transformed, transformed_schema),
+            ],
+        )?;
+
+        let mut metadata =
+            decode_component(&mut envelope, METADATA_COMPONENT_KIND, COMPONENT_VERSION)?;
+        let count = metadata.u32()? as usize;
+        let estimator_tag = metadata.u32()?;
+        if count != S::STAGE_TAGS.len() || estimator_tag != u32::from(E::MODEL_TAG) {
+            return Err(ArtifactError::InvalidPayload);
+        }
+        for &expected in S::STAGE_TAGS {
+            if metadata.u32()? != u32::from(expected) {
+                return Err(ArtifactError::InvalidPayload);
+            }
+        }
+        if !metadata.is_empty() {
+            return Err(ArtifactError::TrailingBytes);
+        }
+
+        let mut components = Vec::with_capacity(count);
+        for _ in 0..count {
+            let stage = decode_component(&mut envelope, STAGE_COMPONENT_KIND, COMPONENT_VERSION)?;
+            components.push(stage.remaining());
+        }
+        let estimator =
+            decode_component(&mut envelope, ESTIMATOR_COMPONENT_KIND, COMPONENT_VERSION)?;
+        if !envelope.is_empty() {
+            return Err(ArtifactError::TrailingBytes);
+        }
+
+        let stages = S::decode_stages(&components, input_schema, transformed_schema)?;
+        let estimator = E::from_model_artifact(estimator.remaining(), transformed_schema)?;
+        Self::new(stages, estimator).map_err(|_| ArtifactError::InvalidPayload)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
     use crate::data::RegressionTargets;
-    use crate::linear_model::{Ridge, RidgeParams};
+    use crate::linear_model::{LinearRegression, Ridge, RidgeParams};
     use crate::preprocessing::{
         MaxAbsScaler, MaxAbsScalerParams, MinMaxScaler, MinMaxScalerParams, StandardScaler,
         StandardScalerParams,
@@ -457,5 +604,150 @@ mod tests {
         let (stages, estimator) = pipeline.into_parts();
         assert_eq!(stages.n_features_out(), 2);
         assert_eq!(estimator.n_features_in(), 2);
+    }
+
+    #[test]
+    fn a_multi_stage_artifact_round_trips_deterministically_and_predicts_identically() {
+        let pipeline = fitted();
+        let raw = data();
+        let bytes = pipeline.to_artifact([1; 32], [2; 32]).unwrap();
+        assert_eq!(bytes, pipeline.to_artifact([1; 32], [2; 32]).unwrap());
+
+        let decoded = StagedPipeline::<(MinMaxScaler, StandardScaler), Ridge>::from_artifact(
+            &bytes, [1; 32], [2; 32],
+        )
+        .unwrap();
+        assert_eq!(decoded, pipeline);
+
+        let mut workspace = vec![0.0; pipeline.workspace_len(raw.rows()).unwrap()];
+        let mut expected = vec![0.0; raw.rows()];
+        let mut actual = vec![0.0; raw.rows()];
+        pipeline
+            .with_transformed(&raw.as_view(), &mut workspace, |model, batch| {
+                model.predict_into(batch, &mut expected)
+            })
+            .unwrap();
+        decoded
+            .with_transformed(&raw.as_view(), &mut workspace, |model, batch| {
+                model.predict_into(batch, &mut actual)
+            })
+            .unwrap();
+        assert_eq!(actual, expected);
+    }
+
+    #[test]
+    fn a_three_stage_artifact_round_trips() {
+        let raw = data();
+        let first = MinMaxScaler::fit(&raw.as_view(), MinMaxScalerParams::default()).unwrap();
+        let after_first = first.transform(&raw.as_view()).unwrap();
+        let second =
+            StandardScaler::fit(&after_first.as_view(), StandardScalerParams::default()).unwrap();
+        let after_second = second.transform(&after_first.as_view()).unwrap();
+        let third = MaxAbsScaler::fit(&after_second.as_view(), MaxAbsScalerParams).unwrap();
+        let transformed = third.transform(&after_second.as_view()).unwrap();
+        let estimator =
+            Ridge::fit(&transformed.as_view(), &targets(), RidgeParams::default()).unwrap();
+        let pipeline = StagedPipeline::new((first, second, third), estimator).unwrap();
+
+        let bytes = pipeline.to_artifact([5; 32], [6; 32]).unwrap();
+        assert_eq!(
+            StagedPipeline::<(MinMaxScaler, StandardScaler, MaxAbsScaler), Ridge>::from_artifact(
+                &bytes, [5; 32], [6; 32]
+            )
+            .unwrap(),
+            pipeline
+        );
+
+        // A two-stage composition records a different stage count.
+        assert_eq!(
+            StagedPipeline::<(MinMaxScaler, StandardScaler), Ridge>::from_artifact(
+                &bytes, [5; 32], [6; 32]
+            )
+            .unwrap_err(),
+            ArtifactError::InvalidPayload
+        );
+    }
+
+    #[test]
+    fn a_composition_never_decodes_as_a_different_one() {
+        let raw = data();
+        let bytes = fitted().to_artifact([1; 32], [2; 32]).unwrap();
+
+        // Same stage types, opposite order: the recorded tag sequence differs.
+        assert_eq!(
+            StagedPipeline::<(StandardScaler, MinMaxScaler), Ridge>::from_artifact(
+                &bytes, [1; 32], [2; 32]
+            )
+            .unwrap_err(),
+            ArtifactError::InvalidPayload
+        );
+
+        // Same stages, different estimator type.
+        assert_eq!(
+            StagedPipeline::<(MinMaxScaler, StandardScaler), LinearRegression>::from_artifact(
+                &bytes, [1; 32], [2; 32]
+            )
+            .unwrap_err(),
+            ArtifactError::InvalidPayload
+        );
+
+        // A single-stage pipeline artifact is a different envelope kind.
+        let scaler = MinMaxScaler::fit(&raw.as_view(), MinMaxScalerParams::default()).unwrap();
+        let scaler_bytes = scaler.to_artifact([1; 32], [2; 32]).unwrap();
+        assert!(matches!(
+            StagedPipeline::<(MinMaxScaler, StandardScaler), Ridge>::from_artifact(
+                &scaler_bytes,
+                [1; 32],
+                [2; 32]
+            )
+            .unwrap_err(),
+            ArtifactError::UnsupportedModelKind { .. }
+        ));
+    }
+
+    #[test]
+    fn a_multi_stage_artifact_is_schema_bound_and_checksummed() {
+        let bytes = fitted().to_artifact([1; 32], [2; 32]).unwrap();
+        assert_eq!(
+            StagedPipeline::<(MinMaxScaler, StandardScaler), Ridge>::from_artifact(
+                &bytes, [9; 32], [2; 32]
+            )
+            .unwrap_err(),
+            ArtifactError::FeatureSchemaMismatch
+        );
+        assert_eq!(
+            StagedPipeline::<(MinMaxScaler, StandardScaler), Ridge>::from_artifact(
+                &bytes, [1; 32], [9; 32]
+            )
+            .unwrap_err(),
+            ArtifactError::FeatureSchemaMismatch
+        );
+
+        let mut corrupted = bytes.clone();
+        let last = corrupted.len() - 40;
+        corrupted[last] ^= 1;
+        assert_eq!(
+            StagedPipeline::<(MinMaxScaler, StandardScaler), Ridge>::from_artifact(
+                &corrupted, [1; 32], [2; 32]
+            )
+            .unwrap_err(),
+            ArtifactError::ChecksumMismatch
+        );
+    }
+
+    #[test]
+    fn a_composition_declares_persistence_but_never_weighted_fitting() {
+        assert!(
+            <StagedPipeline<(MinMaxScaler, StandardScaler), Ridge> as HasCapabilities>::CAPABILITIES
+                .artifact()
+        );
+        assert!(
+            !<StagedPipeline<(MinMaxScaler, StandardScaler), Ridge> as HasCapabilities>::CAPABILITIES
+                .sample_weights()
+        );
+        // Both parts accept weights when fitted on their own; the composition
+        // that only holds them fitted does not.
+        assert!(StandardScaler::CAPABILITIES.sample_weights());
+        assert!(Ridge::CAPABILITIES.sample_weights());
     }
 }

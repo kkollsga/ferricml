@@ -21,8 +21,10 @@ use ferricml::linear_model::{
     LinearRegression, LinearRegressionParams, LogisticRegression, LogisticRegressionParams, Ridge,
     RidgeParams,
 };
-use ferricml::pipeline::Pipeline;
-use ferricml::preprocessing::{MaxAbsScaler, MinMaxScaler, StandardScaler, StandardScalerParams};
+use ferricml::pipeline::{Pipeline, StagedPipeline};
+use ferricml::preprocessing::{
+    MaxAbsScaler, MinMaxScaler, MinMaxScalerParams, StandardScaler, StandardScalerParams,
+};
 
 const WEIGHTED_AND_PERSISTED: Capabilities = Capabilities::NONE
     .with_sample_weights(true)
@@ -175,4 +177,38 @@ fn a_fitted_composition_persists_when_both_parts_do() {
             .sample_weights()
     );
     assert!(pipeline.to_artifact([1; 32], [2; 32]).is_ok());
+}
+
+#[test]
+fn a_multi_stage_composition_persists_when_every_part_does() {
+    let data = DenseMatrix::new(vec![0.0, 1.0, 2.0, 3.0], 4, 1).unwrap();
+    let regression = RegressionTargets::new(vec![0.0, 1.0, 4.0, 9.0]).unwrap();
+    let staged: StagedPipeline<(MinMaxScaler, StandardScaler), Ridge> = StagedPipeline::fit(
+        &data.as_view(),
+        |batch| MinMaxScaler::fit(batch, MinMaxScalerParams::default()),
+        |batch| StandardScaler::fit(batch, StandardScalerParams::default()),
+        |batch| Ridge::fit(batch, &regression, RidgeParams::default()),
+    )
+    .unwrap();
+
+    // One declaration covers every composition whose parts all persist,
+    // instead of one hand-written declaration per concrete composition.
+    assert_eq!(
+        <StagedPipeline<(MinMaxScaler, StandardScaler), Ridge> as HasCapabilities>::CAPABILITIES,
+        PERSISTED_ONLY
+    );
+    assert_eq!(
+        <StagedPipeline<(StandardScaler, MaxAbsScaler, MinMaxScaler), LinearRegression> as
+            HasCapabilities>::CAPABILITIES,
+        PERSISTED_ONLY
+    );
+    // Composing already-fitted parts still cannot accept weights, even though
+    // two of these three parts can be fitted with them.
+    assert!(StandardScaler::CAPABILITIES.sample_weights());
+    assert!(Ridge::CAPABILITIES.sample_weights());
+    assert!(
+        !<StagedPipeline<(MinMaxScaler, StandardScaler), Ridge> as HasCapabilities>::CAPABILITIES
+            .sample_weights()
+    );
+    assert!(staged.to_artifact([1; 32], [2; 32]).is_ok());
 }

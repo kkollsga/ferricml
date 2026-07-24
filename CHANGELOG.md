@@ -42,6 +42,14 @@ and releases use [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - `pipeline::TransformerStack`, the statically dispatched stage-list contract
   `StagedPipeline` composes over, implemented for tuples of two and three
   fitted transformers.
+- Schema-bound `StagedPipeline` artifacts under one artifact kind that records
+  which concrete stage types the composition holds, in order, and which
+  estimator type it ends in, so a composition never decodes as a different one.
+  One capability declaration now covers every composition whose parts all
+  persist, instead of one declaration per concrete composition.
+- `pipeline::StageArtifact`, `pipeline::ModelArtifact`, and
+  `pipeline::PersistedStack`, the persistence contracts a composition is
+  generic over.
 - `AnyClassifier::capabilities` and `AnyRegressor::capabilities`, reporting the
   selected runtime variant's capabilities. The declared constant on each
   dispatch enum and each concrete pipeline is composed from its variants or

@@ -22,6 +22,7 @@ pub(crate) const RANDOM_FOREST_REGRESSOR_ARTIFACT_KIND: u16 = 10;
 pub(crate) const ANY_REGRESSOR_ARTIFACT_KIND: u16 = 12;
 pub(crate) const MIN_MAX_SCALER_ARTIFACT_KIND: u16 = 14;
 pub(crate) const MAX_ABS_SCALER_ARTIFACT_KIND: u16 = 15;
+pub(crate) const STAGED_PIPELINE_ARTIFACT_KIND: u16 = 16;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum SchemaRole {

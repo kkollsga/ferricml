@@ -7,8 +7,10 @@ use ferricml::linear_model::{
     LinearRegression, LinearRegressionParams, LogisticRegression, LogisticRegressionParams, Ridge,
     RidgeParams,
 };
-use ferricml::pipeline::Pipeline;
-use ferricml::preprocessing::{StandardScaler, StandardScalerParams};
+use ferricml::pipeline::{Pipeline, StagedPipeline};
+use ferricml::preprocessing::{
+    MinMaxScaler, MinMaxScalerParams, StandardScaler, StandardScalerParams,
+};
 use ferricml::ranking::{
     PairIndex, PairOutcome, PairwiseLinearRanker, PairwiseLinearRankerParams, PairwiseObservation,
 };
@@ -220,6 +222,28 @@ fn fitted_artifact_fingerprints_are_frozen() {
         [
             72, 150, 95, 114, 217, 38, 109, 10, 241, 113, 80, 81, 84, 36, 151, 137, 108, 208, 36,
             188, 169, 255, 246, 212, 233, 192, 21, 124, 241, 7, 33, 217,
+        ],
+    );
+
+    let staged: StagedPipeline<(MinMaxScaler, StandardScaler), Ridge> = StagedPipeline::fit(
+        &data.as_view(),
+        |batch| MinMaxScaler::fit(batch, MinMaxScalerParams::default()),
+        |batch| StandardScaler::fit(batch, StandardScalerParams::default()),
+        |batch| Ridge::fit(batch, &regression, RidgeParams::default()),
+    )
+    .unwrap();
+    assert_fingerprint(
+        "staged-pipeline",
+        staged
+            .to_artifact(input_schema, transformed_schema)
+            .unwrap(),
+        staged
+            .to_artifact(input_schema, transformed_schema)
+            .unwrap(),
+        684,
+        [
+            239, 250, 222, 100, 214, 146, 29, 132, 72, 138, 179, 149, 177, 235, 23, 20, 5, 202, 16,
+            102, 16, 59, 93, 207, 114, 219, 35, 191, 204, 194, 105, 7,
         ],
     );
 }
