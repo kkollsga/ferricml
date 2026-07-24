@@ -57,3 +57,11 @@ estimator meaning follow the reference contract.
 match once per batch; the regressor variants cover forests, linear regression,
 ridge, and histogram gradient boosting. Generic estimators and pipelines
 remain the primary zero-overhead layer.
+
+Meta-layers compose capabilities rather than restating them. A dispatch enum
+and a fitted pipeline declare the intersection of their variants' or parts'
+capabilities, so an undispatched caller is never promised more than it gets,
+while `capabilities` on a dispatch value reports the variant actually held.
+Capabilities a composition cannot have at all — weighted fitting, when the
+composition owns only already-fitted parts — are declared away structurally
+instead of being inherited.

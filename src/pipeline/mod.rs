@@ -7,7 +7,9 @@
 //! preprocessing estimator rather than guessed in advance.
 
 use crate::api::Classifier;
-use crate::api::{Estimator, ModelError, Transformer, validate_transformed_shape};
+use crate::api::{
+    Capabilities, Estimator, HasCapabilities, ModelError, Transformer, validate_transformed_shape,
+};
 use crate::artifact::{
     ArtifactError, STANDARD_SCALER_LINEAR_PIPELINE_ARTIFACT_KIND,
     STANDARD_SCALER_LOGISTIC_PIPELINE_ARTIFACT_KIND, STANDARD_SCALER_RIDGE_PIPELINE_ARTIFACT_KIND,
@@ -176,6 +178,19 @@ fn decode_pipeline_components(
     Ok((transformer.remaining(), estimator.remaining()))
 }
 
+/// A fitted composition persists exactly when both of its parts do.
+///
+/// Weighted fitting is declared away structurally: [`Pipeline`] composes parts
+/// that are already fitted, so accepting weights is a property of fitting each
+/// part, not of the composition. Only compositions with a concrete artifact
+/// declare capabilities at all; asking an arbitrary `Pipeline<T, E>` is a
+/// compile error rather than a wrong answer.
+impl HasCapabilities for Pipeline<StandardScaler, LogisticRegression> {
+    const CAPABILITIES: Capabilities = StandardScaler::CAPABILITIES
+        .intersection(LogisticRegression::CAPABILITIES)
+        .with_sample_weights(false);
+}
+
 impl Pipeline<StandardScaler, LogisticRegression> {
     /// Writes labels using caller-owned transform and output buffers.
     pub fn predict_into(
@@ -264,6 +279,12 @@ impl Pipeline<StandardScaler, LogisticRegression> {
 
 macro_rules! impl_scaler_regression_pipeline {
     ($estimator:ty, $kind:expr) => {
+        impl HasCapabilities for Pipeline<StandardScaler, $estimator> {
+            const CAPABILITIES: Capabilities = StandardScaler::CAPABILITIES
+                .intersection(<$estimator>::CAPABILITIES)
+                .with_sample_weights(false);
+        }
+
         impl Pipeline<StandardScaler, $estimator> {
             /// Writes predictions using caller-owned transform and output buffers.
             pub fn predict_into(

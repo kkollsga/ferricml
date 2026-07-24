@@ -9,7 +9,7 @@ use crate::ensemble::{
 };
 use crate::linear_model::{LinearRegression, LinearRegressionParams, Ridge, RidgeParams};
 
-use super::super::{Estimator, ModelError, Regressor};
+use super::super::{Capabilities, Estimator, HasCapabilities, ModelError, Regressor};
 
 const ANY_REGRESSOR_PAYLOAD_VERSION: u16 = 1;
 const DISPATCH_COMPONENT_KIND: u16 = 1;
@@ -55,6 +55,22 @@ impl AnyRegressor {
     /// Returns the feature width required by this model.
     pub fn n_features_in(&self) -> usize {
         <Self as Estimator>::n_features_in(self)
+    }
+
+    /// Returns the capabilities of the estimator type this value holds.
+    ///
+    /// [`HasCapabilities::CAPABILITIES`] is the intersection over every
+    /// variant, which is what batch dispatch can rely on without inspecting
+    /// the value. This reports the selected variant instead, which is what a
+    /// caller needs before deciding whether this particular fitted model can
+    /// be refitted with weights.
+    pub fn capabilities(&self) -> Capabilities {
+        match self {
+            Self::RandomForest(_) => RandomForestRegressor::CAPABILITIES,
+            Self::LinearRegression(_) => LinearRegression::CAPABILITIES,
+            Self::Ridge(_) => Ridge::CAPABILITIES,
+            Self::HistGradientBoosting(_) => HistGradientBoostingRegressor::CAPABILITIES,
+        }
     }
 
     /// Returns the concrete fitted parameters without erasing their type.
@@ -197,6 +213,21 @@ impl Estimator for AnyRegressor {
             Self::HistGradientBoosting(model) => model.n_features_in(),
         }
     }
+}
+
+/// Declares only what holds for every variant, so a caller that has not
+/// inspected the runtime variant is never promised more than it gets. Every
+/// variant persists, so the dispatch enum persists too.
+///
+/// Weighted fitting is declared away structurally rather than composed: the
+/// enum owns fitted models and no fitting entry point, so it could not accept
+/// weights even if every variant did.
+impl HasCapabilities for AnyRegressor {
+    const CAPABILITIES: Capabilities = RandomForestRegressor::CAPABILITIES
+        .intersection(LinearRegression::CAPABILITIES)
+        .intersection(Ridge::CAPABILITIES)
+        .intersection(HistGradientBoostingRegressor::CAPABILITIES)
+        .with_sample_weights(false);
 }
 
 impl Regressor for AnyRegressor {

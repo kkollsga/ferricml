@@ -2,7 +2,7 @@ use crate::data::MatrixView;
 use crate::ensemble::{RandomForestClassifier, RandomForestClassifierParams};
 use crate::linear_model::{LogisticRegression, LogisticRegressionParams};
 
-use super::super::{Classifier, Estimator, ModelError};
+use super::super::{Capabilities, Classifier, Estimator, HasCapabilities, ModelError};
 
 /// Parameters retained by a fitted [`AnyClassifier`].
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -36,6 +36,20 @@ impl AnyClassifier {
     /// Returns sorted class labels observed during fitting.
     pub fn classes(&self) -> &[u8] {
         <Self as Classifier>::classes(self)
+    }
+
+    /// Returns the capabilities of the estimator type this value holds.
+    ///
+    /// [`HasCapabilities::CAPABILITIES`] is the intersection over every
+    /// variant, which is what batch dispatch can rely on without inspecting
+    /// the value. This reports the selected variant instead, which is what a
+    /// caller needs before deciding whether this particular fitted model can
+    /// be refitted with weights or persisted.
+    pub fn capabilities(&self) -> Capabilities {
+        match self {
+            Self::RandomForest(_) => RandomForestClassifier::CAPABILITIES,
+            Self::LogisticRegression(_) => LogisticRegression::CAPABILITIES,
+        }
     }
 
     /// Returns the concrete fitted parameters without erasing their type.
@@ -111,6 +125,18 @@ impl Estimator for AnyClassifier {
             Self::LogisticRegression(model) => model.n_features_in(),
         }
     }
+}
+
+/// Declares only what holds for every variant, so a caller that has not
+/// inspected the runtime variant is never promised more than it gets.
+///
+/// Weighted fitting is declared away structurally rather than composed: the
+/// enum owns fitted models and no fitting entry point, so it could not accept
+/// weights even if every variant did.
+impl HasCapabilities for AnyClassifier {
+    const CAPABILITIES: Capabilities = RandomForestClassifier::CAPABILITIES
+        .intersection(LogisticRegression::CAPABILITIES)
+        .with_sample_weights(false);
 }
 
 impl Classifier for AnyClassifier {

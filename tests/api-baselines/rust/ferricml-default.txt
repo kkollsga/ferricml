@@ -4,6 +4,7 @@ pub mod ferricml::api
 pub ferricml::api::AnyClassifier::LogisticRegression(ferricml::linear_model::LogisticRegression)
 pub ferricml::api::AnyClassifier::RandomForest(ferricml::ensemble::RandomForestClassifier)
 impl ferricml::api::AnyClassifier
+pub fn ferricml::api::AnyClassifier::capabilities(&self) -> ferricml::api::Capabilities
 pub fn ferricml::api::AnyClassifier::classes(&self) -> &[u8]
 pub fn ferricml::api::AnyClassifier::get_params(&self) -> ferricml::api::AnyClassifierParams<'_>
 pub fn ferricml::api::AnyClassifier::n_features_in(&self) -> usize
@@ -27,6 +28,8 @@ pub fn ferricml::api::AnyClassifier::predict_proba(&self, &ferricml::data::Matri
 pub fn ferricml::api::AnyClassifier::predict_proba_into(&self, &ferricml::data::MatrixView<'_>, &mut [f32]) -> core::result::Result<(), ferricml::api::ModelError>
 impl ferricml::api::Estimator for ferricml::api::AnyClassifier
 pub fn ferricml::api::AnyClassifier::n_features_in(&self) -> usize
+impl ferricml::api::HasCapabilities for ferricml::api::AnyClassifier
+pub const ferricml::api::AnyClassifier::CAPABILITIES: ferricml::api::Capabilities
 #[non_exhaustive] pub enum ferricml::api::AnyClassifierParams<'a>
 pub ferricml::api::AnyClassifierParams::LogisticRegression(&'a ferricml::linear_model::LogisticRegressionParams)
 pub ferricml::api::AnyClassifierParams::RandomForest(&'a ferricml::ensemble::RandomForestClassifierParams)
@@ -36,6 +39,7 @@ pub ferricml::api::AnyRegressor::LinearRegression(ferricml::linear_model::Linear
 pub ferricml::api::AnyRegressor::RandomForest(ferricml::ensemble::RandomForestRegressor)
 pub ferricml::api::AnyRegressor::Ridge(ferricml::linear_model::Ridge)
 impl ferricml::api::AnyRegressor
+pub fn ferricml::api::AnyRegressor::capabilities(&self) -> ferricml::api::Capabilities
 pub fn ferricml::api::AnyRegressor::from_artifact(&[u8], [u8; 32]) -> core::result::Result<Self, ferricml::artifact::ArtifactError>
 pub fn ferricml::api::AnyRegressor::get_params(&self) -> ferricml::api::AnyRegressorParams<'_>
 pub fn ferricml::api::AnyRegressor::n_features_in(&self) -> usize
@@ -52,6 +56,8 @@ impl core::convert::From<ferricml::linear_model::Ridge> for ferricml::api::AnyRe
 pub fn ferricml::api::AnyRegressor::from(ferricml::linear_model::Ridge) -> Self
 impl ferricml::api::Estimator for ferricml::api::AnyRegressor
 pub fn ferricml::api::AnyRegressor::n_features_in(&self) -> usize
+impl ferricml::api::HasCapabilities for ferricml::api::AnyRegressor
+pub const ferricml::api::AnyRegressor::CAPABILITIES: ferricml::api::Capabilities
 impl ferricml::api::Regressor for ferricml::api::AnyRegressor
 pub fn ferricml::api::AnyRegressor::predict(&self, &ferricml::data::MatrixView<'_>) -> core::result::Result<alloc::vec::Vec<f32>, ferricml::api::ModelError>
 pub fn ferricml::api::AnyRegressor::predict_into(&self, &ferricml::data::MatrixView<'_>, &mut [f32]) -> core::result::Result<(), ferricml::api::ModelError>
@@ -191,6 +197,10 @@ impl<T, E> ferricml::api::Estimator for ferricml::pipeline::Pipeline<T, E> where
 pub fn ferricml::pipeline::Pipeline<T, E>::n_features_in(&self) -> usize
 pub trait ferricml::api::HasCapabilities: ferricml::api::Estimator
 pub const ferricml::api::HasCapabilities::CAPABILITIES: ferricml::api::Capabilities
+impl ferricml::api::HasCapabilities for ferricml::api::AnyClassifier
+pub const ferricml::api::AnyClassifier::CAPABILITIES: ferricml::api::Capabilities
+impl ferricml::api::HasCapabilities for ferricml::api::AnyRegressor
+pub const ferricml::api::AnyRegressor::CAPABILITIES: ferricml::api::Capabilities
 impl ferricml::api::HasCapabilities for ferricml::ensemble::HistGradientBoostingRegressor
 pub const ferricml::ensemble::HistGradientBoostingRegressor::CAPABILITIES: ferricml::api::Capabilities
 impl ferricml::api::HasCapabilities for ferricml::ensemble::RandomForestClassifier
@@ -203,6 +213,12 @@ impl ferricml::api::HasCapabilities for ferricml::linear_model::LogisticRegressi
 pub const ferricml::linear_model::LogisticRegression::CAPABILITIES: ferricml::api::Capabilities
 impl ferricml::api::HasCapabilities for ferricml::linear_model::Ridge
 pub const ferricml::linear_model::Ridge::CAPABILITIES: ferricml::api::Capabilities
+impl ferricml::api::HasCapabilities for ferricml::pipeline::Pipeline<ferricml::preprocessing::StandardScaler, ferricml::linear_model::LinearRegression>
+pub const ferricml::pipeline::Pipeline<ferricml::preprocessing::StandardScaler, ferricml::linear_model::LinearRegression>::CAPABILITIES: ferricml::api::Capabilities
+impl ferricml::api::HasCapabilities for ferricml::pipeline::Pipeline<ferricml::preprocessing::StandardScaler, ferricml::linear_model::LogisticRegression>
+pub const ferricml::pipeline::Pipeline<ferricml::preprocessing::StandardScaler, ferricml::linear_model::LogisticRegression>::CAPABILITIES: ferricml::api::Capabilities
+impl ferricml::api::HasCapabilities for ferricml::pipeline::Pipeline<ferricml::preprocessing::StandardScaler, ferricml::linear_model::Ridge>
+pub const ferricml::pipeline::Pipeline<ferricml::preprocessing::StandardScaler, ferricml::linear_model::Ridge>::CAPABILITIES: ferricml::api::Capabilities
 impl ferricml::api::HasCapabilities for ferricml::preprocessing::StandardScaler
 pub const ferricml::preprocessing::StandardScaler::CAPABILITIES: ferricml::api::Capabilities
 pub trait ferricml::api::HasParams
@@ -876,6 +892,12 @@ pub fn ferricml::pipeline::Pipeline<T, E>::transform_into<'output>(&self, &ferri
 pub const fn ferricml::pipeline::Pipeline<T, E>::transformer(&self) -> &T
 pub fn ferricml::pipeline::Pipeline<T, E>::with_transformed<R>(&self, &ferricml::data::MatrixView<'_>, &mut [f32], impl core::ops::function::FnOnce(&E, &ferricml::data::MatrixView<'_>) -> core::result::Result<R, ferricml::api::ModelError>) -> core::result::Result<R, ferricml::api::ModelError>
 pub fn ferricml::pipeline::Pipeline<T, E>::workspace_len(&self, usize) -> core::result::Result<usize, ferricml::api::ModelError>
+impl ferricml::api::HasCapabilities for ferricml::pipeline::Pipeline<ferricml::preprocessing::StandardScaler, ferricml::linear_model::LinearRegression>
+pub const ferricml::pipeline::Pipeline<ferricml::preprocessing::StandardScaler, ferricml::linear_model::LinearRegression>::CAPABILITIES: ferricml::api::Capabilities
+impl ferricml::api::HasCapabilities for ferricml::pipeline::Pipeline<ferricml::preprocessing::StandardScaler, ferricml::linear_model::LogisticRegression>
+pub const ferricml::pipeline::Pipeline<ferricml::preprocessing::StandardScaler, ferricml::linear_model::LogisticRegression>::CAPABILITIES: ferricml::api::Capabilities
+impl ferricml::api::HasCapabilities for ferricml::pipeline::Pipeline<ferricml::preprocessing::StandardScaler, ferricml::linear_model::Ridge>
+pub const ferricml::pipeline::Pipeline<ferricml::preprocessing::StandardScaler, ferricml::linear_model::Ridge>::CAPABILITIES: ferricml::api::Capabilities
 impl<T, E> ferricml::api::Estimator for ferricml::pipeline::Pipeline<T, E> where T: ferricml::api::Transformer, E: ferricml::api::Estimator
 pub fn ferricml::pipeline::Pipeline<T, E>::n_features_in(&self) -> usize
 pub mod ferricml::preprocessing
