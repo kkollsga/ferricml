@@ -170,6 +170,19 @@ and releases use [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   observed, which is the probability column order of any classifier fitted on
   it. Labels are never assumed contiguous or zero-based, so `{7, 3, 10}` gives
   classes `[3, 7, 10]`, and selecting a subset recomputes the observed set.
+- `model_selection::ClassifierOutput::ProbabilityMatrix`, a batch output
+  carrying a whole row-major probability matrix together with the class list
+  naming its columns, and the matching
+  `ClassifierOutputKind::ProbabilityMatrix`. A score reading it is independent
+  of the binary class layouts, so it works for any observed class set.
+- `model_selection::ClassificationScorer::MulticlassLogLoss` and
+  `MulticlassBrier`, which read that matrix. Cross-entropy agrees with the
+  binary `LogLoss` on two classes; the multiclass Brier score squares every
+  column and is therefore exactly twice the binary one, as documented.
+- `model_selection::score_multiclass_classifier` and
+  `score_multiclass_classifier_with`, scoring a fitted classifier against
+  `data::ClassTargets`. They share one implementation with the binary entry
+  points, so there is still a single prediction and class-layout path.
 
 ### Changed
 

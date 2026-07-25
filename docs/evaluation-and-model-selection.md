@@ -159,6 +159,19 @@ rather than a substituted value. Every score also declares `greater_is_better`,
 which is what lets permutation importance orient its result without knowing
 which metric it holds.
 
+A classification score can also read a whole probability matrix.
+`ClassifierOutput::ProbabilityMatrix` carries the row-major matrix together
+with the classifier's own sorted class list, so the columns are *named* rather
+than assumed to be `[0, 1]`, and a score reading it works for any observed class
+set. `ClassificationScorer::MulticlassLogLoss` and `MulticlassBrier` are the
+built-in scores that do. `score_multiclass_classifier` is `score_classifier`
+over `ClassTargets` instead of `BinaryTargets`; both reach the model through one
+implementation, so the prediction call, the class-layout handling, and the
+workspace reuse exist exactly once. The `[0]`, `[1]`, and `[0, 1]`
+positive-probability layouts are unchanged, and a wider class set asked for one
+of them is still `ScoringError::UnsupportedClasses` rather than a reinterpreted
+column.
+
 `score_classifier_with` and `score_regressor_with` take a `ScoringWorkspace`
 holding the batch output. Reusing one workspace across calls of the same shape
 allocates on the first call only, which is what makes repeated scoring —

@@ -12,7 +12,8 @@ pub use cross_validation::{
 pub use scoring::{
     ClassificationScore, ClassificationScorer, ClassifierOutput, ClassifierOutputKind,
     RegressionScore, RegressionScorer, ScoringError, ScoringWorkspace, score_classifier,
-    score_classifier_with, score_regressor, score_regressor_with,
+    score_classifier_with, score_multiclass_classifier, score_multiclass_classifier_with,
+    score_regressor, score_regressor_with,
 };
 pub use search::{
     CandidateScores, ParameterGrid, SearchError, SearchResult, grid_search_classifier,

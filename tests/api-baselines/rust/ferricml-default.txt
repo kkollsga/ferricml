@@ -945,6 +945,8 @@ pub ferricml::model_selection::ClassificationScorer::Accuracy
 pub ferricml::model_selection::ClassificationScorer::Brier
 pub ferricml::model_selection::ClassificationScorer::F1
 pub ferricml::model_selection::ClassificationScorer::LogLoss
+pub ferricml::model_selection::ClassificationScorer::MulticlassBrier
+pub ferricml::model_selection::ClassificationScorer::MulticlassLogLoss
 pub ferricml::model_selection::ClassificationScorer::Precision
 pub ferricml::model_selection::ClassificationScorer::Recall
 pub ferricml::model_selection::ClassificationScorer::RocAuc
@@ -955,11 +957,15 @@ pub fn ferricml::model_selection::ClassificationScorer::score(&self, &[u8], ferr
 #[non_exhaustive] pub enum ferricml::model_selection::ClassifierOutput<'a>
 pub ferricml::model_selection::ClassifierOutput::Labels(&'a [u8])
 pub ferricml::model_selection::ClassifierOutput::PositiveProbabilities(&'a [f32])
+pub ferricml::model_selection::ClassifierOutput::ProbabilityMatrix
+pub ferricml::model_selection::ClassifierOutput::ProbabilityMatrix::classes: &'a [u8]
+pub ferricml::model_selection::ClassifierOutput::ProbabilityMatrix::probabilities: &'a [f32]
 impl ferricml::model_selection::ClassifierOutput<'_>
 pub const fn ferricml::model_selection::ClassifierOutput<'_>::kind(&self) -> ferricml::model_selection::ClassifierOutputKind
 #[non_exhaustive] pub enum ferricml::model_selection::ClassifierOutputKind
 pub ferricml::model_selection::ClassifierOutputKind::Labels
 pub ferricml::model_selection::ClassifierOutputKind::PositiveProbabilities
+pub ferricml::model_selection::ClassifierOutputKind::ProbabilityMatrix
 #[non_exhaustive] pub enum ferricml::model_selection::CrossValidationError
 pub ferricml::model_selection::CrossValidationError::Fit
 pub ferricml::model_selection::CrossValidationError::Fit::fold: usize
@@ -1251,6 +1257,8 @@ pub fn ferricml::model_selection::grid_search_classifier<M, P, I, F, S>(&ferricm
 pub fn ferricml::model_selection::grid_search_regressor<M, P, I, F, S>(&ferricml::data::MatrixView<'_>, &ferricml::data::RegressionTargets, I, &ferricml::model_selection::ParameterGrid<P>, S, F) -> core::result::Result<ferricml::model_selection::SearchResult<P>, ferricml::model_selection::SearchError> where M: ferricml::api::Regressor, P: core::clone::Clone, I: core::iter::traits::collect::IntoIterator<Item = ferricml::model_selection::Split>, F: core::ops::function::FnMut(&ferricml::data::MatrixView<'_>, &ferricml::data::RegressionTargets, &P) -> core::result::Result<M, ferricml::api::ModelError>, S: ferricml::model_selection::RegressionScore
 pub fn ferricml::model_selection::score_classifier<S: ferricml::model_selection::ClassificationScore>(&dyn ferricml::api::Classifier, &ferricml::data::MatrixView<'_>, &ferricml::data::BinaryTargets, S) -> core::result::Result<f64, ferricml::model_selection::ScoringError>
 pub fn ferricml::model_selection::score_classifier_with<S: ferricml::model_selection::ClassificationScore>(&dyn ferricml::api::Classifier, &ferricml::data::MatrixView<'_>, &ferricml::data::BinaryTargets, S, &mut ferricml::model_selection::ScoringWorkspace) -> core::result::Result<f64, ferricml::model_selection::ScoringError>
+pub fn ferricml::model_selection::score_multiclass_classifier<S: ferricml::model_selection::ClassificationScore>(&dyn ferricml::api::Classifier, &ferricml::data::MatrixView<'_>, &ferricml::data::ClassTargets, S) -> core::result::Result<f64, ferricml::model_selection::ScoringError>
+pub fn ferricml::model_selection::score_multiclass_classifier_with<S: ferricml::model_selection::ClassificationScore>(&dyn ferricml::api::Classifier, &ferricml::data::MatrixView<'_>, &ferricml::data::ClassTargets, S, &mut ferricml::model_selection::ScoringWorkspace) -> core::result::Result<f64, ferricml::model_selection::ScoringError>
 pub fn ferricml::model_selection::score_regressor<S: ferricml::model_selection::RegressionScore>(&dyn ferricml::api::Regressor, &ferricml::data::MatrixView<'_>, &ferricml::data::RegressionTargets, S) -> core::result::Result<f64, ferricml::model_selection::ScoringError>
 pub fn ferricml::model_selection::score_regressor_with<S: ferricml::model_selection::RegressionScore>(&dyn ferricml::api::Regressor, &ferricml::data::MatrixView<'_>, &ferricml::data::RegressionTargets, S, &mut ferricml::model_selection::ScoringWorkspace) -> core::result::Result<f64, ferricml::model_selection::ScoringError>
 pub fn ferricml::model_selection::stratified_train_test_split(&[u8], ferricml::model_selection::HoldoutParams) -> core::result::Result<ferricml::model_selection::Split, ferricml::model_selection::SplitError>

@@ -2,11 +2,11 @@ use std::error::Error;
 use std::fmt;
 
 use crate::api::{Classifier, ModelError, Regressor};
-use crate::data::{BinaryTargets, MatrixView, RegressionTargets};
+use crate::data::{BinaryTargets, ClassTargets, MatrixView, RegressionTargets};
 use crate::metrics::{
     MetricError, accuracy_score, brier_score, f1_score, log_loss, mean_absolute_error,
-    mean_squared_error, precision_score, r2_score, recall_score, roc_auc_score,
-    root_mean_squared_error,
+    mean_squared_error, multiclass_brier_score, multiclass_log_loss, precision_score, r2_score,
+    recall_score, roc_auc_score, root_mean_squared_error,
 };
 
 /// Built-in scores for fitted binary classifiers.
@@ -27,6 +27,21 @@ pub enum ClassificationScorer {
     LogLoss,
     /// Area under the receiver-operating-characteristic curve.
     RocAuc,
+    // New variants are appended rather than inserted: this enum is
+    // `#[non_exhaustive]`, but moving an existing variant's discriminant is
+    // still a reported change and buys nothing.
+    /// Mean cross-entropy of a whole probability matrix.
+    ///
+    /// Unlike [`LogLoss`](Self::LogLoss) this reads every probability column
+    /// and therefore scores an arbitrary observed class set. On a two-class
+    /// classifier the two agree.
+    MulticlassLogLoss,
+    /// Mean squared error of a whole probability row, over every class.
+    ///
+    /// Deliberately *not* interchangeable with [`Brier`](Self::Brier), which
+    /// squares the positive column alone; on the same two-class predictions
+    /// this is exactly twice that value.
+    MulticlassBrier,
 }
 
 /// Built-in scores for fitted regressors.
@@ -51,6 +66,8 @@ pub enum ClassifierOutputKind {
     Labels,
     /// One positive-class probability per row.
     PositiveProbabilities,
+    /// A row-major probability matrix with one column per observed class.
+    ProbabilityMatrix,
 }
 
 /// One batch of classifier output, ready to score.
@@ -66,6 +83,18 @@ pub enum ClassifierOutput<'a> {
     Labels(&'a [u8]),
     /// Positive-class probabilities, one per row.
     PositiveProbabilities(&'a [f32]),
+    /// A whole probability matrix and the class list naming its columns.
+    ///
+    /// This is the variant that makes probability scoring independent of the
+    /// binary class layouts: the columns are identified by the classifier's own
+    /// sorted class list rather than assumed to be `[0, 1]`, so a score reading
+    /// it works for any observed class set.
+    ProbabilityMatrix {
+        /// The classifier's sorted class labels, one per column.
+        classes: &'a [u8],
+        /// Row-major probabilities, `classes.len()` per row.
+        probabilities: &'a [f32],
+    },
 }
 
 impl ClassifierOutput<'_> {
@@ -74,6 +103,7 @@ impl ClassifierOutput<'_> {
         match self {
             Self::Labels(_) => ClassifierOutputKind::Labels,
             Self::PositiveProbabilities(_) => ClassifierOutputKind::PositiveProbabilities,
+            Self::ProbabilityMatrix { .. } => ClassifierOutputKind::ProbabilityMatrix,
         }
     }
 }
@@ -145,11 +175,17 @@ impl ClassificationScore for ClassificationScorer {
             Self::Brier | Self::LogLoss | Self::RocAuc => {
                 ClassifierOutputKind::PositiveProbabilities
             }
+            Self::MulticlassLogLoss | Self::MulticlassBrier => {
+                ClassifierOutputKind::ProbabilityMatrix
+            }
         }
     }
 
     fn greater_is_better(&self) -> bool {
-        !matches!(self, Self::Brier | Self::LogLoss)
+        !matches!(
+            self,
+            Self::Brier | Self::LogLoss | Self::MulticlassLogLoss | Self::MulticlassBrier
+        )
     }
 
     fn score(&self, expected: &[u8], output: ClassifierOutput<'_>) -> Result<f64, ScoringError> {
@@ -173,6 +209,20 @@ impl ClassificationScore for ClassificationScorer {
             (Self::RocAuc, ClassifierOutput::PositiveProbabilities(probabilities)) => {
                 roc_auc_score(expected, probabilities)
             }
+            (
+                Self::MulticlassLogLoss,
+                ClassifierOutput::ProbabilityMatrix {
+                    classes,
+                    probabilities,
+                },
+            ) => multiclass_log_loss(expected, classes, probabilities),
+            (
+                Self::MulticlassBrier,
+                ClassifierOutput::ProbabilityMatrix {
+                    classes,
+                    probabilities,
+                },
+            ) => multiclass_brier_score(expected, classes, probabilities),
             (_, supplied) => {
                 return Err(ScoringError::UnsupportedOutput {
                     required: self.output_kind(),
@@ -226,6 +276,19 @@ impl ScoringWorkspace {
     fn values(&mut self, rows: usize) -> &mut [f32] {
         self.values.resize(rows, 0.0);
         &mut self.values
+    }
+
+    /// Storage for a whole probability matrix, reusing the value buffer.
+    ///
+    /// A probability matrix is `rows * columns` values, so it shares the
+    /// workspace's value allocation rather than adding a second one; the
+    /// buffer grows to the largest shape any call has needed and never
+    /// reallocates for a repeat of that shape.
+    fn matrix(&mut self, rows: usize, columns: usize) -> Result<&mut [f32], ScoringError> {
+        let len = rows.checked_mul(columns).ok_or(ScoringError::Prediction(
+            ModelError::OutputShapeOverflow { rows, columns },
+        ))?;
+        Ok(self.values(len))
     }
 }
 
@@ -314,6 +377,56 @@ pub fn score_classifier_with<S: ClassificationScore>(
     scorer: S,
     workspace: &mut ScoringWorkspace,
 ) -> Result<f64, ScoringError> {
+    score_labelled(classifier, data, targets.as_slice(), scorer, workspace)
+}
+
+/// Scores one fitted classifier against an arbitrary observed class set.
+///
+/// This is [`score_classifier`] over [`ClassTargets`] instead of
+/// [`BinaryTargets`]. It runs the same single batch prediction call and the
+/// same score contract; only the target vocabulary is wider. Scores reading
+/// [`ClassifierOutputKind::ProbabilityMatrix`] work here for any number of
+/// classes, while the binary positive-probability layouts remain what they were.
+pub fn score_multiclass_classifier<S: ClassificationScore>(
+    classifier: &dyn Classifier,
+    data: &MatrixView<'_>,
+    targets: &ClassTargets,
+    scorer: S,
+) -> Result<f64, ScoringError> {
+    score_multiclass_classifier_with(
+        classifier,
+        data,
+        targets,
+        scorer,
+        &mut ScoringWorkspace::new(),
+    )
+}
+
+/// Scores one fitted classifier over a class set into caller-owned storage.
+///
+/// The allocation-free form of [`score_multiclass_classifier`].
+pub fn score_multiclass_classifier_with<S: ClassificationScore>(
+    classifier: &dyn Classifier,
+    data: &MatrixView<'_>,
+    targets: &ClassTargets,
+    scorer: S,
+    workspace: &mut ScoringWorkspace,
+) -> Result<f64, ScoringError> {
+    score_labelled(classifier, data, targets.as_slice(), scorer, workspace)
+}
+
+/// The one classifier scoring implementation, over already-validated labels.
+///
+/// Both target vocabularies reach the model through this function, so the
+/// prediction call, the class-layout handling, and the workspace reuse exist
+/// exactly once.
+fn score_labelled<S: ClassificationScore>(
+    classifier: &dyn Classifier,
+    data: &MatrixView<'_>,
+    targets: &[u8],
+    scorer: S,
+    workspace: &mut ScoringWorkspace,
+) -> Result<f64, ScoringError> {
     validate_target_length(data.rows(), targets.len())?;
     let output = match scorer.output_kind() {
         ClassifierOutputKind::Labels => {
@@ -335,8 +448,19 @@ pub fn score_classifier_with<S: ClassificationScore>(
             }
             ClassifierOutput::PositiveProbabilities(probabilities)
         }
+        ClassifierOutputKind::ProbabilityMatrix => {
+            let classes = classifier.classes();
+            let probabilities = workspace.matrix(data.rows(), classes.len())?;
+            classifier
+                .predict_proba_into(data, probabilities)
+                .map_err(ScoringError::Prediction)?;
+            ClassifierOutput::ProbabilityMatrix {
+                classes,
+                probabilities,
+            }
+        }
     };
-    scorer.score(targets.as_slice(), output)
+    scorer.score(targets, output)
 }
 
 /// Scores one fitted regressor through a single batch prediction call.
@@ -385,7 +509,7 @@ fn validate_target_length(rows: usize, targets: usize) -> Result<(), ScoringErro
 mod tests {
     use super::*;
     use crate::api::{AnyClassifier, AnyRegressor};
-    use crate::data::DenseMatrix;
+    use crate::data::{ClassTargets, DenseMatrix};
     use crate::ensemble::{
         MaxFeatures, RandomForestClassifier, RandomForestClassifierParams, RandomForestRegressor,
         RandomForestRegressorParams,
@@ -681,6 +805,204 @@ mod tests {
         assert_eq!(
             ClassifierOutput::Labels(&labels).kind(),
             ClassifierOutputKind::Labels
+        );
+        let classes = [0_u8, 1];
+        assert_eq!(
+            ClassificationScorer::MulticlassLogLoss
+                .score(&labels, ClassifierOutput::Labels(&labels)),
+            Err(ScoringError::UnsupportedOutput {
+                required: ClassifierOutputKind::ProbabilityMatrix,
+                supplied: ClassifierOutputKind::Labels,
+            })
+        );
+        assert_eq!(
+            ClassificationScorer::Brier.score(
+                &labels,
+                ClassifierOutput::ProbabilityMatrix {
+                    classes: &classes,
+                    probabilities: &[0.8, 0.2, 0.1, 0.9],
+                }
+            ),
+            Err(ScoringError::UnsupportedOutput {
+                required: ClassifierOutputKind::PositiveProbabilities,
+                supplied: ClassifierOutputKind::ProbabilityMatrix,
+            })
+        );
+    }
+
+    fn multiclass_forest(targets: &ClassTargets) -> RandomForestClassifier {
+        RandomForestClassifier::fit_multiclass(
+            &matrix().as_view(),
+            targets,
+            RandomForestClassifierParams::default()
+                .with_n_estimators(3)
+                .with_bootstrap(false)
+                .with_max_features(MaxFeatures::All),
+        )
+        .unwrap()
+    }
+
+    #[test]
+    fn probability_matrix_scores_read_every_column_for_any_class_set() {
+        let data = matrix();
+        // Deliberately non-contiguous, non-zero-based labels.
+        let targets = ClassTargets::new(vec![3, 3, 7, 10]).unwrap();
+        let model = multiclass_forest(&targets);
+        let probabilities = model.predict_proba(&data.as_view()).unwrap();
+        assert_eq!(model.classes(), &[3, 7, 10]);
+
+        for (scorer, expected) in [
+            (
+                ClassificationScorer::MulticlassLogLoss,
+                multiclass_log_loss(targets.as_slice(), model.classes(), &probabilities),
+            ),
+            (
+                ClassificationScorer::MulticlassBrier,
+                multiclass_brier_score(targets.as_slice(), model.classes(), &probabilities),
+            ),
+        ] {
+            assert_eq!(
+                score_multiclass_classifier(&model, &data.as_view(), &targets, scorer),
+                expected.map_err(ScoringError::Metric),
+                "{scorer:?}"
+            );
+        }
+
+        // The positive-probability layouts still refuse a wider class set,
+        // rather than reinterpreting one of its columns.
+        assert_eq!(
+            score_multiclass_classifier(
+                &model,
+                &data.as_view(),
+                &targets,
+                ClassificationScorer::Brier
+            ),
+            Err(ScoringError::UnsupportedClasses)
+        );
+    }
+
+    #[test]
+    fn probability_matrix_scores_reach_binary_targets_through_the_same_path() {
+        let data = matrix();
+        let binary = BinaryTargets::new(vec![0, 0, 1, 1]).unwrap();
+        let model = classifier(&binary);
+        let probabilities = model.predict_proba(&data.as_view()).unwrap();
+        let positive = model.predict_class_proba(&data.as_view(), 1).unwrap();
+
+        // Cross-entropy reads only the true class's column, so the multiclass
+        // and binary log losses agree on two classes.
+        let multiclass = score_classifier(
+            &model,
+            &data.as_view(),
+            &binary,
+            ClassificationScorer::MulticlassLogLoss,
+        )
+        .unwrap();
+        let binary_log_loss = score_classifier(
+            &model,
+            &data.as_view(),
+            &binary,
+            ClassificationScorer::LogLoss,
+        )
+        .unwrap();
+        assert!((multiclass - binary_log_loss).abs() <= 1.0e-12);
+        assert_eq!(
+            multiclass,
+            multiclass_log_loss(binary.as_slice(), model.classes(), &probabilities).unwrap()
+        );
+
+        // The Brier scores deliberately differ by exactly a factor of two.
+        let multiclass_brier = score_classifier(
+            &model,
+            &data.as_view(),
+            &binary,
+            ClassificationScorer::MulticlassBrier,
+        )
+        .unwrap();
+        let binary_brier = brier_score(binary.as_slice(), &positive).unwrap();
+        assert!((multiclass_brier - 2.0 * binary_brier).abs() <= 1.0e-12);
+    }
+
+    #[test]
+    fn the_probability_matrix_workspace_is_reused_and_agrees_with_the_allocating_form() {
+        let data = matrix();
+        let targets = ClassTargets::new(vec![3, 3, 7, 10]).unwrap();
+        let model = multiclass_forest(&targets);
+        let mut workspace = ScoringWorkspace::new();
+        for scorer in [
+            ClassificationScorer::MulticlassLogLoss,
+            ClassificationScorer::MulticlassBrier,
+        ] {
+            let allocating = score_multiclass_classifier(&model, &data.as_view(), &targets, scorer);
+            let reused = score_multiclass_classifier_with(
+                &model,
+                &data.as_view(),
+                &targets,
+                scorer,
+                &mut workspace,
+            );
+            assert_eq!(allocating, reused, "{scorer:?}");
+            // One workspace serves a narrower output kind straight afterwards.
+            assert_eq!(
+                reused,
+                score_multiclass_classifier_with(
+                    &model,
+                    &data.as_view(),
+                    &targets,
+                    scorer,
+                    &mut workspace
+                )
+            );
+        }
+        assert_eq!(
+            score_multiclass_classifier_with(
+                &model,
+                &data.as_view(),
+                &targets,
+                ClassificationScorer::Accuracy,
+                &mut workspace
+            ),
+            score_multiclass_classifier(
+                &model,
+                &data.as_view(),
+                &targets,
+                ClassificationScorer::Accuracy
+            )
+        );
+    }
+
+    #[test]
+    fn multiclass_scoring_validates_targets_before_prediction() {
+        let data = matrix();
+        let fitted = ClassTargets::new(vec![3, 3, 7, 10]).unwrap();
+        let model = multiclass_forest(&fitted);
+        let short = ClassTargets::new(vec![3, 7]).unwrap();
+        assert_eq!(
+            score_multiclass_classifier(
+                &model,
+                &data.as_view(),
+                &short,
+                ClassificationScorer::MulticlassLogLoss
+            ),
+            Err(ScoringError::TargetLength {
+                rows: 4,
+                targets: 2,
+            })
+        );
+
+        // A label with no probability column is reported, never scored.
+        let unknown = ClassTargets::new(vec![3, 3, 7, 11]).unwrap();
+        assert_eq!(
+            score_multiclass_classifier(
+                &model,
+                &data.as_view(),
+                &unknown,
+                ClassificationScorer::MulticlassLogLoss
+            ),
+            Err(ScoringError::Metric(MetricError::UnknownClass {
+                index: 3,
+                value: 11,
+            }))
         );
     }
 }
