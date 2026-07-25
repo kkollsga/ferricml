@@ -89,6 +89,29 @@ and releases use [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   including no artifact. There is no fitted value to persist, so a persistence
   promise would be about something that does not exist. This is the same
   reasoning the baseline estimators already use.
+- `preprocessing::FunctionTransformer`, `FunctionTransformerParams`, and the
+  `ElementwiseFn` alias: a caller-supplied `fn(f32) -> f32` applied to every
+  value, with an optional inverse.
+
+  The map is a **function pointer, not a generic closure**. A capability
+  declaration is an associated constant on a nameable type, and the capability
+  snapshot asserts that every declaring public type appears in it by name — a
+  type instantiated at an unnameable closure type would silently fall out of
+  that coverage. A function pointer also captures no state, so two values of
+  the type cannot behave differently. A caller who needs captured state, or a
+  map that reads a whole row, implements `api::Transformer` directly.
+
+  **Determinism of the supplied function is the caller's obligation.** FerricML
+  guarantees the framing — fixed row-major order, validation before any write,
+  and `ModelError::NonFiniteTransform` naming the first cell where a finite
+  input maps to a non-finite output — but cannot guarantee the supplied
+  function is pure.
+
+  It declares no capabilities, including no artifact: a function pointer is an
+  address in the current process image. It also has no `PartialEq`, because
+  comparing function pointers compares addresses and one function is not
+  guaranteed to have one address; an equality that is quietly wrong at a
+  boundary is worse than none. Compare behaviour instead.
 - `api::ModelError::InvalidThreshold`, raised when a decision threshold is not
   finite.
 - `api::ModelError::InvalidQuantileRange`, raised when a quantile range is not

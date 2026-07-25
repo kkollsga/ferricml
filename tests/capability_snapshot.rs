@@ -51,7 +51,8 @@ use ferricml::ensemble::{
 use ferricml::linear_model::{ElasticNet, Lasso, LinearRegression, LogisticRegression, Ridge};
 use ferricml::pipeline::{Pipeline, StagedPipeline};
 use ferricml::preprocessing::{
-    Binarizer, MaxAbsScaler, MinMaxScaler, Normalizer, RobustScaler, StandardScaler,
+    Binarizer, FunctionTransformer, MaxAbsScaler, MinMaxScaler, Normalizer, RobustScaler,
+    StandardScaler,
 };
 use ferricml::ranking::PairwiseLinearRanker;
 
@@ -167,6 +168,10 @@ fn declarations() -> Vec<(&'static str, Capabilities)> {
             MinMaxScaler::CAPABILITIES,
         ),
         ("ferricml::preprocessing::Binarizer", Binarizer::CAPABILITIES),
+        (
+            "ferricml::preprocessing::FunctionTransformer",
+            FunctionTransformer::CAPABILITIES,
+        ),
         (
             "ferricml::preprocessing::Normalizer",
             Normalizer::CAPABILITIES,

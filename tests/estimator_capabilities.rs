@@ -33,8 +33,8 @@ use ferricml::linear_model::{
 };
 use ferricml::pipeline::{Pipeline, StagedPipeline};
 use ferricml::preprocessing::{
-    Binarizer, MaxAbsScaler, MinMaxScaler, MinMaxScalerParams, Normalizer, RobustScaler,
-    StandardScaler, StandardScalerParams,
+    Binarizer, FunctionTransformer, MaxAbsScaler, MinMaxScaler, MinMaxScalerParams, Normalizer,
+    RobustScaler, StandardScaler, StandardScalerParams,
 };
 use ferricml::ranking::PairwiseLinearRanker;
 
@@ -113,6 +113,14 @@ fn stateless_transformers_declare_nothing_at_all() {
     // an omission.
     assert_eq!(Normalizer::CAPABILITIES, Capabilities::NONE);
     assert_eq!(Binarizer::CAPABILITIES, Capabilities::NONE);
+
+    // `FunctionTransformer` declares nothing for an additional reason worth
+    // separating from the other two: its parameter is a function pointer, an
+    // address in the current process image. Encoding one would produce bytes
+    // that mean nothing in another build and could not be validated on the way
+    // back in, so the absence of an artifact here is a statement about what is
+    // representable, not merely about what was implemented.
+    assert_eq!(FunctionTransformer::CAPABILITIES, Capabilities::NONE);
 }
 
 #[test]

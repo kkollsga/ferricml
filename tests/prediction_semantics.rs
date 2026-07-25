@@ -39,9 +39,9 @@ use ferricml::linear_model::{
     LogisticRegression, LogisticRegressionParams, Ridge, RidgeParams,
 };
 use ferricml::preprocessing::{
-    Binarizer, BinarizerParams, MaxAbsScaler, MaxAbsScalerParams, MinMaxScaler, MinMaxScalerParams,
-    Normalizer, NormalizerParams, RobustScaler, RobustScalerParams, StandardScaler,
-    StandardScalerParams,
+    Binarizer, BinarizerParams, FunctionTransformer, FunctionTransformerParams, MaxAbsScaler,
+    MaxAbsScalerParams, MinMaxScaler, MinMaxScalerParams, Normalizer, NormalizerParams,
+    RobustScaler, RobustScalerParams, StandardScaler, StandardScalerParams,
 };
 use ferricml::ranking::{
     PairIndex, PairOutcome, PairwiseError, PairwiseLinearRanker, PairwiseLinearRankerParams,
@@ -787,6 +787,27 @@ impl TransformerCase for BinarizerCase {
     }
 }
 
+/// Registered at a named `fn`, so the case type is concrete and the
+/// declaration-versus-behaviour check runs exactly as it does for every other
+/// transformer. A closure could not be named here at all.
+struct FunctionTransformerCase;
+
+fn double(value: f32) -> f32 {
+    value * 2.0
+}
+
+impl TransformerCase for FunctionTransformerCase {
+    type Model = FunctionTransformer;
+    const NAME: &'static str = "FunctionTransformer";
+
+    fn fit(train: &Sample, _holdout: &Sample) -> Result<Self::Model, ModelError> {
+        FunctionTransformer::fit(
+            &train.view(),
+            FunctionTransformerParams::default().with_func(double),
+        )
+    }
+}
+
 struct IsotonicRegressionCase;
 
 impl RegressorCase for IsotonicRegressionCase {
@@ -1320,6 +1341,7 @@ fn robust_scaler_conforms() {
 fn stateless_transformers_conform() {
     check_transformer::<NormalizerCase>();
     check_transformer::<BinarizerCase>();
+    check_transformer::<FunctionTransformerCase>();
 }
 
 #[test]
