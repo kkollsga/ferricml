@@ -7,7 +7,51 @@ and releases use [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Changed
+
+- **Breaking.** Producing probabilities is no longer required of every
+  classifier. `predict_proba`, `predict_proba_into`, `predict_class_proba`, and
+  `predict_class_proba_into` move off `api::Classifier` onto a new
+  dyn-compatible sub-trait, `api::ProbabilisticClassifier`. **Callers that
+  invoke any of those four through a generic bound or a trait object must
+  require `ProbabilisticClassifier` instead of `Classifier`**; concrete calls
+  on a shipped estimator are unaffected, since every classifier FerricML ships
+  today implements the sub-trait. Trait upcasting means a
+  `&dyn ProbabilisticClassifier` is still accepted wherever a `&dyn Classifier`
+  is wanted.
+
+  The split exists because margin-based classifiers — ridge classification,
+  discriminant analysis, discrete boosting — have a natural output that is a
+  score rather than a distribution. A required probability method would have
+  forced each of them either to fabricate a number it never earned or to fail
+  at run time on a method the type system promised. A caller that needs
+  probabilities now says so in its bounds and gets a compile error rather than
+  a surprise.
+
+  Consequently `score_classifier`, `score_classifier_with`,
+  `score_multiclass_classifier`, `score_multiclass_classifier_with`,
+  `permutation_importance_classifier`,
+  `permutation_importance_classifier_into`, and the classifier
+  cross-validation and search entry points now take a probability-producing
+  classifier, and `CalibratedClassifier` requires one — a calibrator maps a
+  probability, so there is nothing to calibrate without one.
+
+- **Breaking.** `AnyClassifier` no longer exposes `predict_proba`,
+  `predict_proba_into`, `predict_class_proba`, or `predict_class_proba_into`
+  directly, and deliberately does **not** implement
+  `api::ProbabilisticClassifier`. Reach probabilities through
+  `AnyClassifier::as_probabilistic`, which returns
+  `Option<&dyn ProbabilisticClassifier>`. Runtime dispatch is the one place the
+  concrete type is erased by construction, so it is the one place the question
+  can only be asked rather than proven in the bounds — and the fallible
+  accessor is what lets a future margin-based variant be added without
+  breaking this surface a second time.
+
 ### Added
+
+- `api::Capabilities::probability`, declaring whether a fitted classifier
+  produces a probability per class. It is queryable on a runtime dispatch value
+  through `capabilities()`, which is where a compile-time bound is unavailable.
 
 - A capability declaration on `ranking::PairwiseLinearRanker`, which was the
   one fitted estimator that could not answer a capability query. It declares

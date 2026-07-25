@@ -16,7 +16,7 @@ mod support;
 
 use ferricml::api::{
     AnyClassifier, AnyClassifierParams, AnyRegressor, AnyRegressorParams, Classifier, ModelError,
-    Regressor,
+    ProbabilisticClassifier, Regressor,
 };
 use ferricml::artifact::ArtifactError;
 use ferricml::calibration::{
@@ -53,7 +53,7 @@ use support::conformance::{
     WorkspaceClassifierCase, WorkspaceRegressorCase, check_batch_only_classifier,
     check_batch_only_regressor, check_classifier, check_regressor,
     check_scalar_workspace_regressor, check_transformer, check_workspace_classifier,
-    check_workspace_regressor,
+    check_workspace_regressor, probabilistic_hooks,
 };
 
 /// Second schema identity, for artifacts that bind an input and an output
@@ -106,6 +106,8 @@ fn boosting_classifier_params() -> HistGradientBoostingClassifierParams {
 struct RandomForestClassifierCase;
 
 impl ClassifierCase for RandomForestClassifierCase {
+    probabilistic_hooks!();
+
     type Model = RandomForestClassifier;
     const NAME: &'static str = "RandomForestClassifier";
 
@@ -147,6 +149,8 @@ impl ScalarClassifierCase for RandomForestClassifierCase {
 struct LogisticRegressionCase;
 
 impl ClassifierCase for LogisticRegressionCase {
+    probabilistic_hooks!();
+
     type Model = LogisticRegression;
     const NAME: &'static str = "LogisticRegression";
 
@@ -212,6 +216,46 @@ macro_rules! any_classifier_case {
             type Model = AnyClassifier;
             const NAME: &'static str = $name;
 
+            fn predict_proba(
+                model: &Self::Model,
+                data: &MatrixView<'_>,
+            ) -> Option<Result<Vec<f32>, ModelError>> {
+                model
+                    .as_probabilistic()
+                    .map(|model| model.predict_proba(data))
+            }
+
+            fn predict_proba_into(
+                model: &Self::Model,
+                data: &MatrixView<'_>,
+                output: &mut [f32],
+            ) -> Option<Result<(), ModelError>> {
+                model
+                    .as_probabilistic()
+                    .map(|model| model.predict_proba_into(data, output))
+            }
+
+            fn predict_class_proba(
+                model: &Self::Model,
+                data: &MatrixView<'_>,
+                class: u8,
+            ) -> Option<Result<Vec<f32>, ModelError>> {
+                model
+                    .as_probabilistic()
+                    .map(|model| model.predict_class_proba(data, class))
+            }
+
+            fn predict_class_proba_into(
+                model: &Self::Model,
+                data: &MatrixView<'_>,
+                class: u8,
+                output: &mut [f32],
+            ) -> Option<Result<(), ModelError>> {
+                model
+                    .as_probabilistic()
+                    .map(|model| model.predict_class_proba_into(data, class, output))
+            }
+
             fn fit(train: &Sample, holdout: &Sample) -> Result<Self::Model, ModelError> {
                 <$inner as ClassifierCase>::fit(train, holdout).map(Into::into)
             }
@@ -252,6 +296,8 @@ any_classifier_case!(
 struct IsotonicCalibratedForestCase;
 
 impl ClassifierCase for IsotonicCalibratedForestCase {
+    probabilistic_hooks!();
+
     type Model = CalibratedClassifier<RandomForestClassifier, IsotonicRegression>;
     const NAME: &'static str = "CalibratedClassifier<RandomForestClassifier, IsotonicRegression>";
 
@@ -267,6 +313,8 @@ impl ClassifierCase for IsotonicCalibratedForestCase {
 struct PlattCalibratedForestCase;
 
 impl ClassifierCase for PlattCalibratedForestCase {
+    probabilistic_hooks!();
+
     type Model = CalibratedClassifier<RandomForestClassifier, PlattCalibrator>;
     const NAME: &'static str = "CalibratedClassifier<RandomForestClassifier, PlattCalibrator>";
 
@@ -500,6 +548,8 @@ impl ScalarRegressorCase for HistGradientBoostingRegressorCase {
 struct HistGradientBoostingClassifierCase;
 
 impl ClassifierCase for HistGradientBoostingClassifierCase {
+    probabilistic_hooks!();
+
     type Model = HistGradientBoostingClassifier;
     const NAME: &'static str = "HistGradientBoostingClassifier";
 
@@ -591,6 +641,8 @@ any_regressor_case!(
 struct DummyClassifierCase;
 
 impl ClassifierCase for DummyClassifierCase {
+    probabilistic_hooks!();
+
     type Model = DummyClassifier;
     const NAME: &'static str = "DummyClassifier";
 
@@ -769,10 +821,12 @@ impl WorkspaceClassifierCase for ScaledLogisticPipelineCase {
         model: &Self::Model,
         data: &MatrixView<'_>,
         workspace: &mut [f32],
-    ) -> Result<Vec<f32>, ModelError> {
-        model.with_transformed(data, workspace, |estimator, transformed| {
-            estimator.predict_proba(transformed)
-        })
+    ) -> Option<Result<Vec<f32>, ModelError>> {
+        Some(
+            model.with_transformed(data, workspace, |estimator, transformed| {
+                estimator.predict_proba(transformed)
+            }),
+        )
     }
 
     fn predict_proba_into(
@@ -780,8 +834,8 @@ impl WorkspaceClassifierCase for ScaledLogisticPipelineCase {
         data: &MatrixView<'_>,
         workspace: &mut [f32],
         output: &mut [f32],
-    ) -> Result<(), ModelError> {
-        model.predict_proba_into(data, workspace, output)
+    ) -> Option<Result<(), ModelError>> {
+        Some(model.predict_proba_into(data, workspace, output))
     }
 
     fn predict_class_proba(
@@ -789,10 +843,12 @@ impl WorkspaceClassifierCase for ScaledLogisticPipelineCase {
         data: &MatrixView<'_>,
         workspace: &mut [f32],
         class: u8,
-    ) -> Result<Vec<f32>, ModelError> {
-        model.with_transformed(data, workspace, |estimator, transformed| {
-            Classifier::predict_class_proba(estimator, transformed, class)
-        })
+    ) -> Option<Result<Vec<f32>, ModelError>> {
+        Some(
+            model.with_transformed(data, workspace, |estimator, transformed| {
+                ProbabilisticClassifier::predict_class_proba(estimator, transformed, class)
+            }),
+        )
     }
 
     fn predict_class_proba_into(
@@ -801,8 +857,8 @@ impl WorkspaceClassifierCase for ScaledLogisticPipelineCase {
         workspace: &mut [f32],
         class: u8,
         output: &mut [f32],
-    ) -> Result<(), ModelError> {
-        model.predict_class_proba_into(data, class, workspace, output)
+    ) -> Option<Result<(), ModelError>> {
+        Some(model.predict_class_proba_into(data, class, workspace, output))
     }
 
     fn decision_function(
@@ -1377,8 +1433,14 @@ fn runtime_dispatch_preserves_predictions_and_parameter_identity() {
     let dispatched: AnyClassifier = concrete.into();
     let erased: &dyn Classifier = &dispatched;
     assert_eq!(erased.predict(&data.as_view()).unwrap(), expected_labels);
+    // Probabilities are reached through the fallible accessor rather than
+    // through the dispatch enum's own trait impl; see the shape test below.
     assert_eq!(
-        erased.predict_proba(&data.as_view()).unwrap(),
+        dispatched
+            .as_probabilistic()
+            .expect("every shipped variant produces probabilities")
+            .predict_proba(&data.as_view())
+            .unwrap(),
         expected_probabilities
     );
     assert!(matches!(
@@ -1394,7 +1456,14 @@ fn runtime_dispatch_preserves_predictions_and_parameter_identity() {
     .unwrap();
     let expected = logistic.predict_proba(&data.as_view()).unwrap();
     let dispatched: AnyClassifier = logistic.into();
-    assert_eq!(dispatched.predict_proba(&data.as_view()).unwrap(), expected);
+    assert_eq!(
+        dispatched
+            .as_probabilistic()
+            .expect("every shipped variant produces probabilities")
+            .predict_proba(&data.as_view())
+            .unwrap(),
+        expected
+    );
     assert!(matches!(
         dispatched.get_params(),
         AnyClassifierParams::LogisticRegression(_)

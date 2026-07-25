@@ -75,6 +75,9 @@ fn capability_names(capabilities: Capabilities) -> Vec<&'static str> {
     if capabilities.decision_function() {
         names.push("decision_function");
     }
+    if capabilities.probability() {
+        names.push("probability");
+    }
     names
 }
 

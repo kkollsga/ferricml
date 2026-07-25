@@ -3,7 +3,7 @@
 use std::error::Error;
 use std::fmt;
 
-use crate::api::{Classifier, ModelError, Regressor};
+use crate::api::{ModelError, ProbabilisticClassifier, Regressor};
 use crate::data::{BinaryTargets, MatrixView, RegressionTargets};
 
 use super::cross_validation::{validate_split_sample_count, validate_target_length};
@@ -303,7 +303,7 @@ pub fn grid_search_classifier<M, P, I, F, S>(
     mut fit: F,
 ) -> Result<SearchResult<P>, SearchError>
 where
-    M: Classifier,
+    M: ProbabilisticClassifier,
     P: Clone,
     I: IntoIterator<Item = Split>,
     F: FnMut(&MatrixView<'_>, &BinaryTargets, &P) -> Result<M, ModelError>,

@@ -1,7 +1,7 @@
 use std::error::Error;
 use std::fmt;
 
-use crate::api::{Classifier, Regressor};
+use crate::api::{ProbabilisticClassifier, Regressor};
 use crate::data::{BinaryTargets, MatrixView, RegressionTargets};
 use crate::model_selection::{
     ClassificationScore, RegressionScore, ScoringError, ScoringWorkspace, score_classifier_with,
@@ -135,7 +135,7 @@ impl Error for InspectionError {
 
 /// Measures permutation importance for a fitted classifier.
 pub fn permutation_importance_classifier<S: ClassificationScore>(
-    classifier: &dyn Classifier,
+    classifier: &dyn ProbabilisticClassifier,
     data: &MatrixView<'_>,
     targets: &BinaryTargets,
     scorer: S,
@@ -162,7 +162,7 @@ pub fn permutation_importance_classifier<S: ClassificationScore>(
 /// permutation workspace is allocated once, so the cost of extra repeats is
 /// scoring alone.
 pub fn permutation_importance_classifier_into<S: ClassificationScore>(
-    classifier: &dyn Classifier,
+    classifier: &dyn ProbabilisticClassifier,
     data: &MatrixView<'_>,
     targets: &BinaryTargets,
     scorer: S,

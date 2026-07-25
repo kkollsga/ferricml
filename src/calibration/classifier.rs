@@ -1,6 +1,8 @@
 //! A fitted classifier wrapped in a fitted calibration map.
 
-use crate::api::{Capabilities, Classifier, Estimator, HasCapabilities, ModelError};
+use crate::api::{
+    Capabilities, Classifier, Estimator, HasCapabilities, ModelError, ProbabilisticClassifier,
+};
 use crate::data::{BinaryTargets, MatrixView};
 
 use super::{Calibrator, IsotonicRegression, PlattCalibrator, PlattParams};
@@ -50,7 +52,7 @@ pub struct CalibratedClassifier<C, K> {
     calibrator: K,
 }
 
-impl<C: Classifier, K: Calibrator> CalibratedClassifier<C, K> {
+impl<C: ProbabilisticClassifier, K: Calibrator> CalibratedClassifier<C, K> {
     /// Composes an already-fitted model with an already-fitted calibrator.
     ///
     /// The wrapped model must be binary over classes `[0, 1]`: the calibration
@@ -116,7 +118,7 @@ impl<C: Classifier, K: Calibrator> CalibratedClassifier<C, K> {
     }
 }
 
-impl<C: Classifier> CalibratedClassifier<C, IsotonicRegression> {
+impl<C: ProbabilisticClassifier> CalibratedClassifier<C, IsotonicRegression> {
     /// Fits an isotonic calibration map on caller-supplied held-out rows.
     pub fn fit_isotonic(
         inner: C,
@@ -129,7 +131,7 @@ impl<C: Classifier> CalibratedClassifier<C, IsotonicRegression> {
     }
 }
 
-impl<C: Classifier> CalibratedClassifier<C, PlattCalibrator> {
+impl<C: ProbabilisticClassifier> CalibratedClassifier<C, PlattCalibrator> {
     /// Fits a Platt calibration map on caller-supplied held-out rows.
     pub fn fit_platt(
         inner: C,
@@ -172,7 +174,7 @@ impl<C: Classifier> CalibratedClassifier<C, PlattCalibrator> {
 ///
 /// Every shape check happens before the score buffer is allocated, so a
 /// rejected call does no work and writes nothing.
-fn calibration_scores<C: Classifier>(
+fn calibration_scores<C: ProbabilisticClassifier>(
     inner: &C,
     data: &MatrixView<'_>,
     targets: &BinaryTargets,
@@ -212,13 +214,13 @@ fn validate_binary_inner<C: Classifier>(inner: &C) -> Result<(), ModelError> {
     }
 }
 
-impl<C: Classifier, K: Calibrator> Estimator for CalibratedClassifier<C, K> {
+impl<C: ProbabilisticClassifier, K: Calibrator> Estimator for CalibratedClassifier<C, K> {
     fn n_features_in(&self) -> usize {
         self.inner.n_features_in()
     }
 }
 
-impl<C: Classifier> HasCapabilities for CalibratedClassifier<C, IsotonicRegression> {
+impl<C: ProbabilisticClassifier> HasCapabilities for CalibratedClassifier<C, IsotonicRegression> {
     /// Nothing, and deliberately not the wrapped model's declarations.
     ///
     /// The composition owns already-fitted parts, so it has no weighted fitting
@@ -227,10 +229,10 @@ impl<C: Classifier> HasCapabilities for CalibratedClassifier<C, IsotonicRegressi
     /// point either. Each of those is declared away structurally rather than
     /// intersected, because an intersection would have promised an entry point
     /// that does not exist on the wrapper at all.
-    const CAPABILITIES: Capabilities = Capabilities::NONE;
+    const CAPABILITIES: Capabilities = Capabilities::NONE.with_probability(true);
 }
 
-impl<C: Classifier> HasCapabilities for CalibratedClassifier<C, PlattCalibrator> {
+impl<C: ProbabilisticClassifier> HasCapabilities for CalibratedClassifier<C, PlattCalibrator> {
     /// A raw decision score, which the parametric calibrator genuinely has.
     ///
     /// `slope * score + intercept` is a real-valued score whose sigmoid is the
@@ -238,10 +240,12 @@ impl<C: Classifier> HasCapabilities for CalibratedClassifier<C, PlattCalibrator>
     /// map is a piecewise-linear step, not a squashed line — which is what
     /// makes this declaration vary rather than being a constant dressed up as
     /// a capability.
-    const CAPABILITIES: Capabilities = Capabilities::NONE.with_decision_function(true);
+    const CAPABILITIES: Capabilities = Capabilities::NONE
+        .with_decision_function(true)
+        .with_probability(true);
 }
 
-impl<C: Classifier, K: Calibrator> Classifier for CalibratedClassifier<C, K> {
+impl<C: ProbabilisticClassifier, K: Calibrator> Classifier for CalibratedClassifier<C, K> {
     fn classes(&self) -> &[u8] {
         // Construction rejected anything other than `[0, 1]`, so this is the
         // wrapped model's own class list rather than a second copy that could
@@ -259,7 +263,11 @@ impl<C: Classifier, K: Calibrator> Classifier for CalibratedClassifier<C, K> {
         let mut scores = vec![0.0; data.rows()];
         self.predict_into_with(data, &mut scores, output)
     }
+}
 
+impl<C: ProbabilisticClassifier, K: Calibrator> ProbabilisticClassifier
+    for CalibratedClassifier<C, K>
+{
     fn predict_proba_into(
         &self,
         data: &MatrixView<'_>,
@@ -354,7 +362,9 @@ mod tests {
             }
             Ok(())
         }
+    }
 
+    impl ProbabilisticClassifier for Overconfident {
         fn predict_proba_into(
             &self,
             data: &MatrixView<'_>,
@@ -626,11 +636,13 @@ mod tests {
     fn the_composition_declares_only_what_it_really_offers() {
         assert_eq!(
             <CalibratedClassifier<Overconfident, IsotonicRegression> as HasCapabilities>::CAPABILITIES,
-            Capabilities::NONE
+            Capabilities::NONE.with_probability(true)
         );
         assert_eq!(
             <CalibratedClassifier<Overconfident, PlattCalibrator> as HasCapabilities>::CAPABILITIES,
-            Capabilities::NONE.with_decision_function(true)
+            Capabilities::NONE
+                .with_decision_function(true)
+                .with_probability(true)
         );
     }
 }

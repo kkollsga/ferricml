@@ -9,7 +9,9 @@ use crate::ensemble::{
 };
 use crate::linear_model::{LogisticRegression, LogisticRegressionParams};
 
-use super::super::{Capabilities, Classifier, Estimator, HasCapabilities, ModelError};
+use super::super::{
+    Capabilities, Classifier, Estimator, HasCapabilities, ModelError, ProbabilisticClassifier,
+};
 
 const ANY_CLASSIFIER_PAYLOAD_VERSION: u16 = 1;
 const DISPATCH_COMPONENT_KIND: u16 = 1;
@@ -98,37 +100,49 @@ impl AnyClassifier {
         <Self as Classifier>::predict_into(self, data, output)
     }
 
-    /// Predicts row-major probabilities, allocating the output.
-    pub fn predict_proba(&self, data: &MatrixView<'_>) -> Result<Vec<f32>, ModelError> {
-        <Self as Classifier>::predict_proba(self, data)
-    }
-
-    /// Predicts row-major probabilities without allocating.
-    pub fn predict_proba_into(
-        &self,
-        data: &MatrixView<'_>,
-        output: &mut [f32],
-    ) -> Result<(), ModelError> {
-        <Self as Classifier>::predict_proba_into(self, data, output)
-    }
-
-    /// Predicts one fitted-class probability column without allocating.
-    pub fn predict_class_proba_into(
-        &self,
-        data: &MatrixView<'_>,
-        class: u8,
-        output: &mut [f32],
-    ) -> Result<(), ModelError> {
-        <Self as Classifier>::predict_class_proba_into(self, data, class, output)
-    }
-
-    /// Predicts one fitted-class probability column, allocating the output.
-    pub fn predict_class_proba(
-        &self,
-        data: &MatrixView<'_>,
-        class: u8,
-    ) -> Result<Vec<f32>, ModelError> {
-        <Self as Classifier>::predict_class_proba(self, data, class)
+    /// Borrows this model as a probability-producing classifier, if it is one.
+    ///
+    /// **This is deliberately fallible, and `AnyClassifier` deliberately does
+    /// not implement
+    /// [`ProbabilisticClassifier`](crate::api::ProbabilisticClassifier).**
+    ///
+    /// Runtime dispatch is the one place in the crate where the concrete type
+    /// is erased by construction, so it is the one place a probability
+    /// question can only be *asked* rather than proven in the bounds. Every
+    /// variant shipped today produces probabilities, so this returns `Some`
+    /// for all of them — but a margin-based classifier is a natural future
+    /// variant, and the accessor exists so adding one changes no signature
+    /// here and breaks no caller. Implementing the trait instead would have
+    /// made that addition a second breaking change to this surface.
+    ///
+    /// [`Capabilities::probability`](crate::api::Capabilities::probability) on
+    /// the value answers the same question without borrowing, and the two
+    /// always agree.
+    ///
+    /// ```
+    /// use ferricml::api::{AnyClassifier, HasCapabilities};
+    /// use ferricml::data::{BinaryTargets, DenseMatrix};
+    /// use ferricml::linear_model::{LogisticRegression, LogisticRegressionParams};
+    ///
+    /// let data = DenseMatrix::new(vec![0.0, 1.0, 2.0, 3.0], 4, 1)?;
+    /// let labels = BinaryTargets::new(vec![0, 0, 1, 1])?;
+    /// let model = LogisticRegression::fit(&data.as_view(), &labels, LogisticRegressionParams::default())?;
+    /// let dispatched: AnyClassifier = model.into();
+    ///
+    /// let probabilities = match dispatched.as_probabilistic() {
+    ///     Some(model) => model.predict_proba(&data.as_view())?,
+    ///     None => panic!("this variant produces probabilities"),
+    /// };
+    /// assert_eq!(probabilities.len(), 8);
+    /// # Ok::<(), Box<dyn std::error::Error>>(())
+    /// ```
+    #[must_use]
+    pub fn as_probabilistic(&self) -> Option<&dyn ProbabilisticClassifier> {
+        match self {
+            Self::RandomForest(model) => Some(model),
+            Self::LogisticRegression(model) => Some(model),
+            Self::HistGradientBoosting(model) => Some(model),
+        }
     }
 
     /// Encodes the selected runtime variant and its complete model artifact.
@@ -251,6 +265,14 @@ impl Estimator for AnyClassifier {
 /// Persistence, by contrast, is composed rather than declared away: every
 /// variant persists every fit it offers, and this enum has an artifact entry
 /// point, so the intersection is the truth.
+///
+/// `probability` is likewise an intersection, and is `true` today only because
+/// every shipped variant produces probabilities. The moment a margin-based
+/// variant is added it becomes `false`, which is a reviewable value change in
+/// the capability snapshot and **not** a breaking change — precisely because
+/// this type answers the probability question through
+/// [`AnyClassifier::as_probabilistic`] rather than by implementing
+/// [`ProbabilisticClassifier`](crate::api::ProbabilisticClassifier).
 impl HasCapabilities for AnyClassifier {
     const CAPABILITIES: Capabilities = RandomForestClassifier::CAPABILITIES
         .intersection(LogisticRegression::CAPABILITIES)
@@ -273,33 +295,6 @@ impl Classifier for AnyClassifier {
             Self::RandomForest(model) => model.predict_into(data, output),
             Self::LogisticRegression(model) => model.predict_into(data, output),
             Self::HistGradientBoosting(model) => model.predict_into(data, output),
-        }
-    }
-
-    fn predict_proba_into(
-        &self,
-        data: &MatrixView<'_>,
-        output: &mut [f32],
-    ) -> Result<(), ModelError> {
-        match self {
-            Self::RandomForest(model) => model.predict_proba_into(data, output),
-            Self::LogisticRegression(model) => model.predict_proba_into(data, output),
-            Self::HistGradientBoosting(model) => model.predict_proba_into(data, output),
-        }
-    }
-
-    fn predict_class_proba_into(
-        &self,
-        data: &MatrixView<'_>,
-        class: u8,
-        output: &mut [f32],
-    ) -> Result<(), ModelError> {
-        match self {
-            Self::RandomForest(model) => model.predict_class_proba_into(data, class, output),
-            Self::LogisticRegression(model) => model.predict_class_proba_into(data, class, output),
-            Self::HistGradientBoosting(model) => {
-                model.predict_class_proba_into(data, class, output)
-            }
         }
     }
 }
@@ -398,8 +393,16 @@ mod tests {
                 model.predict(&data.as_view()).unwrap()
             );
             assert_eq!(
-                decoded.predict_proba(&data.as_view()).unwrap(),
-                model.predict_proba(&data.as_view()).unwrap()
+                decoded
+                    .as_probabilistic()
+                    .expect("every shipped variant produces probabilities")
+                    .predict_proba(&data.as_view())
+                    .unwrap(),
+                model
+                    .as_probabilistic()
+                    .expect("every shipped variant produces probabilities")
+                    .predict_proba(&data.as_view())
+                    .unwrap()
             );
             assert_eq!(decoded.to_artifact(schema).unwrap(), bytes);
         }

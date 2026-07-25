@@ -5,7 +5,7 @@ mod multinomial;
 
 use crate::api::{
     Capabilities, Classifier, Estimator, HasCapabilities, HasParams, ModelError,
-    validate_prediction, validate_scalar_row,
+    ProbabilisticClassifier, validate_prediction, validate_scalar_row,
 };
 use crate::artifact::{
     ArtifactError, ArtifactPayloadWriter, LOGISTIC_ARTIFACT_KIND, MODEL_ARTIFACT_VERSION,
@@ -609,7 +609,7 @@ impl LogisticRegression {
 
     /// Allocating probability prediction convenience method.
     pub fn predict_proba(&self, data: &MatrixView<'_>) -> Result<Vec<f32>, ModelError> {
-        <Self as Classifier>::predict_proba(self, data)
+        <Self as ProbabilisticClassifier>::predict_proba(self, data)
     }
 
     /// Allocation-free probability prediction.
@@ -618,7 +618,7 @@ impl LogisticRegression {
         data: &MatrixView<'_>,
         output: &mut [f32],
     ) -> Result<(), ModelError> {
-        <Self as Classifier>::predict_proba_into(self, data, output)
+        <Self as ProbabilisticClassifier>::predict_proba_into(self, data, output)
     }
 
     /// Predicts one requested class probability column.
@@ -627,7 +627,7 @@ impl LogisticRegression {
         data: &MatrixView<'_>,
         class: u8,
     ) -> Result<Vec<f32>, ModelError> {
-        <Self as Classifier>::predict_class_proba(self, data, class)
+        <Self as ProbabilisticClassifier>::predict_class_proba(self, data, class)
     }
 
     /// Encodes this model in FerricML's stable checksummed artifact format.
@@ -978,7 +978,8 @@ impl HasCapabilities for LogisticRegression {
         .with_sample_weights(true)
         .with_artifact(true)
         .with_multiclass(true)
-        .with_decision_function(true);
+        .with_decision_function(true)
+        .with_probability(true);
 }
 
 impl HasParams for LogisticRegression {
@@ -1018,7 +1019,9 @@ impl Classifier for LogisticRegression {
         }
         Ok(())
     }
+}
 
+impl ProbabilisticClassifier for LogisticRegression {
     fn predict_proba_into(
         &self,
         data: &MatrixView<'_>,

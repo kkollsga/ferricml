@@ -146,7 +146,7 @@ fn the_prior_correction_is_what_separates_platt_from_a_raw_label_fit() {
 
 // ------------------------------------------------- calibrated classifiers
 
-use ferricml::api::Classifier;
+use ferricml::api::ProbabilisticClassifier;
 use ferricml::calibration::{CalibratedClassifier, IsotonicRegression};
 use ferricml::ensemble::{MaxFeatures, RandomForestClassifier, RandomForestClassifierParams};
 use ferricml::metrics::{brier_score, log_loss, roc_auc_score};

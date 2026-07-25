@@ -14,5 +14,7 @@ pub use any::{AnyClassifier, AnyClassifierParams, AnyRegressor, AnyRegressorPara
 pub use capabilities::{Capabilities, HasCapabilities};
 pub use error::ModelError;
 pub(crate) use traits::validate_transformed_shape;
-pub use traits::{Classifier, Estimator, HasParams, Regressor, Transformer};
+pub use traits::{
+    Classifier, Estimator, HasParams, ProbabilisticClassifier, Regressor, Transformer,
+};
 pub(crate) use validation::{validate_prediction, validate_scalar_row};

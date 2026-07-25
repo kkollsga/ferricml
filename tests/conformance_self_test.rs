@@ -14,7 +14,8 @@
 mod support;
 
 use ferricml::api::{
-    Capabilities, Classifier, Estimator, HasCapabilities, ModelError, Regressor, Transformer,
+    Capabilities, Classifier, Estimator, HasCapabilities, ModelError, ProbabilisticClassifier,
+    Regressor, Transformer,
 };
 use ferricml::data::{DenseMatrix, MatrixView};
 use std::cell::Cell;
@@ -65,6 +66,10 @@ const DECISION_FUNCTION_DECLARED_WITHOUT_HOOK: u8 = 25;
 const DECISION_FUNCTION_HOOK_WITHOUT_DECLARATION: u8 = 26;
 const DECISION_FUNCTION_CONTRADICTS_PROBABILITY: u8 = 27;
 
+// Faults of the capability D11 made varying: producing probabilities at all.
+const PROBABILITY_DECLARED_WITHOUT_HOOK: u8 = 28;
+const PROBABILITY_HOOK_WITHOUT_DECLARATION: u8 = 29;
+
 const BASE_THRESHOLD: f32 = 3.5;
 const BASE_OFFSET: f32 = 0.0;
 const BASE_SCALE: f32 = 2.0;
@@ -80,6 +85,7 @@ const fn probe_capabilities(fault: u8) -> Capabilities {
             fault == MULTICLASS_DECLARED_WITHOUT_HOOK || fault == MULTICLASS_COLLAPSES_CLASSES,
         )
         .with_decision_function(fault != DECISION_FUNCTION_HOOK_WITHOUT_DECLARATION)
+        .with_probability(fault != PROBABILITY_HOOK_WITHOUT_DECLARATION)
 }
 
 thread_local! {
@@ -276,7 +282,9 @@ impl<const FAULT: u8> Classifier for ClassifierProbe<FAULT> {
         }
         Ok(())
     }
+}
 
+impl<const FAULT: u8> ProbabilisticClassifier for ClassifierProbe<FAULT> {
     fn predict_proba_into(
         &self,
         data: &MatrixView<'_>,
@@ -378,6 +386,42 @@ impl<const FAULT: u8> ClassifierCase for ClassifierProbeCase<FAULT> {
             ))),
             _ => Some(Ok((FABRICATED_ARTIFACT.to_vec(), model.clone()))),
         }
+    }
+
+    fn predict_proba(
+        model: &Self::Model,
+        data: &MatrixView<'_>,
+    ) -> Option<Result<Vec<f32>, ModelError>> {
+        (FAULT != PROBABILITY_DECLARED_WITHOUT_HOOK)
+            .then(|| ProbabilisticClassifier::predict_proba(model, data))
+    }
+
+    fn predict_proba_into(
+        model: &Self::Model,
+        data: &MatrixView<'_>,
+        output: &mut [f32],
+    ) -> Option<Result<(), ModelError>> {
+        (FAULT != PROBABILITY_DECLARED_WITHOUT_HOOK)
+            .then(|| ProbabilisticClassifier::predict_proba_into(model, data, output))
+    }
+
+    fn predict_class_proba(
+        model: &Self::Model,
+        data: &MatrixView<'_>,
+        class: u8,
+    ) -> Option<Result<Vec<f32>, ModelError>> {
+        (FAULT != PROBABILITY_DECLARED_WITHOUT_HOOK)
+            .then(|| ProbabilisticClassifier::predict_class_proba(model, data, class))
+    }
+
+    fn predict_class_proba_into(
+        model: &Self::Model,
+        data: &MatrixView<'_>,
+        class: u8,
+        output: &mut [f32],
+    ) -> Option<Result<(), ModelError>> {
+        (FAULT != PROBABILITY_DECLARED_WITHOUT_HOOK)
+            .then(|| ProbabilisticClassifier::predict_class_proba_into(model, data, class, output))
     }
 
     fn decision_function(
@@ -959,6 +1003,16 @@ violates!(
     ["multiclass_declaration_matches_behavior"]
 );
 violates!(
+    classifier_probability_declared_without_hook,
+    classifier_report::<ClassifierProbeCase<PROBABILITY_DECLARED_WITHOUT_HOOK>>(),
+    ["probability_declaration_matches_behavior"]
+);
+violates!(
+    classifier_probability_hook_without_declaration,
+    classifier_report::<ClassifierProbeCase<PROBABILITY_HOOK_WITHOUT_DECLARATION>>(),
+    ["probability_declaration_matches_behavior"]
+);
+violates!(
     classifier_decision_function_declared_without_hook,
     classifier_report::<ClassifierProbeCase<DECISION_FUNCTION_DECLARED_WITHOUT_HOOK>>(),
     ["decision_function_declaration_matches_behavior"]
@@ -1196,6 +1250,9 @@ fn every_declared_obligation_has_a_probe_that_trips_it() {
         >()),
         sorted(&classifier_report::<
             ClassifierProbeCase<DECISION_FUNCTION_DECLARED_WITHOUT_HOOK>,
+        >()),
+        sorted(&classifier_report::<
+            ClassifierProbeCase<PROBABILITY_DECLARED_WITHOUT_HOOK>,
         >()),
         sorted(&classifier_report::<ClassifierProbeCase<SCALAR_DISAGREES>>()),
         sorted(&classifier_report::<ClassifierProbeCase<NON_FINITE_ACCEPTED>>()),

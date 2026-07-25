@@ -1,7 +1,7 @@
 use std::error::Error;
 use std::fmt;
 
-use crate::api::{Classifier, ModelError, Regressor};
+use crate::api::{ModelError, ProbabilisticClassifier, Regressor};
 use crate::data::{BinaryTargets, MatrixView, RegressionTargets};
 use crate::metrics::MetricError;
 
@@ -172,7 +172,7 @@ pub fn cross_validate_classifier<M, I, F, S>(
     mut fit: F,
 ) -> Result<CrossValidationResult, CrossValidationError>
 where
-    M: Classifier,
+    M: ProbabilisticClassifier,
     I: IntoIterator<Item = Split>,
     F: FnMut(&MatrixView<'_>, &BinaryTargets) -> Result<M, ModelError>,
     S: ClassificationScore,

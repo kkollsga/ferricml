@@ -4,8 +4,8 @@ use super::parameters::{
 use super::training::{Classification, ForestConfig, Regression, train_class_forest, train_forest};
 use super::tree::{ClassTree, FEATURE_MASK, PackedTree};
 use crate::api::{
-    Capabilities, Classifier, Estimator, HasCapabilities, HasParams, ModelError, Regressor,
-    validate_prediction,
+    Capabilities, Classifier, Estimator, HasCapabilities, HasParams, ModelError,
+    ProbabilisticClassifier, Regressor, validate_prediction,
 };
 use crate::artifact::{
     ArtifactCursor, ArtifactError, ArtifactPayloadWriter, LogicalTreeNode, MIN_ENCODED_TREE_BYTES,
@@ -359,7 +359,7 @@ impl RandomForestClassifier {
     /// Predicts row-major probabilities, allocating `rows * classes().len()`
     /// values.
     pub fn predict_proba(&self, data: &MatrixView<'_>) -> Result<Vec<f32>, ModelError> {
-        <Self as Classifier>::predict_proba(self, data)
+        <Self as ProbabilisticClassifier>::predict_proba(self, data)
     }
 
     /// Predicts row-major probabilities without allocating.
@@ -443,7 +443,7 @@ impl RandomForestClassifier {
         data: &MatrixView<'_>,
         class: u8,
     ) -> Result<Vec<f32>, ModelError> {
-        <Self as Classifier>::predict_class_proba(self, data, class)
+        <Self as ProbabilisticClassifier>::predict_class_proba(self, data, class)
     }
 
     /// Predicts one fitted-class probability column without allocating.
@@ -865,7 +865,9 @@ impl Classifier for RandomForestClassifier {
     fn predict_into(&self, data: &MatrixView<'_>, output: &mut [u8]) -> Result<(), ModelError> {
         RandomForestClassifier::predict_into(self, data, output)
     }
+}
 
+impl ProbabilisticClassifier for RandomForestClassifier {
     fn predict_proba_into(
         &self,
         data: &MatrixView<'_>,
@@ -899,7 +901,8 @@ impl HasCapabilities for RandomForestClassifier {
     const CAPABILITIES: Capabilities = Capabilities::NONE
         .with_sample_weights(true)
         .with_artifact(true)
-        .with_multiclass(true);
+        .with_multiclass(true)
+        .with_probability(true);
 }
 
 impl RandomForestRegressor {

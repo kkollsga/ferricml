@@ -14,7 +14,7 @@ pub use artifact::{ModelArtifact, PersistedStack, StageArtifact};
 pub use stack::TransformerStack;
 pub use staged::StagedPipeline;
 
-use crate::api::Classifier;
+use crate::api::ProbabilisticClassifier;
 use crate::api::{
     Capabilities, Estimator, HasCapabilities, ModelError, Transformer, validate_transformed_shape,
 };
@@ -205,7 +205,8 @@ impl HasCapabilities for Pipeline<StandardScaler, LogisticRegression> {
     const CAPABILITIES: Capabilities = StandardScaler::CAPABILITIES
         .intersection(LogisticRegression::CAPABILITIES)
         .with_sample_weights(false)
-        .with_decision_function(LogisticRegression::CAPABILITIES.decision_function());
+        .with_decision_function(LogisticRegression::CAPABILITIES.decision_function())
+        .with_probability(LogisticRegression::CAPABILITIES.probability());
 }
 
 impl Pipeline<StandardScaler, LogisticRegression> {
@@ -242,7 +243,7 @@ impl Pipeline<StandardScaler, LogisticRegression> {
         output: &mut [f32],
     ) -> Result<(), ModelError> {
         self.with_transformed(data, workspace, |model, transformed| {
-            Classifier::predict_class_proba_into(model, transformed, class, output)
+            ProbabilisticClassifier::predict_class_proba_into(model, transformed, class, output)
         })
     }
 

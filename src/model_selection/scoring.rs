@@ -1,7 +1,7 @@
 use std::error::Error;
 use std::fmt;
 
-use crate::api::{Classifier, ModelError, Regressor};
+use crate::api::{ModelError, ProbabilisticClassifier, Regressor};
 use crate::data::{BinaryTargets, ClassTargets, MatrixView, RegressionTargets};
 use crate::metrics::{
     MetricError, accuracy_score, brier_score, f1_score, log_loss, mean_absolute_error,
@@ -350,8 +350,14 @@ impl Error for ScoringError {
 }
 
 /// Scores one fitted classifier through a single batch prediction call.
+///
+/// The classifier must produce probabilities, because a score is free to ask
+/// for them: `output_kind` is a property of the metric, so accuracy and log
+/// loss reach the same entry point. A label-only path for a classifier that
+/// has no probabilities is an additive function when the first such estimator
+/// exists; it is not expressible by weakening this one.
 pub fn score_classifier<S: ClassificationScore>(
-    classifier: &dyn Classifier,
+    classifier: &dyn ProbabilisticClassifier,
     data: &MatrixView<'_>,
     targets: &BinaryTargets,
     scorer: S,
@@ -371,7 +377,7 @@ pub fn score_classifier<S: ClassificationScore>(
 /// same shape allocates on the first call only. The class layouts `[0]`, `[1]`,
 /// and `[0, 1]` are handled here, once, so no consumer re-derives them.
 pub fn score_classifier_with<S: ClassificationScore>(
-    classifier: &dyn Classifier,
+    classifier: &dyn ProbabilisticClassifier,
     data: &MatrixView<'_>,
     targets: &BinaryTargets,
     scorer: S,
@@ -388,7 +394,7 @@ pub fn score_classifier_with<S: ClassificationScore>(
 /// [`ClassifierOutputKind::ProbabilityMatrix`] work here for any number of
 /// classes, while the binary positive-probability layouts remain what they were.
 pub fn score_multiclass_classifier<S: ClassificationScore>(
-    classifier: &dyn Classifier,
+    classifier: &dyn ProbabilisticClassifier,
     data: &MatrixView<'_>,
     targets: &ClassTargets,
     scorer: S,
@@ -406,7 +412,7 @@ pub fn score_multiclass_classifier<S: ClassificationScore>(
 ///
 /// The allocation-free form of [`score_multiclass_classifier`].
 pub fn score_multiclass_classifier_with<S: ClassificationScore>(
-    classifier: &dyn Classifier,
+    classifier: &dyn ProbabilisticClassifier,
     data: &MatrixView<'_>,
     targets: &ClassTargets,
     scorer: S,
@@ -421,7 +427,7 @@ pub fn score_multiclass_classifier_with<S: ClassificationScore>(
 /// prediction call, the class-layout handling, and the workspace reuse exist
 /// exactly once.
 fn score_labelled<S: ClassificationScore>(
-    classifier: &dyn Classifier,
+    classifier: &dyn ProbabilisticClassifier,
     data: &MatrixView<'_>,
     targets: &[u8],
     scorer: S,
@@ -597,7 +603,17 @@ mod tests {
             ClassificationScorer::LogLoss,
             ClassificationScorer::RocAuc,
         ] {
-            assert!(score_classifier(&erased, &data.as_view(), &targets, scorer).is_ok());
+            assert!(
+                score_classifier(
+                    erased
+                        .as_probabilistic()
+                        .expect("every shipped variant produces probabilities"),
+                    &data.as_view(),
+                    &targets,
+                    scorer
+                )
+                .is_ok()
+            );
         }
     }
 

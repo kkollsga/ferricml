@@ -82,6 +82,7 @@ pub const CLASSIFIER_OBLIGATIONS: &[&str] = &[
     "predicts_the_fixture",
     "metadata",
     "into_matches_allocating",
+    "probability_declaration_matches_behavior",
     "probability_columns_follow_classes",
     "label_matches_probability_argmax",
     "feature_width_validated_before_write",
@@ -377,6 +378,59 @@ impl Default for Fixture {
 
 // --------------------------------------------------------------- case traits
 
+/// Supplies the four probability hooks for a case whose model implements
+/// [`ProbabilisticClassifier`](ferricml::api::ProbabilisticClassifier).
+///
+/// Invoked inside the `impl ClassifierCase for _` body, so registering a
+/// probabilistic classifier costs one line rather than four forwards. A
+/// margin-based classifier simply omits it, and the battery then requires its
+/// declaration to say so.
+#[allow(unused_macros)]
+macro_rules! probabilistic_hooks {
+    () => {
+        fn predict_proba(
+            model: &Self::Model,
+            data: &::ferricml::data::MatrixView<'_>,
+        ) -> Option<Result<Vec<f32>, ::ferricml::api::ModelError>> {
+            Some(::ferricml::api::ProbabilisticClassifier::predict_proba(
+                model, data,
+            ))
+        }
+
+        fn predict_proba_into(
+            model: &Self::Model,
+            data: &::ferricml::data::MatrixView<'_>,
+            output: &mut [f32],
+        ) -> Option<Result<(), ::ferricml::api::ModelError>> {
+            Some(::ferricml::api::ProbabilisticClassifier::predict_proba_into(model, data, output))
+        }
+
+        fn predict_class_proba(
+            model: &Self::Model,
+            data: &::ferricml::data::MatrixView<'_>,
+            class: u8,
+        ) -> Option<Result<Vec<f32>, ::ferricml::api::ModelError>> {
+            Some(::ferricml::api::ProbabilisticClassifier::predict_class_proba(model, data, class))
+        }
+
+        fn predict_class_proba_into(
+            model: &Self::Model,
+            data: &::ferricml::data::MatrixView<'_>,
+            class: u8,
+            output: &mut [f32],
+        ) -> Option<Result<(), ::ferricml::api::ModelError>> {
+            Some(
+                ::ferricml::api::ProbabilisticClassifier::predict_class_proba_into(
+                    model, data, class, output,
+                ),
+            )
+        }
+    };
+}
+
+#[allow(unused_imports)]
+pub(crate) use probabilistic_hooks;
+
 /// A classifier registered into the battery.
 pub trait ClassifierCase {
     /// The fitted classifier type under test.
@@ -415,6 +469,48 @@ pub trait ClassifierCase {
     /// Required exactly when the model declares [`Capabilities::artifact`];
     /// supplying it otherwise is a violation.
     fn round_trip(_model: &Self::Model) -> RoundTrip<Self::Model> {
+        None
+    }
+
+    /// Predicts row-major probabilities, allocating the output.
+    ///
+    /// Required exactly when the model declares
+    /// [`Capabilities::probability`]; supplying it otherwise is a violation.
+    /// A case whose model implements
+    /// [`ProbabilisticClassifier`](ferricml::api::ProbabilisticClassifier)
+    /// supplies all four hooks with one `probabilistic_hooks!();` line.
+    fn predict_proba(
+        _model: &Self::Model,
+        _data: &MatrixView<'_>,
+    ) -> Option<Result<Vec<f32>, ModelError>> {
+        None
+    }
+
+    /// Predicts row-major probabilities into caller-owned output.
+    fn predict_proba_into(
+        _model: &Self::Model,
+        _data: &MatrixView<'_>,
+        _output: &mut [f32],
+    ) -> Option<Result<(), ModelError>> {
+        None
+    }
+
+    /// Predicts one probability column, allocating the output.
+    fn predict_class_proba(
+        _model: &Self::Model,
+        _data: &MatrixView<'_>,
+        _class: u8,
+    ) -> Option<Result<Vec<f32>, ModelError>> {
+        None
+    }
+
+    /// Predicts one probability column into caller-owned output.
+    fn predict_class_proba_into(
+        _model: &Self::Model,
+        _data: &MatrixView<'_>,
+        _class: u8,
+        _output: &mut [f32],
+    ) -> Option<Result<(), ModelError>> {
         None
     }
 
@@ -592,37 +688,45 @@ pub trait WorkspaceClassifierCase {
         output: &mut [u8],
     ) -> Result<(), ModelError>;
 
-    /// Predicts row-major probabilities, allocating the output.
+    /// Predicts row-major probabilities. Required exactly when declared.
     fn predict_proba(
-        model: &Self::Model,
-        data: &MatrixView<'_>,
-        workspace: &mut [f32],
-    ) -> Result<Vec<f32>, ModelError>;
+        _model: &Self::Model,
+        _data: &MatrixView<'_>,
+        _workspace: &mut [f32],
+    ) -> Option<Result<Vec<f32>, ModelError>> {
+        None
+    }
 
     /// Predicts row-major probabilities into caller-owned output.
     fn predict_proba_into(
-        model: &Self::Model,
-        data: &MatrixView<'_>,
-        workspace: &mut [f32],
-        output: &mut [f32],
-    ) -> Result<(), ModelError>;
+        _model: &Self::Model,
+        _data: &MatrixView<'_>,
+        _workspace: &mut [f32],
+        _output: &mut [f32],
+    ) -> Option<Result<(), ModelError>> {
+        None
+    }
 
     /// Predicts one probability column, allocating the output.
     fn predict_class_proba(
-        model: &Self::Model,
-        data: &MatrixView<'_>,
-        workspace: &mut [f32],
-        class: u8,
-    ) -> Result<Vec<f32>, ModelError>;
+        _model: &Self::Model,
+        _data: &MatrixView<'_>,
+        _workspace: &mut [f32],
+        _class: u8,
+    ) -> Option<Result<Vec<f32>, ModelError>> {
+        None
+    }
 
     /// Predicts one probability column into caller-owned output.
     fn predict_class_proba_into(
-        model: &Self::Model,
-        data: &MatrixView<'_>,
-        workspace: &mut [f32],
-        class: u8,
-        output: &mut [f32],
-    ) -> Result<(), ModelError>;
+        _model: &Self::Model,
+        _data: &MatrixView<'_>,
+        _workspace: &mut [f32],
+        _class: u8,
+        _output: &mut [f32],
+    ) -> Option<Result<(), ModelError>> {
+        None
+    }
 }
 
 /// A real-valued-score model predicted through a caller-owned workspace.
@@ -712,31 +816,32 @@ trait ClassifierUnderTest {
         output: &mut [u8],
     ) -> Result<(), ModelError>;
 
-    // The probability group; see the module note on D11.
+    // The probability group. `None` means the case supplies no probability
+    // path, which must agree with `Capabilities::probability`.
     fn predict_proba(
         model: &Self::Model,
         data: &MatrixView<'_>,
         workspace: &mut [f32],
-    ) -> Result<Vec<f32>, ModelError>;
+    ) -> Option<Result<Vec<f32>, ModelError>>;
     fn predict_proba_into(
         model: &Self::Model,
         data: &MatrixView<'_>,
         workspace: &mut [f32],
         output: &mut [f32],
-    ) -> Result<(), ModelError>;
+    ) -> Option<Result<(), ModelError>>;
     fn predict_class_proba(
         model: &Self::Model,
         data: &MatrixView<'_>,
         workspace: &mut [f32],
         class: u8,
-    ) -> Result<Vec<f32>, ModelError>;
+    ) -> Option<Result<Vec<f32>, ModelError>>;
     fn predict_class_proba_into(
         model: &Self::Model,
         data: &MatrixView<'_>,
         workspace: &mut [f32],
         class: u8,
         output: &mut [f32],
-    ) -> Result<(), ModelError>;
+    ) -> Option<Result<(), ModelError>>;
 
     fn decision_function(
         model: &Self::Model,
@@ -830,24 +935,24 @@ impl<C: ClassifierCase> ClassifierUnderTest for TraitShaped<C> {
         model: &Self::Model,
         data: &MatrixView<'_>,
         _workspace: &mut [f32],
-    ) -> Result<Vec<f32>, ModelError> {
-        model.predict_proba(data)
+    ) -> Option<Result<Vec<f32>, ModelError>> {
+        C::predict_proba(model, data)
     }
     fn predict_proba_into(
         model: &Self::Model,
         data: &MatrixView<'_>,
         _workspace: &mut [f32],
         output: &mut [f32],
-    ) -> Result<(), ModelError> {
-        model.predict_proba_into(data, output)
+    ) -> Option<Result<(), ModelError>> {
+        C::predict_proba_into(model, data, output)
     }
     fn predict_class_proba(
         model: &Self::Model,
         data: &MatrixView<'_>,
         _workspace: &mut [f32],
         class: u8,
-    ) -> Result<Vec<f32>, ModelError> {
-        model.predict_class_proba(data, class)
+    ) -> Option<Result<Vec<f32>, ModelError>> {
+        C::predict_class_proba(model, data, class)
     }
     fn predict_class_proba_into(
         model: &Self::Model,
@@ -855,8 +960,8 @@ impl<C: ClassifierCase> ClassifierUnderTest for TraitShaped<C> {
         _workspace: &mut [f32],
         class: u8,
         output: &mut [f32],
-    ) -> Result<(), ModelError> {
-        model.predict_class_proba_into(data, class, output)
+    ) -> Option<Result<(), ModelError>> {
+        C::predict_class_proba_into(model, data, class, output)
     }
     fn decision_function(
         model: &Self::Model,
@@ -923,7 +1028,7 @@ impl<C: WorkspaceClassifierCase> ClassifierUnderTest for WorkspaceShaped<C> {
         model: &Self::Model,
         data: &MatrixView<'_>,
         workspace: &mut [f32],
-    ) -> Result<Vec<f32>, ModelError> {
+    ) -> Option<Result<Vec<f32>, ModelError>> {
         C::predict_proba(model, data, workspace)
     }
     fn predict_proba_into(
@@ -931,7 +1036,7 @@ impl<C: WorkspaceClassifierCase> ClassifierUnderTest for WorkspaceShaped<C> {
         data: &MatrixView<'_>,
         workspace: &mut [f32],
         output: &mut [f32],
-    ) -> Result<(), ModelError> {
+    ) -> Option<Result<(), ModelError>> {
         C::predict_proba_into(model, data, workspace, output)
     }
     fn predict_class_proba(
@@ -939,7 +1044,7 @@ impl<C: WorkspaceClassifierCase> ClassifierUnderTest for WorkspaceShaped<C> {
         data: &MatrixView<'_>,
         workspace: &mut [f32],
         class: u8,
-    ) -> Result<Vec<f32>, ModelError> {
+    ) -> Option<Result<Vec<f32>, ModelError>> {
         C::predict_class_proba(model, data, workspace, class)
     }
     fn predict_class_proba_into(
@@ -948,7 +1053,7 @@ impl<C: WorkspaceClassifierCase> ClassifierUnderTest for WorkspaceShaped<C> {
         workspace: &mut [f32],
         class: u8,
         output: &mut [f32],
-    ) -> Result<(), ModelError> {
+    ) -> Option<Result<(), ModelError>> {
         C::predict_class_proba_into(model, data, workspace, class, output)
     }
     fn decision_function(
@@ -1245,11 +1350,10 @@ fn classifier_obligations<C: ClassifierUnderTest>() -> Report {
     );
 
     let labels = C::predict(&model, &view, &mut workspace);
-    let probabilities = C::predict_proba(&model, &view, &mut workspace);
-    let (Ok(labels), Ok(probabilities)) = (&labels, &probabilities) else {
+    let Ok(labels) = &labels else {
         report.record(
             "predicts_the_fixture",
-            format!("predict returned {labels:?} and predict_proba returned {probabilities:?}"),
+            format!("predict returned {labels:?}"),
         );
         return report;
     };
@@ -1260,20 +1364,48 @@ fn classifier_obligations<C: ClassifierUnderTest>() -> Report {
             view.rows()
         )
     });
-    let expected_probabilities = view.rows() * classes.len();
-    report.require(
-        "predicts_the_fixture",
-        probabilities.len() == expected_probabilities,
-        || {
-            format!(
-                "predict_proba returned {} values, expected {expected_probabilities}",
-                probabilities.len()
-            )
-        },
-    );
-    if labels.len() != view.rows() || probabilities.len() != expected_probabilities {
+    if labels.len() != view.rows() {
         return report;
     }
+
+    // Producing probabilities is a declared capability, not a universal one:
+    // a margin-based classifier has a score rather than a distribution, and is
+    // not required to fabricate one. Everything downstream of probabilities is
+    // therefore selected by the declaration, in both directions.
+    let supplied = C::predict_proba(&model, &view, &mut workspace);
+    check_declaration(
+        &mut report,
+        "probability_declaration_matches_behavior",
+        "probability",
+        C::Model::CAPABILITIES.probability(),
+        supplied.is_some(),
+        None,
+    );
+    let probabilities = match supplied {
+        Some(Ok(probabilities)) if C::Model::CAPABILITIES.probability() => Some(probabilities),
+        Some(Err(error)) => {
+            report.record(
+                "probability_declaration_matches_behavior",
+                format!("the declared probability path failed: {error:?}"),
+            );
+            None
+        }
+        _ => None,
+    };
+    let expected_probabilities = view.rows() * classes.len();
+    if let Some(probabilities) = &probabilities {
+        report.require(
+            "probability_declaration_matches_behavior",
+            probabilities.len() == expected_probabilities,
+            || {
+                format!(
+                    "predict_proba returned {} values, expected {expected_probabilities}",
+                    probabilities.len()
+                )
+            },
+        );
+    }
+    let probabilities = probabilities.filter(|values| values.len() == expected_probabilities);
 
     let mut labels_into = vec![u8::MAX; view.rows()];
     let written = C::predict_into(&model, &view, &mut workspace, &mut labels_into);
@@ -1287,7 +1419,9 @@ fn classifier_obligations<C: ClassifierUnderTest>() -> Report {
         },
     );
 
-    probability_obligations::<C>(&mut report, &model, &view, &mut workspace, &classes, labels);
+    if probabilities.is_some() {
+        probability_obligations::<C>(&mut report, &model, &view, &mut workspace, &classes, labels);
+    }
 
     let wrong_width = train.wrong_width();
     let width_error = ModelError::FeatureDimension {
@@ -1310,49 +1444,55 @@ fn classifier_obligations<C: ClassifierUnderTest>() -> Report {
             )
         },
     );
-    let mut untouched = vec![7.0_f32; expected_probabilities];
-    let rejected = C::predict_proba_into(
-        &model,
-        &wrong_width.as_view(),
-        &mut workspace,
-        &mut untouched,
-    );
-    report.require(
-        "feature_width_validated_before_write",
-        rejected == Err(width_error) && untouched == vec![7.0_f32; expected_probabilities],
-        || format!("predict_proba_into on a wrong-width batch returned {rejected:?}"),
-    );
+    if probabilities.is_some() {
+        let mut untouched = vec![7.0_f32; expected_probabilities];
+        let rejected = C::predict_proba_into(
+            &model,
+            &wrong_width.as_view(),
+            &mut workspace,
+            &mut untouched,
+        );
+        report.require(
+            "feature_width_validated_before_write",
+            rejected == Some(Err(width_error))
+                && untouched == vec![7.0_f32; expected_probabilities],
+            || format!("predict_proba_into on a wrong-width batch returned {rejected:?}"),
+        );
+    }
 
     check_output_length::<u8>(&mut report, view.rows(), 7, |output| {
         C::predict_into(&model, &view, &mut workspace, output)
     });
-    check_output_length::<f32>(&mut report, expected_probabilities, 7.0, |output| {
-        C::predict_proba_into(&model, &view, &mut workspace, output)
-    });
-    check_output_length::<f32>(&mut report, view.rows(), 7.0, |output| {
-        C::predict_class_proba_into(&model, &view, &mut workspace, classes[0], output)
-    });
+    if probabilities.is_some() {
+        check_output_length::<f32>(&mut report, expected_probabilities, 7.0, |output| {
+            C::predict_proba_into(&model, &view, &mut workspace, output).unwrap_or(Ok(()))
+        });
+        check_output_length::<f32>(&mut report, view.rows(), 7.0, |output| {
+            C::predict_class_proba_into(&model, &view, &mut workspace, classes[0], output)
+                .unwrap_or(Ok(()))
+        });
 
-    let absent = absent_class(&classes);
-    let mut untouched = vec![7.0_f32; view.rows()];
-    let rejected =
-        C::predict_class_proba_into(&model, &view, &mut workspace, absent, &mut untouched);
-    report.require(
-        "unknown_class_rejected",
-        rejected == Err(ModelError::UnknownClass { class: absent })
-            && untouched == vec![7.0_f32; view.rows()],
-        || format!("class {absent} returned {rejected:?} and wrote {untouched:?}"),
-    );
-    let rejected = C::predict_class_proba(&model, &view, &mut workspace, absent);
-    report.require(
-        "unknown_class_rejected",
-        rejected == Err(ModelError::UnknownClass { class: absent }),
-        || {
-            format!(
-                "allocating predict_class_proba for absent class {absent} returned {rejected:?}"
-            )
-        },
-    );
+        let absent = absent_class(&classes);
+        let mut untouched = vec![7.0_f32; view.rows()];
+        let rejected =
+            C::predict_class_proba_into(&model, &view, &mut workspace, absent, &mut untouched);
+        report.require(
+            "unknown_class_rejected",
+            rejected == Some(Err(ModelError::UnknownClass { class: absent }))
+                && untouched == vec![7.0_f32; view.rows()],
+            || format!("class {absent} returned {rejected:?} and wrote {untouched:?}"),
+        );
+        let rejected = C::predict_class_proba(&model, &view, &mut workspace, absent);
+        report.require(
+            "unknown_class_rejected",
+            rejected == Some(Err(ModelError::UnknownClass { class: absent })),
+            || {
+                format!(
+                    "allocating predict_class_proba for absent class {absent} returned {rejected:?}"
+                )
+            },
+        );
+    }
 
     workspace_obligations(
         &mut report,
@@ -1370,8 +1510,12 @@ fn classifier_obligations<C: ClassifierUnderTest>() -> Report {
             report.require(
                 "refit_is_deterministic",
                 C::predict(&refitted, &view, &mut refit_workspace).as_ref() == Ok(labels)
-                    && C::predict_proba(&refitted, &view, &mut refit_workspace).as_ref()
-                        == Ok(probabilities),
+                    && probabilities_agree::<C>(
+                        &refitted,
+                        &view,
+                        &mut refit_workspace,
+                        probabilities.as_deref(),
+                    ),
                 || "refitting the same data and parameters changed the predictions".to_owned(),
             );
         }
@@ -1394,8 +1538,12 @@ fn classifier_obligations<C: ClassifierUnderTest>() -> Report {
                     workspace_for(C::workspace_len(&weighted, view.rows()));
                 (
                     C::predict(&weighted, &view, &mut weighted_workspace).as_ref() == Ok(labels)
-                        && C::predict_proba(&weighted, &view, &mut weighted_workspace).as_ref()
-                            == Ok(probabilities),
+                        && probabilities_agree::<C>(
+                            &weighted,
+                            &view,
+                            &mut weighted_workspace,
+                            probabilities.as_deref(),
+                        ),
                     "unit-weighted fit predicts differently from the unweighted fit".to_owned(),
                 )
             }
@@ -1423,8 +1571,12 @@ fn classifier_obligations<C: ClassifierUnderTest>() -> Report {
                     bytes == again
                         && C::predict(&decoded, &view, &mut decoded_workspace).as_ref()
                             == Ok(labels)
-                        && C::predict_proba(&decoded, &view, &mut decoded_workspace).as_ref()
-                            == Ok(probabilities),
+                        && probabilities_agree::<C>(
+                            &decoded,
+                            &view,
+                            &mut decoded_workspace,
+                            probabilities.as_deref(),
+                        ),
                     "the artifact re-encoded differently or the decoded model predicts differently"
                         .to_owned(),
                 )
@@ -1453,14 +1605,14 @@ fn probability_obligations<C: ClassifierUnderTest>(
     classes: &[u8],
     labels: &[u8],
 ) {
-    let Ok(probabilities) = C::predict_proba(model, view, workspace) else {
+    let Some(Ok(probabilities)) = C::predict_proba(model, view, workspace) else {
         return;
     };
     let mut probabilities_into = vec![f32::MAX; probabilities.len()];
     let written = C::predict_proba_into(model, view, workspace, &mut probabilities_into);
     report.require(
         "into_matches_allocating",
-        written.is_ok() && probabilities_into == probabilities,
+        written == Some(Ok(())) && probabilities_into == probabilities,
         || format!("predict_proba_into returned {written:?} and disagreed with predict_proba"),
     );
 
@@ -1470,7 +1622,7 @@ fn probability_obligations<C: ClassifierUnderTest>(
         let written = C::predict_class_proba_into(model, view, workspace, class, &mut into);
         report.require(
             "into_matches_allocating",
-            written.is_ok() && allocating.as_ref() == Ok(&into),
+            written == Some(Ok(())) && allocating.as_ref() == Some(&Ok(into.clone())),
             || format!("class {class} disagreed between predict_class_proba and its _into form"),
         );
         let expected: Vec<f32> = probabilities
@@ -1479,7 +1631,7 @@ fn probability_obligations<C: ClassifierUnderTest>(
             .collect();
         report.require(
             "probability_columns_follow_classes",
-            allocating.as_ref() == Ok(&expected),
+            allocating.as_ref() == Some(&Ok(expected.clone())),
             || {
                 format!(
                     "class {class} is not column {column} of predict_proba: {allocating:?} vs {expected:?}"
@@ -1530,7 +1682,7 @@ fn check_multiclass_artifact_declaration<C: ClassifierUnderTest>(
         return;
     };
     let mut workspace = workspace_for(C::workspace_len(&model, view.rows()));
-    let (Ok(labels), Ok(probabilities)) = (
+    let (Ok(labels), Some(Ok(probabilities))) = (
         C::predict(&model, &view, &mut workspace),
         C::predict_proba(&model, &view, &mut workspace),
     ) else {
@@ -1548,8 +1700,12 @@ fn check_multiclass_artifact_declaration<C: ClassifierUnderTest>(
                     C::classes(&model)
                 ))
             } else if C::predict(&decoded, &view, &mut decoded_workspace).as_ref() != Ok(&labels)
-                || C::predict_proba(&decoded, &view, &mut decoded_workspace).as_ref()
-                    != Ok(&probabilities)
+                || !probabilities_agree::<C>(
+                    &decoded,
+                    &view,
+                    &mut decoded_workspace,
+                    Some(&probabilities),
+                )
             {
                 Some("the decoded multiclass model predicts differently".to_owned())
             } else {
@@ -1664,7 +1820,7 @@ fn check_decision_function_declaration<C: ClassifierUnderTest>(
     // the single-column accessor agrees with it is a separate obligation — so
     // this measures the decision function against probabilities rather than
     // against a second accessor that has its own way of being wrong.
-    let Ok(probabilities) = C::predict_proba(model, view, workspace) else {
+    let Some(Ok(probabilities)) = C::predict_proba(model, view, workspace) else {
         return;
     };
     let positive: Vec<f32> = probabilities
@@ -1741,7 +1897,7 @@ fn check_multiclass_declaration<C: ClassifierUnderTest>(report: &mut Report, fix
             )
         },
     );
-    let (Ok(labels), Ok(probabilities)) = (
+    let (Ok(labels), Some(Ok(probabilities))) = (
         C::predict(&model, &view, &mut workspace),
         C::predict_proba(&model, &view, &mut workspace),
     ) else {
@@ -1771,7 +1927,8 @@ fn check_multiclass_declaration<C: ClassifierUnderTest>(report: &mut Report, fix
             .collect();
         report.require(
             "multiclass_declaration_matches_behavior",
-            C::predict_class_proba(&model, &view, &mut workspace, class).as_ref() == Ok(&expected),
+            C::predict_class_proba(&model, &view, &mut workspace, class).as_ref()
+                == Some(&Ok(expected.clone())),
             || format!("multiclass class {class} is not column {column} of predict_proba"),
         );
     }
@@ -2162,6 +2319,24 @@ pub fn transformer_report<T: TransformerCase>() -> Report {
 }
 
 // -------------------------------------------------------------- shared checks
+
+/// Whether another fitted value's probabilities match the reference ones.
+///
+/// `None` means the type declares no probability path, so there is nothing to
+/// compare and the comparison holds vacuously.
+fn probabilities_agree<C: ClassifierUnderTest>(
+    model: &C::Model,
+    data: &MatrixView<'_>,
+    workspace: &mut [f32],
+    expected: Option<&[f32]>,
+) -> bool {
+    match expected {
+        None => true,
+        Some(expected) => {
+            matches!(C::predict_proba(model, data, workspace), Some(Ok(actual)) if actual == expected)
+        }
+    }
+}
 
 fn workspace_for<E>(len: Result<usize, E>) -> Vec<f32> {
     vec![0.0; len.unwrap_or(0)]

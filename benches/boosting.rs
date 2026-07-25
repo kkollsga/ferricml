@@ -1,5 +1,5 @@
 use criterion::{BatchSize, BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
-use ferricml::api::Classifier;
+use ferricml::api::ProbabilisticClassifier;
 use ferricml::data::{BinaryTargets, DenseMatrix, RegressionTargets, SampleWeights};
 use ferricml::ensemble::{
     HistGradientBoostingClassifier, HistGradientBoostingClassifierParams,
@@ -300,7 +300,7 @@ fn classifier_inference(c: &mut Criterion) {
         group.throughput(Throughput::Elements(rows as u64));
         group.bench_function(BenchmarkId::from_parameter("predict_proba"), |bencher| {
             bencher.iter(|| {
-                Classifier::predict_proba_into(
+                ProbabilisticClassifier::predict_proba_into(
                     &model,
                     black_box(&input.as_view()),
                     black_box(&mut output),
