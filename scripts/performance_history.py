@@ -53,6 +53,7 @@ MODEL_FIT = (
     "ferricml_forest_v2_weighted_fit_2048x64_20t/regressor_weighted",
     "ferricml_boosting_v2_weighted_fit_2048x48_64t7l/unweighted",
     "ferricml_boosting_v2_weighted_fit_2048x48_64t7l/weighted",
+    "ferricml_boosting_v3_classifier_fit_2048x48_64t7l/ferricml",
 )
 MODEL_INFERENCE = (
     "ferricml_models_v1_into_1024x48/linear",
@@ -65,6 +66,9 @@ MODEL_INFERENCE = (
     "ferricml_boosting_v2_predict_one_256x_128t15l/predict",
     "ferricml_boosting_v1_into_32x48_64t7l/predict",
     "ferricml_boosting_v1_into_1024x48_64t7l/predict",
+    "ferricml_boosting_v3_classifier_predict_one_256x_64t7l/predict",
+    "ferricml_boosting_v3_classifier_proba_into_32x48_64t7l/predict_proba",
+    "ferricml_boosting_v3_classifier_proba_into_1024x48_64t7l/predict_proba",
     "ferricml_models_v2_logistic_into_1024x48/proba",
     "ferricml_models_v2_scaler_into_1024x48/transform",
     "ferricml_model_selection_v2_holdout_1000000/ordinary_shuffled_20pct",

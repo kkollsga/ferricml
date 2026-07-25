@@ -1,6 +1,10 @@
 use criterion::{BatchSize, BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
-use ferricml::data::{DenseMatrix, RegressionTargets, SampleWeights};
-use ferricml::ensemble::{HistGradientBoostingRegressor, HistGradientBoostingRegressorParams};
+use ferricml::api::Classifier;
+use ferricml::data::{BinaryTargets, DenseMatrix, RegressionTargets, SampleWeights};
+use ferricml::ensemble::{
+    HistGradientBoostingClassifier, HistGradientBoostingClassifierParams,
+    HistGradientBoostingRegressor, HistGradientBoostingRegressorParams,
+};
 use std::hint::black_box;
 
 const TRAIN_ROWS: usize = 2_048;
@@ -208,5 +212,113 @@ fn weighted_training(c: &mut Criterion) {
     group.finish();
 }
 
-criterion_group!(benches, inference, training, weighted_training);
+/// Binary labels over the same fixture, split at its median-ish threshold.
+///
+/// Using one fixture for both estimators keeps the classifier lanes comparable
+/// with the regressor lanes they sit beside: the binning work and the tree
+/// shapes are the same, and what differs is the objective.
+fn binary_targets(targets: &RegressionTargets) -> BinaryTargets {
+    BinaryTargets::new(
+        targets
+            .as_slice()
+            .iter()
+            .map(|&value| u8::from(value > 0.0))
+            .collect(),
+    )
+    .unwrap()
+}
+
+fn classifier_params(trees: usize, leaves: usize) -> HistGradientBoostingClassifierParams {
+    HistGradientBoostingClassifierParams::default()
+        .with_max_iter(trees)
+        .with_max_leaf_nodes(leaves)
+        .with_min_samples_leaf(20)
+}
+
+/// Boosted classification fitting, beside the regressor lane it shares a grower
+/// with.
+///
+/// The classifier is the first consumer of the per-sample hessian arm, so this
+/// is the lane that would move if that arm's cost ever leaked into the
+/// constant-hessian one, and the regressor's own fit lane is the arm that must
+/// not move.
+fn classifier_training(c: &mut Criterion) {
+    let (data, targets) = fixture(TRAIN_ROWS, COLUMNS);
+    let labels = binary_targets(&targets);
+    let mut group = c.benchmark_group("ferricml_boosting_v3_classifier_fit_2048x48_64t7l");
+    group.throughput(Throughput::Elements(TRAIN_ROWS as u64));
+    group.bench_function(BenchmarkId::from_parameter("ferricml"), |bencher| {
+        bencher.iter_batched(
+            || classifier_params(64, 7),
+            |params| {
+                black_box(
+                    HistGradientBoostingClassifier::fit(&data.as_view(), &labels, params).unwrap(),
+                );
+            },
+            BatchSize::SmallInput,
+        );
+    });
+    group.finish();
+}
+
+/// Boosted classification inference: the raw score, its sigmoid, and the
+/// allocation-free probability matrix.
+fn classifier_inference(c: &mut Criterion) {
+    let (training, targets) = fixture(TRAIN_ROWS, COLUMNS);
+    let labels = binary_targets(&targets);
+    let model =
+        HistGradientBoostingClassifier::fit(&training.as_view(), &labels, classifier_params(64, 7))
+            .unwrap();
+
+    let scalar_rows = training
+        .as_slice()
+        .chunks_exact(COLUMNS)
+        .take(SCALAR_REPETITIONS)
+        .collect::<Vec<_>>();
+    let mut group = c.benchmark_group("ferricml_boosting_v3_classifier_predict_one_256x_64t7l");
+    group.throughput(Throughput::Elements(SCALAR_REPETITIONS as u64));
+    group.bench_function(BenchmarkId::from_parameter("predict"), |bencher| {
+        bencher.iter(|| {
+            for row in &scalar_rows {
+                black_box(model.predict_one(black_box(row)).unwrap());
+            }
+        });
+    });
+    group.finish();
+
+    for rows in [32, 1_024] {
+        let input = DenseMatrix::new(
+            training.as_slice()[..rows * COLUMNS].to_vec(),
+            rows,
+            COLUMNS,
+        )
+        .unwrap();
+        let mut output = vec![0.0; rows * 2];
+        let mut group = c.benchmark_group(format!(
+            "ferricml_boosting_v3_classifier_proba_into_{rows}x48_64t7l"
+        ));
+        group.throughput(Throughput::Elements(rows as u64));
+        group.bench_function(BenchmarkId::from_parameter("predict_proba"), |bencher| {
+            bencher.iter(|| {
+                Classifier::predict_proba_into(
+                    &model,
+                    black_box(&input.as_view()),
+                    black_box(&mut output),
+                )
+                .unwrap();
+                black_box(&output);
+            });
+        });
+        group.finish();
+    }
+}
+
+criterion_group!(
+    benches,
+    inference,
+    training,
+    weighted_training,
+    classifier_training,
+    classifier_inference
+);
 criterion_main!(benches);
