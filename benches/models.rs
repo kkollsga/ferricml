@@ -10,10 +10,13 @@ use ferricml::linear_model::{
     LinearRegression, LinearRegressionParams, LogisticRegression, LogisticRegressionParams, Ridge,
     RidgeParams,
 };
-use ferricml::metrics::{mean_squared_error, roc_auc_score};
+use ferricml::metrics::{
+    Average, ConfusionMatrix, average_precision_score, mean_squared_error, roc_auc_score,
+};
 use ferricml::model_selection::{
-    HoldoutParams, KFold, RegressionScorer, TestSize, cross_validate_regressor,
-    stratified_train_test_split, train_test_split,
+    GroupKFold, HoldoutParams, KFold, LeaveOneOut, RegressionScorer, RepeatedKFold,
+    ScoringWorkspace, TestSize, TimeSeriesSplit, cross_validate_regressor, score_regressor,
+    score_regressor_with, stratified_train_test_split, train_test_split,
 };
 use ferricml::pipeline::{Pipeline, StagedPipeline};
 use ferricml::preprocessing::{
@@ -37,6 +40,8 @@ const MANY_CLASS_ROWS: usize = 262_144;
 const INSPECTION_ROWS: usize = 256;
 const INSPECTION_COLUMNS: usize = 8;
 const INSPECTION_REPEATS: usize = 3;
+const SPLITTER_ROWS: usize = 16_384;
+const LEAVE_ONE_OUT_ROWS: usize = 512;
 
 fn fixture(rows: usize, columns: usize) -> (DenseMatrix, RegressionTargets) {
     let mut state = 0x9e37_79b9_u32;
@@ -359,6 +364,137 @@ fn evaluation(c: &mut Criterion) {
     cross_validation.finish();
 }
 
+/// The evaluation vocabulary added in the metrics-and-scorer sprint: averaged
+/// label-set scores, threshold sweeps, and the allocating versus workspace
+/// scoring entry points on one fitted model.
+fn evaluation_vocabulary(c: &mut Criterion) {
+    let labels = (0..METRIC_ROWS)
+        .map(|index| (index % 3) as u8)
+        .collect::<Vec<_>>();
+    let predicted = (0..METRIC_ROWS)
+        .map(|index| (index.wrapping_mul(7) % 3) as u8)
+        .collect::<Vec<_>>();
+    let binary = (0..METRIC_ROWS)
+        .map(|index| u8::from(index % 3 == 0))
+        .collect::<Vec<_>>();
+    let scores = (0..METRIC_ROWS)
+        .map(|index| ((index.wrapping_mul(37) % 1_009) as f32) / 1_009.0)
+        .collect::<Vec<_>>();
+
+    let mut group = c.benchmark_group("ferricml_evaluation_v2_vocabulary_4096");
+    group.throughput(Throughput::Elements(METRIC_ROWS as u64));
+    group.bench_function(BenchmarkId::from_parameter("confusion_matrix"), |bencher| {
+        bencher.iter(|| {
+            black_box(ConfusionMatrix::new(black_box(&labels), black_box(&predicted)).unwrap());
+        });
+    });
+    let matrix = ConfusionMatrix::new(&labels, &predicted).unwrap();
+    group.bench_function(BenchmarkId::from_parameter("macro_f1"), |bencher| {
+        bencher.iter(|| {
+            black_box(black_box(&matrix).f1(Average::Macro).unwrap());
+        });
+    });
+    group.bench_function(
+        BenchmarkId::from_parameter("average_precision"),
+        |bencher| {
+            bencher.iter(|| {
+                black_box(average_precision_score(black_box(&binary), black_box(&scores)).unwrap());
+            });
+        },
+    );
+    group.finish();
+
+    let (data, targets) = fixture(CV_ROWS, CV_COLUMNS);
+    let model = Ridge::fit(&data.as_view(), &targets, RidgeParams::default()).unwrap();
+    let mut workspace = ScoringWorkspace::new();
+    let mut scoring = c.benchmark_group("ferricml_evaluation_v2_scoring_256x12");
+    scoring.throughput(Throughput::Elements(CV_ROWS as u64));
+    scoring.bench_function(BenchmarkId::from_parameter("allocating"), |bencher| {
+        bencher.iter(|| {
+            black_box(
+                score_regressor(
+                    black_box(&model),
+                    black_box(&data.as_view()),
+                    &targets,
+                    RegressionScorer::MeanSquaredError,
+                )
+                .unwrap(),
+            );
+        });
+    });
+    scoring.bench_function(BenchmarkId::from_parameter("workspace"), |bencher| {
+        bencher.iter(|| {
+            black_box(
+                score_regressor_with(
+                    black_box(&model),
+                    black_box(&data.as_view()),
+                    &targets,
+                    RegressionScorer::MeanSquaredError,
+                    &mut workspace,
+                )
+                .unwrap(),
+            );
+        });
+    });
+    scoring.finish();
+}
+
+/// Splitters added alongside the evaluation vocabulary. Each lane materializes
+/// every fold, so the cost of the whole iterator is what is measured.
+fn evaluation_splitters(c: &mut Criterion) {
+    let groups = (0..SPLITTER_ROWS)
+        .map(|index| (index % 128) as u64)
+        .collect::<Vec<_>>();
+
+    let mut group = c.benchmark_group("ferricml_model_selection_v3_splitters_16384");
+    group.throughput(Throughput::Elements(SPLITTER_ROWS as u64));
+    group.bench_function(BenchmarkId::from_parameter("group_kfold_5"), |bencher| {
+        bencher.iter(|| {
+            black_box(
+                GroupKFold::new(5)
+                    .split(black_box(&groups))
+                    .unwrap()
+                    .count(),
+            );
+        });
+    });
+    group.bench_function(BenchmarkId::from_parameter("time_series_5"), |bencher| {
+        bencher.iter(|| {
+            black_box(
+                TimeSeriesSplit::new(5)
+                    .split(black_box(SPLITTER_ROWS))
+                    .unwrap()
+                    .count(),
+            );
+        });
+    });
+    group.bench_function(
+        BenchmarkId::from_parameter("repeated_kfold_5x3"),
+        |bencher| {
+            bencher.iter(|| {
+                black_box(
+                    RepeatedKFold::new(5, 3)
+                        .with_random_state(19)
+                        .split(black_box(SPLITTER_ROWS))
+                        .unwrap()
+                        .count(),
+                );
+            });
+        },
+    );
+    group.bench_function(BenchmarkId::from_parameter("leave_one_out"), |bencher| {
+        bencher.iter(|| {
+            black_box(
+                LeaveOneOut::new()
+                    .split(black_box(LEAVE_ONE_OUT_ROWS))
+                    .unwrap()
+                    .count(),
+            );
+        });
+    });
+    group.finish();
+}
+
 fn split_workloads(c: &mut Criterion) {
     let four_class_labels = (0..HOLDOUT_ROWS)
         .map(|index| (index % 4) as u8)
@@ -669,6 +805,8 @@ criterion_group!(
     logistic_and_scaler,
     transformers_and_staged_pipelines,
     evaluation,
+    evaluation_vocabulary,
+    evaluation_splitters,
     split_workloads,
     inspection
 );

@@ -157,6 +157,41 @@ def composition_families_stay_private(root: Path) -> list[str]:
     return findings
 
 
+def metrics_depend_on_no_estimator(root: Path) -> list[str]:
+    """Metrics score values, never estimators.
+
+    A metric takes expected and predicted values and returns a number. Naming an
+    estimator module inside it is the observable symptom of a metric that only
+    works for one kind of model, which is what keeps the evaluation vocabulary
+    reusable by callers whose model FerricML does not ship.
+    """
+    text = directory_text(root / "src" / "metrics")
+    return [
+        f"metrics depend on estimator module {module}"
+        for module in ESTIMATOR_MODULES
+        if f"crate::{module}" in text
+    ]
+
+
+def evaluation_families_stay_private(root: Path) -> list[str]:
+    """Metric and model-selection internals stay behind their facades.
+
+    Both grew from single files into directories of per-concern child modules —
+    averaging, confusion counts, curve sweeps, one file per splitter family.
+    Exposing one as `pub mod` would make that arrangement public API, so a later
+    regrouping would be a breaking change. Only re-exported types cross.
+    """
+    findings = []
+    for facade in ("metrics", "model_selection"):
+        text = read_if_present(root / "src" / facade / "mod.rs")
+        findings.extend(
+            f"{facade} facade exposes child module: {line.strip()}"
+            for line in text.splitlines()
+            if line.strip().startswith("pub mod ")
+        )
+    return findings
+
+
 RULES: tuple[tuple[str, Callable[[Path], list[str]]], ...] = (
     ("crate-root-lib-only", crate_root_is_lib_only),
     ("obsolete-root-implementations", obsolete_root_implementations_are_gone),
@@ -168,6 +203,8 @@ RULES: tuple[tuple[str, Callable[[Path], list[str]]], ...] = (
     ("capability-descriptor-neutral", capability_descriptor_names_no_estimator),
     ("baselines-independent", baselines_depend_on_no_estimator),
     ("composition-families-private", composition_families_stay_private),
+    ("metrics-below-estimators", metrics_depend_on_no_estimator),
+    ("evaluation-families-private", evaluation_families_stay_private),
 )
 
 
@@ -200,6 +237,10 @@ def write_clean_tree(root: Path) -> Path:
         "preprocessing/standard_scaler/mod.rs": "//! scaler\n",
         "pipeline/mod.rs": "//! pipeline\nmod staged;\npub use staged::StagedPipeline;\n",
         "pipeline/staged.rs": "//! staged\npub struct StagedPipeline;\n",
+        "metrics/mod.rs": "//! metrics\nmod confusion;\npub use confusion::ConfusionMatrix;\n",
+        "metrics/confusion.rs": "//! confusion\npub struct ConfusionMatrix;\n",
+        "model_selection/mod.rs": "//! model selection\nmod split;\npub use split::Split;\n",
+        "model_selection/split/mod.rs": "//! split\npub struct Split;\n",
     }.items():
         path = source / relative
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -279,6 +320,21 @@ SYNTHETIC_VIOLATIONS: tuple[tuple[str, Callable[[Path], None], str], ...] = (
             root / "src" / "preprocessing" / "mod.rs", "pub mod standard_scaler;\n"
         ),
         "preprocessing facade exposes child module",
+    ),
+    (
+        "metrics-below-estimators",
+        lambda root: append(
+            root / "src" / "metrics" / "confusion.rs",
+            "use crate::ensemble::RandomForestClassifier;\n",
+        ),
+        "metrics depend on estimator module ensemble",
+    ),
+    (
+        "evaluation-families-private",
+        lambda root: append(
+            root / "src" / "model_selection" / "mod.rs", "pub mod split;\n"
+        ),
+        "model_selection facade exposes child module",
     ),
 )
 
