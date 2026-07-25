@@ -673,6 +673,7 @@ pub fn ferricml::ensemble::RandomForestClassifier::fit(&ferricml::data::MatrixVi
 pub fn ferricml::ensemble::RandomForestClassifier::fit_multiclass(&ferricml::data::MatrixView<'_>, &ferricml::data::ClassTargets, ferricml::ensemble::RandomForestClassifierParams) -> core::result::Result<Self, ferricml::api::ModelError>
 pub fn ferricml::ensemble::RandomForestClassifier::fit_multiclass_weighted(&ferricml::data::MatrixView<'_>, &ferricml::data::ClassTargets, &ferricml::data::SampleWeights, ferricml::ensemble::RandomForestClassifierParams) -> core::result::Result<Self, ferricml::api::ModelError>
 pub fn ferricml::ensemble::RandomForestClassifier::fit_weighted(&ferricml::data::MatrixView<'_>, &ferricml::data::BinaryTargets, &ferricml::data::SampleWeights, ferricml::ensemble::RandomForestClassifierParams) -> core::result::Result<Self, ferricml::api::ModelError>
+pub fn ferricml::ensemble::RandomForestClassifier::from_artifact(&[u8], [u8; 32]) -> core::result::Result<Self, ferricml::artifact::ArtifactError>
 pub fn ferricml::ensemble::RandomForestClassifier::get_params(&self) -> &ferricml::ensemble::RandomForestClassifierParams
 pub fn ferricml::ensemble::RandomForestClassifier::n_features_in(&self) -> usize
 pub fn ferricml::ensemble::RandomForestClassifier::predict(&self, &ferricml::data::MatrixView<'_>) -> core::result::Result<alloc::vec::Vec<u8>, ferricml::api::ModelError>
@@ -687,6 +688,7 @@ pub fn ferricml::ensemble::RandomForestClassifier::predict_proba(&self, &ferricm
 pub fn ferricml::ensemble::RandomForestClassifier::predict_proba_into(&self, &ferricml::data::MatrixView<'_>, &mut [f32]) -> core::result::Result<(), ferricml::api::ModelError>
 pub fn ferricml::ensemble::RandomForestClassifier::predict_proba_one(&self, &[f32]) -> core::result::Result<alloc::vec::Vec<f32>, ferricml::api::ModelError>
 pub fn ferricml::ensemble::RandomForestClassifier::predict_proba_one_into(&self, &[f32], &mut [f32]) -> core::result::Result<(), ferricml::api::ModelError>
+pub fn ferricml::ensemble::RandomForestClassifier::to_artifact(&self, [u8; 32]) -> core::result::Result<alloc::vec::Vec<u8>, ferricml::artifact::ArtifactError>
 impl core::convert::From<ferricml::ensemble::RandomForestClassifier> for ferricml::api::AnyClassifier
 pub fn ferricml::api::AnyClassifier::from(ferricml::ensemble::RandomForestClassifier) -> Self
 impl ferricml::api::Classifier for ferricml::ensemble::RandomForestClassifier

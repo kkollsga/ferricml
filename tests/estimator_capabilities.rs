@@ -31,7 +31,6 @@ const WEIGHTED_AND_PERSISTED: Capabilities = Capabilities::NONE
     .with_sample_weights(true)
     .with_artifact(true);
 const PERSISTED_ONLY: Capabilities = Capabilities::NONE.with_artifact(true);
-const MULTICLASS_ONLY: Capabilities = Capabilities::NONE.with_multiclass(true);
 
 #[test]
 fn linear_estimators_declare_weighted_fitting_and_persistence() {
@@ -67,12 +66,12 @@ fn tree_ensembles_declare_weighted_fitting_and_persistence() {
 }
 
 #[test]
-fn the_forest_classifier_declares_weighted_and_multiclass_fitting() {
-    // It fits an arbitrary class set and accepts per-row weights, but has no
-    // artifact kind until its leaf representation is persisted.
+fn the_forest_classifier_declares_weighted_and_multiclass_fitting_and_persistence() {
+    // Its artifact covers both leaf representations, so persistence holds for
+    // every fit the type offers rather than for one of its two entry points.
     assert_eq!(
         RandomForestClassifier::CAPABILITIES,
-        MULTICLASS_ONLY.with_sample_weights(true)
+        WEIGHTED_AND_PERSISTED.with_multiclass(true)
     );
 }
 
@@ -197,7 +196,7 @@ fn runtime_dispatch_reports_the_selected_variant_without_type_matching() {
     );
     assert_eq!(
         forest_classifier.capabilities(),
-        MULTICLASS_ONLY.with_sample_weights(true)
+        WEIGHTED_AND_PERSISTED.with_multiclass(true)
     );
 }
 

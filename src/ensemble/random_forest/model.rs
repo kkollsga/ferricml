@@ -8,18 +8,33 @@ use crate::api::{
     validate_prediction,
 };
 use crate::artifact::{
-    ArtifactError, ArtifactPayloadWriter, MIN_ENCODED_TREE_BYTES,
-    RANDOM_FOREST_REGRESSOR_ARTIFACT_KIND, SchemaRole, decode_component, decode_logical_tree,
-    decode_v2_envelope, encode_component, encode_logical_tree, encode_v2_envelope,
+    ArtifactCursor, ArtifactError, ArtifactPayloadWriter, LogicalTreeNode, MIN_ENCODED_TREE_BYTES,
+    RANDOM_FOREST_CLASSIFIER_ARTIFACT_KIND, RANDOM_FOREST_REGRESSOR_ARTIFACT_KIND, SchemaRole,
+    decode_component, decode_logical_tree, decode_v2_envelope, encode_component,
+    encode_logical_tree, encode_v2_envelope,
 };
 use crate::data::{BinaryTargets, ClassTargets, MatrixView, RegressionTargets, SampleWeights};
 
 const REGRESSOR_PAYLOAD_VERSION: u16 = 1;
+const CLASSIFIER_PAYLOAD_VERSION: u16 = 1;
 const METADATA_COMPONENT_KIND: u16 = 1;
 const TREE_COMPONENT_KIND: u16 = 2;
+/// Per-tree leaf distributions, in pre-order leaf rank. Written only by the
+/// multiclass flavour, immediately after that tree's topology component.
+const LEAF_PROBABILITY_COMPONENT_KIND: u16 = 3;
 const COMPONENT_VERSION: u16 = 1;
 const REGRESSOR_OBJECTIVE_VERSION: u32 = 1;
+const CLASSIFIER_OBJECTIVE_VERSION: u32 = 1;
 const METADATA_BYTES: usize = 13 * 4 + 8;
+/// The classifier metadata's fixed words, before its class list: the regressor
+/// fields plus a forest-flavour tag and a class count.
+const CLASSIFIER_METADATA_BYTES: usize = 15 * 4 + 8;
+
+/// Which leaf arithmetic the encoded forest uses. The two are different models,
+/// so the tag is read before any tree is, and neither flavour's trees are ever
+/// handed to the other's builder.
+const FOREST_BINARY: u32 = 1;
+const FOREST_MULTICLASS: u32 = 2;
 
 /// Ceilings applied identically when encoding and decoding, so an artifact
 /// that this crate produced always decodes and a hostile one allocates
@@ -70,7 +85,8 @@ pub(super) enum Forest {
 /// fits natively multiclass trees whose ensemble probability is the **mean of
 /// the per-tree probability vectors** — soft averaging, not a majority vote of
 /// per-tree labels. The two are different models even on the same two-class
-/// data, and only the binary one persists to an artifact today.
+/// data. Both persist, under one artifact kind that records which leaf
+/// arithmetic it holds.
 #[derive(Clone, Debug, PartialEq)]
 pub struct RandomForestClassifier {
     pub(super) n_features_in: usize,
@@ -485,6 +501,287 @@ impl RandomForestClassifier {
         Ok(())
     }
 
+    /// Encodes the fitted parameters, class list, and canonical logical trees.
+    ///
+    /// The two fits are different models with different leaf arithmetic, so the
+    /// payload records which one it holds and the reader refuses to build the
+    /// other. A binary fit reuses the scalar logical-tree records unchanged —
+    /// the same codec the regressor and the boosted trees use. A multiclass fit
+    /// writes the same topology records with a reserved zero where a scalar leaf
+    /// carries its value, followed by that tree's leaf distributions in
+    /// pre-order leaf rank. Storing rank rather than the runtime leaf ordinal is
+    /// what keeps the encoding unique: the ordinals could be permuted together
+    /// with the block to name one model twice.
+    pub fn to_artifact(&self, schema: [u8; 32]) -> Result<Vec<u8>, ArtifactError> {
+        let (flavour, tree_count, total_nodes) = match &self.forest {
+            Forest::Binary(trees) => (
+                FOREST_BINARY,
+                trees.len(),
+                trees.iter().try_fold(0_usize, |total, tree| {
+                    total
+                        .checked_add(tree.logical_node_count())
+                        .ok_or(ArtifactError::InvalidPayload)
+                })?,
+            ),
+            Forest::Multiclass(trees) => (
+                FOREST_MULTICLASS,
+                trees.len(),
+                trees.iter().try_fold(0_usize, |total, tree| {
+                    total
+                        .checked_add(tree.logical_node_count())
+                        .ok_or(ArtifactError::InvalidPayload)
+                })?,
+            ),
+        };
+        if tree_count > MAX_ARTIFACT_TREES
+            || total_nodes > MAX_ARTIFACT_TOTAL_NODES
+            || self.n_features_in > MAX_ARTIFACT_FEATURES
+            || self.classes.is_empty()
+            || self.classes.len() > MAX_CLASSES
+        {
+            return Err(ArtifactError::InvalidPayload);
+        }
+
+        let n_features =
+            u32::try_from(self.n_features_in).map_err(|_| ArtifactError::InvalidPayload)?;
+        let n_estimators =
+            u32::try_from(self.params.n_estimators()).map_err(|_| ArtifactError::InvalidPayload)?;
+        let max_depth = self
+            .params
+            .max_depth()
+            .map(u32::try_from)
+            .transpose()
+            .map_err(|_| ArtifactError::InvalidPayload)?
+            .unwrap_or(0);
+        let min_samples_split = u32::try_from(self.params.min_samples_split())
+            .map_err(|_| ArtifactError::InvalidPayload)?;
+        let min_samples_leaf = u32::try_from(self.params.min_samples_leaf())
+            .map_err(|_| ArtifactError::InvalidPayload)?;
+        let (max_features_tag, max_features_count) =
+            encode_max_features(self.params.max_features())?;
+        let (n_jobs_tag, n_jobs_count) = encode_n_jobs(self.params.n_jobs())?;
+        let tree_count = u32::try_from(tree_count).map_err(|_| ArtifactError::InvalidPayload)?;
+        let total_nodes = u32::try_from(total_nodes).map_err(|_| ArtifactError::InvalidPayload)?;
+        let class_count =
+            u32::try_from(self.classes.len()).map_err(|_| ArtifactError::InvalidPayload)?;
+
+        let mut metadata = ArtifactPayloadWriter::with_capacity(
+            CLASSIFIER_METADATA_BYTES + self.classes.len() * 4,
+        );
+        metadata.u32(CLASSIFIER_OBJECTIVE_VERSION);
+        metadata.u32(flavour);
+        metadata.u32(n_features);
+        metadata.u32(n_estimators);
+        metadata.u32(max_depth);
+        metadata.u32(min_samples_split);
+        metadata.u32(min_samples_leaf);
+        metadata.u32(max_features_tag);
+        metadata.u32(max_features_count);
+        metadata.u32(u32::from(self.params.bootstrap()));
+        metadata.u64(self.params.random_state());
+        metadata.u32(n_jobs_tag);
+        metadata.u32(n_jobs_count);
+        metadata.u32(tree_count);
+        metadata.u32(total_nodes);
+        metadata.u32(class_count);
+        for &class in &self.classes {
+            metadata.u32(u32::from(class));
+        }
+        let mut payload = encode_component(
+            METADATA_COMPONENT_KIND,
+            COMPONENT_VERSION,
+            &metadata.finish(),
+        )?;
+        match &self.forest {
+            Forest::Binary(trees) => {
+                for tree in trees {
+                    payload.extend_from_slice(&encode_component(
+                        TREE_COMPONENT_KIND,
+                        COMPONENT_VERSION,
+                        &encode_logical_tree(&tree.to_logical_nodes())?,
+                    )?);
+                }
+            }
+            Forest::Multiclass(trees) => {
+                for tree in trees {
+                    let (nodes, probabilities) = tree.to_logical_nodes();
+                    payload.extend_from_slice(&encode_component(
+                        TREE_COMPONENT_KIND,
+                        COMPONENT_VERSION,
+                        &encode_logical_tree(&nodes)?,
+                    )?);
+                    let mut block =
+                        ArtifactPayloadWriter::with_capacity(8 + probabilities.len() * 4);
+                    block.u32(
+                        u32::try_from(probabilities.len() / self.classes.len())
+                            .map_err(|_| ArtifactError::InvalidPayload)?,
+                    );
+                    block.u32(class_count);
+                    for &value in &probabilities {
+                        block.f32(value);
+                    }
+                    payload.extend_from_slice(&encode_component(
+                        LEAF_PROBABILITY_COMPONENT_KIND,
+                        COMPONENT_VERSION,
+                        &block.finish(),
+                    )?);
+                }
+            }
+        }
+        encode_v2_envelope(
+            RANDOM_FOREST_CLASSIFIER_ARTIFACT_KIND,
+            CLASSIFIER_PAYLOAD_VERSION,
+            &[(SchemaRole::Input, schema)],
+            &payload,
+        )
+    }
+
+    /// Decodes and revalidates a classifier before building runtime state.
+    ///
+    /// Counts, parameters, and the class list are checked before any tree is
+    /// read, every decoded tree re-enters the same topology validator fitting
+    /// uses, and every decoded probability re-enters the same class-topology
+    /// invariant a fitted tree satisfies.
+    pub fn from_artifact(bytes: &[u8], schema: [u8; 32]) -> Result<Self, ArtifactError> {
+        let mut envelope = decode_v2_envelope(
+            bytes,
+            RANDOM_FOREST_CLASSIFIER_ARTIFACT_KIND,
+            CLASSIFIER_PAYLOAD_VERSION,
+            &[(SchemaRole::Input, schema)],
+        )?;
+        let mut metadata =
+            decode_component(&mut envelope, METADATA_COMPONENT_KIND, COMPONENT_VERSION)?;
+        let objective_version = metadata.u32()?;
+        let flavour = metadata.u32()?;
+        let n_features_in = metadata.u32()? as usize;
+        let n_estimators = metadata.u32()? as usize;
+        let encoded_depth = metadata.u32()? as usize;
+        let min_samples_split = metadata.u32()? as usize;
+        let min_samples_leaf = metadata.u32()? as usize;
+        let max_features_tag = metadata.u32()?;
+        let max_features_count = metadata.u32()?;
+        let bootstrap = metadata.u32()?;
+        let random_state = metadata.u64()?;
+        let n_jobs_tag = metadata.u32()?;
+        let n_jobs_count = metadata.u32()?;
+        let tree_count = metadata.u32()? as usize;
+        let declared_total_nodes = metadata.u32()? as usize;
+        let class_count = metadata.u32()? as usize;
+        if objective_version != CLASSIFIER_OBJECTIVE_VERSION
+            || (flavour != FOREST_BINARY && flavour != FOREST_MULTICLASS)
+            || n_features_in == 0
+            || n_features_in > MAX_ARTIFACT_FEATURES
+            || n_estimators == 0
+            || n_estimators != tree_count
+            || tree_count > MAX_ARTIFACT_TREES
+            || encoded_depth > MAX_ARTIFACT_TOTAL_NODES
+            || min_samples_split < 2
+            || min_samples_leaf == 0
+            || bootstrap > 1
+            || declared_total_nodes < tree_count
+            || declared_total_nodes > MAX_ARTIFACT_TOTAL_NODES
+            || class_count == 0
+            || class_count > MAX_CLASSES
+        {
+            return Err(ArtifactError::InvalidPayload);
+        }
+        let mut classes: Vec<u8> = Vec::with_capacity(metadata.bounded_capacity(class_count, 4));
+        for _ in 0..class_count {
+            let label = u8::try_from(metadata.u32()?).map_err(|_| ArtifactError::InvalidPayload)?;
+            if classes.last().is_some_and(|&previous| previous >= label) {
+                return Err(ArtifactError::InvalidPayload);
+            }
+            classes.push(label);
+        }
+        // A binary fit is asymmetric: its scalar leaf is the probability of
+        // class `1`, and prediction reads the label straight out of that
+        // comparison. Only `[0]`, `[1]`, and `[0, 1]` mean anything there.
+        if flavour == FOREST_BINARY && classes.iter().any(|&label| label > 1) {
+            return Err(ArtifactError::InvalidPayload);
+        }
+        if !metadata.is_empty() {
+            return Err(ArtifactError::TrailingBytes);
+        }
+        let (Some(max_features), Some(n_jobs)) = (
+            decode_max_features(max_features_tag, max_features_count, n_features_in),
+            decode_n_jobs(n_jobs_tag, n_jobs_count),
+        ) else {
+            return Err(ArtifactError::InvalidPayload);
+        };
+        let params = RandomForestClassifierParams::default()
+            .with_n_estimators(n_estimators)
+            .with_max_depth((encoded_depth != 0).then_some(encoded_depth))
+            .with_min_samples_split(min_samples_split)
+            .with_min_samples_leaf(min_samples_leaf)
+            .with_max_features(max_features)
+            .with_bootstrap(bootstrap == 1)
+            .with_random_state(random_state)
+            .with_n_jobs(n_jobs);
+
+        let mut actual_total_nodes = 0_usize;
+        let forest = if flavour == FOREST_BINARY {
+            let mut trees =
+                Vec::with_capacity(envelope.bounded_capacity(tree_count, MIN_ENCODED_TREE_BYTES));
+            for _ in 0..tree_count {
+                let logical = decode_logical_tree(decode_component(
+                    &mut envelope,
+                    TREE_COMPONENT_KIND,
+                    COMPONENT_VERSION,
+                )?)?;
+                actual_total_nodes =
+                    accumulate_nodes(actual_total_nodes, logical.len(), declared_total_nodes)?;
+                // A fitted binary leaf is a probability, so nothing else is a
+                // model this crate could have produced.
+                if logical.iter().any(|node| {
+                    matches!(node, LogicalTreeNode::Leaf { value } if !(0.0..=1.0).contains(value))
+                }) {
+                    return Err(ArtifactError::InvalidPayload);
+                }
+                trees.push(PackedTree::from_logical_nodes(&logical, n_features_in)?);
+            }
+            Forest::Binary(trees)
+        } else {
+            let mut trees =
+                Vec::with_capacity(envelope.bounded_capacity(tree_count, MIN_ENCODED_TREE_BYTES));
+            for _ in 0..tree_count {
+                let logical = decode_logical_tree(decode_component(
+                    &mut envelope,
+                    TREE_COMPONENT_KIND,
+                    COMPONENT_VERSION,
+                )?)?;
+                actual_total_nodes =
+                    accumulate_nodes(actual_total_nodes, logical.len(), declared_total_nodes)?;
+                let probabilities = decode_leaf_probabilities(
+                    decode_component(
+                        &mut envelope,
+                        LEAF_PROBABILITY_COMPONENT_KIND,
+                        COMPONENT_VERSION,
+                    )?,
+                    class_count,
+                )?;
+                trees.push(ClassTree::from_logical_nodes(
+                    &logical,
+                    &probabilities,
+                    class_count,
+                    n_features_in,
+                )?);
+            }
+            Forest::Multiclass(trees)
+        };
+        if !envelope.is_empty() {
+            return Err(ArtifactError::TrailingBytes);
+        }
+        if actual_total_nodes != declared_total_nodes {
+            return Err(ArtifactError::InvalidPayload);
+        }
+        Ok(Self {
+            n_features_in,
+            params,
+            classes,
+            forest,
+        })
+    }
+
     /// The scalar trees of a binary fit, for in-crate structural tests.
     #[cfg(test)]
     pub(super) fn binary_trees(&self) -> &[PackedTree] {
@@ -595,11 +892,13 @@ impl HasParams for RandomForestClassifier {
     }
 }
 
-/// Declares weighted and multiclass fitting. Persistence is declared once the
-/// classifier's leaf representation has an artifact kind.
+/// Declares weighted fitting, multiclass fitting, and persistence. The artifact
+/// covers *both* leaf representations, so the declaration holds for every fit
+/// this type offers rather than for one of its two entry points.
 impl HasCapabilities for RandomForestClassifier {
     const CAPABILITIES: Capabilities = Capabilities::NONE
         .with_sample_weights(true)
+        .with_artifact(true)
         .with_multiclass(true);
 }
 
@@ -864,6 +1163,48 @@ impl RandomForestRegressor {
     pub(crate) fn to_bytes(&self) -> Vec<u8> {
         packed_model_bytes(self.n_features_in, &self.trees, b"FRFR")
     }
+}
+
+/// Adds one decoded tree's records to the running total, refusing to pass the
+/// count the metadata declared before the next tree is even read.
+fn accumulate_nodes(total: usize, added: usize, declared: usize) -> Result<usize, ArtifactError> {
+    let total = total
+        .checked_add(added)
+        .ok_or(ArtifactError::InvalidPayload)?;
+    if total > declared {
+        return Err(ArtifactError::InvalidPayload);
+    }
+    Ok(total)
+}
+
+/// Reads one tree's leaf distributions, in pre-order leaf rank.
+///
+/// The declared leaf count is checked against the class count and against the
+/// bytes actually present before anything is reserved, and every value must be
+/// the finite `0..=1` a fitted leaf distribution holds.
+fn decode_leaf_probabilities(
+    mut cursor: ArtifactCursor<'_>,
+    class_count: usize,
+) -> Result<Vec<f32>, ArtifactError> {
+    let leaves = cursor.u32()? as usize;
+    let declared_classes = cursor.u32()? as usize;
+    let expected = leaves.checked_mul(class_count);
+    if leaves == 0 || declared_classes != class_count || expected.is_none() {
+        return Err(ArtifactError::InvalidPayload);
+    }
+    let expected = expected.expect("checked above");
+    let mut probabilities = Vec::with_capacity(cursor.bounded_capacity(expected, 4));
+    for _ in 0..expected {
+        let value = cursor.f32()?;
+        if !value.is_finite() || !(0.0..=1.0).contains(&value) {
+            return Err(ArtifactError::InvalidPayload);
+        }
+        probabilities.push(value);
+    }
+    if !cursor.is_empty() {
+        return Err(ArtifactError::TrailingBytes);
+    }
+    Ok(probabilities)
 }
 
 fn encode_max_features(value: MaxFeatures) -> Result<(u32, u32), ArtifactError> {

@@ -1,7 +1,9 @@
 use super::model::Forest;
 use super::*;
 use crate::api::ModelError;
-use crate::artifact::{ArtifactError, RANDOM_FOREST_REGRESSOR_ARTIFACT_KIND};
+use crate::artifact::{
+    ArtifactError, RANDOM_FOREST_CLASSIFIER_ARTIFACT_KIND, RANDOM_FOREST_REGRESSOR_ARTIFACT_KIND,
+};
 use crate::data::{BinaryTargets, ClassTargets, DenseMatrix, RegressionTargets, SampleWeights};
 use crate::ensemble::HistGradientBoostingRegressor;
 use crate::linear_model::Ridge;
@@ -574,6 +576,238 @@ fn weights_are_not_inert() {
     )
     .unwrap();
     assert_ne!(plain.to_bytes(), weighted.to_bytes());
+}
+
+// --------------------------------------------------- classifier persistence
+
+fn classifier_artifact_fixture() -> (DenseMatrix, RandomForestClassifier, RandomForestClassifier) {
+    let (x, labels, _) = weight_fixture();
+    let params = classifier_params(21)
+        .with_n_estimators(4)
+        .with_max_depth(Some(3));
+    let binary = RandomForestClassifier::fit(
+        &x.as_view(),
+        &BinaryTargets::new(labels.clone()).unwrap(),
+        params.clone(),
+    )
+    .unwrap();
+    // Non-contiguous labels, so a decoder that reconstructed the class list
+    // instead of reading it would relabel every prediction.
+    let multiclass = RandomForestClassifier::fit_multiclass(
+        &x.as_view(),
+        &ClassTargets::new(vec![3, 7, 10, 3, 7, 10, 3, 7]).unwrap(),
+        params,
+    )
+    .unwrap();
+    (x, binary, multiclass)
+}
+
+#[test]
+fn classifier_artifacts_round_trip_both_leaf_representations() {
+    let (x, binary, multiclass) = classifier_artifact_fixture();
+    let schema = [17; 32];
+    for (name, model) in [("binary", &binary), ("multiclass", &multiclass)] {
+        let bytes = model.to_artifact(schema).unwrap();
+        assert_eq!(
+            bytes,
+            model.to_artifact(schema).unwrap(),
+            "{name} is stable"
+        );
+        let decoded = RandomForestClassifier::from_artifact(&bytes, schema).unwrap();
+        assert_eq!(&decoded, model, "{name} round trip");
+        assert_eq!(decoded.classes(), model.classes(), "{name} classes");
+        assert_eq!(
+            decoded.predict(&x.as_view()).unwrap(),
+            model.predict(&x.as_view()).unwrap(),
+            "{name} labels"
+        );
+        assert_eq!(
+            decoded.predict_proba(&x.as_view()).unwrap(),
+            model.predict_proba(&x.as_view()).unwrap(),
+            "{name} probabilities"
+        );
+        assert_eq!(
+            decoded.to_artifact(schema).unwrap(),
+            bytes,
+            "{name} re-encodes to exactly the bytes it decoded from"
+        );
+        assert_eq!(
+            RandomForestClassifier::from_artifact(&bytes, [18; 32]).unwrap_err(),
+            ArtifactError::FeatureSchemaMismatch,
+            "{name} is schema-bound"
+        );
+    }
+
+    // The two flavours are different models and their artifacts differ; the
+    // regressor's kind is a different kind again.
+    assert_ne!(
+        binary.to_artifact(schema).unwrap(),
+        multiclass.to_artifact(schema).unwrap()
+    );
+    assert_eq!(
+        RandomForestRegressor::from_artifact(&binary.to_artifact(schema).unwrap(), schema)
+            .unwrap_err(),
+        ArtifactError::UnsupportedModelKind {
+            found: RANDOM_FOREST_CLASSIFIER_ARTIFACT_KIND
+        }
+    );
+}
+
+#[test]
+fn classifier_artifacts_restore_every_retained_parameter() {
+    let (x, labels, _) = weight_fixture();
+    let params = RandomForestClassifierParams::default()
+        .with_n_estimators(3)
+        .with_max_depth(Some(5))
+        .with_min_samples_split(3)
+        .with_min_samples_leaf(2)
+        .with_max_features(MaxFeatures::Count(2))
+        .with_bootstrap(false)
+        .with_random_state(4_242)
+        .with_n_jobs(crate::ensemble::NJobs::Count(2));
+    let model = RandomForestClassifier::fit(
+        &x.as_view(),
+        &BinaryTargets::new(labels).unwrap(),
+        params.clone(),
+    )
+    .unwrap();
+    let bytes = model.to_artifact([1; 32]).unwrap();
+    let decoded = RandomForestClassifier::from_artifact(&bytes, [1; 32]).unwrap();
+    assert_eq!(decoded.get_params(), &params);
+    assert_eq!(decoded.n_features_in(), model.n_features_in());
+}
+
+/// A single observed class round trips in both flavours, which is the shape
+/// with one probability column of `1.0`.
+#[test]
+fn classifier_artifacts_round_trip_single_class_and_root_leaf_trees() {
+    let x = matrix(&[&[0.0], &[1.0], &[2.0], &[3.0]]);
+    let params = RandomForestClassifierParams::default()
+        .with_n_estimators(2)
+        .with_bootstrap(false)
+        .with_max_features(MaxFeatures::All)
+        .with_random_state(3);
+    let binary = RandomForestClassifier::fit(
+        &x.as_view(),
+        &BinaryTargets::new(vec![1, 1, 1, 1]).unwrap(),
+        params.clone(),
+    )
+    .unwrap();
+    assert_eq!(binary.classes(), [1]);
+    let bytes = binary.to_artifact([2; 32]).unwrap();
+    let decoded = RandomForestClassifier::from_artifact(&bytes, [2; 32]).unwrap();
+    assert_eq!(decoded, binary);
+    assert_eq!(decoded.predict_proba(&x.as_view()).unwrap(), vec![1.0; 4]);
+
+    let multiclass = RandomForestClassifier::fit_multiclass(
+        &x.as_view(),
+        &ClassTargets::new(vec![9, 9, 9, 9]).unwrap(),
+        params,
+    )
+    .unwrap();
+    assert_eq!(multiclass.classes(), [9]);
+    let bytes = multiclass.to_artifact([2; 32]).unwrap();
+    let decoded = RandomForestClassifier::from_artifact(&bytes, [2; 32]).unwrap();
+    assert_eq!(decoded, multiclass);
+    assert_eq!(decoded.predict_proba(&x.as_view()).unwrap(), vec![1.0; 4]);
+    assert_eq!(decoded.to_artifact([2; 32]).unwrap(), bytes);
+}
+
+#[test]
+fn classifier_artifact_rejects_invalid_metadata_and_framing() {
+    let (_, binary, multiclass) = classifier_artifact_fixture();
+    let schema = [17; 32];
+    let bytes = binary.to_artifact(schema).unwrap();
+    let multiclass_bytes = multiclass.to_artifact(schema).unwrap();
+
+    // Metadata words, in the order the writer emits them.
+    const OBJECTIVE: usize = 0;
+    const FLAVOUR: usize = 4;
+    const N_FEATURES: usize = 8;
+    const N_ESTIMATORS: usize = 12;
+    const MIN_SAMPLES_SPLIT: usize = 20;
+    const MIN_SAMPLES_LEAF: usize = 24;
+    const MAX_FEATURES_TAG: usize = 28;
+    const CLASS_COUNT: usize = 64;
+    const FIRST_CLASS: usize = 68;
+
+    for (name, offset, value) in [
+        ("objective version", OBJECTIVE, 9_u32),
+        ("forest flavour", FLAVOUR, 3),
+        ("zero feature width", N_FEATURES, 0),
+        ("estimator count disagrees with tree count", N_ESTIMATORS, 9),
+        ("min_samples_split below two", MIN_SAMPLES_SPLIT, 1),
+        ("zero min_samples_leaf", MIN_SAMPLES_LEAF, 0),
+        ("unknown max_features tag", MAX_FEATURES_TAG, 9),
+        ("zero class count", CLASS_COUNT, 0),
+        ("a binary class label outside {0, 1}", FIRST_CLASS, 5),
+    ] {
+        let mut mutated = bytes.clone();
+        metadata_u32(&mut mutated, offset, value);
+        assert_eq!(
+            RandomForestClassifier::from_artifact(&mutated, schema).unwrap_err(),
+            ArtifactError::InvalidPayload,
+            "{name} was accepted"
+        );
+    }
+
+    // Relabelling a binary forest as multiclass leaves it without the leaf
+    // probability component the multiclass reader requires, so the two
+    // flavours cannot be crossed by rewriting the tag.
+    let mut crossed = bytes.clone();
+    metadata_u32(&mut crossed, FLAVOUR, 2);
+    assert!(RandomForestClassifier::from_artifact(&crossed, schema).is_err());
+
+    // A multiclass class list must stay strictly increasing: [3, 7, 10] with
+    // the first label raised to 20 is no longer sorted.
+    let mut unsorted = multiclass_bytes.clone();
+    metadata_u32(&mut unsorted, FIRST_CLASS, 20);
+    assert_eq!(
+        RandomForestClassifier::from_artifact(&unsorted, schema).unwrap_err(),
+        ArtifactError::InvalidPayload
+    );
+
+    assert_eq!(
+        RandomForestClassifier::from_artifact(&bytes[..bytes.len() - 1], schema).unwrap_err(),
+        ArtifactError::ChecksumMismatch
+    );
+    let mut trailing = bytes;
+    trailing.push(0);
+    assert_eq!(
+        RandomForestClassifier::from_artifact(&trailing, schema).unwrap_err(),
+        ArtifactError::ChecksumMismatch
+    );
+}
+
+/// The multiclass leaf record carries a reserved zero where a scalar leaf
+/// carries its value, so a nonzero there would be a second encoding of one
+/// model.
+#[test]
+fn multiclass_leaf_records_reserve_their_scalar_slot() {
+    let (_, _, multiclass) = classifier_artifact_fixture();
+    let schema = [17; 32];
+    let bytes = multiclass.to_artifact(schema).unwrap();
+
+    // Skip the metadata component, whose declared length is its own header's
+    // third word, and find the first leaf record in the first tree.
+    let metadata_len = u32::from_le_bytes(
+        bytes[PAYLOAD_START + 4..PAYLOAD_START + 8]
+            .try_into()
+            .unwrap(),
+    ) as usize;
+    let first_tree = PAYLOAD_START + 8 + metadata_len;
+    let leaf = (first_tree..bytes.len() - 20)
+        .step_by(4)
+        .find(|&offset| bytes[offset..offset + 20] == [0_u8; 20])
+        .expect("a leaf record with its reserved zero");
+
+    let mut mutated = bytes;
+    mutated[leaf + 4..leaf + 8].copy_from_slice(&0x3f80_0000_u32.to_le_bytes());
+    resign(&mut mutated);
+    assert_eq!(
+        RandomForestClassifier::from_artifact(&mutated, schema).unwrap_err(),
+        ArtifactError::InvalidPayload
+    );
 }
 
 #[test]

@@ -137,10 +137,15 @@ impl Estimator for AnyClassifier {
 /// offer. It still *holds* and serves a multiclass model — `classes()` and
 /// `predict_proba` are already shaped by the fitted model — which is a property
 /// of the value, not a capability of this type.
+/// Persistence is declared away for now for the same structural reason: every
+/// variant persists, but this enum has no artifact entry point yet, and a
+/// declaration is a promise about the entry points that exist. The override
+/// disappears with the dispatch artifact.
 impl HasCapabilities for AnyClassifier {
     const CAPABILITIES: Capabilities = RandomForestClassifier::CAPABILITIES
         .intersection(LogisticRegression::CAPABILITIES)
         .with_sample_weights(false)
+        .with_artifact(false)
         .with_multiclass(false);
 }
 

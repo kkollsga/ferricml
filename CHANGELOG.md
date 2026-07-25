@@ -235,6 +235,13 @@ and releases use [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   entry point was used, and the conformance battery asserts that a classifier
   declaring both persistence and multiclass fitting round trips a multiclass
   fit as well.
+- Schema-bound `RandomForestClassifier` artifacts covering both fitted leaf
+  representations under one artifact kind. The payload records which leaf
+  arithmetic it holds and the reader refuses to build the other; a binary fit
+  reuses the scalar logical-tree records unchanged, and a multiclass fit writes
+  the same topology with a reserved zero in the scalar slot plus one per-tree
+  leaf-distribution block ordered by pre-order leaf rank, so the encoding stays
+  a unique name for the model. The classifier now declares `artifact`.
 
 ### Changed
 

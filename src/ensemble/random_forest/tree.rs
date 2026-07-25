@@ -259,7 +259,9 @@ impl PackedTree {
         let mut pending = vec![Emit::Branch(0)];
         while let Some(task) = pending.pop() {
             match task {
-                Emit::Leaf(value) => nodes.push(LogicalTreeNode::Leaf { value }),
+                Emit::Leaf(bits) => nodes.push(LogicalTreeNode::Leaf {
+                    value: f32::from_bits(bits),
+                }),
                 Emit::AttachRight(parent) => {
                     let right = u32::try_from(nodes.len()).expect("bounded node count");
                     match &mut nodes[parent] {
@@ -464,6 +466,162 @@ impl ClassTree {
     }
 }
 
+/// Conversion between the private class-tree layout and the stable artifact
+/// records.
+///
+/// The topology is the *same* logical-tree contract a scalar tree uses, with
+/// one difference: a class leaf has no scalar value, so its record carries a
+/// reserved `+0.0` where a scalar leaf carries its prediction, and the leaf's
+/// distribution lives in a separate per-tree probability block.
+///
+/// That block is ordered by the leaf's **pre-order rank**, not by the runtime
+/// ordinal stored in the parent's child slot. The two are not the same order:
+/// packing assigns ordinals branch by branch, so a branch's right leaf can be
+/// numbered before leaves that precede it in pre-order. Storing the runtime
+/// ordinals would also make the artifact malleable — permuting the ordinals and
+/// the block together would name the same model twice — whereas pre-order rank
+/// is determined by the topology alone, so a model has exactly one encoding.
+impl ClassTree {
+    /// Number of logical records [`Self::to_logical_nodes`] will produce.
+    pub(super) fn logical_node_count(&self) -> usize {
+        if self.nodes.is_empty() {
+            1
+        } else {
+            self.nodes.len() * 2 + 1
+        }
+    }
+
+    /// Expands the tree into pre-order records and its pre-order leaf block.
+    pub(super) fn to_logical_nodes(&self) -> (Vec<LogicalTreeNode>, Vec<f32>) {
+        let leaves = self.nodes.len() + 1;
+        let mut probabilities = Vec::with_capacity(leaves * self.classes);
+        if self.nodes.is_empty() {
+            probabilities.extend_from_slice(&self.probabilities[..self.classes]);
+            return (vec![LogicalTreeNode::Leaf { value: 0.0 }], probabilities);
+        }
+        let mut nodes = Vec::with_capacity(self.nodes.len() * 2 + 1);
+        let mut pending = vec![Emit::Branch(0)];
+        while let Some(task) = pending.pop() {
+            match task {
+                Emit::Leaf(ordinal) => {
+                    let start = ordinal as usize * self.classes;
+                    probabilities
+                        .extend_from_slice(&self.probabilities[start..start + self.classes]);
+                    nodes.push(LogicalTreeNode::Leaf { value: 0.0 });
+                }
+                Emit::AttachRight(parent) => {
+                    let right = u32::try_from(nodes.len()).expect("bounded node count");
+                    match &mut nodes[parent] {
+                        LogicalTreeNode::Branch { right: slot, .. } => *slot = right,
+                        LogicalTreeNode::Leaf { .. } => unreachable!("branch record"),
+                    }
+                }
+                Emit::Branch(packed_index) => {
+                    let node = self.nodes[packed_index];
+                    let index = nodes.len();
+                    let left = u32::try_from(index + 1).expect("bounded node count");
+                    nodes.push(LogicalTreeNode::Branch {
+                        feature: node.feature_and_flags & FEATURE_MASK,
+                        threshold: node.threshold,
+                        left,
+                        right: 0,
+                    });
+                    pending.push(child(node.right, node.feature_and_flags & RIGHT_IS_LEAF));
+                    pending.push(Emit::AttachRight(index));
+                    pending.push(child(node.left, node.feature_and_flags & LEFT_IS_LEAF));
+                }
+            }
+        }
+        (nodes, probabilities)
+    }
+
+    /// Rebuilds a class tree from validated records and a pre-order leaf block.
+    ///
+    /// The records are turned back into [`BuildNode`]s and repacked through the
+    /// same topology validator fitting uses, and the reconstructed model is
+    /// re-checked against the same class-topology invariant a fitted tree
+    /// satisfies, so the decoded bytes are never trusted.
+    pub(super) fn from_logical_nodes(
+        nodes: &[LogicalTreeNode],
+        leaf_probabilities: &[f32],
+        classes: usize,
+        n_features: usize,
+    ) -> Result<Self, ArtifactError> {
+        if classes == 0 {
+            return Err(ArtifactError::InvalidPayload);
+        }
+        let mut build = Vec::with_capacity(nodes.len());
+        // Pre-order rank of each leaf, indexed by its build-node position. The
+        // build array is itself pre-order, so this is just a running count.
+        let mut leaf_rank = vec![0_usize; nodes.len()];
+        let mut leaves = 0_usize;
+        for (index, &node) in nodes.iter().enumerate() {
+            match node {
+                LogicalTreeNode::Leaf { value } => {
+                    // The scalar slot is reserved in a class tree; a nonzero
+                    // value would be a second encoding of the same model.
+                    if value.to_bits() != 0 {
+                        return Err(ArtifactError::InvalidPayload);
+                    }
+                    leaf_rank[index] = leaves;
+                    leaves += 1;
+                    build.push(BuildNode::leaf(0.0));
+                }
+                LogicalTreeNode::Branch {
+                    feature,
+                    threshold,
+                    left,
+                    right,
+                } => build.push(BuildNode {
+                    feature,
+                    left,
+                    right,
+                    payload: threshold,
+                }),
+            }
+        }
+        if leaves
+            .checked_mul(classes)
+            .is_none_or(|expected| expected != leaf_probabilities.len())
+        {
+            return Err(ArtifactError::InvalidPayload);
+        }
+
+        let mut probabilities = Vec::with_capacity(leaf_probabilities.len());
+        let mut push_leaf = |index: usize| {
+            let start = leaf_rank[index] * classes;
+            probabilities.extend_from_slice(&leaf_probabilities[start..start + classes]);
+        };
+        let mut ordinal = 0_u32;
+        let packed = pack_topology(&build, n_features, |index, _| {
+            push_leaf(index);
+            let assigned = ordinal;
+            ordinal += 1;
+            assigned
+        })
+        .map_err(|_| ArtifactError::InvalidPayload)?;
+        let tree = match packed {
+            None => {
+                push_leaf(0);
+                Self {
+                    nodes: Vec::new(),
+                    probabilities,
+                    classes,
+                }
+            }
+            Some(nodes) => Self {
+                nodes,
+                probabilities,
+                classes,
+            },
+        };
+        if !tree.has_valid_class_topology(n_features) {
+            return Err(ArtifactError::InvalidPayload);
+        }
+        Ok(tree)
+    }
+}
+
 fn class_child_is_valid(value: u32, leaf_flag: u32, node_count: usize, leaves: usize) -> bool {
     if leaf_flag != 0 {
         (value as usize) < leaves
@@ -472,15 +630,21 @@ fn class_child_is_valid(value: u32, leaf_flag: u32, node_count: usize, leaves: u
     }
 }
 
+/// One step of a pre-order walk over a packed tree.
+///
+/// A leaf carries the raw child slot rather than a decoded value, because the
+/// two tree flavours store different things there: a scalar tree stores the
+/// leaf value's bits, a class tree stores the leaf's ordinal. The walk itself
+/// is the same either way, so only the interpretation differs.
 enum Emit {
     Branch(usize),
-    Leaf(f32),
+    Leaf(u32),
     AttachRight(usize),
 }
 
 fn child(value: u32, leaf_flag: u32) -> Emit {
     if leaf_flag != 0 {
-        Emit::Leaf(f32::from_bits(value))
+        Emit::Leaf(value)
     } else {
         Emit::Branch(value as usize)
     }

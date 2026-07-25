@@ -1,7 +1,8 @@
-use ferricml::data::{BinaryTargets, DenseMatrix, RegressionTargets};
+use ferricml::data::{BinaryTargets, ClassTargets, DenseMatrix, RegressionTargets};
 use ferricml::ensemble::{
     HistGradientBoostingRegressor, HistGradientBoostingRegressorParams, MaxFeatures,
-    RandomForestRegressor, RandomForestRegressorParams,
+    RandomForestClassifier, RandomForestClassifierParams, RandomForestRegressor,
+    RandomForestRegressorParams,
 };
 use ferricml::linear_model::{
     LinearRegression, LinearRegressionParams, LogisticRegression, LogisticRegressionParams, Ridge,
@@ -222,6 +223,43 @@ fn fitted_artifact_fingerprints_are_frozen() {
         [
             72, 150, 95, 114, 217, 38, 109, 10, 241, 113, 80, 81, 84, 36, 151, 137, 108, 208, 36,
             188, 169, 255, 246, 212, 233, 192, 21, 124, 241, 7, 33, 217,
+        ],
+    );
+
+    // Both classifier leaf representations, under one artifact kind. Forests
+    // are tier-1 deterministic (arithmetic only), so their bytes are frozen
+    // here rather than only round-tripped.
+    let classifier_params = RandomForestClassifierParams::default()
+        .with_n_estimators(3)
+        .with_max_depth(Some(4))
+        .with_max_features(MaxFeatures::All)
+        .with_random_state(11);
+    let forest_classifier =
+        RandomForestClassifier::fit(&data.as_view(), &binary, classifier_params.clone()).unwrap();
+    assert_fingerprint(
+        "forest-classifier",
+        forest_classifier.to_artifact([5; 32]).unwrap(),
+        forest_classifier.to_artifact([5; 32]).unwrap(),
+        416,
+        [
+            71, 168, 77, 107, 151, 107, 74, 212, 140, 21, 194, 196, 23, 122, 251, 133, 18, 69, 168,
+            127, 152, 244, 55, 144, 94, 67, 209, 38, 202, 118, 97, 237,
+        ],
+    );
+    let multiclass_forest = RandomForestClassifier::fit_multiclass(
+        &data.as_view(),
+        &ClassTargets::new(vec![3, 7, 10, 7]).unwrap(),
+        classifier_params,
+    )
+    .unwrap();
+    assert_fingerprint(
+        "forest-classifier-multiclass",
+        multiclass_forest.to_artifact([5; 32]).unwrap(),
+        multiclass_forest.to_artifact([5; 32]).unwrap(),
+        592,
+        [
+            89, 182, 208, 111, 239, 82, 138, 10, 170, 201, 231, 232, 108, 177, 151, 116, 130, 156,
+            121, 230, 156, 233, 230, 25, 201, 87, 142, 118, 141, 43, 145, 2,
         ],
     );
 

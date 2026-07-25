@@ -119,6 +119,13 @@ impl ClassifierCase for RandomForestClassifierCase {
                 .expect("weighted fit"),
         )
     }
+
+    fn round_trip(model: &Self::Model) -> RoundTrip<Self::Model> {
+        round_trip(
+            || model.to_artifact(SCHEMA),
+            |bytes| RandomForestClassifier::from_artifact(bytes, SCHEMA),
+        )
+    }
 }
 
 impl ScalarClassifierCase for RandomForestClassifierCase {

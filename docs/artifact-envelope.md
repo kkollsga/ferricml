@@ -85,8 +85,25 @@ synthesizes the leaf records and decoding rebuilds builder nodes that re-enter
 the same topology validator fitting uses. The reader bounds feature width, tree
 count, and aggregate node count before allocating, rejects parameter tags and
 counts it does not recognize, and refuses a forest whose averaged prediction
-could not stay finite. Classifier persistence remains unsupported until the
-multiclass leaf and probability semantics are frozen.
+could not stay finite.
+
+`RandomForestClassifier` artifacts have their own never-reused kind and carry
+both fitted leaf representations under one payload version. Their metadata adds
+a leaf-arithmetic tag and the sorted class list to the regressor's fields, and
+the tag is read before any tree is, so neither flavour's trees ever reach the
+other's builder. A binary fit reuses the scalar logical-tree records unchanged,
+and its leaves must be the `0..=1` a fitted class probability is; its class list
+must be a sorted subset of `{0, 1}`, because the scalar leaf is the probability
+of class `1` and nothing else can be read out of it. A multiclass fit writes the
+same topology records with a **reserved zero** where a scalar leaf carries its
+value, followed by one length-delimited probability block per tree holding that
+tree's leaf distributions. Those distributions are ordered by the leaf's
+pre-order rank rather than by the runtime leaf ordinal: rank is determined by
+the topology alone, so an artifact cannot be rewritten by permuting the ordinals
+and the block together. Every declared count is checked against the bytes
+present before anything is reserved, every distribution entry must be a finite
+`0..=1`, and each decoded tree re-enters the same topology and class-topology
+validators fitting uses.
 
 `AnyRegressor` artifacts are dispatch envelopes rather than model formats. They
 carry a dispatch version and a variant tag, then the selected estimator's own

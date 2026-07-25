@@ -32,7 +32,8 @@ use ferricml::artifact::ArtifactError;
 use ferricml::data::{BinaryTargets, ClassTargets, DenseMatrix, RegressionTargets};
 use ferricml::ensemble::{
     HistGradientBoostingRegressor, HistGradientBoostingRegressorParams, MaxFeatures,
-    RandomForestRegressor, RandomForestRegressorParams,
+    RandomForestClassifier, RandomForestClassifierParams, RandomForestRegressor,
+    RandomForestRegressorParams,
 };
 use ferricml::linear_model::{
     LinearRegression, LinearRegressionParams, LogisticRegression, LogisticRegressionParams, Ridge,
@@ -433,6 +434,12 @@ fn decoders() -> Vec<Decoder> {
                 |m| m.to_artifact(INPUT_SCHEMA),
             )
         }),
+        ("random-forest-classifier", |bytes| {
+            accepted(
+                RandomForestClassifier::from_artifact(bytes, INPUT_SCHEMA),
+                |m| m.to_artifact(INPUT_SCHEMA),
+            )
+        }),
         ("any-regressor", |bytes| {
             accepted(AnyRegressor::from_artifact(bytes, INPUT_SCHEMA), |m| {
                 m.to_artifact(INPUT_SCHEMA)
@@ -578,6 +585,20 @@ fn seed_corpus() -> Vec<(&'static str, Vec<u8>)> {
             .with_max_bins(8),
     )
     .unwrap();
+    let forest_classifier_params = RandomForestClassifierParams::default()
+        .with_n_estimators(3)
+        .with_max_depth(Some(4))
+        .with_max_features(MaxFeatures::All)
+        .with_random_state(11);
+    let forest_classifier =
+        RandomForestClassifier::fit(&data.as_view(), &binary, forest_classifier_params.clone())
+            .unwrap();
+    let multiclass_forest = RandomForestClassifier::fit_multiclass(
+        &data.as_view(),
+        &ClassTargets::new(vec![3, 7, 10, 7]).unwrap(),
+        forest_classifier_params,
+    )
+    .unwrap();
     let forest = RandomForestRegressor::fit(
         &data.as_view(),
         &regression,
@@ -655,6 +676,14 @@ fn seed_corpus() -> Vec<(&'static str, Vec<u8>)> {
         ("pairwise-ranker", ranker.to_artifact(INPUT_SCHEMA).unwrap()),
         ("boosting", boosting.to_artifact(INPUT_SCHEMA).unwrap()),
         ("forest", forest.to_artifact(INPUT_SCHEMA).unwrap()),
+        (
+            "forest-classifier",
+            forest_classifier.to_artifact(INPUT_SCHEMA).unwrap(),
+        ),
+        (
+            "multiclass-forest",
+            multiclass_forest.to_artifact(INPUT_SCHEMA).unwrap(),
+        ),
         (
             "any-forest",
             AnyRegressor::from(forest)
@@ -1457,6 +1486,23 @@ fn corpus() -> Vec<Case> {
     let multiclass_state = multiclass_payload + COMPONENT_HEADER_BYTES;
     let multiclass_features = u32_at(&multiclass, multiclass_state);
 
+    // Forest classifier metadata sits one component header past the payload;
+    // its class list starts at word 17. The multiclass flavour's first leaf
+    // probability block follows its first tree component.
+    let forest_classifier = seed("forest-classifier");
+    let multiclass_forest = seed("multiclass-forest");
+    let (classifier_payload, _) = payload_span(&forest_classifier).expect("classifier payload");
+    let classifier_metadata = classifier_payload + COMPONENT_HEADER_BYTES;
+    let (multiclass_forest_payload, _) =
+        payload_span(&multiclass_forest).expect("multiclass forest payload");
+    let multiclass_metadata = multiclass_forest_payload + COMPONENT_HEADER_BYTES;
+    let multiclass_leaf_block = {
+        let metadata_len = u32_at(&multiclass_forest, multiclass_forest_payload + 4) as usize;
+        let first_tree = multiclass_forest_payload + COMPONENT_HEADER_BYTES + metadata_len;
+        let tree_len = u32_at(&multiclass_forest, first_tree + 4) as usize;
+        first_tree + COMPONENT_HEADER_BYTES + tree_len + COMPONENT_HEADER_BYTES
+    };
+
     // A declared element count far past the bytes present. Before the
     // reservation was clamped, each of these turned roughly 150 bytes into
     // between 4 MB and 32 MB of allocation before reporting `Truncated`.
@@ -2024,6 +2070,97 @@ fn corpus() -> Vec<Case> {
             decoder: "logistic",
             expected: ArtifactError::InvalidPayload,
             bytes: overwrite(&multiclass, multiclass_state + 28, &5_u32.to_le_bytes()),
+        },
+        // Kind 11 carries two leaf representations under one payload version,
+        // so the flavour tag, the class list, and the per-tree probability
+        // block each owe the same guarantees the rest of the envelope does.
+        Case {
+            name: "forest-classifier-unknown-flavour",
+            provenance: "a leaf arithmetic tag this reader does not implement",
+            decoder: "random-forest-classifier",
+            expected: ArtifactError::InvalidPayload,
+            bytes: overwrite(
+                &forest_classifier,
+                classifier_metadata + 4,
+                &3_u32.to_le_bytes(),
+            ),
+        },
+        Case {
+            name: "forest-classifier-binary-label-out-of-range",
+            provenance: "a scalar-leaf forest claiming a class label its leaf cannot mean",
+            decoder: "random-forest-classifier",
+            expected: ArtifactError::InvalidPayload,
+            bytes: overwrite(
+                &forest_classifier,
+                classifier_metadata + 68,
+                &5_u32.to_le_bytes(),
+            ),
+        },
+        Case {
+            name: "forest-classifier-inflated-class-count",
+            provenance: "1e6 declared classes, refused by the class ceiling before any read",
+            decoder: "random-forest-classifier",
+            expected: ArtifactError::InvalidPayload,
+            bytes: overwrite(
+                &forest_classifier,
+                classifier_metadata + 64,
+                &inflated.to_le_bytes(),
+            ),
+        },
+        Case {
+            name: "forest-classifier-crossed-flavour",
+            provenance: "a scalar-leaf forest relabelled as vector-leaf, with no probability block",
+            decoder: "random-forest-classifier",
+            expected: ArtifactError::InvalidPayload,
+            bytes: overwrite(
+                &forest_classifier,
+                classifier_metadata + 4,
+                &2_u32.to_le_bytes(),
+            ),
+        },
+        Case {
+            name: "multiclass-forest-unsorted-classes",
+            provenance: "a class list out of order, a second name for one model",
+            decoder: "random-forest-classifier",
+            expected: ArtifactError::InvalidPayload,
+            bytes: overwrite(
+                &multiclass_forest,
+                multiclass_metadata + 68,
+                &20_u32.to_le_bytes(),
+            ),
+        },
+        Case {
+            name: "multiclass-forest-inflated-leaf-block",
+            provenance: "1e6 declared leaf rows in a probability block with none present",
+            decoder: "random-forest-classifier",
+            expected: ArtifactError::Truncated,
+            bytes: overwrite(
+                &multiclass_forest,
+                multiclass_leaf_block,
+                &inflated.to_le_bytes(),
+            ),
+        },
+        Case {
+            name: "multiclass-forest-leaf-block-class-mismatch",
+            provenance: "a probability block declaring a width the metadata does not",
+            decoder: "random-forest-classifier",
+            expected: ArtifactError::InvalidPayload,
+            bytes: overwrite(
+                &multiclass_forest,
+                multiclass_leaf_block + 4,
+                &2_u32.to_le_bytes(),
+            ),
+        },
+        Case {
+            name: "multiclass-forest-probability-out-of-range",
+            provenance: "a leaf distribution entry outside the 0..=1 a fitted leaf holds",
+            decoder: "random-forest-classifier",
+            expected: ArtifactError::InvalidPayload,
+            bytes: overwrite(
+                &multiclass_forest,
+                multiclass_leaf_block + 8,
+                &2.0_f32.to_bits().to_le_bytes(),
+            ),
         },
         Case {
             name: "binary-logistic-relabelled-as-multiclass",
