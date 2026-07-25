@@ -208,20 +208,28 @@ pub(super) fn train_class_forest(
     })
 }
 
-/// Draws `count` features without replacement, in the generator's order.
+/// Partially shuffles `0..columns` so its first `count` entries are the drawn
+/// features, in the generator's order.
 ///
 /// Shared by both builders because the sampling — not the sweep that follows
-/// it — is what a fitted forest's reproducibility depends on.
+/// it — is what a fitted forest's reproducibility depends on. It runs once per
+/// *node*, which is the crate's hottest fitting path outside the sweep itself,
+/// so it is `#[inline]`: written inline this was part of its caller's body, and
+/// sharing it must not quietly add a call boundary there. It returns the full
+/// permutation rather than truncating, so the caller keeps the drawn count in a
+/// register the way it did before.
+#[inline]
 fn sample_features(rng: &mut OwnedRng, columns: usize, count: usize) -> Vec<usize> {
     let mut features: Vec<usize> = (0..columns).collect();
     for index in 0..count {
         let other = index + rng.index(features.len() - index);
         features.swap(index, other);
     }
-    features.truncate(count);
     features
 }
 
+/// How many features one node draws. Also per node, also `#[inline]`.
+#[inline]
 fn resolved_feature_count(max_features: MaxFeatures, columns: usize) -> usize {
     match max_features {
         MaxFeatures::All => columns,
@@ -364,7 +372,7 @@ impl<Y, O: Objective<Y>> TreeBuilder<'_, '_, Y, O> {
 
         let mut ordered = Vec::with_capacity(rows.len());
         let mut best: Option<Split> = None;
-        for &feature in &features {
+        for &feature in &features[..feature_count] {
             ordered.clear();
             ordered.extend_from_slice(rows);
             ordered.sort_unstable_by(|&left, &right| {
@@ -560,7 +568,7 @@ impl ClassTreeBuilder<'_, '_> {
 
         let mut ordered = Vec::with_capacity(rows.len());
         let mut best: Option<Split> = None;
-        for &feature in &features {
+        for &feature in &features[..feature_count] {
             ordered.clear();
             ordered.extend_from_slice(rows);
             ordered.sort_unstable_by(|&left, &right| {

@@ -71,19 +71,25 @@ pub(super) struct PackedTree {
 
 /// Packs validated build nodes into the inference layout.
 ///
-/// `encode_leaf` turns a leaf's build-node index into the `u32` its parent's
-/// child slot carries. A scalar tree stores the leaf value's bits there; a
-/// class tree stores the leaf's ordinal, because `classes` probabilities do not
-/// fit in a child slot. Returning `None` means the root is itself a leaf, which
-/// has no parent slot to be stored in.
+/// `encode_leaf` turns a leaf into the `u32` its parent's child slot carries. A
+/// scalar tree stores the leaf value's bits there; a class tree stores the
+/// leaf's ordinal, because `classes` probabilities do not fit in a child slot.
+/// Returning `None` means the root is itself a leaf, which has no parent slot
+/// to be stored in.
 ///
 /// Packing runs once per fitted tree and is deliberately shared: the encoding
 /// of a leaf varies between tree flavours, but the pre-order token assignment
 /// that keeps a parent adjacent to its left descendants must not.
+///
+/// The encoder receives the leaf **already loaded**, not just its index. That
+/// is not a convenience: the scalar encoder then needs nothing from `build` at
+/// all, so it captures no second reference to a buffer this function is also
+/// writing near, and each child is read from `build` exactly once per branch
+/// rather than once to classify it and again to encode it.
 fn pack_topology(
     build: &[BuildNode],
     n_features: usize,
-    mut encode_leaf: impl FnMut(usize) -> u32,
+    mut encode_leaf: impl FnMut(usize, BuildNode) -> u32,
 ) -> Result<Option<Vec<PackedNode>>, ModelError> {
     validate_build_topology(build, n_features)?;
     if build[0].is_leaf() {
@@ -106,16 +112,18 @@ fn pack_topology(
         }
     }
     for (index, node) in build.iter().enumerate().filter(|(_, node)| !node.is_leaf()) {
+        let left = build[node.left as usize];
+        let right = build[node.right as usize];
         let packed = &mut nodes[branch_indices[index] as usize];
-        if build[node.left as usize].is_leaf() {
+        if left.is_leaf() {
             packed.feature_and_flags |= LEFT_IS_LEAF;
-            packed.left = encode_leaf(node.left as usize);
+            packed.left = encode_leaf(node.left as usize, left);
         } else {
             packed.left = branch_indices[node.left as usize];
         }
-        if build[node.right as usize].is_leaf() {
+        if right.is_leaf() {
             packed.feature_and_flags |= RIGHT_IS_LEAF;
-            packed.right = encode_leaf(node.right as usize);
+            packed.right = encode_leaf(node.right as usize, right);
         } else {
             packed.right = branch_indices[node.right as usize];
         }
@@ -128,8 +136,9 @@ impl PackedTree {
         build: Vec<BuildNode>,
         n_features: usize,
     ) -> Result<Self, ModelError> {
-        let Some(nodes) =
-            pack_topology(&build, n_features, |index| build[index].value().to_bits())?
+        // The encoder reads nothing from `build`, so it captures nothing and
+        // this borrows the buffer exactly once.
+        let Some(nodes) = pack_topology(&build, n_features, |_, node| node.value().to_bits())?
         else {
             return Ok(Self {
                 nodes: Vec::new(),
@@ -352,7 +361,7 @@ impl ClassTree {
             }
         };
         let mut ordinal = 0_u32;
-        let nodes = pack_topology(&build, n_features, |index| {
+        let nodes = pack_topology(&build, n_features, |index, _| {
             push_leaf(index);
             let assigned = ordinal;
             ordinal += 1;
