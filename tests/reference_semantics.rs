@@ -852,6 +852,52 @@ fn standard_scaler_matches_frozen_reference_outputs() {
     );
 }
 
+/// Weighted tree fitting against the reference, on the exact single-tree
+/// configuration where nothing depends on randomized topology.
+///
+/// **One deliberate divergence, and it is why this fixture keeps
+/// `min_samples_leaf` at one.** The reference bounds the minimum split and leaf
+/// sizes by the number of *rows* in a node; FerricML bounds them by the node's
+/// total *weight*. That is what makes an integer weight the same fitted model
+/// as repeating the row unconditionally in FerricML, where the reference only
+/// has that equivalence while the constraint does not bind. With the bound at
+/// one it never binds, so this compares the weighted impurity and leaf
+/// arithmetic alone — which is where the two must agree.
+#[test]
+fn weighted_forests_match_frozen_reference_outputs() {
+    let train = matrix(reference::EXACT_TRAIN_X, 8, 2);
+    let test = matrix(reference::EXACT_TEST_X, 5, 2);
+    let weights = SampleWeights::new(reference::FOREST_WEIGHTS.to_vec()).unwrap();
+
+    let classifier = RandomForestClassifier::fit_weighted(
+        &train.as_view(),
+        &BinaryTargets::new(reference::EXACT_CLASSIFIER_Y.to_vec()).unwrap(),
+        &weights,
+        exact_classifier_params(),
+    )
+    .unwrap();
+    assert_eq!(
+        classifier.predict(&test.as_view()).unwrap(),
+        reference::FOREST_WEIGHTED_LABELS
+    );
+    assert_close(
+        &classifier.predict_proba(&test.as_view()).unwrap(),
+        reference::FOREST_WEIGHTED_PROBABILITIES,
+    );
+
+    let regressor = RandomForestRegressor::fit_weighted(
+        &train.as_view(),
+        &RegressionTargets::new(reference::EXACT_REGRESSION_Y.to_vec()).unwrap(),
+        &weights,
+        exact_regressor_params(),
+    )
+    .unwrap();
+    assert_close(
+        &regressor.predict(&test.as_view()).unwrap(),
+        reference::FOREST_WEIGHTED_REGRESSION,
+    );
+}
+
 #[test]
 fn histogram_boosting_matches_frozen_reference_one_step_outputs() {
     let train = matrix(reference::HGB_TRAIN_X, 8, 1);
@@ -871,6 +917,33 @@ fn histogram_boosting_matches_frozen_reference_one_step_outputs() {
     assert_close(
         &model.predict(&test.as_view()).unwrap(),
         reference::HGB_PREDICTIONS,
+    );
+}
+
+/// The same one-step boosted configuration, weighted. The bin grid is fitted
+/// from the distinct observed values in both implementations, so weighting
+/// moves only the baseline and the leaf arithmetic.
+#[test]
+fn weighted_histogram_boosting_matches_frozen_reference_outputs() {
+    let train = matrix(reference::HGB_TRAIN_X, 8, 1);
+    let targets = RegressionTargets::new(reference::HGB_TRAIN_Y.to_vec()).unwrap();
+    let test = matrix(reference::HGB_TEST_X, 4, 1);
+    let weights = SampleWeights::new(reference::HGB_WEIGHTS.to_vec()).unwrap();
+    let model = HistGradientBoostingRegressor::fit_weighted(
+        &train.as_view(),
+        &targets,
+        &weights,
+        HistGradientBoostingRegressorParams::default()
+            .with_learning_rate(1.0)
+            .with_max_iter(1)
+            .with_max_leaf_nodes(2)
+            .with_min_samples_leaf(1),
+    )
+    .unwrap();
+    assert_eq!(model.n_iter(), 1);
+    assert_close(
+        &model.predict(&test.as_view()).unwrap(),
+        reference::HGB_WEIGHTED_PREDICTIONS,
     );
 }
 

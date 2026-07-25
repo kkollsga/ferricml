@@ -217,7 +217,10 @@ and releases use [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   fit bit for bit, an integer weight is the same fit as repeating the row that
   many times, and a weight of zero removes the row — including from the
   bootstrap resample, which draws only among positively weighted rows. Both
-  forests now declare `sample_weights` in their capability descriptor.
+  forests now declare `sample_weights` in their capability descriptor. The
+  minimum split and leaf sizes bound **weight** rather than rows, which is a
+  deliberate divergence from the reference contract taken so the integer-weight
+  equivalence holds unconditionally; unweighted fitting is unaffected.
 - `HistGradientBoostingRegressor::fit_weighted`. A weight scales the row's
   gradient and its share of every node's weight total, so the baseline is a
   weighted mean and the minimum leaf size counts weight rather than rows.

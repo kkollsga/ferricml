@@ -24,6 +24,18 @@ prediction row that the allocation-free inference contract exists to avoid.
 Tests assert the bound, and assert that the deviation is real rather than
 hypothetical.
 
+**A tree's minimum split and leaf sizes bound weight, not rows.** The reference
+bounds `min_samples_split` and `min_samples_leaf` by the number of rows in a
+node and lets a sample weight move nothing else; FerricML bounds them by the
+node's total weight. This is a deliberate divergence, taken so that an integer
+sample weight is the same fitted model as repeating that row *unconditionally* —
+under row counting the equivalence holds only while the constraint does not
+bind, because duplicating a row changes the row count the bound is compared
+against. Unweighted fitting is unaffected: a node's weight is its row count when
+every weight is one, so every frozen unweighted fixture is unchanged. The
+weighted tree fixtures pin the bound at one, where it cannot bind, so they
+compare the weighted impurity and leaf arithmetic — where the two agree exactly.
+
 **Class weighting is a caller-side transformation, not a parameter.** No
 FerricML estimator takes a `class_weight`. A per-class weight is a function of
 the label and therefore already a per-row weight, so it is expressed by building
