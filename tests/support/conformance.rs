@@ -629,6 +629,12 @@ pub trait WorkspaceRegressorCase {
     ) -> Result<(), ModelError>;
 }
 
+/// A workspace-shaped model that also offers a scalar path.
+pub trait ScalarWorkspaceRegressorCase: WorkspaceRegressorCase {
+    /// Predicts one value for one row.
+    fn predict_one(model: &Self::Model, row: &[f32]) -> Result<f32, ModelError>;
+}
+
 // ------------------------------------------------------------- driver traits
 //
 // The obligations are written once, against these. Two adapter types carry the
@@ -951,6 +957,12 @@ impl<R: WorkspaceRegressorCase> RegressorUnderTest for WorkspaceShaped<R> {
     }
 }
 
+impl<R: ScalarWorkspaceRegressorCase> ScalarRegressorUnderTest for WorkspaceShaped<R> {
+    fn predict_one(model: &Self::Model, row: &[f32]) -> Result<f32, ModelError> {
+        R::predict_one(model, row)
+    }
+}
+
 // -------------------------------------------------------------- entry points
 
 /// Runs every obligation a classifier with a scalar path owes.
@@ -1013,6 +1025,16 @@ pub fn check_workspace_regressor<R: WorkspaceRegressorCase>() {
     workspace_regressor_report::<R>().assert_clean(R::NAME);
 }
 
+/// Runs every obligation a workspace-predicted regressor with a scalar path
+/// owes.
+///
+/// # Panics
+///
+/// With one line per violated obligation.
+pub fn check_scalar_workspace_regressor<R: ScalarWorkspaceRegressorCase>() {
+    scalar_workspace_regressor_report::<R>().assert_clean(R::NAME);
+}
+
 /// Runs every obligation a transformer owes.
 ///
 /// # Panics
@@ -1056,6 +1078,12 @@ pub fn batch_regressor_report<R: RegressorCase>() -> Report {
 #[must_use]
 pub fn workspace_regressor_report<R: WorkspaceRegressorCase>() -> Report {
     regressor_obligations::<WorkspaceShaped<R>>()
+}
+
+/// Collects violations for a workspace-predicted regressor with a scalar path.
+#[must_use]
+pub fn scalar_workspace_regressor_report<R: ScalarWorkspaceRegressorCase>() -> Report {
+    scalar_regressor_obligations::<WorkspaceShaped<R>>()
 }
 
 // -------------------------------------------------------- classifier battery

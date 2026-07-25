@@ -9,6 +9,11 @@ and releases use [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- A capability declaration on `ranking::PairwiseLinearRanker`, which was the
+  one fitted estimator that could not answer a capability query. It declares
+  artifact persistence and nothing else: its weights belong to a pair
+  observation rather than to a row, and a ranking score is not a probability,
+  so it exposes neither a per-sample weighted fit nor a decision function.
 - Schema-bound `RandomForestRegressor` artifacts that persist backend-neutral
   logical trees and revalidate every decoded topology, count, and parameter.
 - `AnyRegressor` dispatch artifacts that record the fitted runtime variant and

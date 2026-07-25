@@ -301,6 +301,8 @@ impl ferricml::api::HasCapabilities for ferricml::preprocessing::MinMaxScaler
 pub const ferricml::preprocessing::MinMaxScaler::CAPABILITIES: ferricml::api::Capabilities
 impl ferricml::api::HasCapabilities for ferricml::preprocessing::StandardScaler
 pub const ferricml::preprocessing::StandardScaler::CAPABILITIES: ferricml::api::Capabilities
+impl ferricml::api::HasCapabilities for ferricml::ranking::PairwiseLinearRanker
+pub const ferricml::ranking::PairwiseLinearRanker::CAPABILITIES: ferricml::api::Capabilities
 impl<C: ferricml::api::Classifier> ferricml::api::HasCapabilities for ferricml::calibration::CalibratedClassifier<C, ferricml::calibration::IsotonicRegression>
 pub const ferricml::calibration::CalibratedClassifier<C, ferricml::calibration::IsotonicRegression>::CAPABILITIES: ferricml::api::Capabilities
 impl<C: ferricml::api::Classifier> ferricml::api::HasCapabilities for ferricml::calibration::CalibratedClassifier<C, ferricml::calibration::PlattCalibrator>
@@ -1839,6 +1841,8 @@ pub fn ferricml::ranking::PairwiseLinearRanker::score_one(&self, &[f32]) -> core
 pub fn ferricml::ranking::PairwiseLinearRanker::to_artifact(&self, [u8; 32]) -> core::result::Result<alloc::vec::Vec<u8>, ferricml::artifact::ArtifactError>
 impl ferricml::api::Estimator for ferricml::ranking::PairwiseLinearRanker
 pub fn ferricml::ranking::PairwiseLinearRanker::n_features_in(&self) -> usize
+impl ferricml::api::HasCapabilities for ferricml::ranking::PairwiseLinearRanker
+pub const ferricml::ranking::PairwiseLinearRanker::CAPABILITIES: ferricml::api::Capabilities
 impl ferricml::api::HasParams for ferricml::ranking::PairwiseLinearRanker
 pub type ferricml::ranking::PairwiseLinearRanker::Params = ferricml::ranking::PairwiseLinearRankerParams
 pub fn ferricml::ranking::PairwiseLinearRanker::get_params(&self) -> &Self::Params

@@ -3,7 +3,7 @@
 use std::error::Error;
 use std::fmt;
 
-use crate::api::{Estimator, HasParams, ModelError};
+use crate::api::{Capabilities, Estimator, HasCapabilities, HasParams, ModelError};
 use crate::artifact::{
     ArtifactError, ArtifactPayloadWriter, PAIRWISE_LINEAR_RANKER_ARTIFACT_KIND, SchemaRole,
     decode_component, decode_v2_envelope, encode_component, encode_v2_envelope,
@@ -500,6 +500,23 @@ impl Estimator for PairwiseLinearRanker {
     fn n_features_in(&self) -> usize {
         self.model.n_features_in()
     }
+}
+
+/// A ranker persists, and declares nothing else.
+///
+/// `sample_weights` is deliberately absent even though fitting is weighted:
+/// the weight belongs to a *pair observation*, not to a row of the item
+/// matrix, and there is no `SampleWeights` entry point for a caller to reach.
+/// Declaring it would answer a question about per-sample weighting that this
+/// estimator does not have. `multiclass` has no meaning without a class set.
+///
+/// `decision_function` is absent for the reason that keeps the field honest:
+/// it records that a *classifier* exposes a raw score whose squashing is its
+/// probability. A ranker has no probability to squash to, and ranking is
+/// documented as distinct from classification — raw scores and pair margins
+/// are not probabilities. Declaring it would make one field mean two things.
+impl HasCapabilities for PairwiseLinearRanker {
+    const CAPABILITIES: Capabilities = Capabilities::NONE.with_artifact(true);
 }
 
 impl HasParams for PairwiseLinearRanker {

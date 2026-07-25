@@ -49,9 +49,10 @@ use ferricml::ranking::{
 
 use support::conformance::{
     ClassifierCase, FixtureShape, OptionalFit, RegressorCase, RoundTrip, SCHEMA, Sample,
-    ScalarClassifierCase, ScalarRegressorCase, TransformerCase, WorkspaceClassifierCase,
-    WorkspaceRegressorCase, check_batch_only_classifier, check_batch_only_regressor,
-    check_classifier, check_regressor, check_transformer, check_workspace_classifier,
+    ScalarClassifierCase, ScalarRegressorCase, ScalarWorkspaceRegressorCase, TransformerCase,
+    WorkspaceClassifierCase, WorkspaceRegressorCase, check_batch_only_classifier,
+    check_batch_only_regressor, check_classifier, check_regressor,
+    check_scalar_workspace_regressor, check_transformer, check_workspace_classifier,
     check_workspace_regressor,
 };
 
@@ -945,6 +946,107 @@ impl WorkspaceRegressorCase for ThreeStagePipelineCase {
     }
 }
 
+/// The ranker, registered as an ordinary member of the battery.
+///
+/// **Ranking sits inside the battery.** Excluding it is exactly the
+/// special-casing the capability descriptor exists to abolish, and every
+/// structural obligation the battery states is meaningful for a ranker:
+/// metadata, caller-owned output matching the allocating form, feature width
+/// and output length validated before any write, scalar and batch agreement,
+/// non-finite rejection, a deterministic refit, and an artifact declaration
+/// that matches behavior.
+///
+/// The two things it does not share are absorbed here, at the case boundary,
+/// rather than by giving ranking a category of its own:
+///
+/// - *Error type.* Scoring returns [`PairwiseError`]; this case unwraps its
+///   `Model` variant. Any other variant would be a pair-construction error
+///   escaping a scoring path, which cannot happen by construction — scoring is
+///   a thin wrapper over the linear model — so it is asserted rather than
+///   handled.
+/// - *Fit input.* Fitting takes pair observations rather than a target vector,
+///   so the case builds them from the fixture's monotone values.
+///
+/// It produces one real-valued score per row through a caller-owned buffer,
+/// which is exactly [`WorkspaceRegressorCase`]'s shape, so it needs no
+/// workspace at all and no new obligation list. The pairwise surface —
+/// `pair_margin`, `compare`, `compare_into`, pair-index validation — is not a
+/// shared obligation and stays in the estimator-specific tests below.
+struct PairwiseLinearRankerCase;
+
+/// Unwraps the only error variant a scoring path can produce.
+fn scoring_error(error: PairwiseError) -> ModelError {
+    match error {
+        PairwiseError::Model(error) => error,
+        other => panic!("scoring produced a non-model pairwise error: {other:?}"),
+    }
+}
+
+/// Consecutive pairs of the fixture, each preferring the higher-valued row.
+///
+/// The fixture's targets increase with the row index, so this is a total order
+/// the ranker can reproduce, built from the same data every other case uses.
+fn fixture_pairs(train: &Sample) -> Vec<PairwiseObservation> {
+    (1..train.rows())
+        .map(|row| {
+            PairwiseObservation::new(
+                PairIndex::new(row, row - 1).expect("distinct fixture pair"),
+                PairOutcome::LeftPreferred,
+                1.0,
+            )
+            .expect("valid fixture observation")
+        })
+        .collect()
+}
+
+impl WorkspaceRegressorCase for PairwiseLinearRankerCase {
+    type Model = PairwiseLinearRanker;
+    const NAME: &'static str = "PairwiseLinearRanker";
+
+    fn fit(train: &Sample, _holdout: &Sample) -> Result<Self::Model, ModelError> {
+        PairwiseLinearRanker::fit(
+            &train.view(),
+            &fixture_pairs(train),
+            PairwiseLinearRankerParams::default(),
+        )
+        .map_err(scoring_error)
+    }
+
+    fn round_trip(model: &Self::Model) -> RoundTrip<Self::Model> {
+        round_trip(
+            || model.to_artifact(SCHEMA),
+            |bytes| PairwiseLinearRanker::from_artifact(bytes, SCHEMA),
+        )
+    }
+
+    fn workspace_len(_model: &Self::Model, _rows: usize) -> Result<usize, ModelError> {
+        Ok(0)
+    }
+
+    fn predict(
+        model: &Self::Model,
+        data: &MatrixView<'_>,
+        _workspace: &mut [f32],
+    ) -> Result<Vec<f32>, ModelError> {
+        model.score_items(data).map_err(scoring_error)
+    }
+
+    fn predict_into(
+        model: &Self::Model,
+        data: &MatrixView<'_>,
+        _workspace: &mut [f32],
+        output: &mut [f32],
+    ) -> Result<(), ModelError> {
+        model.score_items_into(data, output).map_err(scoring_error)
+    }
+}
+
+impl ScalarWorkspaceRegressorCase for PairwiseLinearRankerCase {
+    fn predict_one(model: &Self::Model, row: &[f32]) -> Result<f32, ModelError> {
+        model.score_one(row).map_err(scoring_error)
+    }
+}
+
 // ----------------------------------------------------- registration list
 //
 // One line per estimator. `check_batch_only_*` is the weaker entry point and
@@ -1051,6 +1153,11 @@ fn fitted_pipelines_conform() {
     check_workspace_classifier::<ScaledLogisticPipelineCase>();
     check_workspace_regressor::<ScaledRidgePipelineCase>();
     check_workspace_regressor::<ScaledLinearPipelineCase>();
+}
+
+#[test]
+fn pairwise_linear_ranker_conforms() {
+    check_scalar_workspace_regressor::<PairwiseLinearRankerCase>();
 }
 
 #[test]

@@ -51,6 +51,7 @@ use ferricml::ensemble::{
 use ferricml::linear_model::{ElasticNet, Lasso, LinearRegression, LogisticRegression, Ridge};
 use ferricml::pipeline::{Pipeline, StagedPipeline};
 use ferricml::preprocessing::{MaxAbsScaler, MinMaxScaler, StandardScaler};
+use ferricml::ranking::PairwiseLinearRanker;
 
 /// The environment variable that rewrites the snapshot instead of checking it.
 const REFRESH: &str = "FERRICML_REFRESH_CAPABILITY_SNAPSHOT";
@@ -151,6 +152,10 @@ fn declarations() -> Vec<(&'static str, Capabilities)> {
         (
             "ferricml::preprocessing::MaxAbsScaler",
             MaxAbsScaler::CAPABILITIES,
+        ),
+        (
+            "ferricml::ranking::PairwiseLinearRanker",
+            PairwiseLinearRanker::CAPABILITIES,
         ),
         (
             "ferricml::preprocessing::MinMaxScaler",

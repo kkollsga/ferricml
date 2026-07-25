@@ -33,6 +33,7 @@ use ferricml::pipeline::{Pipeline, StagedPipeline};
 use ferricml::preprocessing::{
     MaxAbsScaler, MinMaxScaler, MinMaxScalerParams, StandardScaler, StandardScalerParams,
 };
+use ferricml::ranking::PairwiseLinearRanker;
 
 const WEIGHTED_AND_PERSISTED: Capabilities = Capabilities::NONE
     .with_sample_weights(true)
@@ -183,6 +184,24 @@ fn the_monotone_calibrator_declares_nothing() {
     // kind, and no class set to widen, so the conservative default is the whole
     // truth rather than an omission.
     assert_eq!(IsotonicRegression::CAPABILITIES, Capabilities::NONE);
+}
+
+#[test]
+fn the_ranker_declares_persistence_and_nothing_else() {
+    // The one fitted estimator that could never answer a capability query, and
+    // therefore the one every meta-layer would have had to special-case.
+    //
+    // Weighted fitting is absent because a pairwise weight belongs to a *pair
+    // observation*, not to a row of the item matrix, so there is no
+    // `SampleWeights` entry point to declare. A decision function is absent for
+    // the reason that keeps that field honest: it records that a classifier
+    // exposes a raw score whose squashing is its probability, and a ranker has
+    // no probability to squash to — raw scores and pair margins are not
+    // probabilities.
+    assert_eq!(PairwiseLinearRanker::CAPABILITIES, PERSISTED_ONLY);
+    assert!(!PairwiseLinearRanker::CAPABILITIES.sample_weights());
+    assert!(!PairwiseLinearRanker::CAPABILITIES.decision_function());
+    assert!(!PairwiseLinearRanker::CAPABILITIES.multiclass());
 }
 
 #[test]
