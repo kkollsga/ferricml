@@ -48,6 +48,25 @@ impl<'a> ArtifactCursor<'a> {
         self.remaining
     }
 
+    /// Capacity for `requested` items of `stride` bytes each, clamped to what
+    /// the unread bytes could actually supply.
+    ///
+    /// Element counts inside an artifact are attacker-controlled, so reserving
+    /// a declared count directly lets a tiny artifact demand a large
+    /// allocation before the first element is read. The number of bytes still
+    /// unread is the one quantity a hostile writer cannot inflate, so it is
+    /// what bounds the reservation. Growth still happens for a genuine
+    /// artifact, whose bytes really are present.
+    pub(crate) const fn bounded_capacity(&self, requested: usize, stride: usize) -> usize {
+        debug_assert!(stride > 0);
+        let affordable = self.remaining.len() / stride;
+        if requested < affordable {
+            requested
+        } else {
+            affordable
+        }
+    }
+
     pub(crate) const fn is_empty(&self) -> bool {
         self.remaining.is_empty()
     }

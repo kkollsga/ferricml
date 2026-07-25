@@ -17,7 +17,9 @@ pub(crate) use envelope::{
     decode_legacy_envelope, decode_v2_envelope, encode_component, encode_v2_envelope,
 };
 pub use error::ArtifactError;
-pub(crate) use logical_tree::{LogicalTreeNode, decode_logical_tree, encode_logical_tree};
+pub(crate) use logical_tree::{
+    LogicalTreeNode, MIN_ENCODED_TREE_BYTES, decode_logical_tree, encode_logical_tree,
+};
 
 /// Current FerricML binary model artifact version.
 pub const MODEL_ARTIFACT_VERSION: u16 = 2;

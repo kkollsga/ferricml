@@ -7,6 +7,11 @@ const BRANCH_TAG: u32 = 1;
 const TREE_HEADER_BYTES: usize = 3 * 4;
 const NODE_RECORD_BYTES: usize = 5 * 4;
 const MAX_TREE_NODES: usize = 131_071;
+
+/// Smallest number of bytes one encoded tree can occupy: its header plus the
+/// single node record every tree must have. Readers holding a declared tree
+/// count use it to bound what they reserve before reading any tree.
+pub(crate) const MIN_ENCODED_TREE_BYTES: usize = TREE_HEADER_BYTES + NODE_RECORD_BYTES;
 const MAX_TREE_LEAVES: usize = 65_536;
 const MAX_TREE_DEPTH: usize = 256;
 

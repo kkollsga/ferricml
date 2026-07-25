@@ -172,10 +172,13 @@ impl MinMaxScaler {
             1,
         )?;
         let clip = decode_flag(flags[0])?;
-        let mut data_min = Vec::with_capacity(n_features_in);
-        let mut data_max = Vec::with_capacity(n_features_in);
-        let mut scales = Vec::with_capacity(n_features_in);
-        let mut offsets = Vec::with_capacity(n_features_in);
+        // Two `f64` fields per feature: the reservation is clamped to the
+        // bytes actually present, never to the declared width alone.
+        let capacity = state.bounded_capacity(n_features_in, 2 * 8);
+        let mut data_min = Vec::with_capacity(capacity);
+        let mut data_max = Vec::with_capacity(capacity);
+        let mut scales = Vec::with_capacity(capacity);
+        let mut offsets = Vec::with_capacity(capacity);
         for _ in 0..n_features_in {
             let minimum = state.f64()?;
             let maximum = state.f64()?;

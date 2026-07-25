@@ -237,7 +237,7 @@ impl Ridge {
         {
             return Err(ArtifactError::InvalidPayload);
         }
-        let mut coefficients = Vec::with_capacity(coefficient_count);
+        let mut coefficients = Vec::with_capacity(cursor.bounded_capacity(coefficient_count, 4));
         for _ in 0..coefficient_count {
             let value = cursor.f32()?;
             if !value.is_finite() {

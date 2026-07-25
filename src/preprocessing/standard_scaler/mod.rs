@@ -223,9 +223,12 @@ impl StandardScaler {
         )?;
         let with_mean = decode_flag(flags[0])?;
         let with_std = decode_flag(flags[1])?;
-        let mut means = Vec::with_capacity(n_features_in);
-        let mut variances = Vec::with_capacity(n_features_in);
-        let mut scales = Vec::with_capacity(n_features_in);
+        // Three `f64` fields per feature: the reservation is clamped to the
+        // bytes actually present, never to the declared width alone.
+        let capacity = state.bounded_capacity(n_features_in, 3 * 8);
+        let mut means = Vec::with_capacity(capacity);
+        let mut variances = Vec::with_capacity(capacity);
+        let mut scales = Vec::with_capacity(capacity);
         for _ in 0..n_features_in {
             let mean = state.f64()?;
             let variance = state.f64()?;

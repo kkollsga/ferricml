@@ -60,6 +60,10 @@ and releases use [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Report `ModelError::NonFinitePrediction` from `RandomForestRegressor` instead
   of returning a non-finite averaged prediction, matching every other
   regressor.
+- Bound what every artifact decoder reserves by the bytes actually present
+  rather than by a declared element count. A hostile artifact of roughly 150
+  bytes could previously make a scaler, linear model, or forest reserve up to
+  32 MB before reporting the truncation it was always going to report.
 
 ## [0.1.2] - 2026-07-24
 

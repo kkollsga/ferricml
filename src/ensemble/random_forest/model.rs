@@ -8,9 +8,9 @@ use crate::api::{
     validate_prediction,
 };
 use crate::artifact::{
-    ArtifactError, ArtifactPayloadWriter, RANDOM_FOREST_REGRESSOR_ARTIFACT_KIND, SchemaRole,
-    decode_component, decode_logical_tree, decode_v2_envelope, encode_component,
-    encode_logical_tree, encode_v2_envelope,
+    ArtifactError, ArtifactPayloadWriter, MIN_ENCODED_TREE_BYTES,
+    RANDOM_FOREST_REGRESSOR_ARTIFACT_KIND, SchemaRole, decode_component, decode_logical_tree,
+    decode_v2_envelope, encode_component, encode_logical_tree, encode_v2_envelope,
 };
 use crate::data::{BinaryTargets, MatrixView, RegressionTargets};
 
@@ -558,7 +558,8 @@ impl RandomForestRegressor {
             .with_random_state(random_state)
             .with_n_jobs(n_jobs);
 
-        let mut trees = Vec::with_capacity(tree_count);
+        let mut trees =
+            Vec::with_capacity(envelope.bounded_capacity(tree_count, MIN_ENCODED_TREE_BYTES));
         let mut actual_total_nodes = 0_usize;
         for _ in 0..tree_count {
             let logical = decode_logical_tree(decode_component(

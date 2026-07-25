@@ -120,8 +120,11 @@ impl MaxAbsScaler {
             transformed_schema,
             0,
         )?;
-        let mut max_abs = Vec::with_capacity(n_features_in);
-        let mut scales = Vec::with_capacity(n_features_in);
+        // One `f64` field per feature: the reservation is clamped to the
+        // bytes actually present, never to the declared width alone.
+        let capacity = state.bounded_capacity(n_features_in, 8);
+        let mut max_abs = Vec::with_capacity(capacity);
+        let mut scales = Vec::with_capacity(capacity);
         for _ in 0..n_features_in {
             let largest = state.f64()?;
             if !largest.is_finite() || largest < 0.0 {

@@ -13,8 +13,8 @@ use crate::api::{
 };
 use crate::artifact::{
     ArtifactError, ArtifactPayloadWriter, HIST_GRADIENT_BOOSTING_REGRESSOR_ARTIFACT_KIND,
-    SchemaRole, decode_component, decode_logical_tree, decode_v2_envelope, encode_component,
-    encode_logical_tree, encode_v2_envelope,
+    MIN_ENCODED_TREE_BYTES, SchemaRole, decode_component, decode_logical_tree, decode_v2_envelope,
+    encode_component, encode_logical_tree, encode_v2_envelope,
 };
 use crate::data::{MatrixView, RegressionTargets};
 use crate::loss::{Objective, SquaredError};
@@ -350,7 +350,8 @@ impl HistGradientBoostingRegressor {
         {
             return Err(ArtifactError::InvalidPayload);
         }
-        let mut trees = Vec::with_capacity(tree_count);
+        let mut trees =
+            Vec::with_capacity(envelope.bounded_capacity(tree_count, MIN_ENCODED_TREE_BYTES));
         let mut actual_total_nodes = 0_usize;
         for _ in 0..tree_count {
             let logical_nodes = decode_logical_tree(decode_component(
