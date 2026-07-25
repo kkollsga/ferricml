@@ -42,9 +42,12 @@ estimator meaning follow the reference contract.
 - `metrics` owns deterministic classification and regression measures with
   explicit errors for invalid or undefined inputs.
 - `model_selection` owns validated index partitions, deterministic holdout and
-  fold iterators, batch estimator scoring, and serial typed cross-validation.
-  Splitters remain independent of estimator internals, while fitting stays in
-  caller-provided closures.
+  fold iterators, batch estimator scoring, serial typed cross-validation, and
+  typed parameter search. Splitters remain independent of estimator internals,
+  while fitting stays in caller-provided closures. A search grid is built from
+  the parameter type's own builder methods rather than string keys, and search
+  evaluates candidates through cross-validation and the shared scorer contract
+  rather than carrying an evaluation path of its own.
 - `preprocessing` owns fitted transformer implementations and their state.
   `StandardScaler` uses deterministic two-pass population statistics and
   accepts sample weights; `MinMaxScaler` and `MaxAbsScaler` fit order

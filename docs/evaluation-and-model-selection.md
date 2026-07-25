@@ -182,6 +182,64 @@ assert!(result.mean().is_finite());
 # Ok::<(), Box<dyn std::error::Error>>(())
 ```
 
-Parameter grids, parallel fold scheduling, and nested model selection remain
-outside this contract. They can be added without exposing fitted model
-internals or weakening deterministic split semantics.
+## Typed parameter search
+
+`ParameterGrid` holds candidates of a real parameter type. An axis is that
+type's own `with_*` builder method plus the values to pass it, so there are no
+string keys, a misnamed parameter is a compile error, and one grid can cross a
+`usize` axis with an `f32` axis without erasing either. Candidates are
+materialized as each axis is added, so the axis added last varies fastest and
+the order is fixed at construction. `from_candidates` takes an explicit list for
+parameters that are not independent, and an axis with no values empties the grid
+rather than being ignored.
+
+`grid_search_classifier` and `grid_search_regressor` evaluate that grid. The
+split iterator is drained once, so every candidate is cross-validated over
+exactly the same folds and the comparison between candidates is not confounded
+by a re-drawn partition. Each candidate then runs through `cross_validate_*`,
+which runs through the same caller-owned scoring entry point batch scoring and
+permutation importance use, so search adds no second evaluation path and a
+caller-defined score behaves in search exactly as it does anywhere else.
+
+The result reports every candidate's parameters and every fold's score, not only
+the winner's summary. The winner is the candidate with the best mean fold score
+— largest when the score declares `greater_is_better`, smallest otherwise — and
+the comparison is strict, so an exact tie keeps the earliest candidate in grid
+order. Search does not refit: the winning parameters go back through the
+caller's own fitting closure, which keeps the refit policy in the caller's code.
+
+Failures stay attributed. Everything that is wrong with the call itself — target
+length, no splits, a split built for another dataset — is `SearchError::Setup`
+and costs no fitting; a candidate's failure is `SearchError::Candidate`, keeping
+the underlying fold index; and a score that returns a non-finite value is
+`SearchError::NonFiniteScore` rather than an unorderable comparison silently
+deciding a winner.
+
+```rust
+use ferricml::data::{DenseMatrix, RegressionTargets};
+use ferricml::linear_model::{Ridge, RidgeParams};
+use ferricml::model_selection::{
+    KFold, ParameterGrid, RegressionScorer, grid_search_regressor,
+};
+
+let data = DenseMatrix::new(vec![0.0, 1.0, 2.0, 3.0, 4.0, 5.0], 6, 1)?;
+let targets = RegressionTargets::new(vec![0.0, 2.0, 4.0, 6.0, 8.0, 10.0])?;
+let grid = ParameterGrid::new(RidgeParams::default())
+    .axis([0.01_f32, 1.0, 100.0], RidgeParams::with_alpha);
+let result = grid_search_regressor(
+    &data.as_view(),
+    &targets,
+    KFold::new(3).split(data.rows())?,
+    &grid,
+    RegressionScorer::MeanSquaredError,
+    |train, train_targets, params| Ridge::fit(train, train_targets, params.clone()),
+)?;
+assert_eq!(result.len(), 3);
+assert_eq!(result.best_params().alpha(), 0.01);
+# Ok::<(), Box<dyn std::error::Error>>(())
+```
+
+Randomized and Bayesian search, parallel candidate evaluation, early stopping,
+and nested model selection remain outside this contract. They can be added
+without exposing fitted model internals or weakening deterministic split
+semantics.

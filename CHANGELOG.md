@@ -120,6 +120,20 @@ and releases use [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   compile error. Different axes carry different value types, the axis added last
   varies fastest, and `from_candidates` takes an explicit list for parameters
   that are not independent.
+- `model_selection::grid_search_classifier` and
+  `model_selection::grid_search_regressor`, serial typed hyperparameter search.
+  The split iterator is drained once, so every candidate is cross-validated over
+  exactly the same folds, and each candidate runs through the existing
+  cross-validation and scorer path rather than a second evaluation path. The
+  result reports every candidate's parameters and every fold's score through
+  `model_selection::SearchResult` and `model_selection::CandidateScores`; the
+  winner is the best mean fold score in the direction the score declares, with
+  an exact tie keeping the earliest candidate in grid order. Search does not
+  refit.
+- `model_selection::SearchError`, which separates a call that is unusable before
+  any fitting (`Setup`) from a candidate's own failure (`Candidate`, keeping the
+  fold index) and from a score that returns a value no ranking can order
+  (`NonFiniteScore`).
 
 ### Changed
 

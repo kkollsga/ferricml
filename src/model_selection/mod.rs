@@ -14,7 +14,10 @@ pub use scoring::{
     RegressionScore, RegressionScorer, ScoringError, ScoringWorkspace, score_classifier,
     score_classifier_with, score_regressor, score_regressor_with,
 };
-pub use search::ParameterGrid;
+pub use search::{
+    CandidateScores, ParameterGrid, SearchError, SearchResult, grid_search_classifier,
+    grid_search_regressor,
+};
 pub use split::{
     GroupKFold, GroupKFoldIter, GroupShuffleSplit, GroupShuffleSplitIter, HoldoutParams, KFold,
     KFoldIter, LeaveOneOut, LeaveOneOutIter, RepeatedKFold, RepeatedKFoldIter, Split, SplitError,

@@ -241,14 +241,17 @@ where
     finish(scores)
 }
 
-fn validate_target_length(rows: usize, targets: usize) -> Result<(), CrossValidationError> {
+pub(super) fn validate_target_length(
+    rows: usize,
+    targets: usize,
+) -> Result<(), CrossValidationError> {
     if rows != targets {
         return Err(CrossValidationError::TargetLength { rows, targets });
     }
     Ok(())
 }
 
-fn validate_split_sample_count(
+pub(super) fn validate_split_sample_count(
     fold: usize,
     expected: usize,
     split: &Split,

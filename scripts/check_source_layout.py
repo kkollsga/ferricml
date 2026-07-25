@@ -209,6 +209,27 @@ def split_families_stay_private(root: Path) -> list[str]:
     ]
 
 
+def search_consumes_the_scorer_seam(root: Path) -> list[str]:
+    """Hyperparameter search reaches metrics only through the scorer contract.
+
+    Search evaluates candidates by calling cross-validation, which calls the one
+    caller-owned scoring entry point. Naming `crate::metrics` inside search is
+    the observable symptom of a second scorer dispatch growing beside that one —
+    the duplication that already had to be removed from permutation importance
+    once. The module has to exist for the rule to mean anything, so its absence
+    is itself a finding rather than a silently vacuous pass.
+    """
+    module = root / "src" / "model_selection" / "search.rs"
+    text = read_if_present(module) + directory_text(
+        root / "src" / "model_selection" / "search"
+    )
+    if not text:
+        return ["hyperparameter search module is missing"]
+    if "crate::metrics" in text:
+        return ["search re-derives scoring instead of consuming the scorer contract"]
+    return []
+
+
 RULES: tuple[tuple[str, Callable[[Path], list[str]]], ...] = (
     ("crate-root-lib-only", crate_root_is_lib_only),
     ("obsolete-root-implementations", obsolete_root_implementations_are_gone),
@@ -223,6 +244,7 @@ RULES: tuple[tuple[str, Callable[[Path], list[str]]], ...] = (
     ("metrics-below-estimators", metrics_depend_on_no_estimator),
     ("evaluation-families-private", evaluation_families_stay_private),
     ("split-families-private", split_families_stay_private),
+    ("search-consumes-the-scorer-seam", search_consumes_the_scorer_seam),
 )
 
 
@@ -258,6 +280,7 @@ def write_clean_tree(root: Path) -> Path:
         "metrics/mod.rs": "//! metrics\nmod confusion;\npub use confusion::ConfusionMatrix;\n",
         "metrics/confusion.rs": "//! confusion\npub struct ConfusionMatrix;\n",
         "model_selection/mod.rs": "//! model selection\nmod split;\npub use split::Split;\n",
+        "model_selection/search.rs": "//! search\nuse crate::api::Regressor;\n",
         "model_selection/split/mod.rs": "//! split\nmod grouped;\npub use grouped::GroupKFold;\n",
         "model_selection/split/grouped.rs": "//! grouped\npub struct GroupKFold;\n",
     }.items():
@@ -361,6 +384,14 @@ SYNTHETIC_VIOLATIONS: tuple[tuple[str, Callable[[Path], None], str], ...] = (
             root / "src" / "model_selection" / "split" / "mod.rs", "pub mod grouped;\n"
         ),
         "split facade exposes child module",
+    ),
+    (
+        "search-consumes-the-scorer-seam",
+        lambda root: append(
+            root / "src" / "model_selection" / "search.rs",
+            "use crate::metrics::accuracy_score;\n",
+        ),
+        "search re-derives scoring instead of consuming the scorer contract",
     ),
 )
 
