@@ -567,6 +567,7 @@ pub struct ferricml::ensemble::RandomForestClassifier
 impl ferricml::ensemble::RandomForestClassifier
 pub fn ferricml::ensemble::RandomForestClassifier::classes(&self) -> &[u8]
 pub fn ferricml::ensemble::RandomForestClassifier::fit(&ferricml::data::MatrixView<'_>, &ferricml::data::BinaryTargets, ferricml::ensemble::RandomForestClassifierParams) -> core::result::Result<Self, ferricml::api::ModelError>
+pub fn ferricml::ensemble::RandomForestClassifier::fit_multiclass(&ferricml::data::MatrixView<'_>, &ferricml::data::ClassTargets, ferricml::ensemble::RandomForestClassifierParams) -> core::result::Result<Self, ferricml::api::ModelError>
 pub fn ferricml::ensemble::RandomForestClassifier::get_params(&self) -> &ferricml::ensemble::RandomForestClassifierParams
 pub fn ferricml::ensemble::RandomForestClassifier::n_features_in(&self) -> usize
 pub fn ferricml::ensemble::RandomForestClassifier::predict(&self, &ferricml::data::MatrixView<'_>) -> core::result::Result<alloc::vec::Vec<u8>, ferricml::api::ModelError>

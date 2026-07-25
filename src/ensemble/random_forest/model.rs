@@ -1,8 +1,8 @@
 use super::parameters::{
     MaxFeatures, NJobs, RandomForestClassifierParams, RandomForestRegressorParams,
 };
-use super::training::{Classification, ForestConfig, Regression, train_forest};
-use super::tree::{FEATURE_MASK, PackedTree};
+use super::training::{Classification, ForestConfig, Regression, train_class_forest, train_forest};
+use super::tree::{ClassTree, FEATURE_MASK, PackedTree};
 use crate::api::{
     Capabilities, Classifier, Estimator, HasCapabilities, HasParams, ModelError, Regressor,
     validate_prediction,
@@ -12,7 +12,7 @@ use crate::artifact::{
     RANDOM_FOREST_REGRESSOR_ARTIFACT_KIND, SchemaRole, decode_component, decode_logical_tree,
     decode_v2_envelope, encode_component, encode_logical_tree, encode_v2_envelope,
 };
-use crate::data::{BinaryTargets, MatrixView, RegressionTargets};
+use crate::data::{BinaryTargets, ClassTargets, MatrixView, RegressionTargets};
 
 const REGRESSOR_PAYLOAD_VERSION: u16 = 1;
 const METADATA_COMPONENT_KIND: u16 = 1;
@@ -31,6 +31,11 @@ const MAX_ARTIFACT_TOTAL_NODES: usize = 1_048_576;
 // A decoded feature index must never reach the packed layout's flag bits.
 const _: () = assert!(MAX_ARTIFACT_FEATURES < FEATURE_MASK as usize);
 
+/// Every class label is a `u8`, so no fit can observe more classes than this.
+/// Scalar and single-column prediction paths keep one averaged probability row
+/// on the stack at this width rather than allocating inside an `_into` method.
+const MAX_CLASSES: usize = 256;
+
 const MAX_FEATURES_ALL: u32 = 1;
 const MAX_FEATURES_SQRT: u32 = 2;
 const MAX_FEATURES_COUNT: u32 = 3;
@@ -38,16 +43,40 @@ const N_JOBS_SERIAL: u32 = 1;
 const N_JOBS_ALL: u32 = 2;
 const N_JOBS_COUNT: u32 = 3;
 
-/// A random-forest binary classifier.
+/// The fitted trees behind a [`RandomForestClassifier`].
+///
+/// The two flavours are kept apart rather than unified because their leaf
+/// arithmetic is genuinely different: a binary leaf stores one probability and
+/// the ensemble averages that scalar, while a multiclass leaf stores one
+/// probability per class and the ensemble averages the vector. Forcing the
+/// binary fit through the vector path would change values it has already
+/// frozen, for no gain.
+#[derive(Clone, Debug, PartialEq)]
+pub(super) enum Forest {
+    /// Trees whose leaf is the probability of class `1`.
+    Binary(Vec<PackedTree>),
+    /// Trees whose leaf is one probability per observed class.
+    Multiclass(Vec<ClassTree>),
+}
+
+/// A random-forest classifier.
 ///
 /// Class labels are sorted, and probability columns follow that order. Models
 /// fitted on a single class expose one probability column containing `1.0`.
+///
+/// [`fit`](Self::fit) takes binary targets and keeps the asymmetric
+/// scalar-leaf representation FerricML froze first.
+/// [`fit_multiclass`](Self::fit_multiclass) takes any observed class set and
+/// fits natively multiclass trees whose ensemble probability is the **mean of
+/// the per-tree probability vectors** — soft averaging, not a majority vote of
+/// per-tree labels. The two are different models even on the same two-class
+/// data, and only the binary one persists to an artifact today.
 #[derive(Clone, Debug, PartialEq)]
 pub struct RandomForestClassifier {
     pub(super) n_features_in: usize,
     pub(super) params: RandomForestClassifierParams,
     pub(super) classes: Vec<u8>,
-    pub(super) trees: Vec<PackedTree>,
+    pub(super) forest: Forest,
 }
 
 /// A random-forest regressor.  Predictions are averages of tree leaf means.
@@ -77,6 +106,10 @@ impl RandomForestClassifier {
         &self.classes
     }
 
+    /// Fits a binary classifier over `0`/`1` targets.
+    ///
+    /// This is the asymmetric scalar-leaf fit: each tree stores the probability
+    /// of class `1` and the ensemble averages that scalar.
     pub fn fit(
         data: &MatrixView<'_>,
         targets: &BinaryTargets,
@@ -102,49 +135,118 @@ impl RandomForestClassifier {
             n_features_in: data.columns(),
             params,
             classes,
-            trees,
+            forest: Forest::Binary(trees),
+        })
+    }
+
+    /// Fits a natively multiclass classifier over any observed class set.
+    ///
+    /// Each tree splits on multiclass Gini impurity and stores one probability
+    /// per class at every leaf. The ensemble probability is the **mean of the
+    /// per-tree probability vectors**, which is a strictly different rule from
+    /// a majority vote over per-tree labels — soft averaging produces values a
+    /// vote cannot, and the two disagree on real data.
+    ///
+    /// A single observed class is accepted: the fit succeeds with one
+    /// probability column containing `1.0`, matching the single-class contract
+    /// the binary entry point already has. Two observed classes are also
+    /// accepted and produce a vector-leaf model, which is a different — and
+    /// deliberately not interchangeable — model from [`Self::fit`] on the same
+    /// data.
+    pub fn fit_multiclass(
+        data: &MatrixView<'_>,
+        targets: &ClassTargets,
+        params: RandomForestClassifierParams,
+    ) -> Result<Self, ModelError> {
+        let config = ForestConfig::from(&params);
+        validate_common(data, targets.len(), &config)?;
+        let classes = targets.classes().to_vec();
+        let class_of_row = targets
+            .as_slice()
+            .iter()
+            .map(|&label| {
+                targets
+                    .class_index(label)
+                    .expect("every target label is an observed class")
+            })
+            .collect::<Vec<_>>();
+        let trees = train_class_forest(data, &class_of_row, classes.len(), &config)?;
+        Ok(Self {
+            n_features_in: data.columns(),
+            params,
+            classes,
+            forest: Forest::Multiclass(trees),
         })
     }
 
     /// Predicts the class label for one sample.
     pub fn predict_one(&self, row: &[f32]) -> Result<u8, ModelError> {
         check_row(row, self.n_features_in)?;
-        if self.classes.len() == 1 {
-            return Ok(self.classes[0]);
+        match &self.forest {
+            Forest::Binary(trees) => {
+                if self.classes.len() == 1 {
+                    return Ok(self.classes[0]);
+                }
+                let positive = mean_tree_prediction(trees, row).clamp(0.0, 1.0);
+                // `classes` is sorted as [0, 1]. An exact tie selects its first class.
+                Ok(u8::from(positive > 0.5))
+            }
+            Forest::Multiclass(trees) => {
+                let mut storage = [0.0_f32; MAX_CLASSES];
+                let probabilities = &mut storage[..self.classes.len()];
+                average_class_probabilities(trees, row, probabilities);
+                Ok(self.classes[argmax(probabilities)])
+            }
         }
-        let positive = mean_tree_prediction(&self.trees, row).clamp(0.0, 1.0);
-        // `classes` is sorted as [0, 1]. An exact tie selects its first class.
-        Ok(u8::from(positive > 0.5))
     }
 
     /// Predicts one label per row, allocating the output vector.
     pub fn predict(&self, data: &MatrixView<'_>) -> Result<Vec<u8>, ModelError> {
-        if self.classes.len() == 1 {
-            check_prediction_data(data, data.rows(), data.rows(), self.n_features_in)?;
-            return Ok(vec![self.classes[0]; data.rows()]);
+        match &self.forest {
+            Forest::Binary(_) => {
+                if self.classes.len() == 1 {
+                    check_prediction_data(data, data.rows(), data.rows(), self.n_features_in)?;
+                    return Ok(vec![self.classes[0]; data.rows()]);
+                }
+                // The allocating API may use a temporary score buffer. Processing one
+                // tree across the batch keeps its nodes hot and is materially faster
+                // for the locked 32+ row workloads. The `_into` label API remains the
+                // strictly allocation-free option.
+                let mut scores = vec![0.0; data.rows()];
+                self.accumulate_positive_into(data, &mut scores)?;
+                Ok(scores
+                    .into_iter()
+                    .map(|positive| u8::from(positive > 0.5))
+                    .collect())
+            }
+            Forest::Multiclass(_) => <Self as Classifier>::predict(self, data),
         }
-        // The allocating API may use a temporary score buffer. Processing one
-        // tree across the batch keeps its nodes hot and is materially faster
-        // for the locked 32+ row workloads. The `_into` label API remains the
-        // strictly allocation-free option.
-        let mut scores = vec![0.0; data.rows()];
-        self.accumulate_positive_into(data, &mut scores)?;
-        Ok(scores
-            .into_iter()
-            .map(|positive| u8::from(positive > 0.5))
-            .collect())
     }
 
     /// Predicts one label per row without allocating.
     pub fn predict_into(&self, data: &MatrixView<'_>, output: &mut [u8]) -> Result<(), ModelError> {
         check_prediction_data(data, output.len(), data.rows(), self.n_features_in)?;
-        if self.classes.len() == 1 {
-            output.fill(self.classes[0]);
-            return Ok(());
-        }
-        for (row, slot) in data.iter_rows().zip(output) {
-            let positive = mean_tree_prediction(&self.trees, row).clamp(0.0, 1.0);
-            *slot = u8::from(positive > 0.5);
+        match &self.forest {
+            Forest::Binary(trees) => {
+                if self.classes.len() == 1 {
+                    output.fill(self.classes[0]);
+                    return Ok(());
+                }
+                for (row, slot) in data.iter_rows().zip(output) {
+                    let positive = mean_tree_prediction(trees, row).clamp(0.0, 1.0);
+                    *slot = u8::from(positive > 0.5);
+                }
+            }
+            Forest::Multiclass(trees) => {
+                let mut storage = [0.0_f32; MAX_CLASSES];
+                let probabilities = &mut storage[..self.classes.len()];
+                for (row, slot) in data.iter_rows().zip(output) {
+                    // Argmax of the averaged probabilities, so a label can never
+                    // disagree with the probability row a caller can read.
+                    average_class_probabilities(trees, row, probabilities);
+                    *slot = self.classes[argmax(probabilities)];
+                }
+            }
         }
         Ok(())
     }
@@ -164,12 +266,17 @@ impl RandomForestClassifier {
     ) -> Result<(), ModelError> {
         check_row(row, self.n_features_in)?;
         check_output_len(output.len(), self.classes.len())?;
-        if self.classes.len() == 1 {
-            output[0] = 1.0;
-        } else {
-            let positive = mean_tree_prediction(&self.trees, row).clamp(0.0, 1.0);
-            output[0] = 1.0 - positive;
-            output[1] = positive;
+        match &self.forest {
+            Forest::Binary(trees) => {
+                if self.classes.len() == 1 {
+                    output[0] = 1.0;
+                } else {
+                    let positive = mean_tree_prediction(trees, row).clamp(0.0, 1.0);
+                    output[0] = 1.0 - positive;
+                    output[1] = positive;
+                }
+            }
+            Forest::Multiclass(trees) => average_class_probabilities(trees, row, output),
         }
         Ok(())
     }
@@ -186,22 +293,46 @@ impl RandomForestClassifier {
         data: &MatrixView<'_>,
         output: &mut [f32],
     ) -> Result<(), ModelError> {
-        let expected = probability_output_len(data.rows(), self.classes.len())?;
+        let columns = self.classes.len();
+        let expected = probability_output_len(data.rows(), columns)?;
         check_prediction_data(data, output.len(), expected, self.n_features_in)?;
-        if self.classes.len() == 1 {
-            output.fill(1.0);
-            return Ok(());
-        }
-        output.fill(0.0);
-        for tree in &self.trees {
-            for (row, probabilities) in data.iter_rows().zip(output.chunks_exact_mut(2)) {
-                probabilities[1] += tree.predict(row);
+        match &self.forest {
+            Forest::Binary(trees) => {
+                if columns == 1 {
+                    output.fill(1.0);
+                    return Ok(());
+                }
+                output.fill(0.0);
+                for tree in trees {
+                    for (row, probabilities) in data.iter_rows().zip(output.chunks_exact_mut(2)) {
+                        probabilities[1] += tree.predict(row);
+                    }
+                }
+                for probabilities in output.chunks_exact_mut(2) {
+                    let positive = (probabilities[1] / trees.len() as f32).clamp(0.0, 1.0);
+                    probabilities[0] = 1.0 - positive;
+                    probabilities[1] = positive;
+                }
             }
-        }
-        for probabilities in output.chunks_exact_mut(2) {
-            let positive = (probabilities[1] / self.trees.len() as f32).clamp(0.0, 1.0);
-            probabilities[0] = 1.0 - positive;
-            probabilities[1] = positive;
+            Forest::Multiclass(trees) => {
+                // One tree across the whole batch, then the next, so each
+                // tree's nodes and leaf block stay hot.
+                output.fill(0.0);
+                for tree in trees {
+                    for (row, probabilities) in
+                        data.iter_rows().zip(output.chunks_exact_mut(columns))
+                    {
+                        for (slot, &value) in probabilities.iter_mut().zip(tree.probabilities(row))
+                        {
+                            *slot += value;
+                        }
+                    }
+                }
+                let divisor = trees.len() as f32;
+                for slot in output {
+                    *slot = (*slot / divisor).clamp(0.0, 1.0);
+                }
+            }
         }
         Ok(())
     }
@@ -210,15 +341,25 @@ impl RandomForestClassifier {
     pub fn predict_class_proba_one(&self, row: &[f32], class: u8) -> Result<f32, ModelError> {
         check_row(row, self.n_features_in)?;
         let class_index = self.class_index(class)?;
-        if self.classes.len() == 1 {
-            return Ok(1.0);
+        match &self.forest {
+            Forest::Binary(trees) => {
+                if self.classes.len() == 1 {
+                    return Ok(1.0);
+                }
+                let positive = mean_tree_prediction(trees, row).clamp(0.0, 1.0);
+                Ok(if class_index == 0 {
+                    1.0 - positive
+                } else {
+                    positive
+                })
+            }
+            Forest::Multiclass(trees) => {
+                let mut storage = [0.0_f32; MAX_CLASSES];
+                let probabilities = &mut storage[..self.classes.len()];
+                average_class_probabilities(trees, row, probabilities);
+                Ok(probabilities[class_index])
+            }
         }
-        let positive = mean_tree_prediction(&self.trees, row).clamp(0.0, 1.0);
-        Ok(if class_index == 0 {
-            1.0 - positive
-        } else {
-            positive
-        })
     }
 
     /// Predicts one fitted-class probability column, allocating the output.
@@ -239,14 +380,26 @@ impl RandomForestClassifier {
     ) -> Result<(), ModelError> {
         let class_index = self.class_index(class)?;
         check_prediction_data(data, output.len(), data.rows(), self.n_features_in)?;
-        if self.classes.len() == 1 {
-            output.fill(1.0);
-            return Ok(());
-        }
-        self.accumulate_positive_into(data, output)?;
-        if class_index == 0 {
-            for slot in output {
-                *slot = 1.0 - *slot;
+        match &self.forest {
+            Forest::Binary(_) => {
+                if self.classes.len() == 1 {
+                    output.fill(1.0);
+                    return Ok(());
+                }
+                self.accumulate_positive_into(data, output)?;
+                if class_index == 0 {
+                    for slot in output {
+                        *slot = 1.0 - *slot;
+                    }
+                }
+            }
+            Forest::Multiclass(trees) => {
+                let mut storage = [0.0_f32; MAX_CLASSES];
+                let probabilities = &mut storage[..self.classes.len()];
+                for (row, slot) in data.iter_rows().zip(output) {
+                    average_class_probabilities(trees, row, probabilities);
+                    *slot = probabilities[class_index];
+                }
             }
         }
         Ok(())
@@ -257,17 +410,29 @@ impl RandomForestClassifier {
         data: &MatrixView<'_>,
         output: &mut [f32],
     ) -> Result<(), ModelError> {
+        let Forest::Binary(trees) = &self.forest else {
+            unreachable!("the scalar accumulation serves the binary fit only");
+        };
         check_prediction_data(data, output.len(), data.rows(), self.n_features_in)?;
         output.fill(0.0);
-        for tree in &self.trees {
+        for tree in trees {
             for (row, slot) in data.iter_rows().zip(output.iter_mut()) {
                 *slot += tree.predict(row);
             }
         }
         for slot in output {
-            *slot = (*slot / self.trees.len() as f32).clamp(0.0, 1.0);
+            *slot = (*slot / trees.len() as f32).clamp(0.0, 1.0);
         }
         Ok(())
+    }
+
+    /// The scalar trees of a binary fit, for in-crate structural tests.
+    #[cfg(test)]
+    pub(super) fn binary_trees(&self) -> &[PackedTree] {
+        match &self.forest {
+            Forest::Binary(trees) => trees,
+            Forest::Multiclass(_) => unreachable!("binary fixture"),
+        }
     }
 
     #[inline]
@@ -279,14 +444,16 @@ impl RandomForestClassifier {
 
     /// Returns the positive-class probability for one sample.
     ///
-    /// This explicit method preserves the Phase A probability behavior. The
-    /// label and two-column probability methods land in Phase B.
+    /// Defined only for a binary fit. A multiclass fit has no positive class
+    /// and reports [`ModelError::MulticlassOutput`] instead of returning one
+    /// column of a vector that has no distinguished member.
     pub fn predict_positive_proba(&self, row: &[f32]) -> Result<f32, ModelError> {
+        let trees = self.require_binary_forest()?;
         check_row(row, self.n_features_in)?;
         if self.classes.len() == 1 {
             return Ok(f32::from(self.classes[0]));
         }
-        Ok(mean_tree_prediction(&self.trees, row).clamp(0.0, 1.0))
+        Ok(mean_tree_prediction(trees, row).clamp(0.0, 1.0))
     }
 
     /// Predict every row without allocating.  `output.len()` must equal the
@@ -296,23 +463,35 @@ impl RandomForestClassifier {
         data: &MatrixView<'_>,
         output: &mut [f32],
     ) -> Result<(), ModelError> {
+        let trees = self.require_binary_forest()?;
         check_prediction_data(data, output.len(), data.rows(), self.n_features_in)?;
         if self.classes.len() == 1 {
             output.fill(f32::from(self.classes[0]));
             return Ok(());
         }
         for (index, slot) in output.iter_mut().enumerate() {
-            *slot =
-                mean_tree_prediction(&self.trees, data.row(index).expect("validated row index"))
-                    .clamp(0.0, 1.0);
+            *slot = mean_tree_prediction(trees, data.row(index).expect("validated row index"))
+                .clamp(0.0, 1.0);
         }
         Ok(())
+    }
+
+    fn require_binary_forest(&self) -> Result<&[PackedTree], ModelError> {
+        match &self.forest {
+            Forest::Binary(trees) => Ok(trees),
+            Forest::Multiclass(_) => Err(ModelError::MulticlassOutput {
+                columns: self.classes.len(),
+            }),
+        }
     }
 
     /// Internal bytes used only for deterministic implementation tests.
     #[cfg(test)]
     pub(crate) fn to_bytes(&self) -> Vec<u8> {
-        packed_model_bytes(self.n_features_in, &self.trees, b"FRFC")
+        match &self.forest {
+            Forest::Binary(trees) => packed_model_bytes(self.n_features_in, trees, b"FRFC"),
+            Forest::Multiclass(_) => unreachable!("scalar packing is a binary-fit fixture"),
+        }
     }
 }
 
@@ -679,6 +858,48 @@ impl HasCapabilities for RandomForestRegressor {
 fn mean_tree_prediction(trees: &[PackedTree], row: &[f32]) -> f32 {
     let sum: f32 = trees.iter().map(|tree| tree.predict(row)).sum();
     sum / trees.len() as f32
+}
+
+/// Soft averaging: the mean of the per-tree probability vectors.
+///
+/// This is not a vote. Every tree contributes its whole leaf distribution, so
+/// the ensemble can produce values no count of `trees.len()` labels could —
+/// which is exactly what distinguishes the two rules observably.
+///
+/// The accumulation is in the storage width under rule 3 of the accumulation
+/// policy: the term count is the fitted tree count and every value is bounded
+/// by one.
+fn average_class_probabilities(trees: &[ClassTree], row: &[f32], output: &mut [f32]) {
+    debug_assert!(
+        trees
+            .first()
+            .is_none_or(|tree| tree.classes() == output.len())
+    );
+    output.fill(0.0);
+    for tree in trees {
+        for (slot, &value) in output.iter_mut().zip(tree.probabilities(row)) {
+            *slot += value;
+        }
+    }
+    let divisor = trees.len() as f32;
+    for slot in output {
+        *slot = (*slot / divisor).clamp(0.0, 1.0);
+    }
+}
+
+/// Index of the largest value, with an exact tie going to the lowest index.
+///
+/// Class labels are sorted, so this is the smallest tied *label* — which is not
+/// the same as the first class: with classes `[5, 9, 20]`, a tie between the
+/// last two selects `9`.
+fn argmax(values: &[f32]) -> usize {
+    let mut best = 0;
+    for index in 1..values.len() {
+        if values[index] > values[best] {
+            best = index;
+        }
+    }
+    best
 }
 
 fn check_row(row: &[f32], expected: usize) -> Result<(), ModelError> {

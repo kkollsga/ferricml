@@ -134,6 +134,13 @@ and releases use [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   any fitting (`Setup`) from a candidate's own failure (`Candidate`, keeping the
   fold index) and from a score that returns a value no ranking can order
   (`NonFiniteScore`).
+- `RandomForestClassifier::fit_multiclass`, a natively multiclass forest whose
+  trees split on multiclass Gini impurity and store one probability per class
+  at every leaf. The ensemble probability is the mean of the per-tree
+  probability vectors — soft averaging, not a majority vote of per-tree labels
+  — and the predicted label is the argmax of exactly those probabilities. A
+  single observed class fits and returns one all-ones column. Binary `fit`
+  keeps its scalar-leaf representation and every fitted value it had.
 - `LogisticRegression::fit_multiclass` and `fit_multiclass_weighted`, a joint
   multinomial fit over `data::ClassTargets`. It is one optimization over all
   classes, not a wrapper around per-class binary models: probabilities are the

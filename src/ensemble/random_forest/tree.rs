@@ -69,52 +69,73 @@ pub(super) struct PackedTree {
     pub(super) root_leaf: Option<f32>,
 }
 
+/// Packs validated build nodes into the inference layout.
+///
+/// `encode_leaf` turns a leaf's build-node index into the `u32` its parent's
+/// child slot carries. A scalar tree stores the leaf value's bits there; a
+/// class tree stores the leaf's ordinal, because `classes` probabilities do not
+/// fit in a child slot. Returning `None` means the root is itself a leaf, which
+/// has no parent slot to be stored in.
+///
+/// Packing runs once per fitted tree and is deliberately shared: the encoding
+/// of a leaf varies between tree flavours, but the pre-order token assignment
+/// that keeps a parent adjacent to its left descendants must not.
+fn pack_topology(
+    build: &[BuildNode],
+    n_features: usize,
+    mut encode_leaf: impl FnMut(usize) -> u32,
+) -> Result<Option<Vec<PackedNode>>, ModelError> {
+    validate_build_topology(build, n_features)?;
+    if build[0].is_leaf() {
+        return Ok(None);
+    }
+    let mut branch_indices = vec![NO_CHILD; build.len()];
+    let mut nodes = Vec::new();
+    // Assign tokens in the builder's pre-order so a parent and its left
+    // descendants remain adjacent during inference.
+    for (index, node) in build.iter().enumerate() {
+        if !node.is_leaf() {
+            let packed_index = u32::try_from(nodes.len()).map_err(|_| ModelError::TreeTooLarge)?;
+            nodes.push(PackedNode {
+                left: 0,
+                right: 0,
+                threshold: node.threshold(),
+                feature_and_flags: node.feature,
+            });
+            branch_indices[index] = packed_index;
+        }
+    }
+    for (index, node) in build.iter().enumerate().filter(|(_, node)| !node.is_leaf()) {
+        let packed = &mut nodes[branch_indices[index] as usize];
+        if build[node.left as usize].is_leaf() {
+            packed.feature_and_flags |= LEFT_IS_LEAF;
+            packed.left = encode_leaf(node.left as usize);
+        } else {
+            packed.left = branch_indices[node.left as usize];
+        }
+        if build[node.right as usize].is_leaf() {
+            packed.feature_and_flags |= RIGHT_IS_LEAF;
+            packed.right = encode_leaf(node.right as usize);
+        } else {
+            packed.right = branch_indices[node.right as usize];
+        }
+    }
+    Ok(Some(nodes))
+}
+
 impl PackedTree {
     pub(super) fn from_build_nodes(
         build: Vec<BuildNode>,
         n_features: usize,
     ) -> Result<Self, ModelError> {
-        validate_build_topology(&build, n_features)?;
-        if build[0].is_leaf() {
+        let Some(nodes) =
+            pack_topology(&build, n_features, |index| build[index].value().to_bits())?
+        else {
             return Ok(Self {
                 nodes: Vec::new(),
                 root_leaf: Some(build[0].value()),
             });
-        }
-        let mut branch_indices = vec![NO_CHILD; build.len()];
-        let mut nodes = Vec::new();
-        // Assign tokens in the builder's pre-order so a parent and its left
-        // descendants remain adjacent during inference.
-        for (index, node) in build.iter().enumerate() {
-            if !node.is_leaf() {
-                let packed_index =
-                    u32::try_from(nodes.len()).map_err(|_| ModelError::TreeTooLarge)?;
-                nodes.push(PackedNode {
-                    left: 0,
-                    right: 0,
-                    threshold: node.threshold(),
-                    feature_and_flags: node.feature,
-                });
-                branch_indices[index] = packed_index;
-            }
-        }
-        for (index, node) in build.iter().enumerate().filter(|(_, node)| !node.is_leaf()) {
-            let left = build[node.left as usize];
-            let right = build[node.right as usize];
-            let packed = &mut nodes[branch_indices[index] as usize];
-            if left.is_leaf() {
-                packed.feature_and_flags |= LEFT_IS_LEAF;
-                packed.left = left.value().to_bits();
-            } else {
-                packed.left = branch_indices[node.left as usize];
-            }
-            if right.is_leaf() {
-                packed.feature_and_flags |= RIGHT_IS_LEAF;
-                packed.right = right.value().to_bits();
-            } else {
-                packed.right = branch_indices[node.right as usize];
-            }
-        }
+        };
         let tree = Self {
             nodes,
             root_leaf: None,
@@ -287,6 +308,156 @@ impl PackedTree {
             })
             .collect();
         Self::from_build_nodes(build, n_features).map_err(|_| ArtifactError::InvalidPayload)
+    }
+}
+
+/// A decision tree whose leaves store one probability per class.
+///
+/// The packed layout stores a scalar leaf inline in its parent's child slot,
+/// which `classes` probabilities cannot fit in. The child slot therefore holds
+/// the leaf's **ordinal** — a plain index into [`ClassTree::probabilities`],
+/// not punned float bits — assigned in the same pre-order the branches are.
+/// Traversal is otherwise identical, and inference returns a borrowed row of
+/// probabilities so a forest can average without allocating.
+#[derive(Clone, Debug, PartialEq)]
+pub(super) struct ClassTree {
+    nodes: Vec<PackedNode>,
+    /// Row-major, one row of `classes` values per leaf ordinal. A tree whose
+    /// root is a leaf has no branches and exactly one row.
+    probabilities: Vec<f32>,
+    classes: usize,
+}
+
+impl ClassTree {
+    /// Builds a class tree from validated build nodes and their retained
+    /// per-node class weights.
+    ///
+    /// `weights[i]` is the total weight reaching build node `i` and
+    /// `class_weights[i * classes ..]` its per-class split, so a leaf's stored
+    /// probability is one division of `f64` accumulations narrowed once.
+    pub(super) fn from_build_nodes(
+        build: Vec<BuildNode>,
+        class_weights: &[f64],
+        weights: &[u64],
+        classes: usize,
+        n_features: usize,
+    ) -> Result<Self, ModelError> {
+        debug_assert_eq!(class_weights.len(), build.len() * classes);
+        debug_assert_eq!(weights.len(), build.len());
+        let mut probabilities = Vec::new();
+        let mut push_leaf = |index: usize| {
+            let total = weights[index] as f64;
+            for class in 0..classes {
+                probabilities.push((class_weights[index * classes + class] / total) as f32);
+            }
+        };
+        let mut ordinal = 0_u32;
+        let nodes = pack_topology(&build, n_features, |index| {
+            push_leaf(index);
+            let assigned = ordinal;
+            ordinal += 1;
+            assigned
+        })?;
+        let Some(nodes) = nodes else {
+            push_leaf(0);
+            return Ok(Self {
+                nodes: Vec::new(),
+                probabilities,
+                classes,
+            });
+        };
+        let tree = Self {
+            nodes,
+            probabilities,
+            classes,
+        };
+        if !tree.has_valid_class_topology(n_features) {
+            return Err(ModelError::TreeTooLarge);
+        }
+        Ok(tree)
+    }
+
+    /// Number of probability columns each leaf stores.
+    #[inline]
+    pub(super) fn classes(&self) -> usize {
+        self.classes
+    }
+
+    /// The leaf probabilities one row reaches.
+    #[inline(always)]
+    pub(super) fn probabilities(&self, row: &[f32]) -> &[f32] {
+        let ordinal = if self.nodes.is_empty() {
+            0
+        } else {
+            self.leaf_ordinal(row) as usize
+        };
+        &self.probabilities[ordinal * self.classes..(ordinal + 1) * self.classes]
+    }
+
+    #[inline(always)]
+    fn leaf_ordinal(&self, row: &[f32]) -> u32 {
+        let mut index = 0usize;
+        loop {
+            // SAFETY: `from_build_nodes` validates every branch token and every
+            // encoded feature against the immutable packed buffer before the
+            // model becomes observable, and public prediction validates `row`
+            // to the fitted width before entering traversal.
+            let node = unsafe { self.nodes.get_unchecked(index) };
+            // SAFETY: as above; the feature index is checked at construction.
+            let value =
+                unsafe { *row.get_unchecked((node.feature_and_flags & FEATURE_MASK) as usize) };
+            if value <= node.threshold {
+                if node.feature_and_flags & LEFT_IS_LEAF != 0 {
+                    return node.left;
+                }
+                index = node.left as usize;
+            } else {
+                if node.feature_and_flags & RIGHT_IS_LEAF != 0 {
+                    return node.right;
+                }
+                index = node.right as usize;
+            }
+        }
+    }
+
+    /// Every branch token is in range, every leaf ordinal addresses a stored
+    /// probability row, and every stored probability is a finite `0..=1`.
+    fn has_valid_class_topology(&self, n_features: usize) -> bool {
+        let leaves = self.nodes.len() + 1;
+        if self.probabilities.len() != leaves * self.classes || self.classes == 0 {
+            return false;
+        }
+        if !self
+            .probabilities
+            .iter()
+            .all(|value| value.is_finite() && (0.0..=1.0).contains(value))
+        {
+            return false;
+        }
+        self.nodes.iter().all(|node| {
+            ((node.feature_and_flags & FEATURE_MASK) as usize) < n_features
+                && node.threshold.is_finite()
+                && class_child_is_valid(
+                    node.left,
+                    node.feature_and_flags & LEFT_IS_LEAF,
+                    self.nodes.len(),
+                    leaves,
+                )
+                && class_child_is_valid(
+                    node.right,
+                    node.feature_and_flags & RIGHT_IS_LEAF,
+                    self.nodes.len(),
+                    leaves,
+                )
+        })
+    }
+}
+
+fn class_child_is_valid(value: u32, leaf_flag: u32, node_count: usize, leaves: usize) -> bool {
+    if leaf_flag != 0 {
+        (value as usize) < leaves
+    } else {
+        (value as usize) < node_count
     }
 }
 

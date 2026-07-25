@@ -1,7 +1,8 @@
+use super::model::Forest;
 use super::*;
 use crate::api::ModelError;
 use crate::artifact::{ArtifactError, RANDOM_FOREST_REGRESSOR_ARTIFACT_KIND};
-use crate::data::{BinaryTargets, DenseMatrix, RegressionTargets};
+use crate::data::{BinaryTargets, ClassTargets, DenseMatrix, RegressionTargets};
 use crate::ensemble::HistGradientBoostingRegressor;
 use crate::linear_model::Ridge;
 use sha2::{Digest, Sha256};
@@ -124,7 +125,7 @@ fn exact_classifier_split_and_leaf_probabilities_match_the_oracle() {
         .with_bootstrap(false)
         .with_max_features(MaxFeatures::All);
     let forest = RandomForestClassifier::fit(&x.as_view(), &y, cfg).unwrap();
-    let tree = &forest.trees[0];
+    let tree = &forest.binary_trees()[0];
     assert_eq!(tree.nodes.len(), 1);
     let root = &tree.nodes[0];
     assert_eq!(root.feature_and_flags & FEATURE_MASK, 0);
@@ -310,7 +311,7 @@ fn every_packed_tree_has_valid_topology() {
     let y = BinaryTargets::new(vec![0, 0, 1, 1, 0, 1, 0, 1]).unwrap();
     let forest = RandomForestClassifier::fit(&x.as_view(), &y, classifier_params(55)).unwrap();
     assert_eq!(std::mem::size_of::<PackedNode>(), 16);
-    for tree in &forest.trees {
+    for tree in forest.binary_trees() {
         assert!(!tree.nodes.is_empty() || tree.root_leaf.is_some());
         assert!(tree.root_leaf.is_none_or(f32::is_finite));
         for node in &tree.nodes {
@@ -342,7 +343,7 @@ fn pathological_deep_tree_uses_an_explicit_builder_stack() {
         .with_bootstrap(false)
         .with_max_features(MaxFeatures::All);
     let forest = RandomForestClassifier::fit(&x.as_view(), &y, cfg).unwrap();
-    assert_eq!(forest.trees[0].nodes.len(), ROWS - 1);
+    assert_eq!(forest.binary_trees()[0].nodes.len(), ROWS - 1);
 }
 
 /// Offsets into a version-2 envelope carrying one input schema: the fixed
@@ -622,4 +623,394 @@ fn regressor_artifact_refuses_models_whose_averaged_prediction_overflows() {
         model.to_artifact([1; 32]).unwrap_err(),
         ArtifactError::InvalidPayload
     );
+}
+
+// --------------------------------------------------------------- multiclass
+
+/// Twelve rows, two features, three classes with clearly separated regions.
+fn three_class_problem() -> (DenseMatrix, ClassTargets) {
+    let x = matrix(&[
+        &[0.0, 0.0],
+        &[0.5, 0.2],
+        &[0.2, 0.6],
+        &[1.0, 0.3],
+        &[2.0, 0.1],
+        &[1.8, 0.5],
+        &[2.2, 0.9],
+        &[0.3, 2.0],
+        &[0.8, 2.4],
+        &[1.2, 2.2],
+        &[1.0, 3.0],
+        &[0.1, 1.0],
+    ]);
+    (
+        x,
+        ClassTargets::new(vec![0, 0, 0, 0, 1, 1, 1, 2, 2, 2, 2, 0]).unwrap(),
+    )
+}
+
+fn multiclass_params(random_state: u64) -> RandomForestClassifierParams {
+    RandomForestClassifierParams::default()
+        .with_n_estimators(17)
+        .with_max_features(MaxFeatures::All)
+        .with_random_state(random_state)
+}
+
+#[test]
+fn the_ensemble_averages_per_tree_probability_vectors_rather_than_voting() {
+    // Four depth-one trees over three classes. A hard vote over four trees can
+    // only ever produce multiples of a quarter, so any other value is decisive
+    // evidence that whole distributions are being averaged.
+    let (x, y) = three_class_problem();
+    let model = RandomForestClassifier::fit_multiclass(
+        &x.as_view(),
+        &y,
+        RandomForestClassifierParams::default()
+            .with_n_estimators(4)
+            .with_max_depth(Some(1))
+            .with_bootstrap(false)
+            .with_max_features(MaxFeatures::All)
+            .with_random_state(0),
+    )
+    .unwrap();
+
+    let query = matrix(&[&[0.2, 0.3], &[2.0, 0.4], &[1.0, 3.0], &[1.0, 1.2]]);
+    let probabilities = model.predict_proba(&query.as_view()).unwrap();
+    assert_eq!(probabilities.len(), query.rows() * 3);
+
+    let quarter = 0.25_f32;
+    let off_grid = probabilities
+        .iter()
+        .filter(|value| (*value / quarter).fract() != 0.0)
+        .count();
+    assert!(
+        off_grid > 0,
+        "every value was a multiple of 1/4, which a hard vote could also have \
+         produced: {probabilities:?}"
+    );
+
+    // And the averaging identity itself: the ensemble row is the mean of the
+    // per-tree rows, to the rounding of one division.
+    for (row_index, row) in query.iter_rows().enumerate() {
+        let mut expected = [0.0_f64; 3];
+        let Forest::Multiclass(trees) = &model.forest else {
+            unreachable!("multiclass fit");
+        };
+        for tree in trees {
+            for (slot, &value) in expected.iter_mut().zip(tree.probabilities(row)) {
+                *slot += f64::from(value);
+            }
+        }
+        for (class, expected) in expected.iter().enumerate() {
+            let actual = f64::from(probabilities[row_index * 3 + class]);
+            assert!(
+                (actual - expected / 4.0).abs() <= 1.0e-6,
+                "row {row_index} class {class}: {actual} vs {}",
+                expected / 4.0
+            );
+        }
+    }
+}
+
+#[test]
+fn multiclass_labels_never_disagree_with_the_probability_argmax() {
+    for classes in 2..=6_u8 {
+        let rows = 240;
+        let mut values = Vec::with_capacity(rows * 3);
+        let mut labels = Vec::with_capacity(rows);
+        let mut state = 0x9e37_79b9_u64 + u64::from(classes);
+        for row in 0..rows {
+            for _ in 0..3 {
+                state = state
+                    .wrapping_mul(6_364_136_223_846_793_005)
+                    .wrapping_add(1_442_695_040_888_963_407);
+                values.push(((state >> 33) as f32 / (1_u32 << 31) as f32) * 4.0 - 2.0);
+            }
+            labels.push((row % usize::from(classes)) as u8);
+        }
+        let data = DenseMatrix::new(values, rows, 3).unwrap();
+        let targets = ClassTargets::new(labels).unwrap();
+        let model =
+            RandomForestClassifier::fit_multiclass(&data.as_view(), &targets, multiclass_params(3))
+                .unwrap();
+
+        let width = usize::from(classes);
+        let predicted = model.predict(&data.as_view()).unwrap();
+        let probabilities = model.predict_proba(&data.as_view()).unwrap();
+        let mut into = vec![0_u8; rows];
+        model.predict_into(&data.as_view(), &mut into).unwrap();
+        assert_eq!(into, predicted);
+        for (index, (label, row)) in predicted
+            .iter()
+            .zip(probabilities.chunks_exact(width))
+            .enumerate()
+        {
+            let mut best = 0;
+            for class in 1..width {
+                if row[class] > row[best] {
+                    best = class;
+                }
+            }
+            assert_eq!(*label, model.classes()[best], "row {index}");
+            assert_eq!(
+                model.predict_one(data.row(index).unwrap()).unwrap(),
+                *label,
+                "scalar path, row {index}"
+            );
+        }
+    }
+}
+
+#[test]
+fn multiclass_probability_rows_stay_inside_the_frozen_tolerance() {
+    let (x, y) = three_class_problem();
+    for estimators in [1_usize, 3, 17] {
+        let model = RandomForestClassifier::fit_multiclass(
+            &x.as_view(),
+            &y,
+            multiclass_params(1).with_n_estimators(estimators),
+        )
+        .unwrap();
+        for row in model
+            .predict_proba(&x.as_view())
+            .unwrap()
+            .chunks_exact(model.classes().len())
+        {
+            let sum = row.iter().sum::<f32>();
+            // Not renormalized: one is reached only to `n_classes` ulps.
+            assert!(
+                (sum - 1.0).abs() <= model.classes().len() as f32 * f32::EPSILON,
+                "{estimators} trees, row {row:?} sums to {sum}"
+            );
+            assert!(row.iter().all(|&value| (0.0..=1.0).contains(&value)));
+        }
+    }
+}
+
+#[test]
+fn multiclass_columns_follow_sorted_labels_with_no_contiguity_assumption() {
+    let (x, y) = three_class_problem();
+    let base =
+        RandomForestClassifier::fit_multiclass(&x.as_view(), &y, multiclass_params(5)).unwrap();
+    assert_eq!(base.classes(), &[0, 1, 2]);
+
+    let relabelled = ClassTargets::new(
+        y.as_slice()
+            .iter()
+            .map(|&label| match label {
+                0 => 7,
+                1 => 3,
+                _ => 10,
+            })
+            .collect(),
+    )
+    .unwrap();
+    let permuted =
+        RandomForestClassifier::fit_multiclass(&x.as_view(), &relabelled, multiclass_params(5))
+            .unwrap();
+    assert_eq!(permuted.classes(), &[3, 7, 10]);
+
+    // The trees are identical — only the class column order changed — so the
+    // probability rows must be an exact permutation, not merely similar.
+    let base_probabilities = base.predict_proba(&x.as_view()).unwrap();
+    let permuted_probabilities = permuted.predict_proba(&x.as_view()).unwrap();
+    for (base, permuted) in base_probabilities
+        .chunks_exact(3)
+        .zip(permuted_probabilities.chunks_exact(3))
+    {
+        assert_eq!(permuted, [base[1], base[0], base[2]]);
+    }
+    assert_eq!(
+        permuted.predict(&x.as_view()).unwrap(),
+        base.predict(&x.as_view())
+            .unwrap()
+            .into_iter()
+            .map(|label| match label {
+                0 => 7,
+                1 => 3,
+                _ => 10,
+            })
+            .collect::<Vec<_>>()
+    );
+    for (index, &label) in permuted.classes().iter().enumerate() {
+        let column = permuted.predict_class_proba(&x.as_view(), label).unwrap();
+        for (row, &value) in column.iter().enumerate() {
+            assert_eq!(value, permuted_probabilities[row * 3 + index]);
+        }
+        assert_eq!(
+            permuted
+                .predict_class_proba_one(x.row(0).unwrap(), label)
+                .unwrap(),
+            permuted_probabilities[index]
+        );
+    }
+    assert_eq!(
+        permuted.predict_class_proba(&x.as_view(), 0).unwrap_err(),
+        ModelError::UnknownClass { class: 0 }
+    );
+}
+
+#[test]
+fn a_strict_subset_tie_selects_the_lowest_tied_class_not_the_first() {
+    // One feature held constant, so no split can separate anything and every
+    // tree is a single leaf holding the class frequencies: 1/5, 2/5, 2/5.
+    let x = matrix(&[&[1.0], &[1.0], &[1.0], &[1.0], &[1.0]]);
+    let targets = ClassTargets::new(vec![5, 20, 20, 9, 9]).unwrap();
+    let model = RandomForestClassifier::fit_multiclass(
+        &x.as_view(),
+        &targets,
+        RandomForestClassifierParams::default()
+            .with_n_estimators(3)
+            .with_bootstrap(false)
+            .with_max_features(MaxFeatures::All)
+            .with_random_state(0),
+    )
+    .unwrap();
+    assert_eq!(model.classes(), &[5, 9, 20]);
+
+    let probabilities = model.predict_proba_one(&[1.0]).unwrap();
+    assert_eq!(probabilities, vec![0.2, 0.4, 0.4]);
+    assert_eq!(
+        probabilities[1].to_bits(),
+        probabilities[2].to_bits(),
+        "the tie must be exact, not near"
+    );
+    // Lowest *tied* index: label 9, not the first class 5.
+    assert_eq!(model.predict_one(&[1.0]).unwrap(), 9);
+    assert_eq!(model.predict(&x.as_view()).unwrap(), vec![9; 5]);
+}
+
+#[test]
+fn a_single_observed_class_fits_and_returns_one_all_ones_column() {
+    let (x, _) = three_class_problem();
+    for label in [0_u8, 3, 200] {
+        let targets = ClassTargets::new(vec![label; x.rows()]).unwrap();
+        let model =
+            RandomForestClassifier::fit_multiclass(&x.as_view(), &targets, multiclass_params(9))
+                .unwrap();
+        assert_eq!(model.classes(), &[label]);
+        let probabilities = model.predict_proba(&x.as_view()).unwrap();
+        assert_eq!(probabilities, vec![1.0; x.rows()]);
+        assert_eq!(model.predict(&x.as_view()).unwrap(), vec![label; x.rows()]);
+        assert_eq!(
+            model.predict_proba_one(x.row(0).unwrap()).unwrap(),
+            vec![1.0]
+        );
+        assert_eq!(
+            model.predict_class_proba(&x.as_view(), label).unwrap(),
+            vec![1.0; x.rows()]
+        );
+    }
+}
+
+#[test]
+fn multiclass_fits_are_deterministic_across_thread_counts() {
+    let (x, y) = three_class_problem();
+    let serial =
+        RandomForestClassifier::fit_multiclass(&x.as_view(), &y, multiclass_params(11)).unwrap();
+    let repeat =
+        RandomForestClassifier::fit_multiclass(&x.as_view(), &y, multiclass_params(11)).unwrap();
+    let parallel = RandomForestClassifier::fit_multiclass(
+        &x.as_view(),
+        &y,
+        multiclass_params(11).with_n_jobs(NJobs::Count(4)),
+    )
+    .unwrap();
+    assert_eq!(serial, repeat);
+    // The thread count is retained in the parameters, so the trees themselves
+    // are what must match — a parallel fit is the same forest, not the same
+    // configuration.
+    assert_eq!(serial.forest, parallel.forest);
+    let different =
+        RandomForestClassifier::fit_multiclass(&x.as_view(), &y, multiclass_params(12)).unwrap();
+    assert_ne!(serial.forest, different.forest);
+}
+
+#[test]
+fn a_multiclass_fit_has_no_positive_class_and_validates_before_writing() {
+    let (x, y) = three_class_problem();
+    let model =
+        RandomForestClassifier::fit_multiclass(&x.as_view(), &y, multiclass_params(2)).unwrap();
+    let expected = ModelError::MulticlassOutput { columns: 3 };
+    assert_eq!(
+        model.predict_positive_proba(x.row(0).unwrap()).unwrap_err(),
+        expected
+    );
+    let mut sentinel = vec![9.0_f32; x.rows()];
+    assert_eq!(
+        model
+            .predict_positive_proba_into(&x.as_view(), &mut sentinel)
+            .unwrap_err(),
+        expected
+    );
+    assert!(sentinel.iter().all(|&value| value == 9.0));
+
+    let wrong_width = DenseMatrix::new(vec![1.0; x.rows() * 3], x.rows(), 3).unwrap();
+    let mut probabilities = vec![9.0_f32; x.rows() * 3];
+    assert_eq!(
+        model
+            .predict_proba_into(&wrong_width.as_view(), &mut probabilities)
+            .unwrap_err(),
+        ModelError::FeatureDimension {
+            expected: 2,
+            actual: 3
+        }
+    );
+    assert!(probabilities.iter().all(|&value| value == 9.0));
+
+    let mut short = vec![9.0_f32; 2];
+    assert_eq!(
+        model
+            .predict_proba_into(&x.as_view(), &mut short)
+            .unwrap_err(),
+        ModelError::OutputLength {
+            expected: x.rows() * 3,
+            actual: 2
+        }
+    );
+    assert!(short.iter().all(|&value| value == 9.0));
+}
+
+#[test]
+fn multiclass_fitting_validates_targets_and_configuration_before_training() {
+    let (x, _) = three_class_problem();
+    assert_eq!(
+        RandomForestClassifier::fit_multiclass(
+            &x.as_view(),
+            &ClassTargets::new(vec![0, 1, 2]).unwrap(),
+            multiclass_params(0),
+        )
+        .unwrap_err(),
+        ModelError::TargetLength {
+            rows: 12,
+            targets: 3
+        }
+    );
+    let targets = ClassTargets::new(vec![0; x.rows()]).unwrap();
+    assert_eq!(
+        RandomForestClassifier::fit_multiclass(
+            &x.as_view(),
+            &targets,
+            multiclass_params(0).with_n_estimators(0),
+        )
+        .unwrap_err(),
+        ModelError::InvalidEstimatorCount
+    );
+    assert_eq!(
+        RandomForestClassifier::fit_multiclass(
+            &x.as_view(),
+            &targets,
+            multiclass_params(0).with_min_samples_split(1),
+        )
+        .unwrap_err(),
+        ModelError::InvalidMinSamplesSplit
+    );
+}
+
+#[test]
+fn separable_multiclass_regions_are_recovered() {
+    let (x, y) = three_class_problem();
+    let model =
+        RandomForestClassifier::fit_multiclass(&x.as_view(), &y, multiclass_params(4)).unwrap();
+    assert_eq!(model.predict(&x.as_view()).unwrap(), y.as_slice());
 }
