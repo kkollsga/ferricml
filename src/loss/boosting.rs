@@ -6,8 +6,49 @@
 //! stays a search over histograms and the objective stays the only place a
 //! derivative is written down.
 
+use super::binary_log_loss::BinaryLogLoss;
 use super::objective::Objective;
+use super::squared_error::SquaredError;
 use crate::numeric::sum_in_order;
+
+/// What a boosted tree needs from an objective beyond the shared contract.
+///
+/// The [`Objective`] contract is deliberately per-sample and solver-agnostic.
+/// A histogram grower needs one thing more that is specific to *this* consumer
+/// — how a node's second-order denominator is formed, which is the only place a
+/// constant hessian and a varying one differ — and stating it here keeps it out
+/// of the crate-wide contract every other solver would then have to satisfy.
+///
+/// The member is an associated function, so a grower resolves it at compile
+/// time and no per-row branch on the concrete loss can appear by accident.
+pub(crate) trait BoostingObjective: Objective {
+    /// Second-order denominator of one node, before L2 regularization.
+    ///
+    /// `weight` is the node's total sample weight and `hessian_sum` is the
+    /// weighted sum of its per-sample hessians. An objective whose hessian is
+    /// constant reads the first and ignores the second, which is exactly what
+    /// lets its grower skip accumulating a hessian histogram at all; an
+    /// objective with a varying hessian does the reverse.
+    ///
+    /// Expressing the choice as an associated function rather than a branch on
+    /// [`Objective::CONSTANT_HESSIAN`] is deliberate: the constant arm's
+    /// `weight * hessian` is only *meaningful* where the hessian really is
+    /// constant, and a trait implementation is where that precondition can be
+    /// stated once instead of asserted at every call.
+    fn node_hessian_total(weight: f64, hessian_sum: f64) -> f64;
+}
+
+impl BoostingObjective for SquaredError {
+    fn node_hessian_total(weight: f64, _hessian_sum: f64) -> f64 {
+        constant_hessian_total::<Self>(weight)
+    }
+}
+
+impl BoostingObjective for BinaryLogLoss {
+    fn node_hessian_total(_weight: f64, hessian_sum: f64) -> f64 {
+        hessian_sum
+    }
+}
 
 /// Sum of the negative gradients carried by one node's samples.
 ///
@@ -25,16 +66,40 @@ pub(crate) fn negative_gradient_sum(
     negative_gradients: &[f32],
     sample_weights: Option<&[f32]>,
 ) -> f64 {
+    weighted_sample_sum(samples, negative_gradients, sample_weights)
+}
+
+/// Weighted sum of the hessians carried by one node's samples.
+///
+/// This is the other half of the statistic pair a Newton step needs, and it is
+/// accumulated only for an objective whose hessian actually varies — a constant
+/// one is recovered from the node's weight total instead, which is both cheaper
+/// and exactly equal. The reduction is the same one
+/// [`negative_gradient_sum`] performs, so the two statistics of one node are
+/// summed in the same order and a weight of `k` remains the contribution of `k`
+/// copies of the row for both.
+#[inline]
+pub(crate) fn hessian_sum(
+    samples: &[usize],
+    hessians: &[f32],
+    sample_weights: Option<&[f32]>,
+) -> f64 {
+    weighted_sample_sum(samples, hessians, sample_weights)
+}
+
+/// The one reduction both node statistics use.
+///
+/// Written once so the gradient and hessian halves of a node cannot drift into
+/// different accumulation orders, which would make a fitted leaf depend on
+/// which statistic a future edit touched.
+#[inline]
+fn weighted_sample_sum(samples: &[usize], values: &[f32], sample_weights: Option<&[f32]>) -> f64 {
     match sample_weights {
-        None => sum_in_order(
-            samples
-                .iter()
-                .map(|&sample| f64::from(negative_gradients[sample])),
-        ),
+        None => sum_in_order(samples.iter().map(|&sample| f64::from(values[sample]))),
         Some(weights) => sum_in_order(
             samples
                 .iter()
-                .map(|&sample| f64::from(weights[sample]) * f64::from(negative_gradients[sample])),
+                .map(|&sample| f64::from(weights[sample]) * f64::from(values[sample])),
         ),
     }
 }
@@ -89,7 +154,8 @@ pub(crate) fn newton_split_score(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::loss::SquaredError;
+    use crate::loss::{BinaryLogLoss, SquaredError};
+    use crate::numeric::sigmoid_f64;
 
     #[test]
     fn a_constant_hessian_total_is_the_weight_total_for_squared_error() {
@@ -169,6 +235,88 @@ mod tests {
         assert_eq!(
             negative_gradient_sum(&samples, &negative_gradients, Some(&[1.0, 0.0, 1.0])),
             negative_gradient_sum(&[0_usize, 2], &negative_gradients, None)
+        );
+    }
+
+    /// Squared error reads its denominator from the weight total and log loss
+    /// from the hessian sum, and neither reads the other's argument.
+    #[test]
+    fn each_objective_forms_its_denominator_from_the_statistic_it_declares() {
+        for weight in [0.0_f64, 1.0, 7.5, 4096.0] {
+            for hessian in [0.0_f64, 0.25, 3.5] {
+                assert_eq!(
+                    SquaredError::node_hessian_total(weight, hessian).to_bits(),
+                    weight.to_bits(),
+                    "squared error must ignore a hessian sum"
+                );
+                assert_eq!(
+                    BinaryLogLoss::node_hessian_total(weight, hessian).to_bits(),
+                    hessian.to_bits(),
+                    "log loss must ignore a weight total"
+                );
+            }
+        }
+    }
+
+    /// The accumulated hessian sum is the quantity a Newton leaf divides by, so
+    /// a leaf of log-loss residuals is the reference's `sum(y - p) / sum(p(1-p))`
+    /// rather than a plain mean.
+    #[test]
+    fn a_log_loss_leaf_divides_by_the_accumulated_curvature() {
+        let raws = [-2.0_f64, 0.0, 1.5, 3.0];
+        let targets = [1.0_f64, 0.0, 1.0, 1.0];
+        let negative_gradients = raws
+            .iter()
+            .zip(targets)
+            .map(|(&raw, target)| BinaryLogLoss::negative_gradient(raw, target) as f32)
+            .collect::<Vec<_>>();
+        let hessians = raws
+            .iter()
+            .map(|&raw| BinaryLogLoss::hessian(raw, 0.0) as f32)
+            .collect::<Vec<_>>();
+        let samples = [0_usize, 1, 2, 3];
+        let gradient = negative_gradient_sum(&samples, &negative_gradients, None);
+        let curvature = hessian_sum(&samples, &hessians, None);
+        assert_eq!(
+            BinaryLogLoss::node_hessian_total(samples.len() as f64, curvature),
+            curvature
+        );
+
+        let expected_gradient = raws
+            .iter()
+            .zip(targets)
+            .map(|(&raw, target)| target - sigmoid_f64(raw))
+            .fold(-0.0_f64, |sum, term| sum + f64::from(term as f32));
+        let expected_curvature = raws
+            .iter()
+            .map(|&raw| sigmoid_f64(raw) * (1.0 - sigmoid_f64(raw)))
+            .fold(-0.0_f64, |sum, term| sum + f64::from(term as f32));
+        assert_eq!(gradient.to_bits(), expected_gradient.to_bits());
+        assert_eq!(curvature.to_bits(), expected_curvature.to_bits());
+        assert_eq!(
+            newton_leaf_value(gradient, curvature, 0.0),
+            (expected_gradient / expected_curvature) as f32
+        );
+    }
+
+    /// A weight of `k` scales a hessian exactly as it scales a gradient, which
+    /// is what keeps "an integer weight equals repeating the row" true for a
+    /// varying-hessian objective too.
+    #[test]
+    fn a_sample_weight_scales_a_hessian_like_repeating_its_row() {
+        let hessians = [0.25_f32, 0.1875, 0.09];
+        let samples = [0_usize, 1, 2];
+        assert_eq!(
+            hessian_sum(&samples, &hessians, Some(&[1.0, 1.0, 1.0])).to_bits(),
+            hessian_sum(&samples, &hessians, None).to_bits()
+        );
+        assert_eq!(
+            hessian_sum(&samples, &hessians, Some(&[1.0, 3.0, 1.0])),
+            hessian_sum(&[0_usize, 1, 1, 1, 2], &hessians, None)
+        );
+        assert_eq!(
+            hessian_sum(&samples, &hessians, Some(&[1.0, 0.0, 1.0])),
+            hessian_sum(&[0_usize, 2], &hessians, None)
         );
     }
 

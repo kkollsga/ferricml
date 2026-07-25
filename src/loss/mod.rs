@@ -37,7 +37,7 @@ mod squared_error;
 
 pub(crate) use binary_log_loss::BinaryLogLoss;
 pub(crate) use boosting::{
-    constant_hessian_total, negative_gradient_sum, newton_leaf_value, newton_split_score,
+    BoostingObjective, hessian_sum, negative_gradient_sum, newton_leaf_value, newton_split_score,
 };
 pub(crate) use linear::{accumulate_newton_row, raw_score};
 pub(crate) use objective::Objective;

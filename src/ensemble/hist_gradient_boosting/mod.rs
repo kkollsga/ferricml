@@ -5,7 +5,7 @@ use self::error::{
     BoostingError, MAX_BINS, MAX_TOTAL_NODES, MAX_TREE_DEPTH, MAX_TREE_LEAVES, MAX_TREE_NODES,
     MAX_TREES,
 };
-use self::grower::{GrowConfig, grow_tree};
+use self::grower::{GrowConfig, SampleStatistics, grow_tree};
 use self::predictor::CompactTree;
 use crate::api::{
     Capabilities, Estimator, HasCapabilities, HasParams, ModelError, Regressor,
@@ -221,8 +221,17 @@ impl HistGradientBoostingRegressor {
             l2_regularization: params.l2_regularization,
         };
         for _ in 0..params.max_iter {
-            let tree = grow_tree::<SquaredError>(&binned, &binner, &residuals, weights, config)
-                .map_err(map_boosting_error)?;
+            let tree = grow_tree::<SquaredError>(
+                &binned,
+                &binner,
+                SampleStatistics {
+                    negative_gradients: &residuals,
+                    hessians: &[],
+                    sample_weights: weights,
+                },
+                config,
+            )
+            .map_err(map_boosting_error)?;
             tree.add_predictions(data, params.learning_rate, &mut predictions);
             if predictions.iter().any(|value| !value.is_finite()) {
                 return Err(ModelError::NumericalOverflow);
