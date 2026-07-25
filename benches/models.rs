@@ -27,8 +27,9 @@ use ferricml::model_selection::{
 };
 use ferricml::pipeline::{Pipeline, StagedPipeline};
 use ferricml::preprocessing::{
-    MaxAbsScaler, MaxAbsScalerParams, MinMaxScaler, MinMaxScalerParams, StandardScaler,
-    StandardScalerParams,
+    Binarizer, BinarizerParams, FunctionTransformer, FunctionTransformerParams, MaxAbsScaler,
+    MaxAbsScalerParams, MinMaxScaler, MinMaxScalerParams, Normalizer, NormalizerParams,
+    RobustScaler, RobustScalerParams, StandardScaler, StandardScalerParams,
 };
 use ferricml::ranking::{
     PairIndex, PairOutcome, PairwiseLinearRanker, PairwiseLinearRankerParams, PairwiseObservation,
@@ -995,12 +996,28 @@ fn baselines(c: &mut Criterion) {
 /// from the sprint that added it. The lanes cover both halves that can drift
 /// independently: per-column scaling itself, and the workspace splitting a
 /// multi-stage composition adds on top of the stages it runs.
+/// The map the elementwise-transformer workload applies.
+///
+/// A named `fn` because `FunctionTransformer` takes a function pointer, which
+/// is what keeps the type nameable and its capability declaration visible.
+fn bench_scale(value: f32) -> f32 {
+    value * 1.5
+}
+
 fn transformers_and_staged_pipelines(c: &mut Criterion) {
     let (training, targets) = fixture(ROWS, COLUMNS);
     let (inference, _) = fixture(INFERENCE_ROWS, COLUMNS);
 
     let min_max = MinMaxScaler::fit(&training.as_view(), MinMaxScalerParams::default()).unwrap();
     let max_abs = MaxAbsScaler::fit(&training.as_view(), MaxAbsScalerParams).unwrap();
+    let robust = RobustScaler::fit(&training.as_view(), RobustScalerParams::default()).unwrap();
+    let normalizer = Normalizer::fit(&training.as_view(), NormalizerParams::default()).unwrap();
+    let binarizer = Binarizer::fit(&training.as_view(), BinarizerParams::default()).unwrap();
+    let elementwise = FunctionTransformer::fit(
+        &training.as_view(),
+        FunctionTransformerParams::default().with_func(bench_scale),
+    )
+    .unwrap();
 
     let mut transformed = vec![0.0; INFERENCE_ROWS * COLUMNS];
     let mut into = c.benchmark_group("ferricml_transformers_v1_into_1024x48");
@@ -1023,10 +1040,71 @@ fn transformers_and_staged_pipelines(c: &mut Criterion) {
             );
         });
     });
+    into.bench_function(BenchmarkId::from_parameter("robust"), |bencher| {
+        bencher.iter(|| {
+            black_box(
+                robust
+                    .transform_into(black_box(&inference.as_view()), black_box(&mut transformed))
+                    .unwrap(),
+            );
+        });
+    });
+    into.bench_function(BenchmarkId::from_parameter("normalizer"), |bencher| {
+        bencher.iter(|| {
+            black_box(
+                normalizer
+                    .transform_into(black_box(&inference.as_view()), black_box(&mut transformed))
+                    .unwrap(),
+            );
+        });
+    });
+    into.bench_function(BenchmarkId::from_parameter("binarizer"), |bencher| {
+        bencher.iter(|| {
+            black_box(
+                binarizer
+                    .transform_into(black_box(&inference.as_view()), black_box(&mut transformed))
+                    .unwrap(),
+            );
+        });
+    });
+    into.bench_function(BenchmarkId::from_parameter("elementwise"), |bencher| {
+        bencher.iter(|| {
+            black_box(
+                elementwise
+                    .transform_into(black_box(&inference.as_view()), black_box(&mut transformed))
+                    .unwrap(),
+            );
+        });
+    });
+    // The inverse direction is a separate lane: it is the only user-facing
+    // transform path whose cost is not visible from the forward one.
+    into.bench_function(BenchmarkId::from_parameter("robust_inverse"), |bencher| {
+        bencher.iter(|| {
+            black_box(
+                robust
+                    .inverse_transform_into(
+                        black_box(&inference.as_view()),
+                        black_box(&mut transformed),
+                    )
+                    .unwrap(),
+            );
+        });
+    });
     into.finish();
 
     let mut fit = c.benchmark_group("ferricml_transformers_v1_fit_2048x48");
     fit.throughput(Throughput::Elements(ROWS as u64));
+    fit.bench_function(BenchmarkId::from_parameter("robust"), |bencher| {
+        bencher.iter(|| {
+            black_box(
+                RobustScaler::fit(
+                    black_box(&training.as_view()),
+                    RobustScalerParams::default(),
+                )
+                .unwrap(),
+            );
+        });
+    });
     fit.bench_function(BenchmarkId::from_parameter("min_max"), |bencher| {
         bencher.iter(|| {
             black_box(
