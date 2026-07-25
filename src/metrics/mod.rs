@@ -68,6 +68,11 @@ pub enum MetricError {
     },
     /// An F-score beta was not finite and strictly positive.
     InvalidBeta,
+    /// The metric denominator or required class distribution is undefined.
+    Undefined,
+    // New variants are appended rather than inserted: this enum is
+    // `#[non_exhaustive]`, but shifting an existing variant's discriminant is
+    // still a change `cargo-semver-checks` reports, and it buys nothing.
     /// A class list was empty or not strictly increasing.
     ///
     /// A probability matrix's columns are identified by position, so the class
@@ -81,8 +86,6 @@ pub enum MetricError {
         /// The label that has no column.
         value: u8,
     },
-    /// The metric denominator or required class distribution is undefined.
-    Undefined,
 }
 
 impl fmt::Display for MetricError {
@@ -114,6 +117,7 @@ impl fmt::Display for MetricError {
                 "binary averaging requires labels 0 and 1, got {labels} distinct labels"
             ),
             Self::InvalidBeta => f.write_str("F-score beta must be finite and strictly positive"),
+            Self::Undefined => f.write_str("metric is undefined for these observations"),
             Self::InvalidClassSet => {
                 f.write_str("class list must be non-empty and strictly increasing")
             }
@@ -121,7 +125,6 @@ impl fmt::Display for MetricError {
                 f,
                 "expected label at index {index} is {value}, which has no probability column"
             ),
-            Self::Undefined => f.write_str("metric is undefined for these observations"),
         }
     }
 }
