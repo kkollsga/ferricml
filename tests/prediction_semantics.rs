@@ -22,7 +22,7 @@ use ferricml::artifact::ArtifactError;
 use ferricml::calibration::{
     CalibratedClassifier, IsotonicRegression, PlattCalibrator, PlattParams,
 };
-use ferricml::data::{BinaryTargets, DenseMatrix, RegressionTargets};
+use ferricml::data::{BinaryTargets, DenseMatrix, MatrixView, RegressionTargets};
 use ferricml::dummy::{
     DummyClassifier, DummyClassifierParams, DummyRegressor, DummyRegressorParams,
 };
@@ -32,6 +32,8 @@ use ferricml::ensemble::{
     RandomForestClassifier, RandomForestClassifierParams, RandomForestRegressor,
     RandomForestRegressorParams,
 };
+use ferricml::pipeline::{Pipeline, StagedPipeline};
+
 use ferricml::linear_model::{
     ElasticNet, ElasticNetParams, Lasso, LassoParams, LinearRegression, LinearRegressionParams,
     LogisticRegression, LogisticRegressionParams, Ridge, RidgeParams,
@@ -46,9 +48,11 @@ use ferricml::ranking::{
 };
 
 use support::conformance::{
-    ClassifierCase, OptionalFit, RegressorCase, RoundTrip, SCHEMA, Sample, ScalarClassifierCase,
-    ScalarRegressorCase, TransformerCase, check_batch_only_classifier, check_batch_only_regressor,
-    check_classifier, check_regressor, check_transformer,
+    ClassifierCase, FixtureShape, OptionalFit, RegressorCase, RoundTrip, SCHEMA, Sample,
+    ScalarClassifierCase, ScalarRegressorCase, TransformerCase, WorkspaceClassifierCase,
+    WorkspaceRegressorCase, check_batch_only_classifier, check_batch_only_regressor,
+    check_classifier, check_regressor, check_transformer, check_workspace_classifier,
+    check_workspace_regressor,
 };
 
 /// Second schema identity, for artifacts that bind an input and an output
@@ -224,11 +228,11 @@ any_classifier_case!(
 
 /// The two calibrated compositions, registered like any other classifier.
 ///
-/// The battery's one fixture is both the training and the calibration sample
-/// here, which is deliberately *not* how a calibrated model should be built —
-/// but these obligations are structural, and the fixture is the only data the
-/// battery has. Held-out calibration is proven in `tests/calibration.rs`, where
-/// there is room for two folds.
+/// The inner forest is fitted on `train` and the calibrator on `holdout`,
+/// which is what the composition's own documentation requires: a calibrator
+/// fitted on the rows its model already memorised measures that memory rather
+/// than the model's probabilities. The battery supplies the second sample, so
+/// the registration is honest rather than a structural approximation.
 struct IsotonicCalibratedForestCase;
 
 impl ClassifierCase for IsotonicCalibratedForestCase {
@@ -238,8 +242,8 @@ impl ClassifierCase for IsotonicCalibratedForestCase {
     fn fit(train: &Sample, holdout: &Sample) -> Result<Self::Model, ModelError> {
         CalibratedClassifier::fit_isotonic(
             RandomForestClassifierCase::fit(train, holdout)?,
-            &train.view(),
-            &train.labels,
+            &holdout.view(),
+            &holdout.labels,
         )
     }
 }
@@ -253,8 +257,8 @@ impl ClassifierCase for PlattCalibratedForestCase {
     fn fit(train: &Sample, holdout: &Sample) -> Result<Self::Model, ModelError> {
         CalibratedClassifier::fit_platt(
             RandomForestClassifierCase::fit(train, holdout)?,
-            &train.view(),
-            &train.labels,
+            &holdout.view(),
+            &holdout.labels,
             PlattParams::default(),
         )
     }
@@ -634,6 +638,313 @@ impl TransformerCase for MaxAbsScalerCase {
     }
 }
 
+/// A monotone map of one feature, registered on the univariate fixture.
+///
+/// It is a real `Regressor` and could not be registered at all while the
+/// battery had one eight-by-two dataset: a univariate estimator is required to
+/// reject a wider matrix, so the only shape on offer was one it must refuse.
+struct IsotonicRegressionCase;
+
+impl RegressorCase for IsotonicRegressionCase {
+    type Model = IsotonicRegression;
+    const NAME: &'static str = "IsotonicRegression";
+    const FIXTURE: FixtureShape = FixtureShape::Univariate;
+
+    fn fit(train: &Sample, _holdout: &Sample) -> Result<Self::Model, ModelError> {
+        IsotonicRegression::fit(&train.view(), &train.values)
+    }
+}
+
+impl ScalarRegressorCase for IsotonicRegressionCase {
+    fn predict_one(model: &Self::Model, row: &[f32]) -> Result<f32, ModelError> {
+        model.predict_one(row)
+    }
+}
+
+/// One fitted scaler and one fitted classifier, predicted through a workspace.
+struct ScaledLogisticPipelineCase;
+
+impl WorkspaceClassifierCase for ScaledLogisticPipelineCase {
+    type Model = Pipeline<StandardScaler, LogisticRegression>;
+    const NAME: &'static str = "Pipeline<StandardScaler, LogisticRegression>";
+
+    fn fit(train: &Sample, _holdout: &Sample) -> Result<Self::Model, ModelError> {
+        let scaler = StandardScaler::fit(&train.view(), StandardScalerParams::default())?;
+        let transformed = scaler.transform(&train.view())?;
+        let estimator = LogisticRegression::fit(
+            &transformed.as_view(),
+            &train.labels,
+            LogisticRegressionParams::default(),
+        )?;
+        Pipeline::new(scaler, estimator)
+    }
+
+    fn round_trip(model: &Self::Model) -> RoundTrip<Self::Model> {
+        round_trip(
+            || model.to_artifact(SCHEMA, TRANSFORMED_SCHEMA),
+            |bytes| {
+                Pipeline::<StandardScaler, LogisticRegression>::from_artifact(
+                    bytes,
+                    SCHEMA,
+                    TRANSFORMED_SCHEMA,
+                )
+            },
+        )
+    }
+
+    fn workspace_len(model: &Self::Model, rows: usize) -> Result<usize, ModelError> {
+        model.workspace_len(rows)
+    }
+
+    fn classes(model: &Self::Model) -> Vec<u8> {
+        model.estimator().classes().to_vec()
+    }
+
+    fn predict(
+        model: &Self::Model,
+        data: &MatrixView<'_>,
+        workspace: &mut [f32],
+    ) -> Result<Vec<u8>, ModelError> {
+        model.with_transformed(data, workspace, |estimator, transformed| {
+            estimator.predict(transformed)
+        })
+    }
+
+    fn predict_into(
+        model: &Self::Model,
+        data: &MatrixView<'_>,
+        workspace: &mut [f32],
+        output: &mut [u8],
+    ) -> Result<(), ModelError> {
+        model.predict_into(data, workspace, output)
+    }
+
+    fn predict_proba(
+        model: &Self::Model,
+        data: &MatrixView<'_>,
+        workspace: &mut [f32],
+    ) -> Result<Vec<f32>, ModelError> {
+        model.with_transformed(data, workspace, |estimator, transformed| {
+            estimator.predict_proba(transformed)
+        })
+    }
+
+    fn predict_proba_into(
+        model: &Self::Model,
+        data: &MatrixView<'_>,
+        workspace: &mut [f32],
+        output: &mut [f32],
+    ) -> Result<(), ModelError> {
+        model.predict_proba_into(data, workspace, output)
+    }
+
+    fn predict_class_proba(
+        model: &Self::Model,
+        data: &MatrixView<'_>,
+        workspace: &mut [f32],
+        class: u8,
+    ) -> Result<Vec<f32>, ModelError> {
+        model.with_transformed(data, workspace, |estimator, transformed| {
+            Classifier::predict_class_proba(estimator, transformed, class)
+        })
+    }
+
+    fn predict_class_proba_into(
+        model: &Self::Model,
+        data: &MatrixView<'_>,
+        workspace: &mut [f32],
+        class: u8,
+        output: &mut [f32],
+    ) -> Result<(), ModelError> {
+        model.predict_class_proba_into(data, class, workspace, output)
+    }
+}
+
+macro_rules! scaled_regression_pipeline_case {
+    ($case:ident, $estimator:ty, $params:expr, $name:literal) => {
+        struct $case;
+
+        impl WorkspaceRegressorCase for $case {
+            type Model = Pipeline<StandardScaler, $estimator>;
+            const NAME: &'static str = $name;
+
+            fn fit(train: &Sample, _holdout: &Sample) -> Result<Self::Model, ModelError> {
+                let scaler = StandardScaler::fit(&train.view(), StandardScalerParams::default())?;
+                let transformed = scaler.transform(&train.view())?;
+                let estimator = <$estimator>::fit(&transformed.as_view(), &train.values, $params)?;
+                Pipeline::new(scaler, estimator)
+            }
+
+            fn round_trip(model: &Self::Model) -> RoundTrip<Self::Model> {
+                round_trip(
+                    || model.to_artifact(SCHEMA, TRANSFORMED_SCHEMA),
+                    |bytes| {
+                        Pipeline::<StandardScaler, $estimator>::from_artifact(
+                            bytes,
+                            SCHEMA,
+                            TRANSFORMED_SCHEMA,
+                        )
+                    },
+                )
+            }
+
+            fn workspace_len(model: &Self::Model, rows: usize) -> Result<usize, ModelError> {
+                model.workspace_len(rows)
+            }
+
+            fn predict(
+                model: &Self::Model,
+                data: &MatrixView<'_>,
+                workspace: &mut [f32],
+            ) -> Result<Vec<f32>, ModelError> {
+                model.with_transformed(data, workspace, |estimator, transformed| {
+                    estimator.predict(transformed)
+                })
+            }
+
+            fn predict_into(
+                model: &Self::Model,
+                data: &MatrixView<'_>,
+                workspace: &mut [f32],
+                output: &mut [f32],
+            ) -> Result<(), ModelError> {
+                model.predict_into(data, workspace, output)
+            }
+        }
+    };
+}
+
+scaled_regression_pipeline_case!(
+    ScaledRidgePipelineCase,
+    Ridge,
+    RidgeParams::default(),
+    "Pipeline<StandardScaler, Ridge>"
+);
+scaled_regression_pipeline_case!(
+    ScaledLinearPipelineCase,
+    LinearRegression,
+    LinearRegressionParams::default(),
+    "Pipeline<StandardScaler, LinearRegression>"
+);
+
+/// Two fitted transform stages and an estimator, predicted through one
+/// workspace split per stage.
+struct TwoStagePipelineCase;
+
+impl WorkspaceRegressorCase for TwoStagePipelineCase {
+    type Model = StagedPipeline<(MinMaxScaler, StandardScaler), Ridge>;
+    const NAME: &'static str = "StagedPipeline<(MinMaxScaler, StandardScaler), Ridge>";
+
+    fn fit(train: &Sample, _holdout: &Sample) -> Result<Self::Model, ModelError> {
+        StagedPipeline::fit(
+            &train.view(),
+            |batch| MinMaxScaler::fit(batch, MinMaxScalerParams::default()),
+            |batch| StandardScaler::fit(batch, StandardScalerParams::default()),
+            |batch| Ridge::fit(batch, &train.values, RidgeParams::default()),
+        )
+    }
+
+    fn round_trip(model: &Self::Model) -> RoundTrip<Self::Model> {
+        round_trip(
+            || model.to_artifact(SCHEMA, TRANSFORMED_SCHEMA),
+            |bytes| {
+                StagedPipeline::<(MinMaxScaler, StandardScaler), Ridge>::from_artifact(
+                    bytes,
+                    SCHEMA,
+                    TRANSFORMED_SCHEMA,
+                )
+            },
+        )
+    }
+
+    fn workspace_len(model: &Self::Model, rows: usize) -> Result<usize, ModelError> {
+        model.workspace_len(rows)
+    }
+
+    fn predict(
+        model: &Self::Model,
+        data: &MatrixView<'_>,
+        workspace: &mut [f32],
+    ) -> Result<Vec<f32>, ModelError> {
+        model.with_transformed(data, workspace, |estimator, transformed| {
+            estimator.predict(transformed)
+        })
+    }
+
+    fn predict_into(
+        model: &Self::Model,
+        data: &MatrixView<'_>,
+        workspace: &mut [f32],
+        output: &mut [f32],
+    ) -> Result<(), ModelError> {
+        model.with_transformed(data, workspace, |estimator, transformed| {
+            estimator.predict_into(transformed, output)
+        })
+    }
+}
+
+/// The three-stage arity, so both `TransformerStack` implementations are
+/// covered by a registration rather than by a bespoke test.
+struct ThreeStagePipelineCase;
+
+impl WorkspaceRegressorCase for ThreeStagePipelineCase {
+    type Model = StagedPipeline<(StandardScaler, MaxAbsScaler, MinMaxScaler), LinearRegression>;
+    const NAME: &'static str =
+        "StagedPipeline<(StandardScaler, MaxAbsScaler, MinMaxScaler), LinearRegression>";
+
+    fn fit(train: &Sample, _holdout: &Sample) -> Result<Self::Model, ModelError> {
+        let first = StandardScaler::fit(&train.view(), StandardScalerParams::default())?;
+        let after_first = first.transform(&train.view())?;
+        let second = MaxAbsScaler::fit(&after_first.as_view(), MaxAbsScalerParams)?;
+        let after_second = second.transform(&after_first.as_view())?;
+        let third = MinMaxScaler::fit(&after_second.as_view(), MinMaxScalerParams::default())?;
+        let transformed = third.transform(&after_second.as_view())?;
+        let estimator = LinearRegression::fit(
+            &transformed.as_view(),
+            &train.values,
+            LinearRegressionParams::default(),
+        )?;
+        StagedPipeline::new((first, second, third), estimator)
+    }
+
+    fn round_trip(model: &Self::Model) -> RoundTrip<Self::Model> {
+        round_trip(
+            || model.to_artifact(SCHEMA, TRANSFORMED_SCHEMA),
+            |bytes| {
+                StagedPipeline::<
+                    (StandardScaler, MaxAbsScaler, MinMaxScaler),
+                    LinearRegression,
+                >::from_artifact(bytes, SCHEMA, TRANSFORMED_SCHEMA)
+            },
+        )
+    }
+
+    fn workspace_len(model: &Self::Model, rows: usize) -> Result<usize, ModelError> {
+        model.workspace_len(rows)
+    }
+
+    fn predict(
+        model: &Self::Model,
+        data: &MatrixView<'_>,
+        workspace: &mut [f32],
+    ) -> Result<Vec<f32>, ModelError> {
+        model.with_transformed(data, workspace, |estimator, transformed| {
+            estimator.predict(transformed)
+        })
+    }
+
+    fn predict_into(
+        model: &Self::Model,
+        data: &MatrixView<'_>,
+        workspace: &mut [f32],
+        output: &mut [f32],
+    ) -> Result<(), ModelError> {
+        model.with_transformed(data, workspace, |estimator, transformed| {
+            estimator.predict_into(transformed, output)
+        })
+    }
+}
+
 // ----------------------------------------------------- registration list
 //
 // One line per estimator. `check_batch_only_*` is the weaker entry point and
@@ -729,6 +1040,35 @@ fn min_max_scaler_conforms() {
 fn max_abs_scaler_conforms() {
     check_transformer::<MaxAbsScalerCase>();
 }
+
+#[test]
+fn isotonic_regression_conforms() {
+    check_regressor::<IsotonicRegressionCase>();
+}
+
+#[test]
+fn fitted_pipelines_conform() {
+    check_workspace_classifier::<ScaledLogisticPipelineCase>();
+    check_workspace_regressor::<ScaledRidgePipelineCase>();
+    check_workspace_regressor::<ScaledLinearPipelineCase>();
+}
+
+#[test]
+fn staged_pipelines_conform_at_both_arities() {
+    check_workspace_regressor::<TwoStagePipelineCase>();
+    check_workspace_regressor::<ThreeStagePipelineCase>();
+}
+
+// Deliberately unregistered, with the reason stated rather than left as a gap:
+//
+// - `PlattCalibrator` is a `Calibrator`, not an `Estimator`: a fitted map of
+//   one score, with no fitted input width, no batch surface, and no capability
+//   declaration to check against behavior. Its obligations are in
+//   `tests/calibration.rs`.
+// - `TransformerStack` tuples are not `Estimator`s either. A stack is reached
+//   only through `StagedPipeline`, which is registered above at both arities,
+//   so its handoff validation and its disjoint workspace segments are covered
+//   by a registration rather than by a bespoke test.
 
 // -------------------------------------------------- estimator-specific tests
 
