@@ -5,8 +5,8 @@ use crate::artifact::{ArtifactError, MIN_MAX_SCALER_ARTIFACT_KIND};
 use crate::data::MatrixView;
 
 use super::scaling::{
-    decode_flag, decode_scaler_artifact, encode_scaler_artifact, transform_preflighted,
-    validate_transform_request,
+    decode_flag, decode_scaler_artifact, encode_scaler_artifact, substituted_divisor,
+    transform_preflighted, validate_transform_request,
 };
 
 /// Parameters for [`MinMaxScaler`].
@@ -212,12 +212,12 @@ impl MinMaxScaler {
 /// The multiplier that maps `[minimum, maximum]` onto `0.0..=1.0`.
 ///
 /// A column with no spread has no such multiplier, so it keeps one and is
-/// carried to `0.0` by its offset alone. This is the documented reference
-/// treatment of a constant or zero-range column, and it is what keeps a
-/// division by zero out of the transform.
+/// carried to `0.0` by its offset alone. The degeneracy test itself lives in
+/// [`substituted_divisor`], which every scaler here shares, so this function
+/// only expresses what is particular to min-max scaling: the multiplier is the
+/// reciprocal of the range.
 fn derive_scale(minimum: f64, maximum: f64) -> f64 {
-    let range = maximum - minimum;
-    if range == 0.0 { 1.0 } else { 1.0 / range }
+    1.0 / substituted_divisor(maximum - minimum)
 }
 
 impl Estimator for MinMaxScaler {

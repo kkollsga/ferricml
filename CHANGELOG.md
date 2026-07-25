@@ -52,6 +52,28 @@ and releases use [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- `preprocessing::RobustScaler` and `RobustScalerParams`: per-feature scaling by
+  a median and a quantile spread. Both statistics are order statistics, so a
+  handful of extreme rows move them far less than they move a mean and a
+  standard deviation. `with_quantile_range` selects the percentile pair whose
+  difference is removed — the interquartile range by default — and
+  `with_centering` / `with_scaling` select which statistic the transform
+  removes. Quantiles use linear interpolation between the two bracketing order
+  statistics (Hyndman–Fan type 7), applied uniformly including at the median.
+
+  A column with no spread keeps a divisor of one and survives as a constant,
+  the same exact-zero rule the other three scalers already use. A column whose
+  spread is merely *small* is scaled normally; if that overflows `f32` the
+  batch is rejected with the offending row and column before anything is
+  written, rather than being silently left unscaled.
+
+  `unit_variance` is deliberately not claimed: it needs an inverse-normal-CDF
+  primitive with its own accuracy contract, which is not worth adding to serve
+  one optional flag.
+- `api::ModelError::InvalidQuantileRange`, raised when a quantile range is not
+  two percentiles in `0.0..=100.0` with the lower value first. Equal
+  percentiles are accepted and produce a zero spread, which is a legitimate way
+  to ask for centering alone.
 - `model_selection::ScorableClassifier`, the view the scoring layer takes of a
   fitted classifier: `probabilistic` for one that produces probabilities,
   `labels_only` for one that does not. A label metric works for either; a

@@ -41,6 +41,16 @@ def directory_text(directory: Path) -> str:
     return "\n".join(path.read_text() for path in sorted(directory.glob("*.rs")))
 
 
+def tree_text(directory: Path) -> str:
+    """Every source file under `directory`, including its child modules.
+
+    Facades that grew into directories of per-family child modules need the
+    recursive form: a rule reading only the facade would stop seeing the code
+    that actually holds the dependencies.
+    """
+    return "\n".join(path.read_text() for path in sorted(directory.rglob("*.rs")))
+
+
 def crate_root_is_lib_only(root: Path) -> list[str]:
     root_sources = sorted(path.name for path in (root / "src").glob("*.rs"))
     if root_sources != ["lib.rs"]:
@@ -106,6 +116,29 @@ def quantile_definition_lives_only_in_numeric(root: Path) -> list[str]:
             if marker in text
         )
     return findings
+
+
+def preprocessing_sits_below_composition(root: Path) -> list[str]:
+    """Transformers are consumed by composition, never the other way round.
+
+    A fitted transformer is a self-contained map from one dense batch to
+    another. Pipelines, model selection, and the estimator families are its
+    *consumers*; naming one inside `preprocessing` would invert that dependency
+    and make a transformer's behaviour depend on what it happens to be composed
+    into. Keeping the arrow pointing one way is what lets the same scaler be
+    used standalone, as a pipeline stage, and inside a cross-validated search
+    without three variants of it existing. The module has to exist for the rule
+    to mean anything, so its absence is itself a finding rather than a silently
+    vacuous pass.
+    """
+    text = tree_text(root / "src" / "preprocessing")
+    if not text:
+        return ["preprocessing module is missing"]
+    return [
+        f"preprocessing depends on its own consumer {module}"
+        for module in ("pipeline", "model_selection", "ensemble", "linear_model")
+        if f"crate::{module}" in text
+    ]
 
 
 def inspection_uses_only_public_surfaces(root: Path) -> list[str]:
@@ -315,6 +348,7 @@ RULES: tuple[tuple[str, Callable[[Path], list[str]]], ...] = (
     ("ensemble-families-private", ensemble_families_stay_private),
     ("numeric-below-estimators", numeric_depends_on_no_estimator),
     ("quantile-single-source", quantile_definition_lives_only_in_numeric),
+    ("preprocessing-below-composition", preprocessing_sits_below_composition),
     ("inspection-public-surfaces-only", inspection_uses_only_public_surfaces),
     ("loss-below-estimators", loss_depends_on_no_estimator),
     ("optimize-below-estimators", optimize_depends_only_on_loss_and_numeric),
@@ -420,6 +454,14 @@ SYNTHETIC_VIOLATIONS: tuple[tuple[str, Callable[[Path], None], str], ...] = (
             "pub(crate) enum QuantileRule { Linear }\n",
         ),
         "quantile definition re-derived outside numeric",
+    ),
+    (
+        "preprocessing-below-composition",
+        lambda root: append(
+            root / "src" / "preprocessing" / "standard_scaler" / "mod.rs",
+            "use crate::pipeline::Pipeline;\n",
+        ),
+        "preprocessing depends on its own consumer pipeline",
     ),
     (
         "inspection-public-surfaces-only",

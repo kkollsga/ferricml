@@ -22,6 +22,27 @@ const PAYLOAD_VERSION: u16 = 1;
 const STATE_COMPONENT_KIND: u16 = 1;
 const STATE_COMPONENT_VERSION: u16 = 1;
 
+/// The divisor a column with no spread keeps.
+///
+/// FerricML has **one** degeneracy rule and this is it: a spread of exactly
+/// zero has no scale to divide by, so the column keeps a divisor of one and
+/// survives the transform as a constant instead of producing a non-finite
+/// value. Every scaler in this module reaches the rule through here — the
+/// standard scaler on a zero variance, the min-max scaler on a zero range, the
+/// max-abs scaler on an all-zero column, the robust scaler on a zero quantile
+/// spread — so there is one place to read it and one place it could ever
+/// change.
+///
+/// The test is exact equality with zero, deliberately, and not a small
+/// magnitude threshold. The substitution exists to keep a *constant* feature
+/// finite, and only an exactly-zero spread threatens that; a legitimately
+/// tiny-scaled column is real data and is scaled normally, with any resulting
+/// overflow reported by [`transform_preflighted`] before a single value is
+/// written. A magnitude threshold would instead silently decline to scale it.
+pub(super) fn substituted_divisor(spread: f64) -> f64 {
+    if spread == 0.0 { 1.0 } else { spread }
+}
+
 /// Applies `transform` to every value after proving the batch cannot overflow.
 ///
 /// The cheap screen transforms only each column's extrema. When it cannot

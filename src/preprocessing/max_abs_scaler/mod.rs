@@ -5,7 +5,7 @@ use crate::artifact::{ArtifactError, MAX_ABS_SCALER_ARTIFACT_KIND};
 use crate::data::MatrixView;
 
 use super::scaling::{
-    decode_scaler_artifact, encode_scaler_artifact, transform_preflighted,
+    decode_scaler_artifact, encode_scaler_artifact, substituted_divisor, transform_preflighted,
     validate_transform_request,
 };
 
@@ -148,11 +148,11 @@ impl MaxAbsScaler {
 /// The divisor that maps a column's largest magnitude onto one.
 ///
 /// A column that is zero everywhere has no magnitude to normalize by, so it
-/// keeps a divisor of one and passes through unchanged. This is the documented
-/// reference treatment of an all-zero column and what keeps a division by zero
-/// out of the transform.
+/// keeps a divisor of one and passes through unchanged — the crate-wide rule
+/// stated in [`substituted_divisor`], which for this scaler is the whole
+/// derivation.
 fn derive_scale(max_abs: f64) -> f64 {
-    if max_abs == 0.0 { 1.0 } else { max_abs }
+    substituted_divisor(max_abs)
 }
 
 impl Estimator for MaxAbsScaler {

@@ -5,8 +5,8 @@ use crate::artifact::{ArtifactError, STANDARD_SCALER_ARTIFACT_KIND};
 use crate::data::{MatrixView, SampleWeights};
 
 use super::scaling::{
-    decode_flag, decode_scaler_artifact, encode_scaler_artifact, transform_preflighted,
-    validate_transform_request,
+    decode_flag, decode_scaler_artifact, encode_scaler_artifact, substituted_divisor,
+    transform_preflighted, validate_transform_request,
 };
 
 /// Parameters for [`StandardScaler`].
@@ -120,15 +120,13 @@ impl StandardScaler {
         for variance in &mut variances {
             *variance /= total_weight;
         }
+        // A zero-variance column keeps a divisor of one through the crate-wide
+        // degeneracy rule; the square root is what is particular to
+        // standardization. Substituting before the root rather than after is
+        // the same value either way, since `1.0.sqrt()` is `1.0`.
         let scales = variances
             .iter()
-            .map(|&variance| {
-                if variance == 0.0 {
-                    1.0
-                } else {
-                    variance.sqrt()
-                }
-            })
+            .map(|&variance| substituted_divisor(variance).sqrt())
             .collect();
 
         Ok(Self {

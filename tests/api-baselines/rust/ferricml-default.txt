@@ -93,6 +93,7 @@ pub ferricml::api::ModelError::InvalidMaxLeafNodes
 pub ferricml::api::ModelError::InvalidMinSamplesLeaf
 pub ferricml::api::ModelError::InvalidMinSamplesSplit
 pub ferricml::api::ModelError::InvalidPenaltyAlpha
+pub ferricml::api::ModelError::InvalidQuantileRange
 pub ferricml::api::ModelError::InvalidRegularization
 pub ferricml::api::ModelError::InvalidRidgeAlpha
 pub ferricml::api::ModelError::InvalidTolerance
@@ -216,6 +217,8 @@ impl ferricml::api::Estimator for ferricml::preprocessing::MaxAbsScaler
 pub fn ferricml::preprocessing::MaxAbsScaler::n_features_in(&self) -> usize
 impl ferricml::api::Estimator for ferricml::preprocessing::MinMaxScaler
 pub fn ferricml::preprocessing::MinMaxScaler::n_features_in(&self) -> usize
+impl ferricml::api::Estimator for ferricml::preprocessing::RobustScaler
+pub fn ferricml::preprocessing::RobustScaler::n_features_in(&self) -> usize
 impl ferricml::api::Estimator for ferricml::preprocessing::StandardScaler
 pub fn ferricml::preprocessing::StandardScaler::n_features_in(&self) -> usize
 impl ferricml::api::Estimator for ferricml::ranking::PairwiseLinearRanker
@@ -318,6 +321,9 @@ pub fn ferricml::preprocessing::MaxAbsScaler::get_params(&self) -> &Self::Params
 impl ferricml::api::HasParams for ferricml::preprocessing::MinMaxScaler
 pub type ferricml::preprocessing::MinMaxScaler::Params = ferricml::preprocessing::MinMaxScalerParams
 pub fn ferricml::preprocessing::MinMaxScaler::get_params(&self) -> &Self::Params
+impl ferricml::api::HasParams for ferricml::preprocessing::RobustScaler
+pub type ferricml::preprocessing::RobustScaler::Params = ferricml::preprocessing::RobustScalerParams
+pub fn ferricml::preprocessing::RobustScaler::get_params(&self) -> &Self::Params
 impl ferricml::api::HasParams for ferricml::preprocessing::StandardScaler
 pub type ferricml::preprocessing::StandardScaler::Params = ferricml::preprocessing::StandardScalerParams
 pub fn ferricml::preprocessing::StandardScaler::get_params(&self) -> &Self::Params
@@ -396,6 +402,10 @@ impl ferricml::api::Transformer for ferricml::preprocessing::MinMaxScaler
 pub fn ferricml::preprocessing::MinMaxScaler::n_features_out(&self) -> usize
 pub fn ferricml::preprocessing::MinMaxScaler::transform(&self, &ferricml::data::MatrixView<'_>) -> core::result::Result<ferricml::data::DenseMatrix, ferricml::api::ModelError>
 pub fn ferricml::preprocessing::MinMaxScaler::transform_into<'output>(&self, &ferricml::data::MatrixView<'_>, &'output mut [f32]) -> core::result::Result<ferricml::data::MatrixView<'output>, ferricml::api::ModelError>
+impl ferricml::api::Transformer for ferricml::preprocessing::RobustScaler
+pub fn ferricml::preprocessing::RobustScaler::n_features_out(&self) -> usize
+pub fn ferricml::preprocessing::RobustScaler::transform(&self, &ferricml::data::MatrixView<'_>) -> core::result::Result<ferricml::data::DenseMatrix, ferricml::api::ModelError>
+pub fn ferricml::preprocessing::RobustScaler::transform_into<'output>(&self, &ferricml::data::MatrixView<'_>, &'output mut [f32]) -> core::result::Result<ferricml::data::MatrixView<'output>, ferricml::api::ModelError>
 impl ferricml::api::Transformer for ferricml::preprocessing::StandardScaler
 pub fn ferricml::preprocessing::StandardScaler::n_features_out(&self) -> usize
 pub fn ferricml::preprocessing::StandardScaler::transform(&self, &ferricml::data::MatrixView<'_>) -> core::result::Result<ferricml::data::DenseMatrix, ferricml::api::ModelError>
@@ -1743,6 +1753,36 @@ pub struct ferricml::preprocessing::MinMaxScalerParams
 impl ferricml::preprocessing::MinMaxScalerParams
 pub const fn ferricml::preprocessing::MinMaxScalerParams::clip_enabled(&self) -> bool
 pub const fn ferricml::preprocessing::MinMaxScalerParams::with_clip(self, bool) -> Self
+pub struct ferricml::preprocessing::RobustScaler
+impl ferricml::preprocessing::RobustScaler
+pub fn ferricml::preprocessing::RobustScaler::centers(&self) -> &[f64]
+pub fn ferricml::preprocessing::RobustScaler::fit(&ferricml::data::MatrixView<'_>, ferricml::preprocessing::RobustScalerParams) -> core::result::Result<Self, ferricml::api::ModelError>
+pub const fn ferricml::preprocessing::RobustScaler::get_params(&self) -> &ferricml::preprocessing::RobustScalerParams
+pub const fn ferricml::preprocessing::RobustScaler::n_features_in(&self) -> usize
+pub const fn ferricml::preprocessing::RobustScaler::n_features_out(&self) -> usize
+pub fn ferricml::preprocessing::RobustScaler::scales(&self) -> &[f64]
+pub fn ferricml::preprocessing::RobustScaler::spreads(&self) -> &[f64]
+pub fn ferricml::preprocessing::RobustScaler::transform(&self, &ferricml::data::MatrixView<'_>) -> core::result::Result<ferricml::data::DenseMatrix, ferricml::api::ModelError>
+pub fn ferricml::preprocessing::RobustScaler::transform_into<'output>(&self, &ferricml::data::MatrixView<'_>, &'output mut [f32]) -> core::result::Result<ferricml::data::MatrixView<'output>, ferricml::api::ModelError>
+impl ferricml::api::Estimator for ferricml::preprocessing::RobustScaler
+pub fn ferricml::preprocessing::RobustScaler::n_features_in(&self) -> usize
+impl ferricml::api::HasParams for ferricml::preprocessing::RobustScaler
+pub type ferricml::preprocessing::RobustScaler::Params = ferricml::preprocessing::RobustScalerParams
+pub fn ferricml::preprocessing::RobustScaler::get_params(&self) -> &Self::Params
+impl ferricml::api::Transformer for ferricml::preprocessing::RobustScaler
+pub fn ferricml::preprocessing::RobustScaler::n_features_out(&self) -> usize
+pub fn ferricml::preprocessing::RobustScaler::transform(&self, &ferricml::data::MatrixView<'_>) -> core::result::Result<ferricml::data::DenseMatrix, ferricml::api::ModelError>
+pub fn ferricml::preprocessing::RobustScaler::transform_into<'output>(&self, &ferricml::data::MatrixView<'_>, &'output mut [f32]) -> core::result::Result<ferricml::data::MatrixView<'output>, ferricml::api::ModelError>
+pub struct ferricml::preprocessing::RobustScalerParams
+impl ferricml::preprocessing::RobustScalerParams
+pub const fn ferricml::preprocessing::RobustScalerParams::centering_enabled(&self) -> bool
+pub const fn ferricml::preprocessing::RobustScalerParams::quantile_range(&self) -> (f64, f64)
+pub const fn ferricml::preprocessing::RobustScalerParams::scaling_enabled(&self) -> bool
+pub const fn ferricml::preprocessing::RobustScalerParams::with_centering(self, bool) -> Self
+pub const fn ferricml::preprocessing::RobustScalerParams::with_quantile_range(self, f64, f64) -> Self
+pub const fn ferricml::preprocessing::RobustScalerParams::with_scaling(self, bool) -> Self
+impl core::default::Default for ferricml::preprocessing::RobustScalerParams
+pub fn ferricml::preprocessing::RobustScalerParams::default() -> Self
 pub struct ferricml::preprocessing::StandardScaler
 impl ferricml::preprocessing::StandardScaler
 pub fn ferricml::preprocessing::StandardScaler::fit(&ferricml::data::MatrixView<'_>, ferricml::preprocessing::StandardScalerParams) -> core::result::Result<Self, ferricml::api::ModelError>

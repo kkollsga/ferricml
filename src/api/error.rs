@@ -112,6 +112,9 @@ pub enum ModelError {
         /// Number of values the fitted model produces for one row.
         columns: usize,
     },
+    /// A quantile range is not a pair of percentiles in `0.0..=100.0` with the
+    /// lower value first.
+    InvalidQuantileRange,
     /// A multiclass linear fit would need a second-order system larger than the
     /// supported bound, which is `classes * (features + intercept)` parameters.
     MulticlassSystemTooLarge {
@@ -230,6 +233,9 @@ impl fmt::Display for ModelError {
                 f,
                 "operation returns one value per row, but this model produces {columns}"
             ),
+            Self::InvalidQuantileRange => {
+                f.write_str("quantile range must be two percentiles in 0..=100, lowest first")
+            }
             Self::MulticlassSystemTooLarge {
                 classes,
                 features,
