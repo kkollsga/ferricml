@@ -1,6 +1,6 @@
 //! Repeated resampling over an existing splitter.
 
-use super::{KFold, KFoldIter, Split, SplitError, mix64, validate_fold_count};
+use super::{KFold, KFoldIter, Split, SplitError, repeat_seed, validate_fold_count};
 
 /// K-fold splitter run several times with different shuffles.
 ///
@@ -123,14 +123,6 @@ impl Iterator for RepeatedKFoldIter {
 }
 
 impl ExactSizeIterator for RepeatedKFoldIter {}
-
-/// Derives one repeat's shuffle seed from the configured seed.
-///
-/// The repeat index is mixed rather than added so that consecutive seeds and
-/// consecutive repeats do not produce overlapping shuffle streams.
-fn repeat_seed(random_state: u64, repeat: usize) -> u64 {
-    mix64(random_state ^ mix64(repeat as u64 ^ 0x9e37_79b9_7f4a_7c15))
-}
 
 #[cfg(test)]
 mod tests {

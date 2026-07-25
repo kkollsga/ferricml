@@ -4,10 +4,12 @@ use std::collections::BinaryHeap;
 use std::error::Error;
 use std::fmt;
 
+mod group_shuffle;
 mod grouped;
 mod repeated;
 mod time_series;
 
+pub use group_shuffle::{GroupShuffleSplit, GroupShuffleSplitIter, TestGroupSize};
 pub use grouped::{GroupKFold, GroupKFoldIter};
 pub use repeated::{RepeatedKFold, RepeatedKFoldIter};
 pub use time_series::{LeaveOneOut, LeaveOneOutIter, TimeSeriesSplit, TimeSeriesSplitIter};
@@ -97,6 +99,17 @@ pub enum SplitError {
         /// Required partition count.
         partitions: usize,
     },
+    /// A requested number of held-out groups would leave an empty side.
+    ///
+    /// Distinct from [`SplitError::InvalidTestCount`], which counts rows: a
+    /// grouped holdout is sized in whole groups, and saying so in the error
+    /// keeps the two counting units apart.
+    InvalidTestGroupCount {
+        /// Requested groups held out.
+        test_groups: usize,
+        /// Distinct groups observed.
+        groups: usize,
+    },
     /// A repeat count was zero.
     InvalidRepeatCount {
         /// Requested repeats.
@@ -171,6 +184,14 @@ impl fmt::Display for SplitError {
             Self::InsufficientGroups { groups, partitions } => write!(
                 f,
                 "{groups} distinct groups cannot fill {partitions} partitions"
+            ),
+            Self::InvalidTestGroupCount {
+                test_groups,
+                groups,
+            } => write!(
+                f,
+                "test group count {test_groups} must leave non-empty partitions for \
+                 {groups} groups"
             ),
             Self::InvalidRepeatCount { repeats } => {
                 write!(f, "repeat count {repeats} must be at least one")
@@ -867,6 +888,17 @@ impl PartialOrd for QuotaCandidate {
     fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
         Some(self.cmp(other))
     }
+}
+
+/// Derives one repetition's shuffle seed from a configured seed.
+///
+/// Repeated K-fold and grouped shuffle splitting both draw a sequence of
+/// independent partitions from one number, and both need consecutive seeds and
+/// consecutive repetitions not to produce overlapping streams — so the index is
+/// mixed rather than added, and the derivation is stated once here rather than
+/// once per splitter.
+fn repeat_seed(random_state: u64, repetition: usize) -> u64 {
+    mix64(random_state ^ mix64(repetition as u64 ^ 0x9e37_79b9_7f4a_7c15))
 }
 
 fn stable_shuffle(values: &mut [usize], seed: u64) {

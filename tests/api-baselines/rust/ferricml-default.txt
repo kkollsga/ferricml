@@ -1003,6 +1003,9 @@ pub ferricml::model_selection::SplitError::InvalidTestCount
 pub ferricml::model_selection::SplitError::InvalidTestCount::samples: usize
 pub ferricml::model_selection::SplitError::InvalidTestCount::test: usize
 pub ferricml::model_selection::SplitError::InvalidTestFraction
+pub ferricml::model_selection::SplitError::InvalidTestGroupCount
+pub ferricml::model_selection::SplitError::InvalidTestGroupCount::groups: usize
+pub ferricml::model_selection::SplitError::InvalidTestGroupCount::test_groups: usize
 pub ferricml::model_selection::SplitError::InvalidTimeSeriesWindow
 pub ferricml::model_selection::SplitError::InvalidTimeSeriesWindow::gap: usize
 pub ferricml::model_selection::SplitError::InvalidTimeSeriesWindow::samples: usize
@@ -1021,6 +1024,9 @@ pub fn ferricml::model_selection::SplitError::fmt(&self, &mut core::fmt::Formatt
 pub enum ferricml::model_selection::SplitPartition
 pub ferricml::model_selection::SplitPartition::Test
 pub ferricml::model_selection::SplitPartition::Train
+#[non_exhaustive] pub enum ferricml::model_selection::TestGroupSize
+pub ferricml::model_selection::TestGroupSize::Count(usize)
+pub ferricml::model_selection::TestGroupSize::Fraction(f64)
 pub enum ferricml::model_selection::TestSize
 pub ferricml::model_selection::TestSize::Count(usize)
 pub ferricml::model_selection::TestSize::Fraction(f64)
@@ -1042,6 +1048,21 @@ impl core::iter::traits::iterator::Iterator for ferricml::model_selection::Group
 pub type ferricml::model_selection::GroupKFoldIter::Item = ferricml::model_selection::Split
 pub fn ferricml::model_selection::GroupKFoldIter::next(&mut self) -> core::option::Option<Self::Item>
 pub fn ferricml::model_selection::GroupKFoldIter::size_hint(&self) -> (usize, core::option::Option<usize>)
+pub struct ferricml::model_selection::GroupShuffleSplit
+impl ferricml::model_selection::GroupShuffleSplit
+pub const fn ferricml::model_selection::GroupShuffleSplit::n_splits(&self) -> usize
+pub const fn ferricml::model_selection::GroupShuffleSplit::new(usize) -> Self
+pub const fn ferricml::model_selection::GroupShuffleSplit::random_state(&self) -> u64
+pub fn ferricml::model_selection::GroupShuffleSplit::split(&self, &[u64]) -> core::result::Result<ferricml::model_selection::GroupShuffleSplitIter, ferricml::model_selection::SplitError>
+pub const fn ferricml::model_selection::GroupShuffleSplit::test_size(&self) -> ferricml::model_selection::TestGroupSize
+pub const fn ferricml::model_selection::GroupShuffleSplit::with_random_state(self, u64) -> Self
+pub const fn ferricml::model_selection::GroupShuffleSplit::with_test_size(self, ferricml::model_selection::TestGroupSize) -> Self
+pub struct ferricml::model_selection::GroupShuffleSplitIter
+impl core::iter::traits::exact_size::ExactSizeIterator for ferricml::model_selection::GroupShuffleSplitIter
+impl core::iter::traits::iterator::Iterator for ferricml::model_selection::GroupShuffleSplitIter
+pub type ferricml::model_selection::GroupShuffleSplitIter::Item = ferricml::model_selection::Split
+pub fn ferricml::model_selection::GroupShuffleSplitIter::next(&mut self) -> core::option::Option<Self::Item>
+pub fn ferricml::model_selection::GroupShuffleSplitIter::size_hint(&self) -> (usize, core::option::Option<usize>)
 pub struct ferricml::model_selection::HoldoutParams
 impl ferricml::model_selection::HoldoutParams
 pub const fn ferricml::model_selection::HoldoutParams::random_state(&self) -> u64

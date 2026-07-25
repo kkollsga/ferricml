@@ -192,6 +192,23 @@ def evaluation_families_stay_private(root: Path) -> list[str]:
     return findings
 
 
+def split_families_stay_private(root: Path) -> list[str]:
+    """One file per splitter family stays behind the split facade.
+
+    `model_selection/split/` is a directory of per-family child modules —
+    grouped, group-shuffle, repeated, time-ordered. The parent facade re-exports
+    the splitter types, so which file a splitter lives in is an internal
+    arrangement. Exposing one as `pub mod` would publish that arrangement and
+    make a later regrouping a breaking change.
+    """
+    text = read_if_present(root / "src" / "model_selection" / "split" / "mod.rs")
+    return [
+        f"split facade exposes child module: {line.strip()}"
+        for line in text.splitlines()
+        if line.strip().startswith("pub mod ")
+    ]
+
+
 RULES: tuple[tuple[str, Callable[[Path], list[str]]], ...] = (
     ("crate-root-lib-only", crate_root_is_lib_only),
     ("obsolete-root-implementations", obsolete_root_implementations_are_gone),
@@ -205,6 +222,7 @@ RULES: tuple[tuple[str, Callable[[Path], list[str]]], ...] = (
     ("composition-families-private", composition_families_stay_private),
     ("metrics-below-estimators", metrics_depend_on_no_estimator),
     ("evaluation-families-private", evaluation_families_stay_private),
+    ("split-families-private", split_families_stay_private),
 )
 
 
@@ -240,7 +258,8 @@ def write_clean_tree(root: Path) -> Path:
         "metrics/mod.rs": "//! metrics\nmod confusion;\npub use confusion::ConfusionMatrix;\n",
         "metrics/confusion.rs": "//! confusion\npub struct ConfusionMatrix;\n",
         "model_selection/mod.rs": "//! model selection\nmod split;\npub use split::Split;\n",
-        "model_selection/split/mod.rs": "//! split\npub struct Split;\n",
+        "model_selection/split/mod.rs": "//! split\nmod grouped;\npub use grouped::GroupKFold;\n",
+        "model_selection/split/grouped.rs": "//! grouped\npub struct GroupKFold;\n",
     }.items():
         path = source / relative
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -335,6 +354,13 @@ SYNTHETIC_VIOLATIONS: tuple[tuple[str, Callable[[Path], None], str], ...] = (
             root / "src" / "model_selection" / "mod.rs", "pub mod split;\n"
         ),
         "model_selection facade exposes child module",
+    ),
+    (
+        "split-families-private",
+        lambda root: append(
+            root / "src" / "model_selection" / "split" / "mod.rs", "pub mod grouped;\n"
+        ),
+        "split facade exposes child module",
     ),
 )
 

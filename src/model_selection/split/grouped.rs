@@ -135,7 +135,7 @@ impl Iterator for GroupKFoldIter {
 impl ExactSizeIterator for GroupKFoldIter {}
 
 /// Distinct groups with their row counts, in ascending identifier order.
-fn group_sizes(groups: &[u64]) -> Vec<(u64, usize)> {
+pub(super) fn group_sizes(groups: &[u64]) -> Vec<(u64, usize)> {
     let mut sorted = groups.to_vec();
     sorted.sort_unstable();
     let mut sizes: Vec<(u64, usize)> = Vec::new();

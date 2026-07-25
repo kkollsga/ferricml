@@ -104,6 +104,16 @@ and releases use [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   which let a classification score declare whether it reads predicted labels or
   positive-class probabilities; being given another kind is the new
   `ScoringError::UnsupportedOutput` rather than a substituted value.
+- `model_selection::GroupShuffleSplit`, which draws whole groups at random for
+  each of `n_splits` independent holdouts, so no group is ever on both sides of
+  a split. Splits are independent draws rather than a partition, and each one's
+  draw is seeded from the configured seed and the split index.
+- `model_selection::TestGroupSize`, the holdout size for a grouped split. It
+  counts **groups**, deliberately as a type distinct from `TestSize`, which
+  counts rows: rows only move a whole group at a time, so a row target could
+  only be approximated, while a group target is exact. A size that would empty
+  either side is the new `SplitError::InvalidTestGroupCount`, which names groups
+  rather than reusing the row-counting `InvalidTestCount`.
 
 ### Changed
 

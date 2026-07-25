@@ -96,6 +96,19 @@ holding the fewest rows. Fold sizes are then as even as whole groups allow.
 shuffle seed from the configured one, and yields every fold of every repeat in
 order.
 
+`GroupShuffleSplit` draws whole groups at random for each of `n_splits`
+independent holdouts, so no group is ever on both sides of a split. It is not a
+partition: two splits may hold out the same group, and no row is promised a
+turn. Its size is stated in `TestGroupSize`, which counts **groups**, not the
+rows `TestSize` counts everywhere else. That is a deliberate second type rather
+than a second meaning for one: rows only move a whole group at a time, so a row
+target would silently become an approximation, while a group target stays exact.
+Every split therefore holds out exactly the requested number of whole groups,
+and its row count follows from which groups were drawn. `Count` is that number
+directly; `Fraction` is a fraction of the distinct groups, rounded upward. Each
+split's group draw is seeded from the configured seed and the split index, so
+identical parameters reproduce identical membership.
+
 Use `DenseMatrix::select_rows`, `BinaryTargets::select`, and
 `RegressionTargets::select` when manually applying a split:
 
