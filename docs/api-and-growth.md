@@ -80,6 +80,13 @@ estimator meaning follow the reference contract.
   and it makes the fit independent of observation order. Prediction interpolates
   linearly between fitted points and holds the end values outside the fitted
   range rather than extrapolating a trend the fit never observed.
+  `PlattCalibrator` is the parametric one, a two-parameter logistic fit reached
+  through the shared objective contract rather than a third logistic solver. It
+  regresses on Platt's prior-corrected targets rather than on the raw labels,
+  which is what keeps the fit finite when the score separates the classes
+  perfectly — with raw labels that problem has no finite maximum-likelihood
+  solution, and the resulting map would assert exactly the certainty
+  calibration exists to remove.
 - `inspection` owns model-agnostic attribution. Permutation importance works
   through the public batch prediction and scoring contracts only, so it needs
   no estimator cooperation and exposes no model internals. It holds no scoring

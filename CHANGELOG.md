@@ -190,6 +190,12 @@ and releases use [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   violators, so the fit depends on the multiset of observations and not on their
   order; prediction interpolates linearly between fitted points and holds the
   end values outside the fitted range.
+- `calibration::PlattCalibrator` and `calibration::PlattParams`, the parametric
+  calibrator: a two-parameter logistic fit of model scores onto labels, solved
+  through the crate's shared binary log-loss objective rather than a third
+  logistic solver. It regresses on Platt's prior-corrected targets, so a
+  perfectly separating score still has a finite fit and calibrated
+  probabilities never collapse to exactly zero or one.
 - `calibration::Calibrator`, the fitted monotone score-to-probability map
   contract, with an in-place batch form so calibrated prediction needs no second
   buffer.

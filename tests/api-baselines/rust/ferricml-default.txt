@@ -384,12 +384,34 @@ pub fn ferricml::calibration::IsotonicRegression::predict_into(&self, &ferricml:
 impl ferricml::calibration::Calibrator for ferricml::calibration::IsotonicRegression
 pub fn ferricml::calibration::IsotonicRegression::calibrate(&self, f32) -> f32
 pub fn ferricml::calibration::IsotonicRegression::calibrate_in_place(&self, &mut [f32])
+pub struct ferricml::calibration::PlattCalibrator
+impl ferricml::calibration::PlattCalibrator
+pub fn ferricml::calibration::PlattCalibrator::decision_score(&self, f32) -> f32
+pub fn ferricml::calibration::PlattCalibrator::fit(&[f32], &ferricml::data::BinaryTargets, ferricml::calibration::PlattParams) -> core::result::Result<Self, ferricml::api::ModelError>
+pub const fn ferricml::calibration::PlattCalibrator::get_params(&self) -> &ferricml::calibration::PlattParams
+pub const fn ferricml::calibration::PlattCalibrator::intercept(&self) -> f32
+pub const fn ferricml::calibration::PlattCalibrator::n_iter(&self) -> usize
+pub const fn ferricml::calibration::PlattCalibrator::slope(&self) -> f32
+impl ferricml::calibration::Calibrator for ferricml::calibration::PlattCalibrator
+pub fn ferricml::calibration::PlattCalibrator::calibrate(&self, f32) -> f32
+pub fn ferricml::calibration::PlattCalibrator::calibrate_in_place(&self, &mut [f32])
+pub struct ferricml::calibration::PlattParams
+impl ferricml::calibration::PlattParams
+pub const fn ferricml::calibration::PlattParams::max_iter(&self) -> usize
+pub const fn ferricml::calibration::PlattParams::tol(&self) -> f32
+pub fn ferricml::calibration::PlattParams::with_max_iter(self, usize) -> Self
+pub fn ferricml::calibration::PlattParams::with_tol(self, f32) -> Self
+impl core::default::Default for ferricml::calibration::PlattParams
+pub fn ferricml::calibration::PlattParams::default() -> Self
 pub trait ferricml::calibration::Calibrator
 pub fn ferricml::calibration::Calibrator::calibrate(&self, f32) -> f32
 pub fn ferricml::calibration::Calibrator::calibrate_in_place(&self, &mut [f32])
 impl ferricml::calibration::Calibrator for ferricml::calibration::IsotonicRegression
 pub fn ferricml::calibration::IsotonicRegression::calibrate(&self, f32) -> f32
 pub fn ferricml::calibration::IsotonicRegression::calibrate_in_place(&self, &mut [f32])
+impl ferricml::calibration::Calibrator for ferricml::calibration::PlattCalibrator
+pub fn ferricml::calibration::PlattCalibrator::calibrate(&self, f32) -> f32
+pub fn ferricml::calibration::PlattCalibrator::calibrate_in_place(&self, &mut [f32])
 impl<K: ferricml::calibration::Calibrator + ?core::marker::Sized> ferricml::calibration::Calibrator for &K
 pub fn &K::calibrate(&self, f32) -> f32
 pub fn &K::calibrate_in_place(&self, &mut [f32])

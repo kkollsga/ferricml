@@ -8,9 +8,10 @@
 //! # What a calibrator is
 //!
 //! A [`Calibrator`] is a fitted monotone map of one raw model score onto a
-//! probability. [`IsotonicRegression`] is the non-parametric one: it assumes
-//! only monotonicity. Every calibrator is a deterministic function of the
-//! calibration sample alone.
+//! probability. Two are shipped: [`IsotonicRegression`], which is
+//! non-parametric and assumes only monotonicity, and [`PlattCalibrator`], which
+//! is a one-dimensional logistic fit through the crate's shared objective
+//! contract. Both are deterministic functions of the calibration sample alone.
 //!
 //! # Boundaries
 //!
@@ -30,8 +31,10 @@
 //!   probabilities, and FerricML makes that the caller's explicit choice.
 
 mod isotonic;
+mod platt;
 
 pub use isotonic::IsotonicRegression;
+pub use platt::{PlattCalibrator, PlattParams};
 
 use crate::api::ModelError;
 use crate::data::BinaryTargets;
