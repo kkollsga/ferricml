@@ -29,6 +29,10 @@ use ferricml::ranking::{
     PairIndex, PairOutcome, PairwiseLinearRanker, PairwiseLinearRankerParams, PairwiseObservation,
     decisive_directional_accuracy, kendall_tau_b, spearman_correlation, three_way_accuracy,
 };
+use ferricml::tree::{
+    DecisionTreeClassifier, DecisionTreeClassifierParams, DecisionTreeRegressor,
+    DecisionTreeRegressorParams,
+};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 struct IdentityTransformer {
@@ -350,6 +354,104 @@ fn classifier_paths_builders_traits_and_retained_params_are_stable() {
     assert_eq!(model.classes(), &[0, 1]);
     assert_eq!(model.predict(&matrix.as_view()).unwrap().len(), 4);
     assert_eq!(model.predict_proba(&matrix.as_view()).unwrap().len(), 8);
+}
+
+#[test]
+fn decision_tree_classifier_paths_builders_traits_and_retained_params_are_stable() {
+    let matrix = training_matrix();
+    let targets = BinaryTargets::new(vec![0, 0, 1, 1]).unwrap();
+    let params = DecisionTreeClassifierParams::default()
+        .with_max_depth(Some(4))
+        .with_min_samples_split(2)
+        .with_min_samples_leaf(1)
+        .with_max_features(MaxFeatures::Count(1))
+        .with_random_state(17);
+
+    let model = DecisionTreeClassifier::fit(&matrix.as_view(), &targets, params.clone()).unwrap();
+
+    assert_eq!(estimator_width(&model), 2);
+    assert_eq!(classifier_width(&model), 2);
+    assert_eq!(model.n_features_in(), 2);
+    assert_eq!(model.get_params(), &params);
+    assert_eq!(
+        retained_params::<_, DecisionTreeClassifierParams>(&model),
+        &params
+    );
+    // A single tree has no ensemble around it, so the parameter surface stops
+    // exactly where growing one tree stops: no member count, no bootstrap, no
+    // thread count. Reading every accessor back here is what makes a silently
+    // widened parameter set a failing test rather than a snapshot-only diff.
+    assert_eq!(params.max_depth(), Some(4));
+    assert_eq!(params.min_samples_split(), 2);
+    assert_eq!(params.min_samples_leaf(), 1);
+    assert_eq!(params.max_features(), MaxFeatures::Count(1));
+    assert_eq!(params.random_state(), 17);
+
+    let mut positive_probabilities = [0.0; 4];
+    model
+        .predict_positive_proba_into(&matrix.as_view(), &mut positive_probabilities)
+        .unwrap();
+    assert!(
+        positive_probabilities
+            .iter()
+            .all(|probability| (0.0..=1.0).contains(probability))
+    );
+    assert_eq!(model.classes(), &[0, 1]);
+    assert_eq!(model.predict(&matrix.as_view()).unwrap().len(), 4);
+    assert_eq!(model.predict_proba(&matrix.as_view()).unwrap().len(), 8);
+    assert_eq!(
+        model
+            .predict_proba_one(matrix.row(0).unwrap())
+            .unwrap()
+            .len(),
+        2
+    );
+    assert_eq!(
+        model
+            .predict_class_proba(&matrix.as_view(), 1)
+            .unwrap()
+            .len(),
+        4
+    );
+}
+
+#[test]
+fn decision_tree_regressor_paths_builders_traits_and_retained_params_are_stable() {
+    let matrix = training_matrix();
+    let targets = RegressionTargets::new(vec![0.0, 1.0, 4.0, 9.0]).unwrap();
+    let params = DecisionTreeRegressorParams::default()
+        .with_max_depth(Some(3))
+        .with_min_samples_split(2)
+        .with_min_samples_leaf(1)
+        .with_max_features(MaxFeatures::All)
+        .with_random_state(23);
+
+    let model = DecisionTreeRegressor::fit(&matrix.as_view(), &targets, params.clone()).unwrap();
+
+    assert_eq!(estimator_width(&model), 2);
+    assert_eq!(regressor_width(&model), 2);
+    assert_eq!(model.n_features_in(), 2);
+    assert_eq!(model.get_params(), &params);
+    assert_eq!(
+        retained_params::<_, DecisionTreeRegressorParams>(&model),
+        &params
+    );
+
+    let mut predictions = [0.0; 4];
+    model
+        .predict_into(&matrix.as_view(), &mut predictions)
+        .unwrap();
+    assert!(predictions.iter().all(|prediction| prediction.is_finite()));
+    assert_eq!(model.predict(&matrix.as_view()).unwrap(), predictions);
+    assert_eq!(
+        model.predict_one(matrix.row(0).unwrap()).unwrap(),
+        predictions[0]
+    );
+
+    let weights = SampleWeights::new(vec![1.0, 1.0, 1.0, 1.0]).unwrap();
+    let weighted =
+        DecisionTreeRegressor::fit_weighted(&matrix.as_view(), &targets, &weights, params).unwrap();
+    assert_eq!(weighted.predict(&matrix.as_view()).unwrap(), predictions);
 }
 
 #[test]

@@ -36,6 +36,7 @@ use ferricml::preprocessing::{
     MaxAbsScaler, MinMaxScaler, MinMaxScalerParams, StandardScaler, StandardScalerParams,
 };
 use ferricml::ranking::PairwiseLinearRanker;
+use ferricml::tree::{DecisionTreeClassifier, DecisionTreeRegressor};
 
 const WEIGHTED_AND_PERSISTED: Capabilities = Capabilities::NONE
     .with_sample_weights(true)
@@ -100,6 +101,35 @@ fn tree_ensembles_declare_weighted_fitting_and_persistence() {
 }
 
 #[test]
+fn the_standalone_trees_declare_exactly_what_the_forest_of_them_does() {
+    // A single tree is not a weaker estimator than an ensemble of trees; it is
+    // the same grower with nothing averaged around it. So the declarations are
+    // the forest's, minus nothing — and stating that here is what would catch a
+    // standalone tree quietly declining a capability its own members have.
+    assert_eq!(DecisionTreeRegressor::CAPABILITIES, WEIGHTED_AND_PERSISTED);
+    assert_eq!(
+        DecisionTreeRegressor::CAPABILITIES,
+        RandomForestRegressor::CAPABILITIES
+    );
+    // A leaf *is* the distribution over the training rows that reached it, so
+    // the probability declaration is earned rather than squashed out of a
+    // score. A tree has no raw unsquashed score to expose, so it declares no
+    // decision function, exactly as the forest does not.
+    assert_eq!(
+        DecisionTreeClassifier::CAPABILITIES,
+        WEIGHTED_AND_PERSISTED
+            .with_multiclass(true)
+            .with_probability(true)
+    );
+    assert_eq!(
+        DecisionTreeClassifier::CAPABILITIES,
+        RandomForestClassifier::CAPABILITIES
+    );
+    assert!(!DecisionTreeClassifier::CAPABILITIES.decision_function());
+    assert!(!DecisionTreeRegressor::CAPABILITIES.decision_function());
+}
+
+#[test]
 fn the_boosted_classifier_declares_weighted_fitting_persistence_and_a_decision_score() {
     // Binary log loss is fitted in raw-score space, so the additive score the
     // trees sum into is the model's own quantity rather than something derived
@@ -133,6 +163,7 @@ fn multiclass_fitting_is_declared_by_the_types_that_offer_it() {
     // that makes the field worth having.
     assert!(LogisticRegression::CAPABILITIES.multiclass());
     assert!(RandomForestClassifier::CAPABILITIES.multiclass());
+    assert!(DecisionTreeClassifier::CAPABILITIES.multiclass());
     assert!(!DummyClassifier::CAPABILITIES.multiclass());
     assert!(!HistGradientBoostingClassifier::CAPABILITIES.multiclass());
     // A composition whose `fit` takes binary targets does not offer it, and
@@ -185,6 +216,7 @@ fn a_decision_function_is_declared_by_nothing_that_only_produces_probabilities()
     assert!(LogisticRegression::CAPABILITIES.decision_function());
     assert!(HistGradientBoostingClassifier::CAPABILITIES.decision_function());
     assert!(!RandomForestClassifier::CAPABILITIES.decision_function());
+    assert!(!DecisionTreeClassifier::CAPABILITIES.decision_function());
     assert!(!DummyClassifier::CAPABILITIES.decision_function());
     assert!(!AnyClassifier::CAPABILITIES.decision_function());
     assert!(!AnyRegressor::CAPABILITIES.decision_function());

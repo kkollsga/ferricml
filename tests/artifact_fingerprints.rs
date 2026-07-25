@@ -16,6 +16,10 @@ use ferricml::preprocessing::{
 use ferricml::ranking::{
     PairIndex, PairOutcome, PairwiseLinearRanker, PairwiseLinearRankerParams, PairwiseObservation,
 };
+use ferricml::tree::{
+    DecisionTreeClassifier, DecisionTreeClassifierParams, DecisionTreeRegressor,
+    DecisionTreeRegressorParams,
+};
 use sha2::{Digest, Sha256};
 
 fn assert_fingerprint(
@@ -287,6 +291,60 @@ fn fitted_artifact_fingerprints_are_frozen() {
         [
             89, 182, 208, 111, 239, 82, 138, 10, 170, 201, 231, 232, 108, 177, 151, 116, 130, 156,
             121, 230, 156, 233, 230, 25, 201, 87, 142, 118, 141, 43, 145, 2,
+        ],
+    );
+
+    // The standalone trees, in all three fitted shapes. A tree is grown by the
+    // same arithmetic-only code path the forest is, so its bytes are tier-1
+    // deterministic and are frozen here rather than only round-tripped.
+    let tree_regressor_params = DecisionTreeRegressorParams::default()
+        .with_max_depth(Some(4))
+        .with_max_features(MaxFeatures::All)
+        .with_random_state(11);
+    let tree_regressor =
+        DecisionTreeRegressor::fit(&data.as_view(), &regression, tree_regressor_params).unwrap();
+    assert_fingerprint(
+        "decision-tree-regressor",
+        tree_regressor.to_artifact([5; 32]).unwrap(),
+        tree_regressor.to_artifact([5; 32]).unwrap(),
+        300,
+        [
+            130, 251, 25, 192, 108, 233, 218, 147, 110, 249, 222, 132, 191, 12, 84, 33, 154, 51,
+            23, 213, 121, 1, 206, 134, 118, 40, 205, 9, 192, 204, 200, 10,
+        ],
+    );
+
+    let tree_classifier_params = DecisionTreeClassifierParams::default()
+        .with_max_depth(Some(4))
+        .with_max_features(MaxFeatures::All)
+        .with_random_state(11);
+    let tree_classifier =
+        DecisionTreeClassifier::fit(&data.as_view(), &binary, tree_classifier_params.clone())
+            .unwrap();
+    assert_fingerprint(
+        "decision-tree-classifier",
+        tree_classifier.to_artifact([5; 32]).unwrap(),
+        tree_classifier.to_artifact([5; 32]).unwrap(),
+        236,
+        [
+            163, 183, 214, 232, 52, 157, 94, 153, 154, 252, 106, 70, 209, 122, 25, 1, 175, 88, 169,
+            119, 185, 72, 15, 107, 131, 125, 107, 18, 14, 84, 40, 243,
+        ],
+    );
+    let multiclass_tree = DecisionTreeClassifier::fit_multiclass(
+        &data.as_view(),
+        &ClassTargets::new(vec![3, 7, 10, 7]).unwrap(),
+        tree_classifier_params,
+    )
+    .unwrap();
+    assert_fingerprint(
+        "decision-tree-classifier-multiclass",
+        multiclass_tree.to_artifact([5; 32]).unwrap(),
+        multiclass_tree.to_artifact([5; 32]).unwrap(),
+        384,
+        [
+            49, 151, 82, 102, 61, 188, 208, 129, 69, 139, 161, 140, 124, 47, 152, 204, 86, 17, 8,
+            68, 40, 155, 10, 45, 164, 129, 206, 80, 214, 62, 169, 144,
         ],
     );
 

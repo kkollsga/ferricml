@@ -33,6 +33,10 @@ use ferricml::ensemble::{
     RandomForestRegressorParams,
 };
 use ferricml::pipeline::{Pipeline, StagedPipeline};
+use ferricml::tree::{
+    DecisionTreeClassifier, DecisionTreeClassifierParams, DecisionTreeRegressor,
+    DecisionTreeRegressorParams,
+};
 
 use ferricml::linear_model::{
     ElasticNet, ElasticNetParams, Lasso, LassoParams, LinearRegression, LinearRegressionParams,
@@ -83,6 +87,22 @@ fn forest_regressor_params() -> RandomForestRegressorParams {
     RandomForestRegressorParams::default()
         .with_n_estimators(5)
         .with_bootstrap(false)
+        .with_max_features(MaxFeatures::All)
+        .with_random_state(7)
+}
+
+/// One tree grown under the forest members' own limits.
+///
+/// `MaxFeatures::All` and a fixed seed keep the fit reproducible without making
+/// the battery depend on how many columns the shared fixture happens to have.
+fn tree_classifier_params() -> DecisionTreeClassifierParams {
+    DecisionTreeClassifierParams::default()
+        .with_max_features(MaxFeatures::All)
+        .with_random_state(7)
+}
+
+fn tree_regressor_params() -> DecisionTreeRegressorParams {
+    DecisionTreeRegressorParams::default()
         .with_max_features(MaxFeatures::All)
         .with_random_state(7)
 }
@@ -142,6 +162,82 @@ impl ClassifierCase for RandomForestClassifierCase {
 
 impl ScalarClassifierCase for RandomForestClassifierCase {
     fn predict_one(model: &Self::Model, row: &[f32]) -> Result<u8, ModelError> {
+        model.predict_one(row)
+    }
+}
+
+struct DecisionTreeClassifierCase;
+
+impl ClassifierCase for DecisionTreeClassifierCase {
+    probabilistic_hooks!();
+
+    type Model = DecisionTreeClassifier;
+    const NAME: &'static str = "DecisionTreeClassifier";
+
+    fn fit(train: &Sample, _holdout: &Sample) -> Result<Self::Model, ModelError> {
+        DecisionTreeClassifier::fit(&train.view(), &train.labels, tree_classifier_params())
+    }
+
+    fn fit_multiclass(train: &Sample, _holdout: &Sample) -> OptionalFit<Self::Model> {
+        Some(DecisionTreeClassifier::fit_multiclass(
+            &train.view(),
+            &train.class_labels,
+            tree_classifier_params(),
+        ))
+    }
+
+    fn fit_weighted(train: &Sample, _holdout: &Sample) -> OptionalFit<Self::Model> {
+        Some(DecisionTreeClassifier::fit_weighted(
+            &train.view(),
+            &train.labels,
+            &train.unit_weights(),
+            tree_classifier_params(),
+        ))
+    }
+
+    fn round_trip(model: &Self::Model) -> RoundTrip<Self::Model> {
+        round_trip(
+            || model.to_artifact(SCHEMA),
+            |bytes| DecisionTreeClassifier::from_artifact(bytes, SCHEMA),
+        )
+    }
+}
+
+impl ScalarClassifierCase for DecisionTreeClassifierCase {
+    fn predict_one(model: &Self::Model, row: &[f32]) -> Result<u8, ModelError> {
+        model.predict_one(row)
+    }
+}
+
+struct DecisionTreeRegressorCase;
+
+impl RegressorCase for DecisionTreeRegressorCase {
+    type Model = DecisionTreeRegressor;
+    const NAME: &'static str = "DecisionTreeRegressor";
+
+    fn fit(train: &Sample, _holdout: &Sample) -> Result<Self::Model, ModelError> {
+        DecisionTreeRegressor::fit(&train.view(), &train.values, tree_regressor_params())
+    }
+
+    fn fit_weighted(train: &Sample, _holdout: &Sample) -> OptionalFit<Self::Model> {
+        Some(DecisionTreeRegressor::fit_weighted(
+            &train.view(),
+            &train.values,
+            &train.unit_weights(),
+            tree_regressor_params(),
+        ))
+    }
+
+    fn round_trip(model: &Self::Model) -> RoundTrip<Self::Model> {
+        round_trip(
+            || model.to_artifact(SCHEMA),
+            |bytes| DecisionTreeRegressor::from_artifact(bytes, SCHEMA),
+        )
+    }
+}
+
+impl ScalarRegressorCase for DecisionTreeRegressorCase {
+    fn predict_one(model: &Self::Model, row: &[f32]) -> Result<f32, ModelError> {
         model.predict_one(row)
     }
 }
@@ -1180,6 +1276,16 @@ fn random_forest_classifier_conforms() {
 }
 
 #[test]
+fn decision_tree_classifier_conforms() {
+    check_classifier::<DecisionTreeClassifierCase>();
+}
+
+#[test]
+fn decision_tree_regressor_conforms() {
+    check_regressor::<DecisionTreeRegressorCase>();
+}
+
+#[test]
 fn logistic_regression_conforms() {
     check_classifier::<LogisticRegressionCase>();
 }
@@ -1294,6 +1400,12 @@ fn staged_pipelines_conform_at_both_arities() {
 //   one score, with no fitted input width, no batch surface, and no capability
 //   declaration to check against behavior. Its obligations are in
 //   `tests/calibration.rs`.
+// - The standalone tree estimators are **not** `AnyClassifier` / `AnyRegressor`
+//   variants. Adding a variant is a public-enum change to a shared file with no
+//   consumer in this sprint, and the nested-payload dispatch design means it can
+//   be added later without touching any existing estimator's bytes. The
+//   estimators themselves are registered above, so the omission is a dispatch
+//   gap rather than a contract gap.
 // - `TransformerStack` tuples are not `Estimator`s either. A stack is reached
 //   only through `StagedPipeline`, which is registered above at both arities,
 //   so its handoff validation and its disjoint workspace segments are covered
