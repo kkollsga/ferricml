@@ -35,8 +35,8 @@ use ferricml::ensemble::{
     RandomForestRegressorParams,
 };
 use ferricml::linear_model::{
-    Lasso, LassoParams, LinearRegression, LinearRegressionParams, LogisticRegression,
-    LogisticRegressionParams, Ridge, RidgeParams,
+    ElasticNet, ElasticNetParams, Lasso, LassoParams, LinearRegression, LinearRegressionParams,
+    LogisticRegression, LogisticRegressionParams, Ridge, RidgeParams,
 };
 use ferricml::preprocessing::{
     MaxAbsScaler, MaxAbsScalerParams, MinMaxScaler, MinMaxScalerParams, StandardScaler,
@@ -426,6 +426,40 @@ fn lasso_params() -> LassoParams {
         .with_max_iter(10_000)
 }
 
+struct ElasticNetCase;
+
+impl RegressorCase for ElasticNetCase {
+    type Model = ElasticNet;
+    const NAME: &'static str = "ElasticNet";
+
+    fn fit(data: &MatrixView<'_>, values: &RegressionTargets) -> Self::Model {
+        ElasticNet::fit(data, values, elastic_net_params()).expect("fit")
+    }
+
+    fn fit_weighted(
+        data: &MatrixView<'_>,
+        values: &RegressionTargets,
+        weights: &SampleWeights,
+    ) -> Option<Self::Model> {
+        Some(
+            ElasticNet::fit_weighted(data, values, weights, elastic_net_params())
+                .expect("weighted fit"),
+        )
+    }
+}
+
+impl ScalarRegressorCase for ElasticNetCase {
+    fn predict_one(model: &Self::Model, row: &[f32]) -> Result<f32, ModelError> {
+        model.predict_one(row)
+    }
+}
+
+fn elastic_net_params() -> ElasticNetParams {
+    ElasticNetParams::default()
+        .with_alpha(0.01)
+        .with_max_iter(10_000)
+}
+
 struct HistGradientBoostingRegressorCase;
 
 impl RegressorCase for HistGradientBoostingRegressorCase {
@@ -687,6 +721,11 @@ fn ridge_conforms() {
 #[test]
 fn lasso_conforms() {
     check_regressor::<LassoCase>();
+}
+
+#[test]
+fn elastic_net_conforms() {
+    check_regressor::<ElasticNetCase>();
 }
 
 #[test]

@@ -4,12 +4,14 @@ use crate::api::ModelError;
 use crate::data::{MatrixView, SampleWeights};
 
 mod coordinate_descent;
+mod elastic_net;
 mod lasso;
 mod least_squares;
 mod linear_regression;
 mod logistic;
 mod ridge;
 
+pub use elastic_net::{ElasticNet, ElasticNetParams};
 pub use lasso::{Lasso, LassoParams};
 pub use linear_regression::{LinearRegression, LinearRegressionParams};
 pub use logistic::{LogisticRegression, LogisticRegressionParams, LogisticSolver};

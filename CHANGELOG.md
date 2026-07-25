@@ -290,6 +290,13 @@ and releases use [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   coefficients because fitting centers but does not rescale the design.
   Sample weights are fractional row counts, and only their ratios matter. It
   declares weighted fitting and, deliberately, no artifact.
+- `linear_model::ElasticNet`, the same coordinate-descent solver under a mixed
+  L1 and L2 penalty, parametrized by `alpha` and `l1_ratio` exactly as the
+  reference contract documents. `l1_ratio = 1` reproduces `Lasso` bit for bit
+  at the same `alpha`; `l1_ratio = 0` is the ridge objective, but at
+  `Ridge`'s `alpha * total_weight` rather than at the same number. The L2 term
+  restores strict convexity, which both spreads weight across correlated
+  features and makes designs converge that a pure L1 penalty does not.
 - `ModelError::InvalidPenaltyAlpha` and `ModelError::InvalidL1Ratio`, reported
   at the public boundary before any allocation or fitting work.
 - `ModelError::SolverDidNotConverge`, reported when an iterative solver

@@ -19,8 +19,8 @@ use ferricml::ensemble::{
     RandomForestClassifierParams, RandomForestRegressor,
 };
 use ferricml::linear_model::{
-    Lasso, LinearRegression, LinearRegressionParams, LogisticRegression, LogisticRegressionParams,
-    Ridge, RidgeParams,
+    ElasticNet, Lasso, LinearRegression, LinearRegressionParams, LogisticRegression,
+    LogisticRegressionParams, Ridge, RidgeParams,
 };
 use ferricml::pipeline::{Pipeline, StagedPipeline};
 use ferricml::preprocessing::{
@@ -54,6 +54,10 @@ fn the_penalized_regressors_declare_weighted_fitting_but_no_artifact_yet() {
     // point of stating it here.
     assert_eq!(
         Lasso::CAPABILITIES,
+        Capabilities::NONE.with_sample_weights(true)
+    );
+    assert_eq!(
+        ElasticNet::CAPABILITIES,
         Capabilities::NONE.with_sample_weights(true)
     );
 }

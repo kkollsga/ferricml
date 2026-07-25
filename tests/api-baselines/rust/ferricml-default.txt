@@ -235,6 +235,8 @@ impl ferricml::api::Estimator for ferricml::ensemble::RandomForestClassifier
 pub fn ferricml::ensemble::RandomForestClassifier::n_features_in(&self) -> usize
 impl ferricml::api::Estimator for ferricml::ensemble::RandomForestRegressor
 pub fn ferricml::ensemble::RandomForestRegressor::n_features_in(&self) -> usize
+impl ferricml::api::Estimator for ferricml::linear_model::ElasticNet
+pub fn ferricml::linear_model::ElasticNet::n_features_in(&self) -> usize
 impl ferricml::api::Estimator for ferricml::linear_model::Lasso
 pub fn ferricml::linear_model::Lasso::n_features_in(&self) -> usize
 impl ferricml::api::Estimator for ferricml::linear_model::LinearRegression
@@ -277,6 +279,8 @@ impl ferricml::api::HasCapabilities for ferricml::ensemble::RandomForestClassifi
 pub const ferricml::ensemble::RandomForestClassifier::CAPABILITIES: ferricml::api::Capabilities
 impl ferricml::api::HasCapabilities for ferricml::ensemble::RandomForestRegressor
 pub const ferricml::ensemble::RandomForestRegressor::CAPABILITIES: ferricml::api::Capabilities
+impl ferricml::api::HasCapabilities for ferricml::linear_model::ElasticNet
+pub const ferricml::linear_model::ElasticNet::CAPABILITIES: ferricml::api::Capabilities
 impl ferricml::api::HasCapabilities for ferricml::linear_model::Lasso
 pub const ferricml::linear_model::Lasso::CAPABILITIES: ferricml::api::Capabilities
 impl ferricml::api::HasCapabilities for ferricml::linear_model::LinearRegression
@@ -324,6 +328,9 @@ pub fn ferricml::ensemble::RandomForestClassifier::get_params(&self) -> &Self::P
 impl ferricml::api::HasParams for ferricml::ensemble::RandomForestRegressor
 pub type ferricml::ensemble::RandomForestRegressor::Params = ferricml::ensemble::RandomForestRegressorParams
 pub fn ferricml::ensemble::RandomForestRegressor::get_params(&self) -> &Self::Params
+impl ferricml::api::HasParams for ferricml::linear_model::ElasticNet
+pub type ferricml::linear_model::ElasticNet::Params = ferricml::linear_model::ElasticNetParams
+pub fn ferricml::linear_model::ElasticNet::get_params(&self) -> &Self::Params
 impl ferricml::api::HasParams for ferricml::linear_model::Lasso
 pub type ferricml::linear_model::Lasso::Params = ferricml::linear_model::LassoParams
 pub fn ferricml::linear_model::Lasso::get_params(&self) -> &Self::Params
@@ -366,6 +373,9 @@ pub fn ferricml::ensemble::HistGradientBoostingRegressor::predict_into(&self, &f
 impl ferricml::api::Regressor for ferricml::ensemble::RandomForestRegressor
 pub fn ferricml::ensemble::RandomForestRegressor::predict(&self, &ferricml::data::MatrixView<'_>) -> core::result::Result<alloc::vec::Vec<f32>, ferricml::api::ModelError>
 pub fn ferricml::ensemble::RandomForestRegressor::predict_into(&self, &ferricml::data::MatrixView<'_>, &mut [f32]) -> core::result::Result<(), ferricml::api::ModelError>
+impl ferricml::api::Regressor for ferricml::linear_model::ElasticNet
+pub fn ferricml::linear_model::ElasticNet::predict(&self, &ferricml::data::MatrixView<'_>) -> core::result::Result<alloc::vec::Vec<f32>, ferricml::api::ModelError>
+pub fn ferricml::linear_model::ElasticNet::predict_into(&self, &ferricml::data::MatrixView<'_>, &mut [f32]) -> core::result::Result<(), ferricml::api::ModelError>
 impl ferricml::api::Regressor for ferricml::linear_model::Lasso
 pub fn ferricml::linear_model::Lasso::predict(&self, &ferricml::data::MatrixView<'_>) -> core::result::Result<alloc::vec::Vec<f32>, ferricml::api::ModelError>
 pub fn ferricml::linear_model::Lasso::predict_into(&self, &ferricml::data::MatrixView<'_>, &mut [f32]) -> core::result::Result<(), ferricml::api::ModelError>
@@ -898,6 +908,43 @@ pub mod ferricml::linear_model
 #[non_exhaustive] pub enum ferricml::linear_model::LogisticSolver
 pub ferricml::linear_model::LogisticSolver::Lbfgs
 pub ferricml::linear_model::LogisticSolver::Newton
+pub struct ferricml::linear_model::ElasticNet
+impl ferricml::linear_model::ElasticNet
+pub fn ferricml::linear_model::ElasticNet::coefficients(&self) -> &[f32]
+pub fn ferricml::linear_model::ElasticNet::fit(&ferricml::data::MatrixView<'_>, &ferricml::data::RegressionTargets, ferricml::linear_model::ElasticNetParams) -> core::result::Result<Self, ferricml::api::ModelError>
+pub fn ferricml::linear_model::ElasticNet::fit_weighted(&ferricml::data::MatrixView<'_>, &ferricml::data::RegressionTargets, &ferricml::data::SampleWeights, ferricml::linear_model::ElasticNetParams) -> core::result::Result<Self, ferricml::api::ModelError>
+pub const fn ferricml::linear_model::ElasticNet::get_params(&self) -> &ferricml::linear_model::ElasticNetParams
+pub const fn ferricml::linear_model::ElasticNet::intercept(&self) -> f32
+pub const fn ferricml::linear_model::ElasticNet::n_features_in(&self) -> usize
+pub const fn ferricml::linear_model::ElasticNet::n_iter(&self) -> usize
+pub fn ferricml::linear_model::ElasticNet::n_zero_coefficients(&self) -> usize
+pub fn ferricml::linear_model::ElasticNet::predict(&self, &ferricml::data::MatrixView<'_>) -> core::result::Result<alloc::vec::Vec<f32>, ferricml::api::ModelError>
+pub fn ferricml::linear_model::ElasticNet::predict_into(&self, &ferricml::data::MatrixView<'_>, &mut [f32]) -> core::result::Result<(), ferricml::api::ModelError>
+pub fn ferricml::linear_model::ElasticNet::predict_one(&self, &[f32]) -> core::result::Result<f32, ferricml::api::ModelError>
+impl ferricml::api::Estimator for ferricml::linear_model::ElasticNet
+pub fn ferricml::linear_model::ElasticNet::n_features_in(&self) -> usize
+impl ferricml::api::HasCapabilities for ferricml::linear_model::ElasticNet
+pub const ferricml::linear_model::ElasticNet::CAPABILITIES: ferricml::api::Capabilities
+impl ferricml::api::HasParams for ferricml::linear_model::ElasticNet
+pub type ferricml::linear_model::ElasticNet::Params = ferricml::linear_model::ElasticNetParams
+pub fn ferricml::linear_model::ElasticNet::get_params(&self) -> &Self::Params
+impl ferricml::api::Regressor for ferricml::linear_model::ElasticNet
+pub fn ferricml::linear_model::ElasticNet::predict(&self, &ferricml::data::MatrixView<'_>) -> core::result::Result<alloc::vec::Vec<f32>, ferricml::api::ModelError>
+pub fn ferricml::linear_model::ElasticNet::predict_into(&self, &ferricml::data::MatrixView<'_>, &mut [f32]) -> core::result::Result<(), ferricml::api::ModelError>
+pub struct ferricml::linear_model::ElasticNetParams
+impl ferricml::linear_model::ElasticNetParams
+pub const fn ferricml::linear_model::ElasticNetParams::alpha(&self) -> f32
+pub const fn ferricml::linear_model::ElasticNetParams::fit_intercept(&self) -> bool
+pub const fn ferricml::linear_model::ElasticNetParams::l1_ratio(&self) -> f32
+pub const fn ferricml::linear_model::ElasticNetParams::max_iter(&self) -> usize
+pub const fn ferricml::linear_model::ElasticNetParams::tol(&self) -> f32
+pub fn ferricml::linear_model::ElasticNetParams::with_alpha(self, f32) -> Self
+pub fn ferricml::linear_model::ElasticNetParams::with_fit_intercept(self, bool) -> Self
+pub fn ferricml::linear_model::ElasticNetParams::with_l1_ratio(self, f32) -> Self
+pub fn ferricml::linear_model::ElasticNetParams::with_max_iter(self, usize) -> Self
+pub fn ferricml::linear_model::ElasticNetParams::with_tol(self, f32) -> Self
+impl core::default::Default for ferricml::linear_model::ElasticNetParams
+pub fn ferricml::linear_model::ElasticNetParams::default() -> Self
 pub struct ferricml::linear_model::Lasso
 impl ferricml::linear_model::Lasso
 pub fn ferricml::linear_model::Lasso::coefficients(&self) -> &[f32]
