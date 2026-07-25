@@ -1,7 +1,7 @@
 //! FerricML conformance against frozen reference outputs.
 
 use ferricml::api::ModelError;
-use ferricml::data::{BinaryTargets, DenseMatrix, RegressionTargets, SampleWeights};
+use ferricml::data::{BinaryTargets, ClassTargets, DenseMatrix, RegressionTargets, SampleWeights};
 use ferricml::ensemble::{
     HistGradientBoostingRegressor, HistGradientBoostingRegressorParams, MaxFeatures, NJobs,
     RandomForestClassifier, RandomForestClassifierParams, RandomForestRegressor,
@@ -400,6 +400,217 @@ fn tie_and_single_class_shapes_match_frozen_reference_outputs() {
     let probabilities = single.predict_proba(&test.as_view()).unwrap();
     assert_eq!(probabilities.len(), test.rows());
     assert_close(&probabilities, reference::SINGLE_PROBABILITIES);
+}
+
+/// The multiclass exact-tree configuration: one tree, every feature, no
+/// bootstrap, so nothing depends on randomized topology.
+fn exact_multiclass_forest_params(max_depth: usize) -> RandomForestClassifierParams {
+    RandomForestClassifierParams::default()
+        .with_n_estimators(1)
+        .with_max_depth(Some(max_depth))
+        .with_max_features(MaxFeatures::All)
+        .with_bootstrap(false)
+        .with_random_state(0)
+}
+
+#[test]
+fn joint_multinomial_logistic_matches_frozen_reference_outputs() {
+    let train = matrix(reference::MULTICLASS_TRAIN_X, 12, 2);
+    let test = matrix(reference::MULTICLASS_TEST_X, 4, 2);
+    let targets = ClassTargets::new(reference::MULTICLASS_Y.to_vec()).unwrap();
+    let model = LogisticRegression::fit_multiclass(
+        &train.as_view(),
+        &targets,
+        LogisticRegressionParams::default()
+            .with_max_iter(1000)
+            .with_tol(1.0e-9),
+    )
+    .unwrap();
+
+    assert_eq!(model.classes(), reference::MULTICLASS_CLASSES);
+    // One coefficient row and one intercept per class, with no pinned
+    // reference class.
+    assert_eq!(model.n_decision_columns(), 3);
+    assert_close_with_tolerance(
+        model.coefficients(),
+        reference::MULTINOMIAL_COEFFICIENTS,
+        LOGISTIC_TOLERANCE,
+    );
+    assert_close_with_tolerance(
+        model.intercepts(),
+        reference::MULTINOMIAL_INTERCEPTS,
+        LOGISTIC_TOLERANCE,
+    );
+
+    let scores = model.decision_function(&test.as_view()).unwrap();
+    assert_eq!(scores.len(), test.rows() * 3);
+    assert_close_with_tolerance(
+        &scores,
+        reference::MULTINOMIAL_DECISIONS,
+        LOGISTIC_TOLERANCE,
+    );
+    let probabilities = model.predict_proba(&test.as_view()).unwrap();
+    assert_eq!(probabilities.len(), test.rows() * 3);
+    assert_close_with_tolerance(
+        &probabilities,
+        reference::MULTINOMIAL_PROBABILITIES,
+        LOGISTIC_TOLERANCE,
+    );
+    assert_eq!(
+        model.predict(&test.as_view()).unwrap(),
+        reference::MULTINOMIAL_LABELS
+    );
+
+    // The score rows are centred: they sum to zero to `f32` rounding, which is
+    // what "no reference class" means observably.
+    for row in scores.chunks_exact(3) {
+        let magnitude = row.iter().fold(1.0_f32, |max, value| max.max(value.abs()));
+        assert!(
+            row.iter().sum::<f32>().abs() <= 3.0 * f32::EPSILON * magnitude,
+            "score row {row:?} is not centred"
+        );
+    }
+    // And probability rows sum to one only within the frozen tolerance; the
+    // contract is explicitly not exact summation.
+    for row in probabilities.chunks_exact(3) {
+        let sum = row.iter().sum::<f32>();
+        assert!(
+            (sum - 1.0).abs() <= 3.0 * f32::EPSILON,
+            "row {row:?} sums to {sum}"
+        );
+    }
+}
+
+#[test]
+fn multiclass_columns_follow_relabelled_classes_in_both_estimators() {
+    let train = matrix(reference::MULTICLASS_TRAIN_X, 12, 2);
+    let test = matrix(reference::MULTICLASS_TEST_X, 4, 2);
+    let targets = ClassTargets::new(reference::MULTICLASS_RELABELLED_Y.to_vec()).unwrap();
+    assert_eq!(targets.classes(), reference::MULTICLASS_RELABELLED_CLASSES);
+
+    let logistic = LogisticRegression::fit_multiclass(
+        &train.as_view(),
+        &targets,
+        LogisticRegressionParams::default()
+            .with_max_iter(1000)
+            .with_tol(1.0e-9),
+    )
+    .unwrap();
+    assert_eq!(logistic.classes(), reference::MULTICLASS_RELABELLED_CLASSES);
+    assert_close_with_tolerance(
+        &logistic.predict_proba(&test.as_view()).unwrap(),
+        reference::MULTINOMIAL_RELABELLED_PROBABILITIES,
+        LOGISTIC_TOLERANCE,
+    );
+
+    let forest = RandomForestClassifier::fit_multiclass(
+        &train.as_view(),
+        &targets,
+        exact_multiclass_forest_params(2),
+    )
+    .unwrap();
+    assert_eq!(forest.classes(), reference::MULTICLASS_RELABELLED_CLASSES);
+    assert_close(
+        &forest.predict_proba(&test.as_view()).unwrap(),
+        reference::FOREST_MULTICLASS_RELABELLED_PROBABILITIES,
+    );
+}
+
+#[test]
+fn natively_multiclass_forests_match_frozen_reference_outputs() {
+    let train = matrix(reference::MULTICLASS_TRAIN_X, 12, 2);
+    let test = matrix(reference::MULTICLASS_TEST_X, 4, 2);
+    let targets = ClassTargets::new(reference::MULTICLASS_Y.to_vec()).unwrap();
+    let model = RandomForestClassifier::fit_multiclass(
+        &train.as_view(),
+        &targets,
+        exact_multiclass_forest_params(2),
+    )
+    .unwrap();
+    assert_eq!(model.classes(), reference::MULTICLASS_CLASSES);
+    assert_eq!(
+        model.predict(&test.as_view()).unwrap(),
+        reference::FOREST_MULTICLASS_LABELS
+    );
+    assert_close(
+        &model.predict_proba(&test.as_view()).unwrap(),
+        reference::FOREST_MULTICLASS_PROBABILITIES,
+    );
+
+    // A depth-one stump: its leaves hold class *distributions*, so the
+    // probabilities are fractional where a vote over one tree could only ever
+    // produce a zero or a one.
+    let stump = RandomForestClassifier::fit_multiclass(
+        &train.as_view(),
+        &targets,
+        exact_multiclass_forest_params(1),
+    )
+    .unwrap();
+    let probabilities = stump.predict_proba(&test.as_view()).unwrap();
+    assert!(
+        probabilities
+            .iter()
+            .any(|&value| value != 0.0 && value != 1.0),
+        "a stump's leaves must expose fractional class distributions: {probabilities:?}"
+    );
+    assert_close(&probabilities, reference::FOREST_STUMP_PROBABILITIES);
+    assert_eq!(
+        stump.predict(&test.as_view()).unwrap(),
+        reference::FOREST_STUMP_LABELS
+    );
+
+    // A single observed class fits and reports one all-ones column, on a label
+    // that is neither zero nor one.
+    let single = RandomForestClassifier::fit_multiclass(
+        &train.as_view(),
+        &ClassTargets::new(vec![7; train.rows()]).unwrap(),
+        exact_multiclass_forest_params(2),
+    )
+    .unwrap();
+    assert_eq!(single.classes(), reference::FOREST_SINGLE_CLASS_CLASSES);
+    let probabilities = single.predict_proba(&test.as_view()).unwrap();
+    assert_eq!(probabilities.len(), test.rows());
+    assert_close(&probabilities, reference::FOREST_SINGLE_CLASS_PROBABILITIES);
+}
+
+#[test]
+fn a_multiclass_fit_never_changes_the_binary_one() {
+    // The two entry points are different models on purpose. This asserts the
+    // binary fit is untouched by the multiclass one existing: its frozen
+    // reference outputs are re-checked here from the same data the multiclass
+    // path uses, through the binary API.
+    let train = matrix(reference::EXACT_TRAIN_X, 8, 2);
+    let test = matrix(reference::EXACT_TEST_X, 5, 2);
+    let binary = BinaryTargets::new(reference::EXACT_CLASSIFIER_Y.to_vec()).unwrap();
+    let forest =
+        RandomForestClassifier::fit(&train.as_view(), &binary, exact_classifier_params()).unwrap();
+    assert_close(
+        &forest.predict_proba(&test.as_view()).unwrap(),
+        reference::EXACT_PROBABILITIES,
+    );
+
+    let logistic = LogisticRegression::fit(
+        &matrix(reference::LOGISTIC_NO_INTERCEPT_TRAIN_X, 6, 2).as_view(),
+        &BinaryTargets::new(reference::LOGISTIC_NO_INTERCEPT_Y.to_vec()).unwrap(),
+        LogisticRegressionParams::default()
+            .with_fit_intercept(false)
+            .with_tol(1.0e-8),
+    )
+    .unwrap();
+    assert_eq!(logistic.n_decision_columns(), 1);
+    assert_eq!(
+        logistic
+            .decision_function(&matrix(reference::LOGISTIC_NO_INTERCEPT_TEST_X, 5, 2).as_view())
+            .unwrap()
+            .len(),
+        5,
+        "a binary decision score stays one value per row"
+    );
+    assert_close_with_tolerance(
+        logistic.coefficients(),
+        reference::LOGISTIC_NO_INTERCEPT_COEFFICIENTS,
+        LOGISTIC_TOLERANCE,
+    );
 }
 
 #[test]
