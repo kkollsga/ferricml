@@ -88,6 +88,14 @@ iterators. Fold sizes differ by at most one. Stratification accepts arbitrary
 `u8` labels and requires enough members of every observed class to place that
 class in every requested partition.
 
+`GroupKFold` takes one group identifier per row and assigns whole groups to
+folds, so no group is ever on both sides of a split. It needs no seed: groups
+are taken largest first, ties by increasing identifier, each into the fold
+holding the fewest rows. Fold sizes are then as even as whole groups allow.
+`RepeatedKFold` runs shuffled K-fold `n_repeats` times, deriving each repeat's
+shuffle seed from the configured one, and yields every fold of every repeat in
+order.
+
 Use `DenseMatrix::select_rows`, `BinaryTargets::select`, and
 `RegressionTargets::select` when manually applying a split:
 
@@ -161,7 +169,6 @@ assert!(result.mean().is_finite());
 # Ok::<(), Box<dyn std::error::Error>>(())
 ```
 
-Parameter grids, repeated validation, parallel fold scheduling, group-aware
-splits, and nested model selection remain outside this initial contract. They
-can be added without exposing fitted model internals or weakening deterministic
-split semantics.
+Parameter grids, parallel fold scheduling, and nested model selection remain
+outside this contract. They can be added without exposing fitted model
+internals or weakening deterministic split semantics.

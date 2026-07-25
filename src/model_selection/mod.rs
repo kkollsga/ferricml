@@ -14,7 +14,8 @@ pub use scoring::{
     score_classifier_with, score_regressor, score_regressor_with,
 };
 pub use split::{
-    HoldoutParams, KFold, KFoldIter, LeaveOneOut, LeaveOneOutIter, Split, SplitError,
-    SplitPartition, StratifiedKFold, StratifiedKFoldIter, TestSize, TimeSeriesSplit,
-    TimeSeriesSplitIter, stratified_train_test_split, train_test_split,
+    GroupKFold, GroupKFoldIter, HoldoutParams, KFold, KFoldIter, LeaveOneOut, LeaveOneOutIter,
+    RepeatedKFold, RepeatedKFoldIter, Split, SplitError, SplitPartition, StratifiedKFold,
+    StratifiedKFoldIter, TestSize, TimeSeriesSplit, TimeSeriesSplitIter,
+    stratified_train_test_split, train_test_split,
 };

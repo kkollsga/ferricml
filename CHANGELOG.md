@@ -80,6 +80,12 @@ and releases use [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   follows it, with an optional `gap`, so no fold is ever fitted on a row that
   comes after the rows it is evaluated on.
 - `model_selection::LeaveOneOut`, which holds out one sample per split.
+- `model_selection::GroupKFold`, which assigns whole groups to folds so no
+  group is ever on both sides of a split. Assignment is deterministic and needs
+  no seed: largest group first, into the fold holding the fewest rows.
+- `model_selection::RepeatedKFold`, which runs shuffled K-fold several times
+  with a per-repeat seed derived from one configured seed, so a caller can
+  separate model variance from partition variance reproducibly.
 - `Split::partial`, for a split that deliberately leaves rows out of both
   partitions — what a forward-chaining fold needs so that the rows after its
   test window leak into neither side — plus `Split::covered_samples`.

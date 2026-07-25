@@ -4,8 +4,12 @@ use std::collections::BinaryHeap;
 use std::error::Error;
 use std::fmt;
 
+mod grouped;
+mod repeated;
 mod time_series;
 
+pub use grouped::{GroupKFold, GroupKFoldIter};
+pub use repeated::{RepeatedKFold, RepeatedKFoldIter};
 pub use time_series::{LeaveOneOut, LeaveOneOutIter, TimeSeriesSplit, TimeSeriesSplitIter};
 
 /// Identifies one side of a train/test split.
@@ -86,6 +90,18 @@ pub enum SplitError {
         /// Required partition count.
         partitions: usize,
     },
+    /// Fewer distinct groups than the requested number of partitions.
+    InsufficientGroups {
+        /// Distinct groups observed.
+        groups: usize,
+        /// Required partition count.
+        partitions: usize,
+    },
+    /// A repeat count was zero.
+    InvalidRepeatCount {
+        /// Requested repeats.
+        repeats: usize,
+    },
     /// A forward-chaining split left no room for a train or test window.
     InvalidTimeSeriesWindow {
         /// Requested splits.
@@ -152,6 +168,13 @@ impl fmt::Display for SplitError {
                 f,
                 "class {label} has {count} rows but needs at least {partitions}"
             ),
+            Self::InsufficientGroups { groups, partitions } => write!(
+                f,
+                "{groups} distinct groups cannot fill {partitions} partitions"
+            ),
+            Self::InvalidRepeatCount { repeats } => {
+                write!(f, "repeat count {repeats} must be at least one")
+            }
             Self::InvalidTimeSeriesWindow {
                 splits,
                 gap,

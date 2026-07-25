@@ -991,9 +991,14 @@ pub ferricml::model_selection::SplitError::InsufficientClassMembers
 pub ferricml::model_selection::SplitError::InsufficientClassMembers::count: usize
 pub ferricml::model_selection::SplitError::InsufficientClassMembers::label: u8
 pub ferricml::model_selection::SplitError::InsufficientClassMembers::partitions: usize
+pub ferricml::model_selection::SplitError::InsufficientGroups
+pub ferricml::model_selection::SplitError::InsufficientGroups::groups: usize
+pub ferricml::model_selection::SplitError::InsufficientGroups::partitions: usize
 pub ferricml::model_selection::SplitError::InvalidFoldCount
 pub ferricml::model_selection::SplitError::InvalidFoldCount::folds: usize
 pub ferricml::model_selection::SplitError::InvalidFoldCount::samples: usize
+pub ferricml::model_selection::SplitError::InvalidRepeatCount
+pub ferricml::model_selection::SplitError::InvalidRepeatCount::repeats: usize
 pub ferricml::model_selection::SplitError::InvalidTestCount
 pub ferricml::model_selection::SplitError::InvalidTestCount::samples: usize
 pub ferricml::model_selection::SplitError::InvalidTestCount::test: usize
@@ -1026,6 +1031,17 @@ pub fn ferricml::model_selection::CrossValidationResult::len(&self) -> usize
 pub fn ferricml::model_selection::CrossValidationResult::mean(&self) -> f64
 pub fn ferricml::model_selection::CrossValidationResult::population_standard_deviation(&self) -> f64
 pub fn ferricml::model_selection::CrossValidationResult::scores(&self) -> &[f64]
+pub struct ferricml::model_selection::GroupKFold
+impl ferricml::model_selection::GroupKFold
+pub const fn ferricml::model_selection::GroupKFold::n_splits(&self) -> usize
+pub const fn ferricml::model_selection::GroupKFold::new(usize) -> Self
+pub fn ferricml::model_selection::GroupKFold::split(&self, &[u64]) -> core::result::Result<ferricml::model_selection::GroupKFoldIter, ferricml::model_selection::SplitError>
+pub struct ferricml::model_selection::GroupKFoldIter
+impl core::iter::traits::exact_size::ExactSizeIterator for ferricml::model_selection::GroupKFoldIter
+impl core::iter::traits::iterator::Iterator for ferricml::model_selection::GroupKFoldIter
+pub type ferricml::model_selection::GroupKFoldIter::Item = ferricml::model_selection::Split
+pub fn ferricml::model_selection::GroupKFoldIter::next(&mut self) -> core::option::Option<Self::Item>
+pub fn ferricml::model_selection::GroupKFoldIter::size_hint(&self) -> (usize, core::option::Option<usize>)
 pub struct ferricml::model_selection::HoldoutParams
 impl ferricml::model_selection::HoldoutParams
 pub const fn ferricml::model_selection::HoldoutParams::random_state(&self) -> u64
@@ -1061,6 +1077,20 @@ impl core::iter::traits::iterator::Iterator for ferricml::model_selection::Leave
 pub type ferricml::model_selection::LeaveOneOutIter::Item = ferricml::model_selection::Split
 pub fn ferricml::model_selection::LeaveOneOutIter::next(&mut self) -> core::option::Option<Self::Item>
 pub fn ferricml::model_selection::LeaveOneOutIter::size_hint(&self) -> (usize, core::option::Option<usize>)
+pub struct ferricml::model_selection::RepeatedKFold
+impl ferricml::model_selection::RepeatedKFold
+pub const fn ferricml::model_selection::RepeatedKFold::n_repeats(&self) -> usize
+pub const fn ferricml::model_selection::RepeatedKFold::n_splits(&self) -> usize
+pub const fn ferricml::model_selection::RepeatedKFold::new(usize, usize) -> Self
+pub const fn ferricml::model_selection::RepeatedKFold::random_state(&self) -> u64
+pub fn ferricml::model_selection::RepeatedKFold::split(&self, usize) -> core::result::Result<ferricml::model_selection::RepeatedKFoldIter, ferricml::model_selection::SplitError>
+pub const fn ferricml::model_selection::RepeatedKFold::with_random_state(self, u64) -> Self
+pub struct ferricml::model_selection::RepeatedKFoldIter
+impl core::iter::traits::exact_size::ExactSizeIterator for ferricml::model_selection::RepeatedKFoldIter
+impl core::iter::traits::iterator::Iterator for ferricml::model_selection::RepeatedKFoldIter
+pub type ferricml::model_selection::RepeatedKFoldIter::Item = ferricml::model_selection::Split
+pub fn ferricml::model_selection::RepeatedKFoldIter::next(&mut self) -> core::option::Option<Self::Item>
+pub fn ferricml::model_selection::RepeatedKFoldIter::size_hint(&self) -> (usize, core::option::Option<usize>)
 pub struct ferricml::model_selection::ScoringWorkspace
 impl ferricml::model_selection::ScoringWorkspace
 pub fn ferricml::model_selection::ScoringWorkspace::new() -> Self
