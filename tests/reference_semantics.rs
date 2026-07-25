@@ -3,10 +3,11 @@
 use ferricml::api::ModelError;
 use ferricml::data::{BinaryTargets, ClassTargets, DenseMatrix, RegressionTargets, SampleWeights};
 use ferricml::ensemble::{
-    HistGradientBoostingClassifier, HistGradientBoostingClassifierParams,
-    HistGradientBoostingRegressor, HistGradientBoostingRegressorParams, MaxFeatures, NJobs,
-    RandomForestClassifier, RandomForestClassifierParams, RandomForestRegressor,
-    RandomForestRegressorParams,
+    ExtraTreesClassifier, ExtraTreesClassifierParams, ExtraTreesRegressor,
+    ExtraTreesRegressorParams, HistGradientBoostingClassifier,
+    HistGradientBoostingClassifierParams, HistGradientBoostingRegressor,
+    HistGradientBoostingRegressorParams, MaxFeatures, NJobs, RandomForestClassifier,
+    RandomForestClassifierParams, RandomForestRegressor, RandomForestRegressorParams,
 };
 use ferricml::linear_model::{
     ElasticNet, ElasticNetParams, Lasso, LassoParams, LinearRegression, LinearRegressionParams,
@@ -24,6 +25,10 @@ use ferricml::model_selection::{
     stratified_train_test_split, train_test_split,
 };
 use ferricml::preprocessing::{StandardScaler, StandardScalerParams};
+use ferricml::tree::{
+    DecisionTreeClassifier, DecisionTreeClassifierParams, DecisionTreeRegressor,
+    DecisionTreeRegressorParams,
+};
 
 #[allow(dead_code, clippy::excessive_precision)]
 mod reference {
@@ -361,6 +366,113 @@ fn exact_regressor_matches_frozen_reference_outputs() {
     let predictions = model.predict(&test.as_view()).unwrap();
     assert_eq!(predictions.len(), 5);
     assert_close(&predictions, reference::EXACT_REGRESSION);
+}
+
+/// The claimed standalone-tree subset: the standard split search, every
+/// feature, a stated depth and stated node-size bounds.
+///
+/// Randomized split selection is deliberately absent from every exact fixture.
+/// FerricML owns its generator and does not promise randomized tree identity,
+/// so a frozen drawn threshold would convert a recorded non-promise into a
+/// promise. Extra-trees is held to a quality envelope instead, below.
+///
+/// Parity is claimed here only **outside** the two recorded divergent regions:
+/// `max_features` never binds, so the constant-column quota rule cannot show,
+/// and no two values are near-duplicates, so the exact-distinctness rule cannot
+/// either. Both regions are covered by first-party assertions in
+/// `src/tree/tests.rs`, which state what the reference produces instead.
+#[test]
+fn exact_standalone_trees_match_frozen_reference_outputs() {
+    let train = matrix(reference::EXACT_TRAIN_X, 8, 2);
+    let test = matrix(reference::EXACT_TEST_X, 5, 2);
+    let labels = BinaryTargets::new(reference::EXACT_CLASSIFIER_Y.to_vec()).unwrap();
+    let values = RegressionTargets::new(reference::EXACT_REGRESSION_Y.to_vec()).unwrap();
+
+    let classifier = DecisionTreeClassifier::fit(
+        &train.as_view(),
+        &labels,
+        DecisionTreeClassifierParams::default()
+            .with_max_depth(Some(2))
+            .with_min_samples_split(2)
+            .with_min_samples_leaf(1)
+            .with_max_features(MaxFeatures::All)
+            .with_random_state(0),
+    )
+    .unwrap();
+    assert_eq!(classifier.n_features_in(), 2);
+    assert_eq!(classifier.classes(), reference::TREE_CLASSES);
+    assert_eq!(
+        classifier.predict(&test.as_view()).unwrap(),
+        reference::TREE_LABELS
+    );
+    assert_close(
+        &classifier.predict_proba(&test.as_view()).unwrap(),
+        reference::TREE_PROBABILITIES,
+    );
+
+    let regressor = DecisionTreeRegressor::fit(
+        &train.as_view(),
+        &values,
+        DecisionTreeRegressorParams::default()
+            .with_max_depth(Some(2))
+            .with_min_samples_split(2)
+            .with_min_samples_leaf(1)
+            .with_max_features(MaxFeatures::All)
+            .with_random_state(0),
+    )
+    .unwrap();
+    assert_close(
+        &regressor.predict(&test.as_view()).unwrap(),
+        reference::TREE_REGRESSION,
+    );
+
+    // A second configuration where the node-size bounds bind, so the fixture
+    // covers the parameters rather than only the default path. Both bounded
+    // arrays differ from their unbounded twins, which is asserted in the
+    // generator so this cannot silently become a duplicate.
+    let bounded_classifier = DecisionTreeClassifier::fit(
+        &train.as_view(),
+        &labels,
+        DecisionTreeClassifierParams::default()
+            .with_max_depth(Some(3))
+            .with_min_samples_split(6)
+            .with_min_samples_leaf(3)
+            .with_max_features(MaxFeatures::All)
+            .with_random_state(0),
+    )
+    .unwrap();
+    assert_eq!(
+        bounded_classifier.predict(&test.as_view()).unwrap(),
+        reference::TREE_BOUNDED_LABELS
+    );
+    assert_close(
+        &bounded_classifier.predict_proba(&test.as_view()).unwrap(),
+        reference::TREE_BOUNDED_PROBABILITIES,
+    );
+    assert_ne!(
+        bounded_classifier.predict_proba(&test.as_view()).unwrap(),
+        classifier.predict_proba(&test.as_view()).unwrap()
+    );
+
+    let bounded_regressor = DecisionTreeRegressor::fit(
+        &train.as_view(),
+        &values,
+        DecisionTreeRegressorParams::default()
+            .with_max_depth(Some(3))
+            .with_min_samples_split(6)
+            .with_min_samples_leaf(3)
+            .with_max_features(MaxFeatures::All)
+            .with_random_state(0),
+    )
+    .unwrap();
+    assert_close(
+        &bounded_regressor.predict(&test.as_view()).unwrap(),
+        reference::TREE_BOUNDED_REGRESSION,
+    );
+    assert_ne!(
+        bounded_regressor.predict(&test.as_view()).unwrap(),
+        regressor.predict(&test.as_view()).unwrap()
+    );
 }
 
 #[test]
@@ -1502,6 +1614,103 @@ fn five_seed_classification_quality_stays_within_approved_deltas() {
             "{lane}: FerricML Brier {ferric_brier:.6} exceeds baseline {baseline_brier:.6} by more than 0.02"
         );
     }
+}
+
+/// Extra-trees is held to a quality envelope and to nothing exact.
+///
+/// Its thresholds come out of each implementation's own generator, so the two
+/// never agree value-for-value and no tolerance would make them. What *is*
+/// comparable is whether the randomized ensemble is as good a model, and that
+/// is what this checks. It is also the lane that would catch a split search
+/// randomized in name only: a `Splitter::Random` that had silently fallen back
+/// to the exhaustive sweep would still score well here, but the bitwise
+/// equivalence tests in `src/ensemble/equivalence.rs` cover that half — the two
+/// mechanisms answer different questions and neither substitutes for the other.
+#[test]
+fn five_seed_extra_trees_quality_stays_within_approved_deltas() {
+    let mut ferric_accuracy = 0.0;
+    let mut ferric_brier = 0.0;
+    let mut baseline_accuracy = 0.0;
+    let mut baseline_brier = 0.0;
+    for seed in QUALITY_SEEDS {
+        let (train, train_y, test, test_y) = classification_data("nonlinear", seed);
+        let model = ExtraTreesClassifier::fit(
+            &train.as_view(),
+            &train_y,
+            ExtraTreesClassifierParams::default()
+                .with_n_estimators(64)
+                .with_max_depth(Some(10))
+                .with_min_samples_leaf(2)
+                .with_max_features(MaxFeatures::Sqrt)
+                .with_random_state(seed),
+        )
+        .unwrap();
+        ferric_accuracy +=
+            accuracy_score(test_y.as_slice(), &model.predict(&test.as_view()).unwrap()).unwrap();
+        ferric_brier += brier_score(
+            test_y.as_slice(),
+            &model.predict_class_proba(&test.as_view(), 1).unwrap(),
+        )
+        .unwrap();
+        let reference = reference::QUALITY_REFERENCES
+            .iter()
+            .find(|reference| reference.lane == "extra_trees_nonlinear" && reference.seed == seed)
+            .unwrap();
+        baseline_accuracy += reference.accuracy;
+        baseline_brier += reference.brier;
+    }
+    let count = QUALITY_SEEDS.len() as f64;
+    ferric_accuracy /= count;
+    ferric_brier /= count;
+    baseline_accuracy /= count;
+    baseline_brier /= count;
+    eprintln!(
+        "quality extra_trees_nonlinear: ferric accuracy={ferric_accuracy:.6} brier={ferric_brier:.6}; baseline accuracy={baseline_accuracy:.6} brier={baseline_brier:.6}"
+    );
+    assert!(
+        ferric_accuracy + 0.02 >= baseline_accuracy,
+        "extra-trees accuracy {ferric_accuracy:.6} trails baseline {baseline_accuracy:.6} by more than 0.02"
+    );
+    assert!(
+        ferric_brier <= baseline_brier + 0.02,
+        "extra-trees Brier {ferric_brier:.6} exceeds baseline {baseline_brier:.6} by more than 0.02"
+    );
+
+    let mut ferric_nrmse = 0.0;
+    let mut baseline_nrmse = 0.0;
+    for seed in QUALITY_SEEDS {
+        let (train, train_y, test, test_y) = regression_data(seed);
+        let model = ExtraTreesRegressor::fit(
+            &train.as_view(),
+            &train_y,
+            ExtraTreesRegressorParams::default()
+                .with_n_estimators(64)
+                .with_max_depth(Some(10))
+                .with_min_samples_leaf(2)
+                .with_max_features(MaxFeatures::All)
+                .with_random_state(seed),
+        )
+        .unwrap();
+        ferric_nrmse += normalized_root_mean_squared_error(
+            test_y.as_slice(),
+            &model.predict(&test.as_view()).unwrap(),
+        );
+        baseline_nrmse += reference::QUALITY_REFERENCES
+            .iter()
+            .find(|reference| reference.lane == "extra_trees_regression" && reference.seed == seed)
+            .unwrap()
+            .nrmse;
+    }
+    let count = QUALITY_SEEDS.len() as f64;
+    ferric_nrmse /= count;
+    baseline_nrmse /= count;
+    eprintln!(
+        "quality extra_trees_regression: ferric nRMSE={ferric_nrmse:.6}; baseline nRMSE={baseline_nrmse:.6}"
+    );
+    assert!(
+        ferric_nrmse <= baseline_nrmse * 1.05,
+        "extra-trees nRMSE {ferric_nrmse:.6} exceeds baseline {baseline_nrmse:.6} by more than 5%"
+    );
 }
 
 #[test]

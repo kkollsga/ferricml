@@ -12,6 +12,13 @@ pub const FOREST_WEIGHTS: &[f32] = &[1.0, 2.0, 1.0, 3.0, 1.0, 2.0, 1.0, 2.0];
 pub const FOREST_WEIGHTED_LABELS: &[u8] = &[0, 0, 1, 1, 0];
 pub const FOREST_WEIGHTED_PROBABILITIES: &[f32] = &[1.0, 0.0, 1.0, 0.0, 0.1428571492433548, 0.8571428656578064, 0.1428571492433548, 0.8571428656578064, 0.66666668653488159, 0.3333333432674408];
 pub const FOREST_WEIGHTED_REGRESSION: &[f32] = &[-0.3333333432674408, -0.3333333432674408, 1.75, 5.3333334922790527, 8.3333330154418945];
+pub const TREE_CLASSES: &[u8] = &[0, 1];
+pub const TREE_LABELS: &[u8] = &[0, 0, 0, 1, 1];
+pub const TREE_PROBABILITIES: &[f32] = &[1.0, 0.0, 1.0, 0.0, 0.5, 0.5, 0.25, 0.75, 0.25, 0.75];
+pub const TREE_REGRESSION: &[f32] = &[-0.5, -0.5, 1.5, 5.0, 8.0];
+pub const TREE_BOUNDED_LABELS: &[u8] = &[0, 0, 0, 1, 1];
+pub const TREE_BOUNDED_PROBABILITIES: &[f32] = &[0.75, 0.25, 0.75, 0.25, 0.75, 0.25, 0.25, 0.75, 0.25, 0.75];
+pub const TREE_BOUNDED_REGRESSION: &[f32] = &[0.5, 0.5, 0.5, 6.5, 6.5];
 pub const TIE_TRAIN_X: &[f32] = &[0.0, 1.0, 2.0, 3.0];
 pub const TIE_Y: &[u8] = &[0, 1, 0, 1];
 pub const TIE_TEST_X: &[f32] = &[-1.0, 1.5, 4.0];
@@ -80,6 +87,30 @@ pub const SCALER_WEIGHTED_MEAN: &[f64] = &[5.0, 7.25, 5.0];
 pub const SCALER_WEIGHTED_VARIANCE: &[f64] = &[5.0, 9.9375, 0.0];
 pub const SCALER_WEIGHTED_SCALE: &[f64] = &[2.2360679774997898, 3.1523800532296229, 1.0];
 pub const SCALER_WEIGHTED_TRANSFORMED: &[f32] = &[-1.7888543605804443, -1.6654083728790283, 0.0, -0.89442718029022217, -1.030967116355896, 0.0, 0.0, 0.23791548609733582, 0.0, 0.89442718029022217, 0.87235677242279053, 0.0];
+pub const ROBUST_TRAIN_X: &[f32] = &[0.0, 1.0, 5.0, 1.0, 2.0, 5.0, 2.0, 10.0, 5.0, 10.0, 10.0, 5.0];
+pub const ROBUST_DEFAULT_CENTER: &[f64] = &[1.5, 6.0, 5.0];
+pub const ROBUST_DEFAULT_SCALE: &[f64] = &[3.25, 8.25, 1.0];
+pub const ROBUST_DEFAULT_TRANSFORMED: &[f32] = &[-0.46153846383094788, -0.60606062412261963, 0.0, -0.15384615957736969, -0.4848484992980957, 0.0, 0.15384615957736969, 0.4848484992980957, 0.0, 2.615384578704834, 0.4848484992980957, 0.0];
+pub const ROBUST_WIDE_CENTER: &[f64] = &[1.5, 6.0, 5.0];
+pub const ROBUST_WIDE_SCALE: &[f64] = &[7.3000000000000016, 8.6999999999999993, 1.0];
+pub const ROBUST_WIDE_TRANSFORMED: &[f32] = &[-0.2054794579744339, -0.57471263408660889, 0.0, -0.068493150174617767, -0.45977011322975159, 0.0, 0.068493150174617767, 0.45977011322975159, 0.0, 1.1643835306167603, 0.45977011322975159, 0.0];
+pub const ROBUST_NO_CENTERING_TRANSFORMED: &[f32] = &[0.0, 0.12121212482452393, 5.0, 0.30769231915473938, 0.24242424964904785, 5.0, 0.61538463830947876, 1.2121212482452393, 5.0, 3.076923131942749, 1.2121212482452393, 5.0];
+pub const ROBUST_NO_SCALING_TRANSFORMED: &[f32] = &[-1.5, -5.0, 0.0, -0.5, -4.0, 0.0, 0.5, 4.0, 0.0, 8.5, 4.0, 0.0];
+pub const ROBUST_DEGENERATE_X: &[f32] = &[0.0, 5.0, 5.0, 5.0, 5.0, 5.0, 5.0, 5.0, 100.0];
+pub const ROBUST_DEGENERATE_CENTER: &[f64] = &[5.0];
+pub const ROBUST_DEGENERATE_SCALE: &[f64] = &[1.0];
+pub const ROBUST_DEGENERATE_TRANSFORMED: &[f32] = &[-5.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 95.0];
+pub const NORMALIZER_X: &[f32] = &[1.0, 2.0, -2.0, 0.0, 0.0, 0.0, 3.0, 4.0, 0.0, -4.0, 2.0, 1.0];
+pub const NORMALIZER_L1: &[f32] = &[0.20000000298023224, 0.40000000596046448, -0.40000000596046448, 0.0, 0.0, 0.0, 0.4285714328289032, 0.57142859697341919, 0.0, -0.57142859697341919, 0.28571429848670959, 0.1428571492433548];
+pub const NORMALIZER_L2: &[f32] = &[0.3333333432674408, 0.66666668653488159, -0.66666668653488159, 0.0, 0.0, 0.0, 0.60000002384185791, 0.80000001192092896, 0.0, -0.87287157773971558, 0.43643578886985779, 0.21821789443492889];
+pub const NORMALIZER_MAX: &[f32] = &[0.5, 1.0, -1.0, 0.0, 0.0, 0.0, 0.75, 1.0, 0.0, -1.0, 0.5, 0.25];
+pub const BINARIZER_X: &[f32] = &[-1.0, 0.0, 1.0, 2.0, 2.5, 3.0, -0.5, 0.5, 100.0];
+pub const BINARIZER_DEFAULT: &[f32] = &[0.0, 0.0, 1.0, 1.0, 1.0, 1.0, 0.0, 1.0, 1.0];
+pub const BINARIZER_AT_TWO: &[f32] = &[0.0, 0.0, 0.0, 0.0, 1.0, 1.0, 0.0, 0.0, 1.0];
+pub const MIN_MAX_RANGE_X: &[f32] = &[1.0, 2.0, 5.0, 3.0, 4.0, 5.0, 5.0, 8.0, 5.0, 7.0, 10.0, 5.0];
+pub const MIN_MAX_RANGE_SCALE: &[f64] = &[0.33333333333333331, 0.25, 2.0];
+pub const MIN_MAX_RANGE_MIN: &[f64] = &[-1.3333333333333333, -1.5, -11.0];
+pub const MIN_MAX_RANGE_TRANSFORMED: &[f32] = &[-1.0, -1.0, -1.0, -0.3333333432674408, -0.5, -1.0, 0.3333333432674408, 0.5, -1.0, 1.0, 1.0, -1.0];
 pub const HGB_TRAIN_X: &[f32] = &[0.0, 1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0];
 pub const HGB_TRAIN_Y: &[f32] = &[0.0, 0.0, 0.0, 0.0, 4.0, 4.0, 4.0, 4.0];
 pub const HGB_TEST_X: &[f32] = &[-1.0, 3.5, 3.5000998973846436, 8.0];
@@ -145,9 +176,19 @@ pub const QUALITY_REFERENCES: &[QualityReference] = &[
     QualityReference { lane: "noise", seed: 33, accuracy: 0.48697916666666669, brier: 0.25721229280205754, nrmse: 0.0 },
     QualityReference { lane: "noise", seed: 44, accuracy: 0.54947916666666663, brier: 0.24965895039890071, nrmse: 0.0 },
     QualityReference { lane: "noise", seed: 55, accuracy: 0.53385416666666663, brier: 0.25229331787028803, nrmse: 0.0 },
+    QualityReference { lane: "extra_trees_nonlinear", seed: 11, accuracy: 0.83333333333333337, brier: 0.1515578355890046, nrmse: 0.0 },
+    QualityReference { lane: "extra_trees_nonlinear", seed: 22, accuracy: 0.8125, brier: 0.15759193559690179, nrmse: 0.0 },
+    QualityReference { lane: "extra_trees_nonlinear", seed: 33, accuracy: 0.80729166666666663, brier: 0.1536715281443756, nrmse: 0.0 },
+    QualityReference { lane: "extra_trees_nonlinear", seed: 44, accuracy: 0.81510416666666663, brier: 0.1492011416202734, nrmse: 0.0 },
+    QualityReference { lane: "extra_trees_nonlinear", seed: 55, accuracy: 0.84895833333333337, brier: 0.13672736479696804, nrmse: 0.0 },
     QualityReference { lane: "regression", seed: 11, accuracy: 0.0, brier: 0.0, nrmse: 0.24186311590882517 },
     QualityReference { lane: "regression", seed: 22, accuracy: 0.0, brier: 0.0, nrmse: 0.23901463672470494 },
     QualityReference { lane: "regression", seed: 33, accuracy: 0.0, brier: 0.0, nrmse: 0.26025475911554852 },
     QualityReference { lane: "regression", seed: 44, accuracy: 0.0, brier: 0.0, nrmse: 0.24397924444397501 },
     QualityReference { lane: "regression", seed: 55, accuracy: 0.0, brier: 0.0, nrmse: 0.24407533069232981 },
+    QualityReference { lane: "extra_trees_regression", seed: 11, accuracy: 0.0, brier: 0.0, nrmse: 0.24808771526294254 },
+    QualityReference { lane: "extra_trees_regression", seed: 22, accuracy: 0.0, brier: 0.0, nrmse: 0.24761031113945867 },
+    QualityReference { lane: "extra_trees_regression", seed: 33, accuracy: 0.0, brier: 0.0, nrmse: 0.26349086618937173 },
+    QualityReference { lane: "extra_trees_regression", seed: 44, accuracy: 0.0, brier: 0.0, nrmse: 0.24300937873706335 },
+    QualityReference { lane: "extra_trees_regression", seed: 55, accuracy: 0.0, brier: 0.0, nrmse: 0.24148671687390968 },
 ];
