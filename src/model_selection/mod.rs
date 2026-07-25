@@ -9,7 +9,9 @@ pub use cross_validation::{
     cross_validate_regressor,
 };
 pub use scoring::{
-    ClassificationScorer, RegressionScorer, ScoringError, score_classifier, score_regressor,
+    ClassificationScore, ClassificationScorer, ClassifierOutput, ClassifierOutputKind,
+    RegressionScore, RegressionScorer, ScoringError, ScoringWorkspace, score_classifier,
+    score_classifier_with, score_regressor, score_regressor_with,
 };
 pub use split::{
     HoldoutParams, KFold, KFoldIter, Split, SplitError, SplitPartition, StratifiedKFold,

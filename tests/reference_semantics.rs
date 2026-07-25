@@ -315,7 +315,7 @@ fn cross_validation_fold_scores_and_error_attribution_are_frozen() {
     );
 
     assert_eq!(
-        cross_validate_regressor::<Ridge, _, _>(
+        cross_validate_regressor::<Ridge, _, _, _>(
             &data.as_view(),
             &regression,
             KFold::new(2).split(data.rows()).unwrap(),

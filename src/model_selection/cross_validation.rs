@@ -6,7 +6,8 @@ use crate::data::{BinaryTargets, MatrixView, RegressionTargets};
 use crate::metrics::MetricError;
 
 use super::{
-    ClassificationScorer, RegressionScorer, ScoringError, Split, score_classifier, score_regressor,
+    ClassificationScore, ClassifierOutputKind, RegressionScore, ScoringError, ScoringWorkspace,
+    Split, score_classifier_with, score_regressor_with,
 };
 
 /// Errors produced while running serial cross-validation.
@@ -57,6 +58,15 @@ pub enum CrossValidationError {
         /// Zero-based fold index.
         fold: usize,
     },
+    /// A score received a batch output other than the one it declared.
+    UnsupportedOutput {
+        /// Zero-based fold index.
+        fold: usize,
+        /// Output the score declared it reads.
+        required: ClassifierOutputKind,
+        /// Output it was given.
+        supplied: ClassifierOutputKind,
+    },
 }
 
 impl fmt::Display for CrossValidationError {
@@ -85,6 +95,14 @@ impl fmt::Display for CrossValidationError {
             Self::UnsupportedClasses { fold } => {
                 write!(f, "fold {fold} exposed unsupported classifier classes")
             }
+            Self::UnsupportedOutput {
+                fold,
+                required,
+                supplied,
+            } => write!(
+                f,
+                "fold {fold} score reads {required:?} but was given {supplied:?}"
+            ),
         }
     }
 }
@@ -146,20 +164,22 @@ impl CrossValidationResult {
 }
 
 /// Fits and scores one classifier per supplied split, serially and in order.
-pub fn cross_validate_classifier<M, I, F>(
+pub fn cross_validate_classifier<M, I, F, S>(
     data: &MatrixView<'_>,
     targets: &BinaryTargets,
     splits: I,
-    scorer: ClassificationScorer,
+    scorer: S,
     mut fit: F,
 ) -> Result<CrossValidationResult, CrossValidationError>
 where
     M: Classifier,
     I: IntoIterator<Item = Split>,
     F: FnMut(&MatrixView<'_>, &BinaryTargets) -> Result<M, ModelError>,
+    S: ClassificationScore,
 {
     validate_target_length(data.rows(), targets.len())?;
     let mut feature_buffer = Vec::new();
+    let mut workspace = ScoringWorkspace::new();
     let mut scores = Vec::new();
     for (fold, split) in splits.into_iter().enumerate() {
         validate_split_sample_count(fold, data.rows(), &split)?;
@@ -175,7 +195,7 @@ where
         let test_targets = targets
             .select(split.test_indices())
             .expect("validated split contains non-empty in-bounds indices");
-        let score = score_classifier(&model, &test, &test_targets, scorer)
+        let score = score_classifier_with(&model, &test, &test_targets, &scorer, &mut workspace)
             .map_err(|error| map_scoring_error(fold, error))?;
         scores.push(score);
     }
@@ -183,20 +203,22 @@ where
 }
 
 /// Fits and scores one regressor per supplied split, serially and in order.
-pub fn cross_validate_regressor<M, I, F>(
+pub fn cross_validate_regressor<M, I, F, S>(
     data: &MatrixView<'_>,
     targets: &RegressionTargets,
     splits: I,
-    scorer: RegressionScorer,
+    scorer: S,
     mut fit: F,
 ) -> Result<CrossValidationResult, CrossValidationError>
 where
     M: Regressor,
     I: IntoIterator<Item = Split>,
     F: FnMut(&MatrixView<'_>, &RegressionTargets) -> Result<M, ModelError>,
+    S: RegressionScore,
 {
     validate_target_length(data.rows(), targets.len())?;
     let mut feature_buffer = Vec::new();
+    let mut workspace = ScoringWorkspace::new();
     let mut scores = Vec::new();
     for (fold, split) in splits.into_iter().enumerate() {
         validate_split_sample_count(fold, data.rows(), &split)?;
@@ -212,7 +234,7 @@ where
         let test_targets = targets
             .select(split.test_indices())
             .expect("validated split contains non-empty in-bounds indices");
-        let score = score_regressor(&model, &test, &test_targets, scorer)
+        let score = score_regressor_with(&model, &test, &test_targets, &scorer, &mut workspace)
             .map_err(|error| map_scoring_error(fold, error))?;
         scores.push(score);
     }
@@ -265,6 +287,13 @@ fn map_scoring_error(fold: usize, error: ScoringError) -> CrossValidationError {
         ScoringError::Prediction(source) => CrossValidationError::Prediction { fold, source },
         ScoringError::Metric(source) => CrossValidationError::Metric { fold, source },
         ScoringError::UnsupportedClasses => CrossValidationError::UnsupportedClasses { fold },
+        ScoringError::UnsupportedOutput { required, supplied } => {
+            CrossValidationError::UnsupportedOutput {
+                fold,
+                required,
+                supplied,
+            }
+        }
         ScoringError::TargetLength { .. } => {
             unreachable!("selected rows and targets have identical validated indices")
         }
@@ -284,7 +313,7 @@ mod tests {
     use crate::api::Estimator;
     use crate::data::DenseMatrix;
     use crate::linear_model::{LogisticRegression, LogisticRegressionParams, Ridge, RidgeParams};
-    use crate::model_selection::{KFold, StratifiedKFold};
+    use crate::model_selection::{ClassificationScorer, KFold, RegressionScorer, StratifiedKFold};
     use std::cell::Cell;
     use std::rc::Rc;
 
@@ -385,7 +414,7 @@ mod tests {
         let data = data();
         let targets = RegressionTargets::new((0..12).map(|row| row as f32).collect()).unwrap();
         assert_eq!(
-            cross_validate_regressor::<Ridge, _, _>(
+            cross_validate_regressor::<Ridge, _, _, _>(
                 &data.as_view(),
                 &RegressionTargets::new(vec![0.0]).unwrap(),
                 KFold::new(2).split(12).unwrap(),
@@ -398,7 +427,7 @@ mod tests {
             })
         );
         assert_eq!(
-            cross_validate_regressor::<Ridge, _, _>(
+            cross_validate_regressor::<Ridge, _, _, _>(
                 &data.as_view(),
                 &targets,
                 std::iter::empty(),
@@ -408,7 +437,7 @@ mod tests {
             Err(CrossValidationError::NoSplits)
         );
         assert_eq!(
-            cross_validate_regressor::<Ridge, _, _>(
+            cross_validate_regressor::<Ridge, _, _, _>(
                 &data.as_view(),
                 &targets,
                 vec![Split::new(4, vec![0, 1], vec![2, 3]).unwrap()],
@@ -424,7 +453,7 @@ mod tests {
 
         let calls = Cell::new(0_usize);
         assert_eq!(
-            cross_validate_regressor::<Ridge, _, _>(
+            cross_validate_regressor::<Ridge, _, _, _>(
                 &data.as_view(),
                 &targets,
                 KFold::new(3).split(12).unwrap(),

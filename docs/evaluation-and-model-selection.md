@@ -98,10 +98,27 @@ let train_targets = targets.select(split.train_indices())?;
 
 ## Scoring and cross-validation
 
-`score_classifier` and `score_regressor` map typed scorer enums to public
-metrics and make one batch prediction call. Probability-based binary scorers
-accept fitted class layouts `[0]`, `[1]`, and `[0, 1]`; other layouts produce
-an explicit error.
+`score_classifier` and `score_regressor` make one batch prediction call and
+hand the result to a score. Probability-based binary scores accept fitted class
+layouts `[0]`, `[1]`, and `[0, 1]`; other layouts produce an explicit error.
+That handling lives in the scoring functions alone, so no consumer repeats it.
+
+A score is the `ClassificationScore` or `RegressionScore` trait, not a closed
+list. `ClassificationScorer` and `RegressionScorer` remain the built-in set and
+are ordinary implementations of those traits, so a caller can score on a metric
+FerricML has not enumerated by implementing the trait instead of reimplementing
+prediction. A classification score declares which batch output it reads through
+`output_kind`, and receiving any other kind is `ScoringError::UnsupportedOutput`
+rather than a substituted value. Every score also declares `greater_is_better`,
+which is what lets permutation importance orient its result without knowing
+which metric it holds.
+
+`score_classifier_with` and `score_regressor_with` take a `ScoringWorkspace`
+holding the batch output. Reusing one workspace across calls of the same shape
+allocates on the first call only, which is what makes repeated scoring —
+cross-validation across folds, permutation importance across repeats — free of
+per-call allocation. Cross-validation and permutation importance both consume
+exactly these entry points, so there is one implementation of scoring.
 
 Cross-validation consumes any iterator of validated `Split` values, fits one
 typed model per fold through a caller closure, and returns scores in iterator

@@ -76,6 +76,27 @@ and releases use [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   expected value as a denominator, so a single expected zero is
   `MetricError::Undefined` rather than a silently clamped floor.
 
+- `model_selection::ClassificationScore` and `model_selection::RegressionScore`,
+  the open scorer contract that batch scoring, cross-validation, and
+  permutation importance all consume identically. The existing
+  `ClassificationScorer` and `RegressionScorer` enums remain the built-in set
+  and now implement these traits, including a declared `greater_is_better`
+  orientation, so a caller can score on a metric FerricML does not enumerate.
+- `model_selection::ScoringWorkspace` with `score_classifier_with` and
+  `score_regressor_with`, the allocation-free scoring entry points. Reusing one
+  workspace across calls of the same shape allocates only on the first call.
+- `model_selection::ClassifierOutput` and `model_selection::ClassifierOutputKind`,
+  which let a classification score declare whether it reads predicted labels or
+  positive-class probabilities; being given another kind is the new
+  `ScoringError::UnsupportedOutput` rather than a substituted value.
+
+### Changed
+
+- `score_classifier`, `score_regressor`, `cross_validate_classifier`, and
+  `cross_validate_regressor` are generic over the new scorer traits instead of
+  taking the built-in enums. Calls that pass a built-in scorer are unaffected;
+  a turbofished `cross_validate_*` call gains one inferred type argument.
+
 ### Fixed
 
 - Report `ModelError::NonFinitePrediction` from `RandomForestRegressor` instead

@@ -285,7 +285,7 @@ fn closure_based_cross_validation_paths_are_stable() {
     .unwrap();
     assert_eq!(regressor.len(), 2);
     assert!(matches!(
-        cross_validate_regressor::<Ridge, _, _>(
+        cross_validate_regressor::<Ridge, _, _, _>(
             &matrix.as_view(),
             &regression,
             std::iter::empty(),
