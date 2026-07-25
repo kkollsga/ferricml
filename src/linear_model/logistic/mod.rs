@@ -814,7 +814,8 @@ impl HasCapabilities for LogisticRegression {
     const CAPABILITIES: Capabilities = Capabilities::NONE
         .with_sample_weights(true)
         .with_artifact(true)
-        .with_multiclass(true);
+        .with_multiclass(true)
+        .with_decision_function(true);
 }
 
 impl HasParams for LogisticRegression {

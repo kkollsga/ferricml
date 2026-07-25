@@ -36,8 +36,11 @@ const PERSISTED_ONLY: Capabilities = Capabilities::NONE.with_artifact(true);
 fn linear_estimators_declare_weighted_fitting_and_persistence() {
     assert_eq!(
         LogisticRegression::CAPABILITIES,
-        WEIGHTED_AND_PERSISTED.with_multiclass(true),
-        "logistic regression is the one linear model that also fits a class set"
+        WEIGHTED_AND_PERSISTED
+            .with_multiclass(true)
+            .with_decision_function(true),
+        "logistic regression is the one linear model that also fits a class set, \
+         and the only shipped estimator exposing a raw unsquashed score"
     );
     assert_eq!(LinearRegression::CAPABILITIES, WEIGHTED_AND_PERSISTED);
     assert_eq!(Ridge::CAPABILITIES, WEIGHTED_AND_PERSISTED);
@@ -120,12 +123,13 @@ fn a_calibrated_composition_declares_only_what_its_calibrator_gives_it() {
 
 #[test]
 fn a_decision_function_is_declared_by_nothing_that_only_produces_probabilities() {
-    // Every fitted estimator FerricML ships today declares no decision
-    // function, including the one type that has the method. `LogisticRegression`
-    // is the gap and is recorded here rather than left to be discovered:
-    // its declaration lives beside the estimator, so the consumer that needed
-    // the field could not also land the declaration.
-    assert!(!LogisticRegression::CAPABILITIES.decision_function());
+    // `LogisticRegression` is the one shipped type with a decision function,
+    // and it declares one. The declaration was applied by the coordinator at
+    // merge rather than by the sprint that added the field: declarations live
+    // beside their estimator, so the consumer that needed the capability could
+    // not also land the declaration from another track. Every other estimator
+    // only produces probabilities, which is not what this field records.
+    assert!(LogisticRegression::CAPABILITIES.decision_function());
     assert!(!RandomForestClassifier::CAPABILITIES.decision_function());
     assert!(!DummyClassifier::CAPABILITIES.decision_function());
     assert!(!AnyClassifier::CAPABILITIES.decision_function());
@@ -192,7 +196,9 @@ fn runtime_dispatch_reports_the_selected_variant_without_type_matching() {
     .into();
     assert_eq!(
         logistic.capabilities(),
-        WEIGHTED_AND_PERSISTED.with_multiclass(true)
+        WEIGHTED_AND_PERSISTED
+            .with_multiclass(true)
+            .with_decision_function(true)
     );
     assert_eq!(
         forest_classifier.capabilities(),
