@@ -129,19 +129,29 @@ pub(crate) fn decode_logical_tree(
     Ok(nodes)
 }
 
+/// Validates one canonical pre-order tree and reports its leaf count and depth.
+///
+/// The traversal pops a branch's left child before its right, so it visits
+/// records in pre-order. Requiring each visited index to be the next unvisited
+/// one is therefore what makes the layout *canonical*: a record sequence
+/// describing the right tree in the wrong order — a right child placed before
+/// the end of its sibling's subtree — is a second encoding of a model that
+/// already has one, and is rejected rather than normalized on the way in. That
+/// check subsumes reachability and repeat detection, so no visited-set
+/// allocation is needed either.
 fn topology_stats(nodes: &[LogicalTreeNode]) -> Result<(usize, usize), ArtifactError> {
     if nodes.is_empty() || nodes.len() > MAX_TREE_NODES {
         return Err(ArtifactError::InvalidPayload);
     }
-    let mut seen = vec![false; nodes.len()];
     let mut stack = vec![(0_usize, 0_usize)];
+    let mut visited = 0_usize;
     let mut leaves = 0_usize;
     let mut max_depth = 0_usize;
     while let Some((index, depth)) = stack.pop() {
-        if index >= nodes.len() || seen[index] || depth > MAX_TREE_DEPTH {
+        if index >= nodes.len() || index != visited || depth > MAX_TREE_DEPTH {
             return Err(ArtifactError::InvalidPayload);
         }
-        seen[index] = true;
+        visited += 1;
         max_depth = max_depth.max(depth);
         match nodes[index] {
             LogicalTreeNode::Leaf { value } => {
@@ -170,7 +180,7 @@ fn topology_stats(nodes: &[LogicalTreeNode]) -> Result<(usize, usize), ArtifactE
             }
         }
     }
-    if seen.iter().any(|&seen| !seen)
+    if visited != nodes.len()
         || leaves == 0
         || leaves > MAX_TREE_LEAVES
         || nodes.len() != leaves.saturating_mul(2).saturating_sub(1)

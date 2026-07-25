@@ -713,6 +713,9 @@ fn random_tree_payload(rng: &mut Rng, n_features: u32) -> Vec<u8> {
     // Structurally valid pre-order tree, then a few targeted perturbations.
     let depth_limit = 1 + rng.below(4);
     grow(rng, depth_limit, n_features, &mut records);
+    if rng.chance(2) {
+        relabel_two_leaves(rng, &mut records);
+    }
     let (leaves, depth) = tree_stats(&records);
     let mut header = [records.len() as u32, leaves, depth];
     if rng.chance(3) {
@@ -762,6 +765,76 @@ fn grow(rng: &mut Rng, depth: usize, n_features: u32, records: &mut Vec<[u32; 5]
     grow(rng, depth - 1, n_features, records);
     records[index][3] = index as u32 + 1;
     records[index][4] = right;
+}
+
+/// Rewrites a valid tree into a *different record order for the same tree*.
+///
+/// Two leaf records are swapped along with every pointer that referred to
+/// them. The tree is unchanged — same shape, same thresholds, the same leaf
+/// value reached by the same path — but the records now sit in a different
+/// order, so this is a second encoding of a model that already has one. Only
+/// swaps that keep the layout structurally decodable are kept, because a swap
+/// the reader rejects for some *other* reason proves nothing about canonicity.
+///
+/// A reader that normalizes such a layout instead of rejecting it makes
+/// artifact bytes a many-to-one identity; the canonicity oracle sees it as a
+/// re-encode that differs from what was decoded.
+fn relabel_two_leaves(rng: &mut Rng, records: &mut [[u32; 5]]) {
+    let leaves: Vec<usize> = (0..records.len())
+        .filter(|&index| records[index][0] == 0)
+        .collect();
+    if leaves.len() < 2 {
+        return;
+    }
+    for _ in 0..8 {
+        let first = leaves[rng.below(leaves.len())];
+        let second = leaves[rng.below(leaves.len())];
+        if first == second {
+            continue;
+        }
+        let mut candidate = records.to_vec();
+        candidate.swap(first, second);
+        for record in &mut candidate {
+            if record[0] != 1 {
+                continue;
+            }
+            for slot in [3, 4] {
+                if record[slot] as usize == first {
+                    record[slot] = second as u32;
+                } else if record[slot] as usize == second {
+                    record[slot] = first as u32;
+                }
+            }
+        }
+        if layout_is_structurally_decodable(&candidate) {
+            records.copy_from_slice(&candidate);
+            return;
+        }
+    }
+}
+
+/// Whether every branch still has `left == index + 1`, an in-range right child
+/// after it, and every record reachable exactly once — the constraints that
+/// exist independently of pre-order canonicity.
+fn layout_is_structurally_decodable(records: &[[u32; 5]]) -> bool {
+    let mut seen = vec![false; records.len()];
+    let mut stack = vec![0_usize];
+    while let Some(index) = stack.pop() {
+        if index >= records.len() || seen[index] {
+            return false;
+        }
+        seen[index] = true;
+        if records[index][0] == 0 {
+            continue;
+        }
+        let (left, right) = (records[index][3] as usize, records[index][4] as usize);
+        if left != index + 1 || right <= left || right >= records.len() {
+            return false;
+        }
+        stack.push(right);
+        stack.push(left);
+    }
+    seen.iter().all(|&visited| visited)
 }
 
 /// A leaf value: usually an ordinary finite number, sometimes a boundary bit
@@ -1330,6 +1403,12 @@ fn forest_with(records: &[[u32; 5]], leaves: u32, depth: u32) -> Vec<u8> {
     envelope(10, 1, &MODEL_ROLES, &payload)
 }
 
+fn boosting_with(records: &[[u32; 5]], leaves: u32, depth: u32) -> Vec<u8> {
+    let mut payload = component(1, 1, &valid_boosting_metadata(1, 1, records.len() as u32));
+    payload.extend_from_slice(&tree_component(records, leaves, depth));
+    envelope(9, 1, &MODEL_ROLES, &payload)
+}
+
 /// Copies `base` with `value` written at `offset`, resealing the footer.
 fn overwrite(base: &[u8], offset: usize, value: &[u8]) -> Vec<u8> {
     let mut bytes = base.to_vec();
@@ -1452,6 +1531,30 @@ fn corpus() -> Vec<Case> {
             ),
         },
     ];
+
+    // Two record orders for one tree. Both describe the same model; only one
+    // is the pre-order the writer produces, and the other used to be accepted
+    // and silently normalized.
+    let mut shuffled = canonical_tree();
+    shuffled[0][4] = 3;
+    shuffled[1][4] = 4;
+    shuffled.swap(3, 4);
+    cases.extend([
+        Case {
+            name: "forest-non-canonical-preorder",
+            provenance: "a valid tree whose right children are laid out in the wrong record order",
+            decoder: "random-forest",
+            expected: ArtifactError::InvalidPayload,
+            bytes: forest_with(&shuffled, 3, 2),
+        },
+        Case {
+            name: "boosting-non-canonical-preorder",
+            provenance: "the same layout against histogram boosting",
+            decoder: "hist-gradient-boosting",
+            expected: ArtifactError::InvalidPayload,
+            bytes: boosting_with(&shuffled, 3, 2),
+        },
+    ]);
 
     // Envelope-level malformations.
     cases.extend([
@@ -1953,7 +2056,7 @@ fn the_frozen_adversarial_corpus_decodes_exactly_as_recorded() {
         cases.len()
     );
     assert!(
-        cases.len() >= 38,
+        cases.len() >= 40,
         "the corpus shrank to {} cases",
         cases.len()
     );

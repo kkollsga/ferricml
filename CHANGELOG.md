@@ -64,6 +64,10 @@ and releases use [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   rather than by a declared element count. A hostile artifact of roughly 150
   bytes could previously make a scaler, linear model, or forest reserve up to
   32 MB before reporting the truncation it was always going to report.
+- Reject a logical tree whose records are laid out in any order other than the
+  canonical pre-order the writer produces. Such a layout described a model that
+  already had an encoding, so one fitted forest or boosted ensemble had more
+  than one accepted artifact.
 
 ## [0.1.2] - 2026-07-24
 

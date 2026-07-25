@@ -54,7 +54,11 @@ and logical child indices; leaves encode only their prediction value. The
 reader bounds tree and aggregate node counts before allocation, requires a
 canonical full binary topology, validates finite values and feature indices,
 and rejects unreachable, repeated, cyclic, over-depth, truncated, or trailing
-records before constructing compact runtime trees. The private compact node
+records before constructing compact runtime trees. Canonical means the pre-order
+the writer produces: a branch's left child is the next record and its right
+child is the record after that branch's whole left subtree, so a tree has
+exactly one accepted record order and an artifact is a canonical name for the
+model it holds. The private compact node
 representation and traversal layout remain free to change.
 
 `RandomForestRegressor` artifacts use the same logical-tree records. Their
