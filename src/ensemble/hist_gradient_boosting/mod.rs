@@ -17,14 +17,22 @@ use crate::artifact::{
     encode_component, encode_logical_tree, encode_v2_envelope,
 };
 use crate::data::{MatrixView, RegressionTargets, SampleWeights};
-use crate::loss::{Objective, SquaredError};
+use crate::loss::{BoostingObjective, Objective, SquaredError};
 use crate::numeric::sum_in_order;
 
 const ARTIFACT_PAYLOAD_VERSION: u16 = 1;
 const METADATA_COMPONENT_KIND: u16 = 1;
 const TREE_COMPONENT_KIND: u16 = 2;
 const COMPONENT_VERSION: u16 = 1;
-const OBJECTIVE_VERSION: u32 = 1;
+
+/// The objective this estimator's artifacts are fitted against.
+///
+/// Read from the objective type rather than restated, so the field can never
+/// name a loss the model was not fitted with. The estimator kind is what stops
+/// a regressor's artifact from decoding as some other model; this is what stops
+/// it from decoding as a *different objective* under the same kind, which is
+/// the only distinction a kind cannot make.
+const OBJECTIVE_VERSION: u32 = <SquaredError as BoostingObjective>::ARTIFACT_OBJECTIVE_TAG;
 
 mod binning;
 mod error;

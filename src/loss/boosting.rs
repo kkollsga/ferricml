@@ -22,6 +22,22 @@ use crate::numeric::sum_in_order;
 /// The member is an associated function, so a grower resolves it at compile
 /// time and no per-row branch on the concrete loss can appear by accident.
 pub(crate) trait BoostingObjective: Objective {
+    /// The name this objective goes by inside a persisted boosting artifact.
+    ///
+    /// A boosted model's leaf values are only meaningful against the loss they
+    /// were fitted to descend, so the artifact records which loss that was. The
+    /// numbering is **crate-wide** rather than per estimator: an estimator kind
+    /// already separates one model type from another, and this separates one
+    /// *objective* from another inside a kind that carries more than one — the
+    /// forward-compatibility hook the kind cannot provide. A decoder requires
+    /// exactly its own value, so the two discriminators are independent and a
+    /// crossed artifact fails both.
+    ///
+    /// Values are permanent. Squared error is `1` because that is what
+    /// `HistGradientBoostingRegressor` has always written, and no value is ever
+    /// reused for a different loss.
+    const ARTIFACT_OBJECTIVE_TAG: u32;
+
     /// Second-order denominator of one node, before L2 regularization.
     ///
     /// `weight` is the node's total sample weight and `hessian_sum` is the
@@ -39,12 +55,16 @@ pub(crate) trait BoostingObjective: Objective {
 }
 
 impl BoostingObjective for SquaredError {
+    const ARTIFACT_OBJECTIVE_TAG: u32 = 1;
+
     fn node_hessian_total(weight: f64, _hessian_sum: f64) -> f64 {
         constant_hessian_total::<Self>(weight)
     }
 }
 
 impl BoostingObjective for BinaryLogLoss {
+    const ARTIFACT_OBJECTIVE_TAG: u32 = 2;
+
     fn node_hessian_total(_weight: f64, hessian_sum: f64) -> f64 {
         hessian_sum
     }
@@ -236,6 +256,21 @@ mod tests {
             negative_gradient_sum(&samples, &negative_gradients, Some(&[1.0, 0.0, 1.0])),
             negative_gradient_sum(&[0_usize, 2], &negative_gradients, None)
         );
+    }
+
+    /// Two objectives may never share an on-disk name, and squared error's is
+    /// pinned to the value already written into every boosting artifact in the
+    /// wild.
+    #[test]
+    fn every_objective_has_its_own_permanent_artifact_name() {
+        assert_eq!(SquaredError::ARTIFACT_OBJECTIVE_TAG, 1);
+        assert_ne!(
+            SquaredError::ARTIFACT_OBJECTIVE_TAG,
+            BinaryLogLoss::ARTIFACT_OBJECTIVE_TAG
+        );
+        // Zero stays unassigned so a zeroed metadata field never names a loss.
+        assert_ne!(SquaredError::ARTIFACT_OBJECTIVE_TAG, 0);
+        assert_ne!(BinaryLogLoss::ARTIFACT_OBJECTIVE_TAG, 0);
     }
 
     /// Squared error reads its denominator from the weight total and log loss
