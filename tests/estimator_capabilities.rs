@@ -33,7 +33,8 @@ use ferricml::linear_model::{
 };
 use ferricml::pipeline::{Pipeline, StagedPipeline};
 use ferricml::preprocessing::{
-    MaxAbsScaler, MinMaxScaler, MinMaxScalerParams, StandardScaler, StandardScalerParams,
+    MaxAbsScaler, MinMaxScaler, MinMaxScalerParams, RobustScaler, StandardScaler,
+    StandardScalerParams,
 };
 use ferricml::ranking::PairwiseLinearRanker;
 
@@ -88,6 +89,17 @@ fn range_scalers_declare_persistence_but_not_weighted_fitting() {
     // move them and there is no weighted entry point to declare.
     assert_eq!(MinMaxScaler::CAPABILITIES, PERSISTED_ONLY);
     assert_eq!(MaxAbsScaler::CAPABILITIES, PERSISTED_ONLY);
+}
+
+#[test]
+fn the_robust_scaler_declares_persistence_but_not_weighted_fitting() {
+    // A median and a quantile spread are order statistics too, and the reason
+    // there is no weighted entry point is sharper here than for the range
+    // scalers: weighting a quantile requires a *different* interpolation rule,
+    // because the linear rule this scaler is frozen against has no weighted
+    // form at all. Declaring weights would mean quietly fitting under a second
+    // definition of the same statistic.
+    assert_eq!(RobustScaler::CAPABILITIES, PERSISTED_ONLY);
 }
 
 #[test]

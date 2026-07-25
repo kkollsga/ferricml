@@ -1,10 +1,14 @@
 //! Deterministic dense scaling by robust order statistics.
 
-use crate::api::{Estimator, HasParams, ModelError, Transformer};
+use crate::api::{Capabilities, Estimator, HasCapabilities, HasParams, ModelError, Transformer};
+use crate::artifact::{ArtifactError, ROBUST_SCALER_ARTIFACT_KIND};
 use crate::data::MatrixView;
 use crate::numeric::{QuantileRule, quantile_sorted, sort_for_quantiles};
 
-use super::scaling::{substituted_divisor, transform_preflighted, validate_transform_request};
+use super::scaling::{
+    ScalerHeader, ScalerParameters, decode_flag, decode_scaler_artifact, encode_scaler_artifact,
+    substituted_divisor, transform_preflighted, validate_transform_request,
+};
 
 /// The quantile definition every fitted [`RobustScaler`] statistic is taken
 /// under.
@@ -221,12 +225,114 @@ impl RobustScaler {
     pub fn transform(&self, data: &MatrixView<'_>) -> Result<crate::data::DenseMatrix, ModelError> {
         <Self as Transformer>::transform(self, data)
     }
+
+    /// Encodes fitted scaling state with explicit input and transformed schemas.
+    ///
+    /// The raw spread is stored and the divisor is recomputed on decode, so a
+    /// fitted model has exactly one valid byte string: a writer cannot choose
+    /// to store a substituted divisor beside the spread it was substituted for.
+    pub fn to_artifact(
+        &self,
+        input_schema: [u8; 32],
+        transformed_schema: [u8; 32],
+    ) -> Result<Vec<u8>, ArtifactError> {
+        let (low, high) = self.params.quantile_range();
+        encode_scaler_artifact(
+            ROBUST_SCALER_ARTIFACT_KIND,
+            input_schema,
+            transformed_schema,
+            self.n_features_in,
+            ScalerParameters {
+                flags: &[
+                    u32::from(self.params.with_centering),
+                    u32::from(self.params.with_scaling),
+                ],
+                reals: &[low, high],
+            },
+            2,
+            |feature, state| {
+                state.f64(self.centers[feature]);
+                state.f64(self.spreads[feature]);
+            },
+        )
+    }
+
+    /// Decodes fitted scaling state after checking both schemas.
+    pub fn from_artifact(
+        bytes: &[u8],
+        input_schema: [u8; 32],
+        transformed_schema: [u8; 32],
+    ) -> Result<Self, ArtifactError> {
+        let ScalerHeader {
+            n_features_in,
+            flags,
+            parameters,
+            mut state,
+        } = decode_scaler_artifact(
+            bytes,
+            ROBUST_SCALER_ARTIFACT_KIND,
+            input_schema,
+            transformed_schema,
+            2,
+            2,
+        )?;
+        let params = RobustScalerParams {
+            quantile_low: parameters[0],
+            quantile_high: parameters[1],
+            with_centering: decode_flag(flags[0])?,
+            with_scaling: decode_flag(flags[1])?,
+        };
+        // A stored range that fitting would have refused describes a model that
+        // could not have been produced, so it is rejected on the way back in
+        // rather than trusted because it is already encoded.
+        params
+            .validate()
+            .map_err(|_| ArtifactError::InvalidPayload)?;
+
+        // Two `f64` fields per feature: the reservation is clamped to the
+        // bytes actually present, never to the declared width alone.
+        let capacity = state.bounded_capacity(n_features_in, 2 * 8);
+        let mut centers = Vec::with_capacity(capacity);
+        let mut spreads = Vec::with_capacity(capacity);
+        let mut scales = Vec::with_capacity(capacity);
+        for _ in 0..n_features_in {
+            let center = state.f64()?;
+            let spread = state.f64()?;
+            // A negative spread is not reachable from any fit: the two
+            // percentiles are ordered and quantiles are monotone in the
+            // percentile, so the difference cannot be below zero.
+            if !center.is_finite() || !spread.is_finite() || spread < 0.0 {
+                return Err(ArtifactError::InvalidPayload);
+            }
+            centers.push(center);
+            spreads.push(spread);
+            scales.push(substituted_divisor(spread));
+        }
+        if !state.is_empty() {
+            return Err(ArtifactError::TrailingBytes);
+        }
+        Ok(Self {
+            n_features_in,
+            params,
+            centers,
+            spreads,
+            scales,
+        })
+    }
 }
 
 impl Estimator for RobustScaler {
     fn n_features_in(&self) -> usize {
         self.n_features_in
     }
+}
+
+impl HasCapabilities for RobustScaler {
+    /// A median and a quantile spread are order statistics: a per-sample weight
+    /// cannot move them without a weighted quantile rule, and the linear rule
+    /// this scaler is frozen against has no weighted form. There is therefore
+    /// no weighted entry point to declare.
+    const CAPABILITIES: Capabilities = Capabilities::NONE.with_artifact(true);
 }
 
 impl HasParams for RobustScaler {
@@ -560,6 +666,84 @@ mod tests {
             }
         );
         assert_eq!(narrow_output, [91.0; 2]);
+    }
+
+    #[test]
+    fn artifact_is_deterministic_and_schema_bound() {
+        let scaler = fitted(
+            &worked_examples(),
+            RobustScalerParams::default()
+                .with_quantile_range(10.0, 90.0)
+                .with_centering(false),
+        );
+        let bytes = scaler.to_artifact([1; 32], [2; 32]).unwrap();
+        assert_eq!(bytes, scaler.to_artifact([1; 32], [2; 32]).unwrap());
+        assert_eq!(
+            RobustScaler::from_artifact(&bytes, [1; 32], [2; 32]).unwrap(),
+            scaler
+        );
+        assert_eq!(
+            RobustScaler::from_artifact(&bytes, [3; 32], [2; 32]).unwrap_err(),
+            ArtifactError::FeatureSchemaMismatch
+        );
+        assert_eq!(
+            RobustScaler::from_artifact(&bytes, [1; 32], [9; 32]).unwrap_err(),
+            ArtifactError::FeatureSchemaMismatch
+        );
+    }
+
+    #[test]
+    fn a_degenerate_column_round_trips_as_the_spread_it_really_had() {
+        // The substituted divisor is never stored, so the decoded model
+        // reports the same raw zero spread the fit measured.
+        let data = matrix(&[3.0, 3.0, 3.0, 3.0], 4, 1);
+        let scaler = fitted(&data, RobustScalerParams::default());
+        let bytes = scaler.to_artifact([1; 32], [2; 32]).unwrap();
+        let decoded = RobustScaler::from_artifact(&bytes, [1; 32], [2; 32]).unwrap();
+        assert_eq!(decoded.spreads(), &[0.0]);
+        assert_eq!(decoded.scales(), &[1.0]);
+        assert_eq!(decoded, scaler);
+    }
+
+    #[test]
+    fn artifact_rejects_a_truncation_and_a_range_no_fit_could_produce() {
+        let scaler = fitted(&worked_examples(), RobustScalerParams::default());
+        let bytes = scaler.to_artifact([1; 32], [2; 32]).unwrap();
+        assert_eq!(
+            RobustScaler::from_artifact(&bytes[..bytes.len() - 1], [1; 32], [2; 32]).unwrap_err(),
+            ArtifactError::ChecksumMismatch
+        );
+
+        let inverted = RobustScaler {
+            n_features_in: 1,
+            params: RobustScalerParams {
+                quantile_low: 75.0,
+                quantile_high: 25.0,
+                with_centering: true,
+                with_scaling: true,
+            },
+            centers: vec![1.0],
+            spreads: vec![2.0],
+            scales: vec![2.0],
+        };
+        let bytes = inverted.to_artifact([1; 32], [2; 32]).unwrap();
+        assert_eq!(
+            RobustScaler::from_artifact(&bytes, [1; 32], [2; 32]).unwrap_err(),
+            ArtifactError::InvalidPayload
+        );
+
+        let negative = RobustScaler {
+            n_features_in: 1,
+            params: RobustScalerParams::default(),
+            centers: vec![1.0],
+            spreads: vec![-2.0],
+            scales: vec![-2.0],
+        };
+        let bytes = negative.to_artifact([1; 32], [2; 32]).unwrap();
+        assert_eq!(
+            RobustScaler::from_artifact(&bytes, [1; 32], [2; 32]).unwrap_err(),
+            ArtifactError::InvalidPayload
+        );
     }
 
     #[test]

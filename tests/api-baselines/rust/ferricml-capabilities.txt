@@ -24,5 +24,6 @@ ferricml::pipeline::Pipeline<ferricml::preprocessing::StandardScaler, ferricml::
 ferricml::pipeline::StagedPipeline<(ferricml::preprocessing::MinMaxScaler, ferricml::preprocessing::StandardScaler), ferricml::linear_model::Ridge> = artifact
 ferricml::preprocessing::MaxAbsScaler = artifact
 ferricml::preprocessing::MinMaxScaler = artifact
+ferricml::preprocessing::RobustScaler = artifact
 ferricml::preprocessing::StandardScaler = sample_weights, artifact
 ferricml::ranking::PairwiseLinearRanker = artifact

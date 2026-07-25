@@ -30,6 +30,7 @@ pub(crate) const STAGED_PIPELINE_ARTIFACT_KIND: u16 = 16;
 // permanent name in the on-disk format, and reusing a reserved number is exactly
 // the crossed-schema confusion the adversarial corpus exists to catch.
 pub(crate) const HIST_GRADIENT_BOOSTING_CLASSIFIER_ARTIFACT_KIND: u16 = 20;
+pub(crate) const ROBUST_SCALER_ARTIFACT_KIND: u16 = 44;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum SchemaRole {

@@ -5,8 +5,8 @@ use crate::artifact::{ArtifactError, STANDARD_SCALER_ARTIFACT_KIND};
 use crate::data::{MatrixView, SampleWeights};
 
 use super::scaling::{
-    decode_flag, decode_scaler_artifact, encode_scaler_artifact, substituted_divisor,
-    transform_preflighted, validate_transform_request,
+    ScalerHeader, ScalerParameters, decode_flag, decode_scaler_artifact, encode_scaler_artifact,
+    substituted_divisor, transform_preflighted, validate_transform_request,
 };
 
 /// Parameters for [`StandardScaler`].
@@ -193,10 +193,13 @@ impl StandardScaler {
             input_schema,
             transformed_schema,
             self.n_features_in,
-            &[
-                u32::from(self.params.with_mean),
-                u32::from(self.params.with_std),
-            ],
+            ScalerParameters {
+                flags: &[
+                    u32::from(self.params.with_mean),
+                    u32::from(self.params.with_std),
+                ],
+                reals: &[],
+            },
             3,
             |feature, state| {
                 state.f64(self.means[feature]);
@@ -212,12 +215,18 @@ impl StandardScaler {
         input_schema: [u8; 32],
         transformed_schema: [u8; 32],
     ) -> Result<Self, ArtifactError> {
-        let (n_features_in, flags, mut state) = decode_scaler_artifact(
+        let ScalerHeader {
+            n_features_in,
+            flags,
+            mut state,
+            ..
+        } = decode_scaler_artifact(
             bytes,
             STANDARD_SCALER_ARTIFACT_KIND,
             input_schema,
             transformed_schema,
             2,
+            0,
         )?;
         let with_mean = decode_flag(flags[0])?;
         let with_std = decode_flag(flags[1])?;

@@ -42,8 +42,8 @@ use ferricml::linear_model::{
 };
 use ferricml::pipeline::{Pipeline, StagedPipeline};
 use ferricml::preprocessing::{
-    MaxAbsScaler, MaxAbsScalerParams, MinMaxScaler, MinMaxScalerParams, StandardScaler,
-    StandardScalerParams,
+    MaxAbsScaler, MaxAbsScalerParams, MinMaxScaler, MinMaxScalerParams, RobustScaler,
+    RobustScalerParams, StandardScaler, StandardScalerParams,
 };
 use ferricml::ranking::{
     PairIndex, PairOutcome, PairwiseLinearRanker, PairwiseLinearRankerParams, PairwiseObservation,
@@ -393,6 +393,12 @@ fn decoders() -> Vec<Decoder> {
                 |m| m.to_artifact(INPUT_SCHEMA, TRANSFORMED_SCHEMA),
             )
         }),
+        ("robust-scaler", |bytes| {
+            accepted(
+                RobustScaler::from_artifact(bytes, INPUT_SCHEMA, TRANSFORMED_SCHEMA),
+                |m| m.to_artifact(INPUT_SCHEMA, TRANSFORMED_SCHEMA),
+            )
+        }),
         ("pipeline-logistic", |bytes| {
             accepted(
                 Pipeline::<StandardScaler, LogisticRegression>::from_artifact(
@@ -546,6 +552,7 @@ fn seed_corpus() -> Vec<(&'static str, Vec<u8>)> {
     let standard = StandardScaler::fit(&data.as_view(), StandardScalerParams::default()).unwrap();
     let min_max = MinMaxScaler::fit(&data.as_view(), MinMaxScalerParams::default()).unwrap();
     let max_abs = MaxAbsScaler::fit(&data.as_view(), MaxAbsScalerParams).unwrap();
+    let robust = RobustScaler::fit(&data.as_view(), RobustScalerParams::default()).unwrap();
     let transformed = standard.transform(&data.as_view()).unwrap();
 
     let pipeline_logistic = Pipeline::new(
@@ -680,6 +687,12 @@ fn seed_corpus() -> Vec<(&'static str, Vec<u8>)> {
         (
             "max-abs-scaler",
             max_abs
+                .to_artifact(INPUT_SCHEMA, TRANSFORMED_SCHEMA)
+                .unwrap(),
+        ),
+        (
+            "robust-scaler",
+            robust
                 .to_artifact(INPUT_SCHEMA, TRANSFORMED_SCHEMA)
                 .unwrap(),
         ),
@@ -1609,6 +1622,79 @@ fn corpus() -> Vec<Case> {
             decoder: "max-abs-scaler",
             expected: ArtifactError::Truncated,
             bytes: stated(15, &SCALER_ROLES, &words(&[inflated, inflated])),
+        },
+        Case {
+            name: "robust-scaler-inflated-width",
+            provenance: "same shape against the scaler carrying a parameter block",
+            decoder: "robust-scaler",
+            expected: ArtifactError::Truncated,
+            bytes: {
+                let mut state = words(&[inflated, 1, 1]);
+                state.extend_from_slice(&25.0_f64.to_le_bits_vec());
+                state.extend_from_slice(&75.0_f64.to_le_bits_vec());
+                state.extend_from_slice(&words(&[inflated]));
+                stated(44, &SCALER_ROLES, &state)
+            },
+        },
+        Case {
+            name: "robust-scaler-inverted-quantile-range",
+            provenance: "a stored percentile pair that fitting would have refused",
+            decoder: "robust-scaler",
+            expected: ArtifactError::InvalidPayload,
+            bytes: {
+                let mut state = words(&[1, 1, 1]);
+                state.extend_from_slice(&75.0_f64.to_le_bits_vec());
+                state.extend_from_slice(&25.0_f64.to_le_bits_vec());
+                state.extend_from_slice(&words(&[1]));
+                state.extend_from_slice(&1.0_f64.to_le_bits_vec());
+                state.extend_from_slice(&2.0_f64.to_le_bits_vec());
+                stated(44, &SCALER_ROLES, &state)
+            },
+        },
+        Case {
+            name: "robust-scaler-percentile-out-of-range",
+            provenance: "a percentile above 100, which no fitted range can hold",
+            decoder: "robust-scaler",
+            expected: ArtifactError::InvalidPayload,
+            bytes: {
+                let mut state = words(&[1, 1, 1]);
+                state.extend_from_slice(&25.0_f64.to_le_bits_vec());
+                state.extend_from_slice(&101.0_f64.to_le_bits_vec());
+                state.extend_from_slice(&words(&[1]));
+                state.extend_from_slice(&1.0_f64.to_le_bits_vec());
+                state.extend_from_slice(&2.0_f64.to_le_bits_vec());
+                stated(44, &SCALER_ROLES, &state)
+            },
+        },
+        Case {
+            name: "robust-scaler-negative-spread",
+            provenance: "a spread below zero, unreachable from ordered percentiles",
+            decoder: "robust-scaler",
+            expected: ArtifactError::InvalidPayload,
+            bytes: {
+                let mut state = words(&[1, 1, 1]);
+                state.extend_from_slice(&25.0_f64.to_le_bits_vec());
+                state.extend_from_slice(&75.0_f64.to_le_bits_vec());
+                state.extend_from_slice(&words(&[1]));
+                state.extend_from_slice(&1.0_f64.to_le_bits_vec());
+                state.extend_from_slice(&(-2.0_f64).to_le_bits_vec());
+                stated(44, &SCALER_ROLES, &state)
+            },
+        },
+        Case {
+            name: "robust-scaler-flag-is-not-boolean",
+            provenance: "a centring flag of 2, which no writer produces",
+            decoder: "robust-scaler",
+            expected: ArtifactError::InvalidPayload,
+            bytes: {
+                let mut state = words(&[1, 2, 1]);
+                state.extend_from_slice(&25.0_f64.to_le_bits_vec());
+                state.extend_from_slice(&75.0_f64.to_le_bits_vec());
+                state.extend_from_slice(&words(&[1]));
+                state.extend_from_slice(&1.0_f64.to_le_bits_vec());
+                state.extend_from_slice(&2.0_f64.to_le_bits_vec());
+                stated(44, &SCALER_ROLES, &state)
+            },
         },
         Case {
             name: "logistic-inflated-coefficients",

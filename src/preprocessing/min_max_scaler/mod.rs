@@ -5,8 +5,8 @@ use crate::artifact::{ArtifactError, MIN_MAX_SCALER_ARTIFACT_KIND};
 use crate::data::MatrixView;
 
 use super::scaling::{
-    decode_flag, decode_scaler_artifact, encode_scaler_artifact, substituted_divisor,
-    transform_preflighted, validate_transform_request,
+    ScalerHeader, ScalerParameters, decode_flag, decode_scaler_artifact, encode_scaler_artifact,
+    substituted_divisor, transform_preflighted, validate_transform_request,
 };
 
 /// Parameters for [`MinMaxScaler`].
@@ -149,7 +149,10 @@ impl MinMaxScaler {
             input_schema,
             transformed_schema,
             self.n_features_in,
-            &[u32::from(self.params.clip)],
+            ScalerParameters {
+                flags: &[u32::from(self.params.clip)],
+                reals: &[],
+            },
             2,
             |feature, state| {
                 state.f64(self.data_min[feature]);
@@ -164,12 +167,18 @@ impl MinMaxScaler {
         input_schema: [u8; 32],
         transformed_schema: [u8; 32],
     ) -> Result<Self, ArtifactError> {
-        let (n_features_in, flags, mut state) = decode_scaler_artifact(
+        let ScalerHeader {
+            n_features_in,
+            flags,
+            mut state,
+            ..
+        } = decode_scaler_artifact(
             bytes,
             MIN_MAX_SCALER_ARTIFACT_KIND,
             input_schema,
             transformed_schema,
             1,
+            0,
         )?;
         let clip = decode_flag(flags[0])?;
         // Two `f64` fields per feature: the reservation is clamped to the

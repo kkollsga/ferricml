@@ -70,6 +70,11 @@ and releases use [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   `unit_variance` is deliberately not claimed: it needs an inverse-normal-CDF
   primitive with its own accuracy contract, which is not worth adding to serve
   one optional flag.
+
+  The scaler persists through `to_artifact` / `from_artifact` under artifact
+  kind `44`, and composes into a `StagedPipeline` as a persisted stage. The raw
+  spread is what is stored and the divisor is recomputed on decode, so a fitted
+  model has exactly one valid byte string.
 - `api::ModelError::InvalidQuantileRange`, raised when a quantile range is not
   two percentiles in `0.0..=100.0` with the lower value first. Equal
   percentiles are accepted and produce a zero spread, which is a legitimate way

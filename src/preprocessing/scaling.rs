@@ -110,28 +110,37 @@ where
 /// Encodes fitted scaler state into a schema-bound envelope.
 ///
 /// Every scaler here has the same artifact shape: one state component holding
-/// a feature count, the scaler's own parameter flags, a repeated feature
-/// count, and then a fixed group of `f64` fields per feature. Only the flags
-/// and the per-feature fields differ between scalers, so those are what a
-/// caller supplies and everything else is stated once.
+/// a feature count, the scaler's own parameter flags, its real-valued
+/// parameters, a repeated feature count, and then a fixed group of `f64`
+/// fields per feature. Only the parameters and the per-feature fields differ
+/// between scalers, so those are what a caller supplies and everything else is
+/// stated once.
+///
+/// A scaler with no real-valued parameters passes an empty `parameters` slice
+/// and writes exactly the bytes it wrote before this block existed, which is
+/// what lets the block be added without moving any already-frozen artifact.
 pub(super) fn encode_scaler_artifact(
     kind: u16,
     input_schema: [u8; 32],
     transformed_schema: [u8; 32],
     n_features_in: usize,
-    flags: &[u32],
+    parameters: ScalerParameters<'_>,
     fields_per_feature: usize,
     mut write_feature: impl FnMut(usize, &mut ArtifactPayloadWriter),
 ) -> Result<Vec<u8>, ArtifactError> {
+    let ScalerParameters { flags, reals } = parameters;
     if n_features_in > MAX_ARTIFACT_FEATURES {
         return Err(ArtifactError::InvalidPayload);
     }
     let count = u32::try_from(n_features_in).map_err(|_| ArtifactError::InvalidPayload)?;
-    let capacity = 8 + flags.len() * 4 + n_features_in * fields_per_feature * 8;
+    let capacity = 8 + flags.len() * 4 + reals.len() * 8 + n_features_in * fields_per_feature * 8;
     let mut state = ArtifactPayloadWriter::with_capacity(capacity);
     state.u32(count);
     for &flag in flags {
         state.u32(flag);
+    }
+    for &real in reals {
+        state.f64(real);
     }
     state.u32(count);
     for feature in 0..n_features_in {
@@ -153,18 +162,43 @@ pub(super) fn encode_scaler_artifact(
     )
 }
 
+/// A scaler's own parameters, as they are laid out inside its artifact.
+///
+/// Two blocks rather than one because they are encoded differently: boolean
+/// toggles are single words, and a real-valued parameter needs the full `f64`
+/// pattern. A scaler with neither passes both empty and writes exactly the
+/// bytes it wrote before this block existed.
+pub(super) struct ScalerParameters<'a> {
+    /// Boolean toggles, one `u32` each.
+    pub flags: &'a [u32],
+    /// Real-valued parameters, one `f64` each.
+    pub reals: &'a [f64],
+}
+
+/// The shared prefix of a decoded scaler artifact.
+pub(super) struct ScalerHeader<'a> {
+    /// Fitted input width.
+    pub n_features_in: usize,
+    /// The scaler's parameter flags, exactly as written.
+    pub flags: Vec<u32>,
+    /// The scaler's real-valued parameters, exactly as written.
+    pub parameters: Vec<f64>,
+    /// Positioned at the first per-feature field.
+    pub state: ArtifactCursor<'a>,
+}
+
 /// Decodes the shared prefix of a scaler artifact.
 ///
-/// Returns the fitted width, the scaler's parameter flags exactly as written,
-/// and a cursor positioned at the first per-feature field. The caller reads
-/// its own fields from that cursor and must reject any trailing bytes.
+/// The caller reads its own per-feature fields from the returned cursor and
+/// must reject any trailing bytes.
 pub(super) fn decode_scaler_artifact<'a>(
     bytes: &'a [u8],
     kind: u16,
     input_schema: [u8; 32],
     transformed_schema: [u8; 32],
     flag_count: usize,
-) -> Result<(usize, Vec<u32>, ArtifactCursor<'a>), ArtifactError> {
+    parameter_count: usize,
+) -> Result<ScalerHeader<'a>, ArtifactError> {
     let version = artifact_version(bytes)?;
     if version != MODEL_ARTIFACT_VERSION {
         return Err(ArtifactError::UnsupportedVersion { found: version });
@@ -187,11 +221,20 @@ pub(super) fn decode_scaler_artifact<'a>(
     for _ in 0..flag_count {
         flags.push(state.u32()?);
     }
+    let mut parameters = Vec::with_capacity(parameter_count);
+    for _ in 0..parameter_count {
+        parameters.push(state.f64()?);
+    }
     let count = state.u32()? as usize;
     if n_features_in == 0 || n_features_in > MAX_ARTIFACT_FEATURES || count != n_features_in {
         return Err(ArtifactError::InvalidPayload);
     }
-    Ok((n_features_in, flags, state))
+    Ok(ScalerHeader {
+        n_features_in,
+        flags,
+        parameters,
+        state,
+    })
 }
 
 /// Reads an artifact flag written as a `u32` back into a `bool`.

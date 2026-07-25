@@ -5,8 +5,8 @@ use crate::artifact::{ArtifactError, MAX_ABS_SCALER_ARTIFACT_KIND};
 use crate::data::MatrixView;
 
 use super::scaling::{
-    decode_scaler_artifact, encode_scaler_artifact, substituted_divisor, transform_preflighted,
-    validate_transform_request,
+    ScalerHeader, ScalerParameters, decode_scaler_artifact, encode_scaler_artifact,
+    substituted_divisor, transform_preflighted, validate_transform_request,
 };
 
 /// Parameters for [`MaxAbsScaler`].
@@ -101,7 +101,10 @@ impl MaxAbsScaler {
             input_schema,
             transformed_schema,
             self.n_features_in,
-            &[],
+            ScalerParameters {
+                flags: &[],
+                reals: &[],
+            },
             1,
             |feature, state| state.f64(self.max_abs[feature]),
         )
@@ -113,11 +116,16 @@ impl MaxAbsScaler {
         input_schema: [u8; 32],
         transformed_schema: [u8; 32],
     ) -> Result<Self, ArtifactError> {
-        let (n_features_in, _, mut state) = decode_scaler_artifact(
+        let ScalerHeader {
+            n_features_in,
+            mut state,
+            ..
+        } = decode_scaler_artifact(
             bytes,
             MAX_ABS_SCALER_ARTIFACT_KIND,
             input_schema,
             transformed_schema,
+            0,
             0,
         )?;
         // One `f64` field per feature: the reservation is clamped to the

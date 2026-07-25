@@ -39,8 +39,8 @@ use ferricml::linear_model::{
     LogisticRegression, LogisticRegressionParams, Ridge, RidgeParams,
 };
 use ferricml::preprocessing::{
-    MaxAbsScaler, MaxAbsScalerParams, MinMaxScaler, MinMaxScalerParams, StandardScaler,
-    StandardScalerParams,
+    MaxAbsScaler, MaxAbsScalerParams, MinMaxScaler, MinMaxScalerParams, RobustScaler,
+    RobustScalerParams, StandardScaler, StandardScalerParams,
 };
 use ferricml::ranking::{
     PairIndex, PairOutcome, PairwiseError, PairwiseLinearRanker, PairwiseLinearRankerParams,
@@ -741,6 +741,24 @@ impl TransformerCase for MaxAbsScalerCase {
 /// It is a real `Regressor` and could not be registered at all while the
 /// battery had one eight-by-two dataset: a univariate estimator is required to
 /// reject a wider matrix, so the only shape on offer was one it must refuse.
+struct RobustScalerCase;
+
+impl TransformerCase for RobustScalerCase {
+    type Model = RobustScaler;
+    const NAME: &'static str = "RobustScaler";
+
+    fn fit(train: &Sample, _holdout: &Sample) -> Result<Self::Model, ModelError> {
+        RobustScaler::fit(&train.view(), RobustScalerParams::default())
+    }
+
+    fn round_trip(model: &Self::Model) -> RoundTrip<Self::Model> {
+        round_trip(
+            || model.to_artifact(SCHEMA, TRANSFORMED_SCHEMA),
+            |bytes| RobustScaler::from_artifact(bytes, SCHEMA, TRANSFORMED_SCHEMA),
+        )
+    }
+}
+
 struct IsotonicRegressionCase;
 
 impl RegressorCase for IsotonicRegressionCase {
@@ -1263,6 +1281,11 @@ fn min_max_scaler_conforms() {
 #[test]
 fn max_abs_scaler_conforms() {
     check_transformer::<MaxAbsScalerCase>();
+}
+
+#[test]
+fn robust_scaler_conforms() {
+    check_transformer::<RobustScalerCase>();
 }
 
 #[test]

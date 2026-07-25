@@ -15,7 +15,7 @@
 use crate::artifact::ArtifactError;
 use crate::ensemble::{HistGradientBoostingRegressor, RandomForestRegressor};
 use crate::linear_model::{LinearRegression, LogisticRegression, Ridge};
-use crate::preprocessing::{MaxAbsScaler, MinMaxScaler, StandardScaler};
+use crate::preprocessing::{MaxAbsScaler, MinMaxScaler, RobustScaler, StandardScaler};
 
 /// A fitted transform stage that can be persisted inside a composition.
 ///
@@ -107,6 +107,7 @@ macro_rules! impl_stage_artifact {
 impl_stage_artifact!(StandardScaler, 1);
 impl_stage_artifact!(MinMaxScaler, 2);
 impl_stage_artifact!(MaxAbsScaler, 3);
+impl_stage_artifact!(RobustScaler, 4);
 
 macro_rules! impl_model_artifact {
     ($model:ty, $tag:expr) => {

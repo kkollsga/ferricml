@@ -269,6 +269,8 @@ impl ferricml::api::HasCapabilities for ferricml::preprocessing::MaxAbsScaler
 pub const ferricml::preprocessing::MaxAbsScaler::CAPABILITIES: ferricml::api::Capabilities
 impl ferricml::api::HasCapabilities for ferricml::preprocessing::MinMaxScaler
 pub const ferricml::preprocessing::MinMaxScaler::CAPABILITIES: ferricml::api::Capabilities
+impl ferricml::api::HasCapabilities for ferricml::preprocessing::RobustScaler
+pub const ferricml::preprocessing::RobustScaler::CAPABILITIES: ferricml::api::Capabilities
 impl ferricml::api::HasCapabilities for ferricml::preprocessing::StandardScaler
 pub const ferricml::preprocessing::StandardScaler::CAPABILITIES: ferricml::api::Capabilities
 impl ferricml::api::HasCapabilities for ferricml::ranking::PairwiseLinearRanker
@@ -1669,6 +1671,10 @@ impl ferricml::pipeline::StageArtifact for ferricml::preprocessing::MinMaxScaler
 pub const ferricml::preprocessing::MinMaxScaler::STAGE_TAG: u16
 pub fn ferricml::preprocessing::MinMaxScaler::from_stage_artifact(&[u8], [u8; 32], [u8; 32]) -> core::result::Result<Self, ferricml::artifact::ArtifactError>
 pub fn ferricml::preprocessing::MinMaxScaler::to_stage_artifact(&self, [u8; 32], [u8; 32]) -> core::result::Result<alloc::vec::Vec<u8>, ferricml::artifact::ArtifactError>
+impl ferricml::pipeline::StageArtifact for ferricml::preprocessing::RobustScaler
+pub const ferricml::preprocessing::RobustScaler::STAGE_TAG: u16
+pub fn ferricml::preprocessing::RobustScaler::from_stage_artifact(&[u8], [u8; 32], [u8; 32]) -> core::result::Result<Self, ferricml::artifact::ArtifactError>
+pub fn ferricml::preprocessing::RobustScaler::to_stage_artifact(&self, [u8; 32], [u8; 32]) -> core::result::Result<alloc::vec::Vec<u8>, ferricml::artifact::ArtifactError>
 impl ferricml::pipeline::StageArtifact for ferricml::preprocessing::StandardScaler
 pub const ferricml::preprocessing::StandardScaler::STAGE_TAG: u16
 pub fn ferricml::preprocessing::StandardScaler::from_stage_artifact(&[u8], [u8; 32], [u8; 32]) -> core::result::Result<Self, ferricml::artifact::ArtifactError>
@@ -1757,15 +1763,19 @@ pub struct ferricml::preprocessing::RobustScaler
 impl ferricml::preprocessing::RobustScaler
 pub fn ferricml::preprocessing::RobustScaler::centers(&self) -> &[f64]
 pub fn ferricml::preprocessing::RobustScaler::fit(&ferricml::data::MatrixView<'_>, ferricml::preprocessing::RobustScalerParams) -> core::result::Result<Self, ferricml::api::ModelError>
+pub fn ferricml::preprocessing::RobustScaler::from_artifact(&[u8], [u8; 32], [u8; 32]) -> core::result::Result<Self, ferricml::artifact::ArtifactError>
 pub const fn ferricml::preprocessing::RobustScaler::get_params(&self) -> &ferricml::preprocessing::RobustScalerParams
 pub const fn ferricml::preprocessing::RobustScaler::n_features_in(&self) -> usize
 pub const fn ferricml::preprocessing::RobustScaler::n_features_out(&self) -> usize
 pub fn ferricml::preprocessing::RobustScaler::scales(&self) -> &[f64]
 pub fn ferricml::preprocessing::RobustScaler::spreads(&self) -> &[f64]
+pub fn ferricml::preprocessing::RobustScaler::to_artifact(&self, [u8; 32], [u8; 32]) -> core::result::Result<alloc::vec::Vec<u8>, ferricml::artifact::ArtifactError>
 pub fn ferricml::preprocessing::RobustScaler::transform(&self, &ferricml::data::MatrixView<'_>) -> core::result::Result<ferricml::data::DenseMatrix, ferricml::api::ModelError>
 pub fn ferricml::preprocessing::RobustScaler::transform_into<'output>(&self, &ferricml::data::MatrixView<'_>, &'output mut [f32]) -> core::result::Result<ferricml::data::MatrixView<'output>, ferricml::api::ModelError>
 impl ferricml::api::Estimator for ferricml::preprocessing::RobustScaler
 pub fn ferricml::preprocessing::RobustScaler::n_features_in(&self) -> usize
+impl ferricml::api::HasCapabilities for ferricml::preprocessing::RobustScaler
+pub const ferricml::preprocessing::RobustScaler::CAPABILITIES: ferricml::api::Capabilities
 impl ferricml::api::HasParams for ferricml::preprocessing::RobustScaler
 pub type ferricml::preprocessing::RobustScaler::Params = ferricml::preprocessing::RobustScalerParams
 pub fn ferricml::preprocessing::RobustScaler::get_params(&self) -> &Self::Params
@@ -1773,6 +1783,10 @@ impl ferricml::api::Transformer for ferricml::preprocessing::RobustScaler
 pub fn ferricml::preprocessing::RobustScaler::n_features_out(&self) -> usize
 pub fn ferricml::preprocessing::RobustScaler::transform(&self, &ferricml::data::MatrixView<'_>) -> core::result::Result<ferricml::data::DenseMatrix, ferricml::api::ModelError>
 pub fn ferricml::preprocessing::RobustScaler::transform_into<'output>(&self, &ferricml::data::MatrixView<'_>, &'output mut [f32]) -> core::result::Result<ferricml::data::MatrixView<'output>, ferricml::api::ModelError>
+impl ferricml::pipeline::StageArtifact for ferricml::preprocessing::RobustScaler
+pub const ferricml::preprocessing::RobustScaler::STAGE_TAG: u16
+pub fn ferricml::preprocessing::RobustScaler::from_stage_artifact(&[u8], [u8; 32], [u8; 32]) -> core::result::Result<Self, ferricml::artifact::ArtifactError>
+pub fn ferricml::preprocessing::RobustScaler::to_stage_artifact(&self, [u8; 32], [u8; 32]) -> core::result::Result<alloc::vec::Vec<u8>, ferricml::artifact::ArtifactError>
 pub struct ferricml::preprocessing::RobustScalerParams
 impl ferricml::preprocessing::RobustScalerParams
 pub const fn ferricml::preprocessing::RobustScalerParams::centering_enabled(&self) -> bool
