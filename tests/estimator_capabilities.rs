@@ -58,16 +58,19 @@ fn range_scalers_declare_persistence_but_not_weighted_fitting() {
 }
 
 #[test]
-fn tree_ensembles_declare_persistence_but_not_weighted_fitting() {
-    assert_eq!(RandomForestRegressor::CAPABILITIES, PERSISTED_ONLY);
+fn tree_ensembles_declare_weighted_fitting_and_persistence() {
+    assert_eq!(RandomForestRegressor::CAPABILITIES, WEIGHTED_AND_PERSISTED);
     assert_eq!(HistGradientBoostingRegressor::CAPABILITIES, PERSISTED_ONLY);
 }
 
 #[test]
-fn the_forest_classifier_declares_multiclass_fitting_only() {
-    // It fits an arbitrary class set, but has no weighted entry point and no
+fn the_forest_classifier_declares_weighted_and_multiclass_fitting() {
+    // It fits an arbitrary class set and accepts per-row weights, but has no
     // artifact kind until its leaf representation is persisted.
-    assert_eq!(RandomForestClassifier::CAPABILITIES, MULTICLASS_ONLY);
+    assert_eq!(
+        RandomForestClassifier::CAPABILITIES,
+        MULTICLASS_ONLY.with_sample_weights(true)
+    );
 }
 
 #[test]
@@ -169,7 +172,7 @@ fn runtime_dispatch_reports_the_selected_variant_without_type_matching() {
     // promise in general: this one could be refitted with weights.
     assert_eq!(ridge.capabilities(), WEIGHTED_AND_PERSISTED);
     assert!(!AnyRegressor::CAPABILITIES.sample_weights());
-    assert_eq!(forest.capabilities(), PERSISTED_ONLY);
+    assert_eq!(forest.capabilities(), WEIGHTED_AND_PERSISTED);
 
     let logistic: AnyClassifier = LogisticRegression::fit(
         &data.as_view(),
@@ -189,7 +192,10 @@ fn runtime_dispatch_reports_the_selected_variant_without_type_matching() {
         logistic.capabilities(),
         WEIGHTED_AND_PERSISTED.with_multiclass(true)
     );
-    assert_eq!(forest_classifier.capabilities(), MULTICLASS_ONLY);
+    assert_eq!(
+        forest_classifier.capabilities(),
+        MULTICLASS_ONLY.with_sample_weights(true)
+    );
 }
 
 #[test]

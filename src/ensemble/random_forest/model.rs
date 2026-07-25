@@ -12,7 +12,7 @@ use crate::artifact::{
     RANDOM_FOREST_REGRESSOR_ARTIFACT_KIND, SchemaRole, decode_component, decode_logical_tree,
     decode_v2_envelope, encode_component, encode_logical_tree, encode_v2_envelope,
 };
-use crate::data::{BinaryTargets, ClassTargets, MatrixView, RegressionTargets};
+use crate::data::{BinaryTargets, ClassTargets, MatrixView, RegressionTargets, SampleWeights};
 
 const REGRESSOR_PAYLOAD_VERSION: u16 = 1;
 const METADATA_COMPONENT_KIND: u16 = 1;
@@ -115,8 +115,32 @@ impl RandomForestClassifier {
         targets: &BinaryTargets,
         params: RandomForestClassifierParams,
     ) -> Result<Self, ModelError> {
+        Self::fit_binary(data, targets, None, params)
+    }
+
+    /// Fits a binary classifier with per-row sample weights.
+    ///
+    /// A weight scales the row's contribution to every impurity and leaf
+    /// statistic, and composes with the bootstrap replication count. Weights of
+    /// exactly one reproduce [`Self::fit`] bit for bit, and an integer weight is
+    /// the same fit as repeating that row that many times.
+    pub fn fit_weighted(
+        data: &MatrixView<'_>,
+        targets: &BinaryTargets,
+        sample_weights: &SampleWeights,
+        params: RandomForestClassifierParams,
+    ) -> Result<Self, ModelError> {
+        Self::fit_binary(data, targets, Some(sample_weights), params)
+    }
+
+    fn fit_binary(
+        data: &MatrixView<'_>,
+        targets: &BinaryTargets,
+        sample_weights: Option<&SampleWeights>,
+        params: RandomForestClassifierParams,
+    ) -> Result<Self, ModelError> {
         let config = ForestConfig::from(&params);
-        validate_common(data, targets.as_slice().len(), &config)?;
+        validate_common(data, targets.as_slice().len(), sample_weights, &config)?;
         for (index, &value) in targets.as_slice().iter().enumerate() {
             if value > 1 {
                 return Err(ModelError::InvalidBinaryTarget { index, value });
@@ -130,7 +154,13 @@ impl RandomForestClassifier {
             (false, true) => vec![1],
             (false, false) => unreachable!("non-empty validated binary targets"),
         };
-        let trees = train_forest(data, targets.as_slice(), &config, Classification)?;
+        let trees = train_forest(
+            data,
+            targets.as_slice(),
+            sample_weights.map(SampleWeights::as_slice),
+            &config,
+            Classification,
+        )?;
         Ok(Self {
             n_features_in: data.columns(),
             params,
@@ -158,8 +188,31 @@ impl RandomForestClassifier {
         targets: &ClassTargets,
         params: RandomForestClassifierParams,
     ) -> Result<Self, ModelError> {
+        Self::fit_multiclass_internal(data, targets, None, params)
+    }
+
+    /// Fits a natively multiclass classifier with per-row sample weights.
+    ///
+    /// The weight scales the row's contribution to the multiclass Gini
+    /// statistics and to every leaf distribution, exactly as it does for the
+    /// binary fit.
+    pub fn fit_multiclass_weighted(
+        data: &MatrixView<'_>,
+        targets: &ClassTargets,
+        sample_weights: &SampleWeights,
+        params: RandomForestClassifierParams,
+    ) -> Result<Self, ModelError> {
+        Self::fit_multiclass_internal(data, targets, Some(sample_weights), params)
+    }
+
+    fn fit_multiclass_internal(
+        data: &MatrixView<'_>,
+        targets: &ClassTargets,
+        sample_weights: Option<&SampleWeights>,
+        params: RandomForestClassifierParams,
+    ) -> Result<Self, ModelError> {
         let config = ForestConfig::from(&params);
-        validate_common(data, targets.len(), &config)?;
+        validate_common(data, targets.len(), sample_weights, &config)?;
         let classes = targets.classes().to_vec();
         let class_of_row = targets
             .as_slice()
@@ -170,7 +223,13 @@ impl RandomForestClassifier {
                     .expect("every target label is an observed class")
             })
             .collect::<Vec<_>>();
-        let trees = train_class_forest(data, &class_of_row, classes.len(), &config)?;
+        let trees = train_class_forest(
+            data,
+            &class_of_row,
+            classes.len(),
+            sample_weights.map(SampleWeights::as_slice),
+            &config,
+        )?;
         Ok(Self {
             n_features_in: data.columns(),
             params,
@@ -536,11 +595,12 @@ impl HasParams for RandomForestClassifier {
     }
 }
 
-/// Declares multiclass fitting only: bootstrap resampling has no weighted entry
-/// point yet, and the classifier has no artifact kind until its leaf
-/// representation is persisted.
+/// Declares weighted and multiclass fitting. Persistence is declared once the
+/// classifier's leaf representation has an artifact kind.
 impl HasCapabilities for RandomForestClassifier {
-    const CAPABILITIES: Capabilities = Capabilities::NONE.with_multiclass(true);
+    const CAPABILITIES: Capabilities = Capabilities::NONE
+        .with_sample_weights(true)
+        .with_multiclass(true);
 }
 
 impl RandomForestRegressor {
@@ -561,14 +621,44 @@ impl RandomForestRegressor {
         targets: &RegressionTargets,
         params: RandomForestRegressorParams,
     ) -> Result<Self, ModelError> {
+        Self::fit_internal(data, targets, None, params)
+    }
+
+    /// Fits with per-row sample weights.
+    ///
+    /// A weight scales the row's contribution to the variance and leaf mean of
+    /// every node it reaches, and composes with the bootstrap replication
+    /// count. Weights of exactly one reproduce [`Self::fit`] bit for bit, and an
+    /// integer weight is the same fit as repeating that row that many times.
+    pub fn fit_weighted(
+        data: &MatrixView<'_>,
+        targets: &RegressionTargets,
+        sample_weights: &SampleWeights,
+        params: RandomForestRegressorParams,
+    ) -> Result<Self, ModelError> {
+        Self::fit_internal(data, targets, Some(sample_weights), params)
+    }
+
+    fn fit_internal(
+        data: &MatrixView<'_>,
+        targets: &RegressionTargets,
+        sample_weights: Option<&SampleWeights>,
+        params: RandomForestRegressorParams,
+    ) -> Result<Self, ModelError> {
         let config = ForestConfig::from(&params);
-        validate_common(data, targets.as_slice().len(), &config)?;
+        validate_common(data, targets.as_slice().len(), sample_weights, &config)?;
         for (index, value) in targets.as_slice().iter().enumerate() {
             if !value.is_finite() {
                 return Err(ModelError::NonFiniteTarget { index });
             }
         }
-        let trees = train_forest(data, targets.as_slice(), &config, Regression)?;
+        let trees = train_forest(
+            data,
+            targets.as_slice(),
+            sample_weights.map(SampleWeights::as_slice),
+            &config,
+            Regression,
+        )?;
         Ok(Self {
             n_features_in: data.columns(),
             params,
@@ -854,7 +944,9 @@ impl HasParams for RandomForestRegressor {
 }
 
 impl HasCapabilities for RandomForestRegressor {
-    const CAPABILITIES: Capabilities = Capabilities::NONE.with_artifact(true);
+    const CAPABILITIES: Capabilities = Capabilities::NONE
+        .with_sample_weights(true)
+        .with_artifact(true);
 }
 
 fn mean_tree_prediction(trees: &[PackedTree], row: &[f32]) -> f32 {
@@ -950,6 +1042,7 @@ fn probability_output_len(rows: usize, classes: usize) -> Result<usize, ModelErr
 fn validate_common(
     data: &MatrixView<'_>,
     target_len: usize,
+    sample_weights: Option<&SampleWeights>,
     config: &ForestConfig,
 ) -> Result<(), ModelError> {
     if data.rows() == 0 || data.columns() == 0 {
@@ -962,6 +1055,14 @@ fn validate_common(
         return Err(ModelError::TargetLength {
             rows: data.rows(),
             targets: target_len,
+        });
+    }
+    if let Some(sample_weights) = sample_weights
+        && data.rows() != sample_weights.len()
+    {
+        return Err(ModelError::SampleWeightLength {
+            rows: data.rows(),
+            weights: sample_weights.len(),
         });
     }
     if config.n_estimators == 0 {

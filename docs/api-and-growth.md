@@ -35,7 +35,14 @@ estimator meaning follow the reference contract.
 - `data` owns validated row-major inputs, targets, and sample weights.
 - `ensemble` owns public ensemble estimators and parameter types; each private
   estimator family owns its validation, training, persistence conversion, and
-  compact representation below the public facade.
+  compact representation below the public facade. A forest's weighted entry
+  points treat a sample weight as a fractional row count: it multiplies the
+  bootstrap replication count, and the product is what every impurity, split
+  threshold test, leaf mean, and leaf distribution accumulates. The minimum
+  split and leaf sizes therefore count weight rather than rows, which is what
+  makes an integer weight the same fit as repeating the row. A row of weight
+  zero is not in the training sample at all, so it is also excluded from the
+  bootstrap draw rather than consuming one of it.
 - `pipeline` composes fitted transformers and an estimator generically. Its
   `with_transformed` path uses caller-owned workspace and static dispatch.
   `Pipeline` holds one transformer; concrete standard-scaler pipelines provide

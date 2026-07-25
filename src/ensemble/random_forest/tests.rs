@@ -2,7 +2,7 @@ use super::model::Forest;
 use super::*;
 use crate::api::ModelError;
 use crate::artifact::{ArtifactError, RANDOM_FOREST_REGRESSOR_ARTIFACT_KIND};
-use crate::data::{BinaryTargets, ClassTargets, DenseMatrix, RegressionTargets};
+use crate::data::{BinaryTargets, ClassTargets, DenseMatrix, RegressionTargets, SampleWeights};
 use crate::ensemble::HistGradientBoostingRegressor;
 use crate::linear_model::Ridge;
 use sha2::{Digest, Sha256};
@@ -252,6 +252,328 @@ fn bootstrap_and_seed_are_deterministic_but_seed_affects_model() {
     let c = RandomForestClassifier::fit(&x.as_view(), &y, classifier_params(9)).unwrap();
     assert_eq!(a.to_bytes(), b.to_bytes());
     assert_ne!(a.to_bytes(), c.to_bytes());
+}
+
+// ------------------------------------------------------------ sample weights
+
+/// Eight rows of exactly representable features and integer targets.
+///
+/// Every weighted accumulation over this fixture is a sum of small integers
+/// scaled by small integers, so the weighted and duplicated arithmetic below is
+/// exact rather than merely close. That is what lets the equivalences be
+/// asserted on fitted bytes instead of on a tolerance.
+fn weight_fixture() -> (DenseMatrix, Vec<u8>, Vec<f32>) {
+    let x = matrix(&[
+        &[0.0, 3.0],
+        &[1.0, 2.0],
+        &[2.0, 1.0],
+        &[3.0, 0.0],
+        &[4.0, 7.0],
+        &[5.0, 6.0],
+        &[6.0, 5.0],
+        &[7.0, 4.0],
+    ]);
+    let labels = vec![0, 1, 1, 0, 1, 0, 0, 1];
+    let values = vec![0.0, 1.0, 2.0, 3.0, 8.0, 7.0, 6.0, 5.0];
+    (x, labels, values)
+}
+
+/// The same fixture with row `repeat` present `times` times, in place.
+fn duplicated_fixture(repeat: usize, times: usize) -> (DenseMatrix, Vec<u8>, Vec<f32>) {
+    let (x, labels, values) = weight_fixture();
+    let mut rows = Vec::new();
+    let mut duplicated_labels = Vec::new();
+    let mut duplicated_values = Vec::new();
+    for row in 0..labels.len() {
+        let copies = if row == repeat { times } else { 1 };
+        for _ in 0..copies {
+            rows.extend_from_slice(x.as_view().row(row).unwrap());
+            duplicated_labels.push(labels[row]);
+            duplicated_values.push(values[row]);
+        }
+    }
+    let columns = x.as_view().columns();
+    let matrix = DenseMatrix::new(rows, duplicated_labels.len(), columns).unwrap();
+    (matrix, duplicated_labels, duplicated_values)
+}
+
+/// Weights of exactly one must not perturb one bit of the unweighted fit.
+///
+/// Asserted on the packed model bytes and on the whole fitted value, not on
+/// predictions: a difference small enough to leave every prediction unchanged
+/// would still mean the weighted path is a second implementation of the
+/// unweighted one, which is exactly what the declaration promises it is not.
+#[test]
+fn unit_weights_reproduce_the_unweighted_fit_bit_for_bit() {
+    let (x, labels, values) = weight_fixture();
+    let binary = BinaryTargets::new(labels.clone()).unwrap();
+    let classes = ClassTargets::new(labels).unwrap();
+    let regression = RegressionTargets::new(values).unwrap();
+    let ones = SampleWeights::new(vec![1.0; x.as_view().rows()]).unwrap();
+
+    for bootstrap in [false, true] {
+        let classifier_params = classifier_params(123).with_bootstrap(bootstrap);
+        let regressor_params = regressor_params(123).with_bootstrap(bootstrap);
+
+        let plain =
+            RandomForestClassifier::fit(&x.as_view(), &binary, classifier_params.clone()).unwrap();
+        let weighted = RandomForestClassifier::fit_weighted(
+            &x.as_view(),
+            &binary,
+            &ones,
+            classifier_params.clone(),
+        )
+        .unwrap();
+        assert_eq!(
+            plain.to_bytes(),
+            weighted.to_bytes(),
+            "binary classifier, bootstrap = {bootstrap}"
+        );
+        assert_eq!(plain, weighted);
+
+        let plain = RandomForestClassifier::fit_multiclass(
+            &x.as_view(),
+            &classes,
+            classifier_params.clone(),
+        )
+        .unwrap();
+        let weighted = RandomForestClassifier::fit_multiclass_weighted(
+            &x.as_view(),
+            &classes,
+            &ones,
+            classifier_params,
+        )
+        .unwrap();
+        assert_eq!(
+            plain, weighted,
+            "multiclass classifier, bootstrap = {bootstrap}"
+        );
+
+        let plain = RandomForestRegressor::fit(&x.as_view(), &regression, regressor_params.clone())
+            .unwrap();
+        let weighted =
+            RandomForestRegressor::fit_weighted(&x.as_view(), &regression, &ones, regressor_params)
+                .unwrap();
+        assert_eq!(
+            plain.to_bytes(),
+            weighted.to_bytes(),
+            "regressor, bootstrap = {bootstrap}"
+        );
+        assert_eq!(
+            plain.to_artifact([5; 32]).unwrap(),
+            weighted.to_artifact([5; 32]).unwrap()
+        );
+    }
+}
+
+/// An integer weight is the same fit as repeating the row that many times.
+///
+/// Bootstrapping is off, because a resample draws from the rows it is given:
+/// adding rows changes what is drawn, so the two datasets would stop being the
+/// same training problem before any weight was applied.
+#[test]
+fn an_integer_weight_is_the_same_fit_as_repeating_the_row() {
+    let repeat = 2;
+    let times = 3;
+    let (x, labels, values) = weight_fixture();
+    let (duplicated_x, duplicated_labels, duplicated_values) = duplicated_fixture(repeat, times);
+    let mut weights = vec![1.0_f32; labels.len()];
+    weights[repeat] = times as f32;
+    let weights = SampleWeights::new(weights).unwrap();
+
+    let classifier_params = classifier_params(123).with_bootstrap(false);
+    let regressor_params = regressor_params(123).with_bootstrap(false);
+
+    let weighted = RandomForestClassifier::fit_weighted(
+        &x.as_view(),
+        &BinaryTargets::new(labels.clone()).unwrap(),
+        &weights,
+        classifier_params.clone(),
+    )
+    .unwrap();
+    let repeated = RandomForestClassifier::fit(
+        &duplicated_x.as_view(),
+        &BinaryTargets::new(duplicated_labels.clone()).unwrap(),
+        classifier_params.clone(),
+    )
+    .unwrap();
+    assert_eq!(
+        weighted.to_bytes(),
+        repeated.to_bytes(),
+        "binary classifier"
+    );
+
+    let weighted = RandomForestClassifier::fit_multiclass_weighted(
+        &x.as_view(),
+        &ClassTargets::new(labels).unwrap(),
+        &weights,
+        classifier_params.clone(),
+    )
+    .unwrap();
+    let repeated = RandomForestClassifier::fit_multiclass(
+        &duplicated_x.as_view(),
+        &ClassTargets::new(duplicated_labels).unwrap(),
+        classifier_params,
+    )
+    .unwrap();
+    assert_eq!(weighted, repeated, "multiclass classifier");
+
+    let weighted = RandomForestRegressor::fit_weighted(
+        &x.as_view(),
+        &RegressionTargets::new(values).unwrap(),
+        &weights,
+        regressor_params.clone(),
+    )
+    .unwrap();
+    let repeated = RandomForestRegressor::fit(
+        &duplicated_x.as_view(),
+        &RegressionTargets::new(duplicated_values).unwrap(),
+        regressor_params,
+    )
+    .unwrap();
+    assert_eq!(weighted.to_bytes(), repeated.to_bytes(), "regressor");
+}
+
+/// A weight of zero removes the row from training entirely.
+///
+/// This is the `times = 0` case of the duplication rule, and it is also why a
+/// bootstrap resample draws from the positively weighted rows only: a row that
+/// is not in the sample cannot consume one of its draws.
+#[test]
+fn a_zero_weight_row_is_the_same_fit_as_a_deleted_row() {
+    let (x, labels, values) = weight_fixture();
+    let dropped = 4;
+    let mut weights = vec![1.0_f32; labels.len()];
+    weights[dropped] = 0.0;
+    let weights = SampleWeights::new(weights).unwrap();
+
+    let mut kept_rows = Vec::new();
+    let mut kept_values = Vec::new();
+    for (row, &value) in values.iter().enumerate() {
+        if row != dropped {
+            kept_rows.extend_from_slice(x.as_view().row(row).unwrap());
+            kept_values.push(value);
+        }
+    }
+    let kept = DenseMatrix::new(kept_rows, labels.len() - 1, x.as_view().columns()).unwrap();
+
+    for bootstrap in [false, true] {
+        let params = regressor_params(123).with_bootstrap(bootstrap);
+        let weighted = RandomForestRegressor::fit_weighted(
+            &x.as_view(),
+            &RegressionTargets::new(values.clone()).unwrap(),
+            &weights,
+            params.clone(),
+        )
+        .unwrap();
+        let deleted = RandomForestRegressor::fit(
+            &kept.as_view(),
+            &RegressionTargets::new(kept_values.clone()).unwrap(),
+            params,
+        )
+        .unwrap();
+        assert_eq!(
+            weighted.to_bytes(),
+            deleted.to_bytes(),
+            "bootstrap = {bootstrap}"
+        );
+    }
+}
+
+#[test]
+fn weighted_fits_stay_deterministic_across_repeats_and_thread_counts() {
+    let (x, labels, values) = weight_fixture();
+    let weights = SampleWeights::new(vec![0.5, 2.0, 1.25, 3.0, 0.25, 1.0, 4.0, 0.75]).unwrap();
+    let regression = RegressionTargets::new(values).unwrap();
+    let classes = ClassTargets::new(labels).unwrap();
+
+    let serial = regressor_params(77);
+    let parallel = regressor_params(77).with_n_jobs(crate::ensemble::NJobs::Count(4));
+    let one =
+        RandomForestRegressor::fit_weighted(&x.as_view(), &regression, &weights, serial.clone())
+            .unwrap();
+    let repeat =
+        RandomForestRegressor::fit_weighted(&x.as_view(), &regression, &weights, serial).unwrap();
+    let threaded =
+        RandomForestRegressor::fit_weighted(&x.as_view(), &regression, &weights, parallel).unwrap();
+    assert_eq!(one.to_bytes(), repeat.to_bytes());
+    assert_eq!(one.to_bytes(), threaded.to_bytes());
+
+    let serial = multiclass_params(77);
+    let parallel = multiclass_params(77).with_n_jobs(crate::ensemble::NJobs::Count(4));
+    let one =
+        RandomForestClassifier::fit_multiclass_weighted(&x.as_view(), &classes, &weights, serial)
+            .unwrap();
+    let threaded =
+        RandomForestClassifier::fit_multiclass_weighted(&x.as_view(), &classes, &weights, parallel)
+            .unwrap();
+    // The retained thread count is part of the fitted parameters, so the two
+    // values differ there by construction; the fitted trees must not.
+    assert_eq!(
+        one.predict_proba(&x.as_view()).unwrap(),
+        threaded.predict_proba(&x.as_view()).unwrap()
+    );
+}
+
+/// A length mismatch is reported before any training work begins.
+#[test]
+fn weighted_fitting_rejects_a_length_mismatch_before_training() {
+    let (x, labels, values) = weight_fixture();
+    let short = SampleWeights::new(vec![1.0; labels.len() - 1]).unwrap();
+    let expected = ModelError::SampleWeightLength {
+        rows: labels.len(),
+        weights: labels.len() - 1,
+    };
+    assert_eq!(
+        RandomForestClassifier::fit_weighted(
+            &x.as_view(),
+            &BinaryTargets::new(labels.clone()).unwrap(),
+            &short,
+            classifier_params(1),
+        )
+        .unwrap_err(),
+        expected
+    );
+    assert_eq!(
+        RandomForestClassifier::fit_multiclass_weighted(
+            &x.as_view(),
+            &ClassTargets::new(labels).unwrap(),
+            &short,
+            classifier_params(1),
+        )
+        .unwrap_err(),
+        expected
+    );
+    assert_eq!(
+        RandomForestRegressor::fit_weighted(
+            &x.as_view(),
+            &RegressionTargets::new(values).unwrap(),
+            &short,
+            regressor_params(1),
+        )
+        .unwrap_err(),
+        expected
+    );
+}
+
+/// Weights change the model. Without this the equivalences above would be
+/// satisfied by an implementation that ignored its weights entirely.
+#[test]
+fn weights_are_not_inert() {
+    let (x, labels, values) = weight_fixture();
+    let regression = RegressionTargets::new(values).unwrap();
+    let mut skewed = vec![1.0_f32; labels.len()];
+    skewed[0] = 9.0;
+    let skewed = SampleWeights::new(skewed).unwrap();
+    let plain = RandomForestRegressor::fit(&x.as_view(), &regression, regressor_params(5)).unwrap();
+    let weighted = RandomForestRegressor::fit_weighted(
+        &x.as_view(),
+        &regression,
+        &skewed,
+        regressor_params(5),
+    )
+    .unwrap();
+    assert_ne!(plain.to_bytes(), weighted.to_bytes());
 }
 
 #[test]

@@ -47,13 +47,20 @@ impl From<&RandomForestRegressorParams> for ForestConfig {
     }
 }
 
+/// One node's statistics are weighted totals rather than row counts.
+///
+/// `weight` is the total row weight reaching a node: the bootstrap replication
+/// count of each row multiplied by its sample weight. Without sample weights
+/// every term is an integer, and an integer sum accumulated in `f64` is exact
+/// below `2^53`, so the unweighted arithmetic is bit-for-bit what the earlier
+/// `u64` counter produced.
 pub(super) trait Objective<Y>: Copy + Send + Sync {
     fn value(self, y: &Y) -> f64;
-    fn impurity(self, sum: f64, sum_sq: f64, weight: u64) -> f64;
-    fn leaf_value(self, sum: f64, weight: u64) -> f32 {
-        (sum / weight as f64) as f32
+    fn impurity(self, sum: f64, sum_sq: f64, weight: f64) -> f64;
+    fn leaf_value(self, sum: f64, weight: f64) -> f32 {
+        (sum / weight) as f32
     }
-    fn pure(self, sum: f64, sum_sq: f64, weight: u64) -> bool;
+    fn pure(self, sum: f64, sum_sq: f64, weight: f64) -> bool;
 }
 
 #[derive(Clone, Copy)]
@@ -64,13 +71,13 @@ impl Objective<u8> for Classification {
         f64::from(*y)
     }
 
-    fn impurity(self, positives: f64, _sum_sq: f64, weight: u64) -> f64 {
-        let p = positives / weight as f64;
+    fn impurity(self, positives: f64, _sum_sq: f64, weight: f64) -> f64 {
+        let p = positives / weight;
         2.0 * p * (1.0 - p)
     }
 
-    fn pure(self, positives: f64, _sum_sq: f64, weight: u64) -> bool {
-        positives == 0.0 || positives == weight as f64
+    fn pure(self, positives: f64, _sum_sq: f64, weight: f64) -> bool {
+        positives == 0.0 || positives == weight
     }
 }
 
@@ -82,13 +89,13 @@ impl Objective<f32> for Regression {
         f64::from(*y)
     }
 
-    fn impurity(self, sum: f64, sum_sq: f64, weight: u64) -> f64 {
+    fn impurity(self, sum: f64, sum_sq: f64, weight: f64) -> f64 {
         // Population variance.  Clamp cancellation noise at zero.
-        let mean = sum / weight as f64;
-        (sum_sq / weight as f64 - mean * mean).max(0.0)
+        let mean = sum / weight;
+        (sum_sq / weight - mean * mean).max(0.0)
     }
 
-    fn pure(self, sum: f64, sum_sq: f64, weight: u64) -> bool {
+    fn pure(self, sum: f64, sum_sq: f64, weight: f64) -> bool {
         self.impurity(sum, sum_sq, weight) == 0.0
     }
 }
@@ -131,32 +138,69 @@ where
     indexed.into_iter().map(|(_, tree)| tree).collect()
 }
 
-/// One tree's bootstrap replication counts and the rows it retains.
+/// One tree's per-row training weights and the rows it retains.
 ///
-/// Without bootstrapping every row is used exactly once; with it, a row's count
-/// is how many times the resample drew it, and a row drawn zero times is left
-/// out of the row list entirely.
-fn tree_sample(rows: usize, bootstrap: bool, rng: &mut OwnedRng) -> (Vec<u32>, Vec<usize>) {
-    let mut counts = vec![0u32; rows];
+/// A row's weight is how many times the resample drew it multiplied by its
+/// sample weight; without bootstrapping the replication count is one. A row of
+/// weight zero contributes to nothing and is left out of the row list entirely.
+///
+/// The unweighted arm is deliberately separate rather than a special case of
+/// the weighted one. It draws exactly the indices it always drew and stores
+/// exact integers, so every unweighted fit is bit-for-bit unchanged.
+///
+/// The weighted arm resamples the **positively weighted rows only**, and draws
+/// as many times as there are of them. A zero weight means the row is not in
+/// the training sample at all, so it no more consumes a bootstrap draw than a
+/// deleted row would — and the drawn sample can therefore never come back
+/// empty, which a division by a zero total weight would otherwise produce.
+fn tree_sample(
+    rows: usize,
+    bootstrap: bool,
+    sample_weights: Option<&[f32]>,
+    rng: &mut OwnedRng,
+) -> (Vec<f64>, Vec<usize>) {
+    let Some(sample_weights) = sample_weights else {
+        let mut weights = vec![0.0_f64; rows];
+        if bootstrap {
+            for _ in 0..rows {
+                weights[rng.index(rows)] += 1.0;
+            }
+        } else {
+            weights.fill(1.0);
+        }
+        let retained = weights
+            .iter()
+            .enumerate()
+            .filter_map(|(row, &weight)| (weight != 0.0).then_some(row))
+            .collect();
+        return (weights, retained);
+    };
+
+    let eligible: Vec<usize> = (0..rows).filter(|&row| sample_weights[row] > 0.0).collect();
+    let mut weights = vec![0.0_f64; rows];
     if bootstrap {
-        for _ in 0..rows {
-            let row = rng.index(rows);
-            counts[row] += 1;
+        for _ in 0..eligible.len() {
+            weights[eligible[rng.index(eligible.len())]] += 1.0;
         }
     } else {
-        counts.fill(1);
+        for &row in &eligible {
+            weights[row] = 1.0;
+        }
     }
-    let retained = counts
-        .iter()
-        .enumerate()
-        .filter_map(|(row, &count)| (count != 0).then_some(row))
-        .collect();
-    (counts, retained)
+    let mut retained = Vec::with_capacity(eligible.len());
+    for &row in &eligible {
+        if weights[row] != 0.0 {
+            weights[row] *= f64::from(sample_weights[row]);
+            retained.push(row);
+        }
+    }
+    (weights, retained)
 }
 
 pub(super) fn train_forest<Y, O>(
     data: &MatrixView<'_>,
     targets: &[Y],
+    sample_weights: Option<&[f32]>,
     config: &ForestConfig,
     objective: O,
 ) -> Result<Vec<PackedTree>, ModelError>
@@ -166,11 +210,11 @@ where
 {
     train_trees(config, |index| {
         let mut rng = OwnedRng::new(derive_tree_seed(config.random_state, index as u64));
-        let (counts, rows) = tree_sample(data.rows(), config.bootstrap, &mut rng);
+        let (weights, rows) = tree_sample(data.rows(), config.bootstrap, sample_weights, &mut rng);
         let builder = TreeBuilder {
             data,
             targets,
-            counts: &counts,
+            row_weights: &weights,
             config,
             objective,
             rng: &mut rng,
@@ -188,16 +232,17 @@ pub(super) fn train_class_forest(
     data: &MatrixView<'_>,
     class_of_row: &[usize],
     classes: usize,
+    sample_weights: Option<&[f32]>,
     config: &ForestConfig,
 ) -> Result<Vec<ClassTree>, ModelError> {
     train_trees(config, |index| {
         let mut rng = OwnedRng::new(derive_tree_seed(config.random_state, index as u64));
-        let (counts, rows) = tree_sample(data.rows(), config.bootstrap, &mut rng);
+        let (weights, rows) = tree_sample(data.rows(), config.bootstrap, sample_weights, &mut rng);
         let builder = ClassTreeBuilder {
             data,
             class_of_row,
             classes,
-            counts: &counts,
+            row_weights: &weights,
             config,
             rng: &mut rng,
             nodes: Vec::new(),
@@ -241,7 +286,8 @@ fn resolved_feature_count(max_features: MaxFeatures, columns: usize) -> usize {
 struct TreeBuilder<'a, 'm, Y, O> {
     data: &'a MatrixView<'m>,
     targets: &'a [Y],
-    counts: &'a [u32],
+    /// Total training weight of each row in this tree's sample.
+    row_weights: &'a [f64],
     config: &'a ForestConfig,
     objective: O,
     rng: &'a mut OwnedRng,
@@ -290,7 +336,7 @@ impl<Y, O: Objective<Y>> TreeBuilder<'_, '_, Y, O> {
                 .max_depth
                 .is_some_and(|max_depth| task.depth >= max_depth);
             if depth_limited
-                || weight < self.config.min_samples_split as u64
+                || weight < self.config.min_samples_split as f64
                 || self.objective.pure(sum, sum_sq, weight)
             {
                 continue;
@@ -345,17 +391,16 @@ impl<Y, O: Objective<Y>> TreeBuilder<'_, '_, Y, O> {
         Ok(index)
     }
 
-    fn totals(&self, rows: &[usize]) -> (f64, f64, u64) {
+    fn totals(&self, rows: &[usize]) -> (f64, f64, f64) {
         let mut sum = 0.0;
         let mut sum_sq = 0.0;
-        let mut weight = 0u64;
+        let mut weight = 0.0;
         for &row in rows {
-            let count = u64::from(self.counts[row]);
+            let row_weight = self.row_weights[row];
             let value = self.objective.value(&self.targets[row]);
-            let count_f = count as f64;
-            sum += value * count_f;
-            sum_sq += value * value * count_f;
-            weight += count;
+            sum += value * row_weight;
+            sum_sq += value * value * row_weight;
+            weight += row_weight;
         }
         (sum, sum_sq, weight)
     }
@@ -365,7 +410,7 @@ impl<Y, O: Objective<Y>> TreeBuilder<'_, '_, Y, O> {
         rows: &[usize],
         total_sum: f64,
         total_sum_sq: f64,
-        total_weight: u64,
+        total_weight: f64,
     ) -> Option<Split> {
         let feature_count = resolved_feature_count(self.config.max_features, self.data.columns());
         let features = sample_features(self.rng, self.data.columns(), feature_count);
@@ -383,15 +428,14 @@ impl<Y, O: Objective<Y>> TreeBuilder<'_, '_, Y, O> {
 
             let mut left_sum = 0.0;
             let mut left_sum_sq = 0.0;
-            let mut left_weight = 0u64;
+            let mut left_weight = 0.0;
             for boundary in 0..ordered.len().saturating_sub(1) {
                 let row = ordered[boundary];
-                let count = u64::from(self.counts[row]);
+                let row_weight = self.row_weights[row];
                 let value = self.objective.value(&self.targets[row]);
-                let count_f = count as f64;
-                left_sum += value * count_f;
-                left_sum_sq += value * value * count_f;
-                left_weight += count;
+                left_sum += value * row_weight;
+                left_sum_sq += value * value * row_weight;
+                left_weight += row_weight;
 
                 let a = self.data.row(row).expect("known row")[feature];
                 let b = self.data.row(ordered[boundary + 1]).expect("known row")[feature];
@@ -399,8 +443,8 @@ impl<Y, O: Objective<Y>> TreeBuilder<'_, '_, Y, O> {
                     continue;
                 }
                 let right_weight = total_weight - left_weight;
-                if left_weight < self.config.min_samples_leaf as u64
-                    || right_weight < self.config.min_samples_leaf as u64
+                if left_weight < self.config.min_samples_leaf as f64
+                    || right_weight < self.config.min_samples_leaf as f64
                 {
                     continue;
                 }
@@ -410,9 +454,8 @@ impl<Y, O: Objective<Y>> TreeBuilder<'_, '_, Y, O> {
                 let right_impurity = self
                     .objective
                     .impurity(right_sum, right_sum_sq, right_weight);
-                let score = (left_weight as f64 * left_impurity
-                    + right_weight as f64 * right_impurity)
-                    / total_weight as f64;
+                let score =
+                    (left_weight * left_impurity + right_weight * right_impurity) / total_weight;
                 if best.as_ref().is_none_or(|current| score < current.score) {
                     best = Some(Split {
                         feature,
@@ -440,14 +483,15 @@ struct ClassTreeBuilder<'a, 'm> {
     /// Each row's column in the sorted class list.
     class_of_row: &'a [usize],
     classes: usize,
-    counts: &'a [u32],
+    /// Total training weight of each row in this tree's sample.
+    row_weights: &'a [f64],
     config: &'a ForestConfig,
     rng: &'a mut OwnedRng,
     nodes: Vec<BuildNode>,
     /// `classes` weighted counts per build node, parallel to `nodes`.
     class_weights: Vec<f64>,
     /// Total weight per build node, parallel to `nodes`.
-    weights: Vec<u64>,
+    weights: Vec<f64>,
 }
 
 impl ClassTreeBuilder<'_, '_> {
@@ -478,8 +522,8 @@ impl ClassTreeBuilder<'_, '_> {
                 .max_depth
                 .is_some_and(|max_depth| task.depth >= max_depth);
             if depth_limited
-                || weight < self.config.min_samples_split as u64
-                || totals.contains(&(weight as f64))
+                || weight < self.config.min_samples_split as f64
+                || totals.contains(&weight)
             {
                 continue;
             }
@@ -532,7 +576,7 @@ impl ClassTreeBuilder<'_, '_> {
         &mut self,
         node: BuildNode,
         class_weights: &[f64],
-        weight: u64,
+        weight: f64,
     ) -> Result<u32, ModelError> {
         let index = u32::try_from(self.nodes.len()).map_err(|_| ModelError::TreeTooLarge)?;
         if index == NO_CHILD {
@@ -544,13 +588,13 @@ impl ClassTreeBuilder<'_, '_> {
         Ok(index)
     }
 
-    fn totals(&self, rows: &[usize], class_weights: &mut [f64]) -> u64 {
+    fn totals(&self, rows: &[usize], class_weights: &mut [f64]) -> f64 {
         class_weights.fill(0.0);
-        let mut weight = 0u64;
+        let mut weight = 0.0;
         for &row in rows {
-            let count = u64::from(self.counts[row]);
-            class_weights[self.class_of_row[row]] += count as f64;
-            weight += count;
+            let row_weight = self.row_weights[row];
+            class_weights[self.class_of_row[row]] += row_weight;
+            weight += row_weight;
         }
         weight
     }
@@ -559,7 +603,7 @@ impl ClassTreeBuilder<'_, '_> {
         &mut self,
         rows: &[usize],
         totals: &[f64],
-        total_weight: u64,
+        total_weight: f64,
         left: &mut [f64],
         right: &mut [f64],
     ) -> Option<Split> {
@@ -578,12 +622,12 @@ impl ClassTreeBuilder<'_, '_> {
             });
 
             left.fill(0.0);
-            let mut left_weight = 0u64;
+            let mut left_weight = 0.0;
             for boundary in 0..ordered.len().saturating_sub(1) {
                 let row = ordered[boundary];
-                let count = u64::from(self.counts[row]);
-                left[self.class_of_row[row]] += count as f64;
-                left_weight += count;
+                let row_weight = self.row_weights[row];
+                left[self.class_of_row[row]] += row_weight;
+                left_weight += row_weight;
 
                 let a = self.data.row(row).expect("known row")[feature];
                 let b = self.data.row(ordered[boundary + 1]).expect("known row")[feature];
@@ -591,8 +635,8 @@ impl ClassTreeBuilder<'_, '_> {
                     continue;
                 }
                 let right_weight = total_weight - left_weight;
-                if left_weight < self.config.min_samples_leaf as u64
-                    || right_weight < self.config.min_samples_leaf as u64
+                if left_weight < self.config.min_samples_leaf as f64
+                    || right_weight < self.config.min_samples_leaf as f64
                 {
                     continue;
                 }
@@ -600,9 +644,9 @@ impl ClassTreeBuilder<'_, '_> {
                 {
                     *slot = total - left;
                 }
-                let score = (left_weight as f64 * gini(left, left_weight)
-                    + right_weight as f64 * gini(right, right_weight))
-                    / total_weight as f64;
+                let score = (left_weight * gini(left, left_weight)
+                    + right_weight * gini(right, right_weight))
+                    / total_weight;
                 if best.as_ref().is_none_or(|current| score < current.score) {
                     best = Some(Split {
                         feature,
@@ -621,11 +665,10 @@ impl ClassTreeBuilder<'_, '_> {
 /// `1 - Σ pₖ²` over any number of classes. At two classes it is exactly the
 /// `2p(1-p)` the binary objective above uses, so the two criteria agree where
 /// they overlap instead of being two different notions of impurity.
-fn gini(class_weights: &[f64], weight: u64) -> f64 {
-    let total = weight as f64;
+fn gini(class_weights: &[f64], weight: f64) -> f64 {
     let mut squares = 0.0_f64;
     for &count in class_weights {
-        let proportion = count / total;
+        let proportion = count / weight;
         squares += proportion * proportion;
     }
     1.0 - squares

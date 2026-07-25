@@ -108,6 +108,17 @@ impl ClassifierCase for RandomForestClassifierCase {
                 .expect("multiclass fit"),
         )
     }
+
+    fn fit_weighted(
+        data: &MatrixView<'_>,
+        labels: &BinaryTargets,
+        weights: &SampleWeights,
+    ) -> Option<Self::Model> {
+        Some(
+            RandomForestClassifier::fit_weighted(data, labels, weights, forest_classifier_params())
+                .expect("weighted fit"),
+        )
+    }
 }
 
 impl ScalarClassifierCase for RandomForestClassifierCase {
@@ -233,6 +244,17 @@ impl RegressorCase for RandomForestRegressorCase {
 
     fn fit(data: &MatrixView<'_>, values: &RegressionTargets) -> Self::Model {
         RandomForestRegressor::fit(data, values, forest_regressor_params()).expect("fit")
+    }
+
+    fn fit_weighted(
+        data: &MatrixView<'_>,
+        values: &RegressionTargets,
+        weights: &SampleWeights,
+    ) -> Option<Self::Model> {
+        Some(
+            RandomForestRegressor::fit_weighted(data, values, weights, forest_regressor_params())
+                .expect("weighted fit"),
+        )
     }
 
     fn round_trip(model: &Self::Model) -> RoundTrip<Self::Model> {

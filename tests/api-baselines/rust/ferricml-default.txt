@@ -670,6 +670,8 @@ impl ferricml::ensemble::RandomForestClassifier
 pub fn ferricml::ensemble::RandomForestClassifier::classes(&self) -> &[u8]
 pub fn ferricml::ensemble::RandomForestClassifier::fit(&ferricml::data::MatrixView<'_>, &ferricml::data::BinaryTargets, ferricml::ensemble::RandomForestClassifierParams) -> core::result::Result<Self, ferricml::api::ModelError>
 pub fn ferricml::ensemble::RandomForestClassifier::fit_multiclass(&ferricml::data::MatrixView<'_>, &ferricml::data::ClassTargets, ferricml::ensemble::RandomForestClassifierParams) -> core::result::Result<Self, ferricml::api::ModelError>
+pub fn ferricml::ensemble::RandomForestClassifier::fit_multiclass_weighted(&ferricml::data::MatrixView<'_>, &ferricml::data::ClassTargets, &ferricml::data::SampleWeights, ferricml::ensemble::RandomForestClassifierParams) -> core::result::Result<Self, ferricml::api::ModelError>
+pub fn ferricml::ensemble::RandomForestClassifier::fit_weighted(&ferricml::data::MatrixView<'_>, &ferricml::data::BinaryTargets, &ferricml::data::SampleWeights, ferricml::ensemble::RandomForestClassifierParams) -> core::result::Result<Self, ferricml::api::ModelError>
 pub fn ferricml::ensemble::RandomForestClassifier::get_params(&self) -> &ferricml::ensemble::RandomForestClassifierParams
 pub fn ferricml::ensemble::RandomForestClassifier::n_features_in(&self) -> usize
 pub fn ferricml::ensemble::RandomForestClassifier::predict(&self, &ferricml::data::MatrixView<'_>) -> core::result::Result<alloc::vec::Vec<u8>, ferricml::api::ModelError>
@@ -724,6 +726,7 @@ pub fn ferricml::ensemble::RandomForestClassifierParams::default() -> Self
 pub struct ferricml::ensemble::RandomForestRegressor
 impl ferricml::ensemble::RandomForestRegressor
 pub fn ferricml::ensemble::RandomForestRegressor::fit(&ferricml::data::MatrixView<'_>, &ferricml::data::RegressionTargets, ferricml::ensemble::RandomForestRegressorParams) -> core::result::Result<Self, ferricml::api::ModelError>
+pub fn ferricml::ensemble::RandomForestRegressor::fit_weighted(&ferricml::data::MatrixView<'_>, &ferricml::data::RegressionTargets, &ferricml::data::SampleWeights, ferricml::ensemble::RandomForestRegressorParams) -> core::result::Result<Self, ferricml::api::ModelError>
 pub fn ferricml::ensemble::RandomForestRegressor::from_artifact(&[u8], [u8; 32]) -> core::result::Result<Self, ferricml::artifact::ArtifactError>
 pub fn ferricml::ensemble::RandomForestRegressor::get_params(&self) -> &ferricml::ensemble::RandomForestRegressorParams
 pub fn ferricml::ensemble::RandomForestRegressor::n_features_in(&self) -> usize

@@ -209,6 +209,15 @@ and releases use [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - `api::Capabilities::decision_function`, declaring whether a fitted classifier
   exposes a raw, unsquashed decision score. Producing probabilities is required
   of every `Classifier` and is not what this records.
+- `RandomForestRegressor::fit_weighted`, `RandomForestClassifier::fit_weighted`,
+  and `RandomForestClassifier::fit_multiclass_weighted`, taking validated
+  per-row `data::SampleWeights`. A weight scales the row's contribution to every
+  impurity, leaf statistic, and leaf distribution, and composes with the
+  bootstrap replication count. Weights of exactly one reproduce the unweighted
+  fit bit for bit, an integer weight is the same fit as repeating the row that
+  many times, and a weight of zero removes the row — including from the
+  bootstrap resample, which draws only among positively weighted rows. Both
+  forests now declare `sample_weights` in their capability descriptor.
 
 ### Changed
 

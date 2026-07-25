@@ -347,7 +347,7 @@ impl ClassTree {
     pub(super) fn from_build_nodes(
         build: Vec<BuildNode>,
         class_weights: &[f64],
-        weights: &[u64],
+        weights: &[f64],
         classes: usize,
         n_features: usize,
     ) -> Result<Self, ModelError> {
@@ -355,7 +355,7 @@ impl ClassTree {
         debug_assert_eq!(weights.len(), build.len());
         let mut probabilities = Vec::new();
         let mut push_leaf = |index: usize| {
-            let total = weights[index] as f64;
+            let total = weights[index];
             for class in 0..classes {
                 probabilities.push((class_weights[index * classes + class] / total) as f32);
             }
