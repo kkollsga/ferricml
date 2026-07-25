@@ -62,6 +62,11 @@ and releases use [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   weighted fitting whose integer weights equal repeated rows, and schema-bound
   artifacts under an artifact kind of its own whose objective field names the
   loss the leaves were fitted to descend. Fitting requires both class labels.
+- `api::AnyClassifier::HistGradientBoosting`, so a boosted classifier can be
+  selected at runtime and persisted through the dispatch envelope like every
+  other variant. The enum's declared capabilities are still the intersection
+  over its variants, so adding one that offers no multiclass fit does not
+  quietly widen what the enum promises.
 - `metrics::ConfusionMatrix`, counting one classification result over the
   sorted union of the observed labels, and the `metrics::Average` vocabulary
   that combines its per-class precision, recall, F1, and F-beta as a binary,

@@ -3,7 +3,10 @@ use crate::artifact::{
     decode_component, decode_v2_envelope, encode_component, encode_v2_envelope,
 };
 use crate::data::MatrixView;
-use crate::ensemble::{RandomForestClassifier, RandomForestClassifierParams};
+use crate::ensemble::{
+    HistGradientBoostingClassifier, HistGradientBoostingClassifierParams, RandomForestClassifier,
+    RandomForestClassifierParams,
+};
 use crate::linear_model::{LogisticRegression, LogisticRegressionParams};
 
 use super::super::{Capabilities, Classifier, Estimator, HasCapabilities, ModelError};
@@ -17,6 +20,7 @@ const DISPATCH_METADATA_BYTES: usize = 2 * 4;
 
 const VARIANT_RANDOM_FOREST: u32 = 1;
 const VARIANT_LOGISTIC_REGRESSION: u32 = 2;
+const VARIANT_HIST_GRADIENT_BOOSTING: u32 = 3;
 
 /// Parameters retained by a fitted [`AnyClassifier`].
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -26,6 +30,8 @@ pub enum AnyClassifierParams<'a> {
     RandomForest(&'a RandomForestClassifierParams),
     /// Logistic-regression classifier parameters.
     LogisticRegression(&'a LogisticRegressionParams),
+    /// Histogram gradient-boosted classifier parameters.
+    HistGradientBoosting(&'a HistGradientBoostingClassifierParams),
 }
 
 /// An owned fitted classifier selected at runtime.
@@ -39,6 +45,8 @@ pub enum AnyClassifier {
     RandomForest(RandomForestClassifier),
     /// A fitted logistic-regression classifier.
     LogisticRegression(LogisticRegression),
+    /// A fitted histogram gradient-boosted classifier.
+    HistGradientBoosting(HistGradientBoostingClassifier),
 }
 
 impl AnyClassifier {
@@ -63,6 +71,7 @@ impl AnyClassifier {
         match self {
             Self::RandomForest(_) => RandomForestClassifier::CAPABILITIES,
             Self::LogisticRegression(_) => LogisticRegression::CAPABILITIES,
+            Self::HistGradientBoosting(_) => HistGradientBoostingClassifier::CAPABILITIES,
         }
     }
 
@@ -72,6 +81,9 @@ impl AnyClassifier {
             Self::RandomForest(model) => AnyClassifierParams::RandomForest(model.get_params()),
             Self::LogisticRegression(model) => {
                 AnyClassifierParams::LogisticRegression(model.get_params())
+            }
+            Self::HistGradientBoosting(model) => {
+                AnyClassifierParams::HistGradientBoosting(model.get_params())
             }
         }
     }
@@ -133,6 +145,9 @@ impl AnyClassifier {
             Self::LogisticRegression(model) => {
                 (VARIANT_LOGISTIC_REGRESSION, model.to_artifact(schema)?)
             }
+            Self::HistGradientBoosting(model) => {
+                (VARIANT_HIST_GRADIENT_BOOSTING, model.to_artifact(schema)?)
+            }
         };
         let mut metadata = ArtifactPayloadWriter::with_capacity(DISPATCH_METADATA_BYTES);
         metadata.u32(DISPATCH_VERSION);
@@ -187,6 +202,9 @@ impl AnyClassifier {
             VARIANT_LOGISTIC_REGRESSION => {
                 Self::LogisticRegression(LogisticRegression::from_artifact(model, schema)?)
             }
+            VARIANT_HIST_GRADIENT_BOOSTING => Self::HistGradientBoosting(
+                HistGradientBoostingClassifier::from_artifact(model, schema)?,
+            ),
             _ => return Err(ArtifactError::InvalidPayload),
         })
     }
@@ -204,11 +222,18 @@ impl From<LogisticRegression> for AnyClassifier {
     }
 }
 
+impl From<HistGradientBoostingClassifier> for AnyClassifier {
+    fn from(model: HistGradientBoostingClassifier) -> Self {
+        Self::HistGradientBoosting(model)
+    }
+}
+
 impl Estimator for AnyClassifier {
     fn n_features_in(&self) -> usize {
         match self {
             Self::RandomForest(model) => model.n_features_in(),
             Self::LogisticRegression(model) => model.n_features_in(),
+            Self::HistGradientBoosting(model) => model.n_features_in(),
         }
     }
 }
@@ -229,6 +254,7 @@ impl Estimator for AnyClassifier {
 impl HasCapabilities for AnyClassifier {
     const CAPABILITIES: Capabilities = RandomForestClassifier::CAPABILITIES
         .intersection(LogisticRegression::CAPABILITIES)
+        .intersection(HistGradientBoostingClassifier::CAPABILITIES)
         .with_sample_weights(false)
         .with_multiclass(false);
 }
@@ -238,6 +264,7 @@ impl Classifier for AnyClassifier {
         match self {
             Self::RandomForest(model) => model.classes(),
             Self::LogisticRegression(model) => model.classes(),
+            Self::HistGradientBoosting(model) => model.classes(),
         }
     }
 
@@ -245,6 +272,7 @@ impl Classifier for AnyClassifier {
         match self {
             Self::RandomForest(model) => model.predict_into(data, output),
             Self::LogisticRegression(model) => model.predict_into(data, output),
+            Self::HistGradientBoosting(model) => model.predict_into(data, output),
         }
     }
 
@@ -256,6 +284,7 @@ impl Classifier for AnyClassifier {
         match self {
             Self::RandomForest(model) => model.predict_proba_into(data, output),
             Self::LogisticRegression(model) => model.predict_proba_into(data, output),
+            Self::HistGradientBoosting(model) => model.predict_proba_into(data, output),
         }
     }
 
@@ -268,6 +297,9 @@ impl Classifier for AnyClassifier {
         match self {
             Self::RandomForest(model) => model.predict_class_proba_into(data, class, output),
             Self::LogisticRegression(model) => model.predict_class_proba_into(data, class, output),
+            Self::HistGradientBoosting(model) => {
+                model.predict_class_proba_into(data, class, output)
+            }
         }
     }
 }
@@ -277,6 +309,7 @@ mod tests {
     use super::*;
     use crate::artifact::ArtifactError;
     use crate::data::{BinaryTargets, ClassTargets, DenseMatrix};
+    use crate::ensemble::HistGradientBoostingClassifierParams;
     use crate::ensemble::MaxFeatures;
     use sha2::{Digest, Sha256};
 
@@ -326,6 +359,17 @@ mod tests {
                 &data.as_view(),
                 classes,
                 LogisticRegressionParams::default(),
+            )
+            .unwrap()
+            .into(),
+            HistGradientBoostingClassifier::fit(
+                &data.as_view(),
+                binary,
+                HistGradientBoostingClassifierParams::default()
+                    .with_max_iter(3)
+                    .with_max_leaf_nodes(2)
+                    .with_min_samples_leaf(1)
+                    .with_max_bins(4),
             )
             .unwrap()
             .into(),

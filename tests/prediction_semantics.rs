@@ -207,6 +207,24 @@ impl ClassifierCase for AnyForestClassifierCase {
     }
 }
 
+struct AnyBoostedClassifierCase;
+
+impl ClassifierCase for AnyBoostedClassifierCase {
+    type Model = AnyClassifier;
+    const NAME: &'static str = "AnyClassifier::HistGradientBoosting";
+
+    fn fit(data: &MatrixView<'_>, labels: &BinaryTargets) -> Self::Model {
+        HistGradientBoostingClassifierCase::fit(data, labels).into()
+    }
+
+    fn round_trip(model: &Self::Model) -> RoundTrip<Self::Model> {
+        round_trip(
+            || model.to_artifact(SCHEMA),
+            |bytes| AnyClassifier::from_artifact(bytes, SCHEMA),
+        )
+    }
+}
+
 struct AnyLogisticClassifierCase;
 
 impl ClassifierCase for AnyLogisticClassifierCase {
@@ -609,6 +627,7 @@ fn hist_gradient_boosting_classifier_conforms() {
 fn any_classifier_conforms_for_every_variant() {
     check_batch_only_classifier::<AnyForestClassifierCase>();
     check_batch_only_classifier::<AnyLogisticClassifierCase>();
+    check_batch_only_classifier::<AnyBoostedClassifierCase>();
 }
 
 #[test]

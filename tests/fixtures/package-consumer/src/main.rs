@@ -1,4 +1,6 @@
-use ferricml::api::{AnyClassifier, AnyRegressor, AnyRegressorParams, Classifier, Regressor};
+use ferricml::api::{
+    AnyClassifier, AnyClassifierParams, AnyRegressor, AnyRegressorParams, Classifier, Regressor,
+};
 use ferricml::data::{
     BinaryTargets, ClassTargets, DenseMatrix, RegressionTargets, SampleWeights,
 };
@@ -307,6 +309,20 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         boosted_classifier.decision_function(&features.as_view())?,
         boosted_scores
     );
+
+    let erased: AnyClassifier = boosted_classifier.into();
+    assert!(matches!(
+        erased.get_params(),
+        AnyClassifierParams::HistGradientBoosting(_)
+    ));
+    assert!(erased.capabilities().artifact());
+    assert!(erased.capabilities().decision_function());
+    let erased_encoded = erased.to_artifact(schema)?;
+    let erased = AnyClassifier::from_artifact(&erased_encoded, schema)?;
+    assert_eq!(erased.to_artifact(schema)?, erased_encoded);
+    assert_eq!(erased.classes(), &[0, 1]);
+    assert_eq!(erased.predict(&features.as_view())?, boosted_labels);
+    assert_eq!(erased.predict_proba(&features.as_view())?, boosted_proba);
 
     let regressor = RandomForestRegressor::fit(
         &features.as_view(),

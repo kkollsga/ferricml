@@ -1,6 +1,7 @@
 pub mod ferricml
 pub mod ferricml::api
 #[non_exhaustive] pub enum ferricml::api::AnyClassifier
+pub ferricml::api::AnyClassifier::HistGradientBoosting(ferricml::ensemble::HistGradientBoostingClassifier)
 pub ferricml::api::AnyClassifier::LogisticRegression(ferricml::linear_model::LogisticRegression)
 pub ferricml::api::AnyClassifier::RandomForest(ferricml::ensemble::RandomForestClassifier)
 impl ferricml::api::AnyClassifier
@@ -16,6 +17,8 @@ pub fn ferricml::api::AnyClassifier::predict_into(&self, &ferricml::data::Matrix
 pub fn ferricml::api::AnyClassifier::predict_proba(&self, &ferricml::data::MatrixView<'_>) -> core::result::Result<alloc::vec::Vec<f32>, ferricml::api::ModelError>
 pub fn ferricml::api::AnyClassifier::predict_proba_into(&self, &ferricml::data::MatrixView<'_>, &mut [f32]) -> core::result::Result<(), ferricml::api::ModelError>
 pub fn ferricml::api::AnyClassifier::to_artifact(&self, [u8; 32]) -> core::result::Result<alloc::vec::Vec<u8>, ferricml::artifact::ArtifactError>
+impl core::convert::From<ferricml::ensemble::HistGradientBoostingClassifier> for ferricml::api::AnyClassifier
+pub fn ferricml::api::AnyClassifier::from(ferricml::ensemble::HistGradientBoostingClassifier) -> Self
 impl core::convert::From<ferricml::ensemble::RandomForestClassifier> for ferricml::api::AnyClassifier
 pub fn ferricml::api::AnyClassifier::from(ferricml::ensemble::RandomForestClassifier) -> Self
 impl core::convert::From<ferricml::linear_model::LogisticRegression> for ferricml::api::AnyClassifier
@@ -33,6 +36,7 @@ pub fn ferricml::api::AnyClassifier::n_features_in(&self) -> usize
 impl ferricml::api::HasCapabilities for ferricml::api::AnyClassifier
 pub const ferricml::api::AnyClassifier::CAPABILITIES: ferricml::api::Capabilities
 #[non_exhaustive] pub enum ferricml::api::AnyClassifierParams<'a>
+pub ferricml::api::AnyClassifierParams::HistGradientBoosting(&'a ferricml::ensemble::HistGradientBoostingClassifierParams)
 pub ferricml::api::AnyClassifierParams::LogisticRegression(&'a ferricml::linear_model::LogisticRegressionParams)
 pub ferricml::api::AnyClassifierParams::RandomForest(&'a ferricml::ensemble::RandomForestClassifierParams)
 #[non_exhaustive] pub enum ferricml::api::AnyRegressor
@@ -658,6 +662,8 @@ pub fn ferricml::ensemble::HistGradientBoostingClassifier::predict_positive_prob
 pub fn ferricml::ensemble::HistGradientBoostingClassifier::predict_proba(&self, &ferricml::data::MatrixView<'_>) -> core::result::Result<alloc::vec::Vec<f32>, ferricml::api::ModelError>
 pub fn ferricml::ensemble::HistGradientBoostingClassifier::predict_proba_into(&self, &ferricml::data::MatrixView<'_>, &mut [f32]) -> core::result::Result<(), ferricml::api::ModelError>
 pub fn ferricml::ensemble::HistGradientBoostingClassifier::to_artifact(&self, [u8; 32]) -> core::result::Result<alloc::vec::Vec<u8>, ferricml::artifact::ArtifactError>
+impl core::convert::From<ferricml::ensemble::HistGradientBoostingClassifier> for ferricml::api::AnyClassifier
+pub fn ferricml::api::AnyClassifier::from(ferricml::ensemble::HistGradientBoostingClassifier) -> Self
 impl ferricml::api::Classifier for ferricml::ensemble::HistGradientBoostingClassifier
 pub fn ferricml::ensemble::HistGradientBoostingClassifier::classes(&self) -> &[u8]
 pub fn ferricml::ensemble::HistGradientBoostingClassifier::predict(&self, &ferricml::data::MatrixView<'_>) -> core::result::Result<alloc::vec::Vec<u8>, ferricml::api::ModelError>

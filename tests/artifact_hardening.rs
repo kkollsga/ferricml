@@ -705,7 +705,10 @@ fn seed_corpus() -> Vec<(&'static str, Vec<u8>)> {
         ("boosting", boosting.to_artifact(INPUT_SCHEMA).unwrap()),
         (
             "boosting-classifier",
-            boosting_classifier.to_artifact(INPUT_SCHEMA).unwrap(),
+            boosting_classifier
+                .clone()
+                .to_artifact(INPUT_SCHEMA)
+                .unwrap(),
         ),
         ("forest", forest.to_artifact(INPUT_SCHEMA).unwrap()),
         (
@@ -735,6 +738,12 @@ fn seed_corpus() -> Vec<(&'static str, Vec<u8>)> {
         (
             "any-multiclass-logistic",
             AnyClassifier::from(multiclass_logistic)
+                .to_artifact(INPUT_SCHEMA)
+                .unwrap(),
+        ),
+        (
+            "any-boosting-classifier",
+            AnyClassifier::from(boosting_classifier)
                 .to_artifact(INPUT_SCHEMA)
                 .unwrap(),
         ),
