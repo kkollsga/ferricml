@@ -108,14 +108,25 @@ pub(super) fn fit_ridge_dense(
     })
 }
 
-struct PreprocessedDense {
-    matrix: DMatrix<f64>,
-    targets: DVector<f64>,
-    feature_means: Vec<f64>,
-    target_mean: f64,
+/// Centered, weight-scaled dense storage shared by every dense linear fit.
+///
+/// `matrix` is column-major, which is the layout nalgebra builds and the one a
+/// coordinate sweep wants: a coordinate step touches one whole column and no
+/// part of any other.
+pub(super) struct PreprocessedDense {
+    pub(super) matrix: DMatrix<f64>,
+    pub(super) targets: DVector<f64>,
+    pub(super) feature_means: Vec<f64>,
+    pub(super) target_mean: f64,
 }
 
-fn preprocess(
+/// Centers by the weighted means when an intercept is fitted and scales each
+/// row by the square root of its weight.
+///
+/// Stated once for the whole family. Sharing it is what makes "the penalty
+/// applies to raw-scale coefficients, and the intercept is recovered from the
+/// centering" one definition rather than one per estimator.
+pub(super) fn preprocess(
     data: &MatrixView<'_>,
     targets: &[f32],
     sample_weights: Option<&SampleWeights>,

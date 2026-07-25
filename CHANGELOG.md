@@ -281,6 +281,17 @@ and releases use [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   above 2048 stacked parameters and keeps producing the identical fit below it,
   while the matrix-free path accepts 131 072 within the same storage budget.
   `ModelError::MulticlassSystemTooLarge` now reports whichever limit applied.
+- `linear_model::Lasso`, a dense L1-regularized regressor fitted by cyclic
+  coordinate descent. Coefficients it removes are exactly `0.0` and positively
+  signed, so `coefficients` reads as a feature selection. Its objective divides
+  the weighted squared error by twice the total sample weight, matching the
+  reference contract's documented parametrization — so its `alpha` is a
+  different quantity from `Ridge`'s, and the penalty applies to raw-scale
+  coefficients because fitting centers but does not rescale the design.
+  Sample weights are fractional row counts, and only their ratios matter. It
+  declares weighted fitting and, deliberately, no artifact.
+- `ModelError::InvalidPenaltyAlpha` and `ModelError::InvalidL1Ratio`, reported
+  at the public boundary before any allocation or fitting work.
 - `ModelError::SolverDidNotConverge`, reported when an iterative solver
   exhausts `max_iter` — or is asked for a tolerance below what the objective's
   own numerical resolution can certify — instead of returning the last iterate

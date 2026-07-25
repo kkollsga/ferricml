@@ -19,8 +19,8 @@ use ferricml::ensemble::{
     RandomForestClassifierParams, RandomForestRegressor,
 };
 use ferricml::linear_model::{
-    LinearRegression, LinearRegressionParams, LogisticRegression, LogisticRegressionParams, Ridge,
-    RidgeParams,
+    Lasso, LinearRegression, LinearRegressionParams, LogisticRegression, LogisticRegressionParams,
+    Ridge, RidgeParams,
 };
 use ferricml::pipeline::{Pipeline, StagedPipeline};
 use ferricml::preprocessing::{
@@ -44,6 +44,18 @@ fn linear_estimators_declare_weighted_fitting_and_persistence() {
     );
     assert_eq!(LinearRegression::CAPABILITIES, WEIGHTED_AND_PERSISTED);
     assert_eq!(Ridge::CAPABILITIES, WEIGHTED_AND_PERSISTED);
+}
+
+#[test]
+fn the_penalized_regressors_declare_weighted_fitting_but_no_artifact_yet() {
+    // Persistence is a separate contract from semantics: these estimators have
+    // no artifact kind, so declaring one they do not have would promise bytes
+    // that cannot be written. Flipping this is a reviewable diff, which is the
+    // point of stating it here.
+    assert_eq!(
+        Lasso::CAPABILITIES,
+        Capabilities::NONE.with_sample_weights(true)
+    );
 }
 
 #[test]

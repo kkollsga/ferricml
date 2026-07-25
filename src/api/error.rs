@@ -65,6 +65,15 @@ pub enum ModelError {
     InvalidLeastSquaresTolerance,
     /// A ridge penalty is not finite and non-negative.
     InvalidRidgeAlpha,
+    /// An elastic-net-family penalty is not finite and non-negative.
+    ///
+    /// Separate from [`ModelError::InvalidRidgeAlpha`] because the two `alpha`
+    /// parameters are different quantities: a ridge penalty accompanies an
+    /// undivided squared-error term, and this one accompanies a squared-error
+    /// term divided by twice the total sample weight.
+    InvalidPenaltyAlpha,
+    /// An elastic-net mixing parameter is outside `0.0..=1.0`.
+    InvalidL1Ratio,
     /// A boosting learning rate is not finite and positive.
     InvalidLearningRate,
     /// A boosting iteration count is outside its supported bound.
@@ -183,6 +192,10 @@ impl fmt::Display for ModelError {
                 f.write_str("least-squares tolerance must be finite and non-negative")
             }
             Self::InvalidRidgeAlpha => f.write_str("ridge alpha must be finite and non-negative"),
+            Self::InvalidPenaltyAlpha => {
+                f.write_str("penalty alpha must be finite and non-negative")
+            }
+            Self::InvalidL1Ratio => f.write_str("l1_ratio must be finite and in 0..=1"),
             Self::InvalidLearningRate => {
                 f.write_str("boosting learning rate must be finite and positive")
             }

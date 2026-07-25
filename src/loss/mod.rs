@@ -33,6 +33,7 @@ mod boosting;
 mod linear;
 mod link;
 mod objective;
+mod penalty;
 mod squared_error;
 
 pub(crate) use binary_log_loss::BinaryLogLoss;
@@ -41,4 +42,5 @@ pub(crate) use boosting::{
 };
 pub(crate) use linear::{accumulate_newton_row, raw_score};
 pub(crate) use objective::Objective;
+pub(crate) use penalty::ElasticNetPenalty;
 pub(crate) use squared_error::SquaredError;

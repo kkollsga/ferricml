@@ -35,8 +35,8 @@ use ferricml::ensemble::{
     RandomForestRegressorParams,
 };
 use ferricml::linear_model::{
-    LinearRegression, LinearRegressionParams, LogisticRegression, LogisticRegressionParams, Ridge,
-    RidgeParams,
+    Lasso, LassoParams, LinearRegression, LinearRegressionParams, LogisticRegression,
+    LogisticRegressionParams, Ridge, RidgeParams,
 };
 use ferricml::preprocessing::{
     MaxAbsScaler, MaxAbsScalerParams, MinMaxScaler, MinMaxScalerParams, StandardScaler,
@@ -393,6 +393,39 @@ impl ScalarRegressorCase for RidgeCase {
     }
 }
 
+struct LassoCase;
+
+impl RegressorCase for LassoCase {
+    type Model = Lasso;
+    const NAME: &'static str = "Lasso";
+
+    fn fit(data: &MatrixView<'_>, values: &RegressionTargets) -> Self::Model {
+        Lasso::fit(data, values, lasso_params()).expect("fit")
+    }
+
+    fn fit_weighted(
+        data: &MatrixView<'_>,
+        values: &RegressionTargets,
+        weights: &SampleWeights,
+    ) -> Option<Self::Model> {
+        Some(Lasso::fit_weighted(data, values, weights, lasso_params()).expect("weighted fit"))
+    }
+}
+
+impl ScalarRegressorCase for LassoCase {
+    fn predict_one(model: &Self::Model, row: &[f32]) -> Result<f32, ModelError> {
+        model.predict_one(row)
+    }
+}
+
+/// A penalty small enough that the fixture keeps a non-degenerate fit, and a
+/// sweep budget large enough that the battery never observes a refusal.
+fn lasso_params() -> LassoParams {
+    LassoParams::default()
+        .with_alpha(0.01)
+        .with_max_iter(10_000)
+}
+
 struct HistGradientBoostingRegressorCase;
 
 impl RegressorCase for HistGradientBoostingRegressorCase {
@@ -649,6 +682,11 @@ fn linear_regression_conforms() {
 #[test]
 fn ridge_conforms() {
     check_regressor::<RidgeCase>();
+}
+
+#[test]
+fn lasso_conforms() {
+    check_regressor::<LassoCase>();
 }
 
 #[test]
