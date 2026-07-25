@@ -310,6 +310,26 @@ def idle_summary(record: dict[str, Any]) -> dict[str, Any] | None:
     }
 
 
+def archived_groups() -> set[str]:
+    """Criterion group directories whose raw output is kept as evidence.
+
+    Derived from the suites rather than hand-maintained, because the
+    hand-maintained prefix list this replaces had silently fallen behind by 13
+    of 53 gated lanes — including the loudest false-verdict lane in the suite,
+    which is why two sprints had to re-measure live instead of reading the
+    answer off disk.
+    """
+    return {
+        benchmark.split("/", 1)[0]
+        for spec in SUITE_SPECS.values()
+        for benchmark in spec["benchmarks"]
+    }
+
+
+def archives_criterion_path(relative: Path, groups: set[str]) -> bool:
+    return bool(relative.parts) and relative.parts[0] in groups
+
+
 def measurement_config(record: dict[str, Any]) -> dict[str, Any] | None:
     """Return a run's Criterion measurement configuration, or None."""
     run = record.get("run") or {}
@@ -699,22 +719,13 @@ def capture(args: argparse.Namespace) -> int:
     with destination.open("x", encoding="utf-8") as stream:
         stream.write(json.dumps(record, indent=2, sort_keys=True) + "\n")
 
+    groups = archived_groups()
     for name in ("benchmark.json", "estimates.json", "sample.json", "tukey.json"):
         for source in criterion.rglob(name):
-            if not any(
-                prefix in source.as_posix()
-                for prefix in (
-                    "forest_historical_",
-                    "ferricml_forest_v2_",
-                    "ferricml_artifact_v1_",
-                    "ferricml_models_v1_",
-                    "ferricml_models_v2_",
-                    "ferricml_boosting_v1_",
-                    "ferricml_boosting_v2_",
-                )
-            ):
+            relative = source.relative_to(criterion)
+            if not archives_criterion_path(relative, groups):
                 continue
-            copied = evidence / "criterion" / source.relative_to(criterion)
+            copied = evidence / "criterion" / relative
             copied.parent.mkdir(parents=True, exist_ok=True)
             shutil.copy2(source, copied)
 
@@ -892,6 +903,46 @@ def idle_self_test(root: Path) -> None:
     assert idle_summary({}) is None
     assert idle_summary({"run": {"cpu_idle_percent_before": []}}) is None
     assert idle_summary({"run": {"cpu_idle_percent_before": ["90"]}}) is None
+
+
+# The lanes the superseded hand-maintained prefix allowlist silently dropped,
+# pinned by literal name so the defect cannot recur unnoticed.
+PREVIOUSLY_DISCARDED_LANES = (
+    "ferricml_boosting_v3_classifier_fit_2048x48_64t7l/ferricml",
+    "ferricml_boosting_v3_classifier_predict_one_256x_64t7l/predict",
+    "ferricml_boosting_v3_classifier_proba_into_32x48_64t7l/predict_proba",
+    "ferricml_boosting_v3_classifier_proba_into_1024x48_64t7l/predict_proba",
+    "ferricml_model_selection_v2_holdout_1000000/ordinary_shuffled_20pct",
+    "ferricml_model_selection_v2_holdout_1000000/ordinary_shuffled_80pct",
+    "ferricml_model_selection_v2_holdout_1000000/ordinary_unshuffled_20pct",
+    "ferricml_model_selection_v2_holdout_1000000/stratified_4_class_20pct",
+    "ferricml_model_selection_v2_stratified_262144/256_class_50pct",
+    "ferricml_forest_v1_regressor_into_32x64_100t/predict",
+    "ferricml_forest_v1_regressor_into_1024x64_100t/predict",
+    "ferricml_inspection_v1_permutation_256x8_3r/forest_mse",
+    "ferricml_inspection_v1_permutation_256x8_3r/ridge_r2",
+)
+
+
+def archive_self_test() -> None:
+    groups = archived_groups()
+
+    def evidence_path(benchmark: str) -> Path:
+        return Path(*benchmark.split("/"), "new", "estimates.json")
+
+    for suite_name, spec in SUITE_SPECS.items():
+        for benchmark in spec["benchmarks"]:
+            assert archives_criterion_path(evidence_path(benchmark), groups), (
+                f"{suite_name}: {benchmark} would have its raw evidence discarded; "
+                "a lane cannot be gated while its evidence is thrown away"
+            )
+    for benchmark in PREVIOUSLY_DISCARDED_LANES:
+        assert archives_criterion_path(evidence_path(benchmark), groups), (
+            f"{benchmark} was discarded by the superseded allowlist and must not be again"
+        )
+    assert not archives_criterion_path(evidence_path("unrelated_group/case"), groups)
+    assert not archives_criterion_path(Path("report", "index.html"), groups)
+    assert not archives_criterion_path(Path(), groups)
 
 
 def measurement_self_test(root: Path) -> None:
@@ -1106,12 +1157,15 @@ def self_test() -> int:
         measurement_root = Path(temporary) / "measurement"
         measurement_root.mkdir()
         measurement_self_test(measurement_root)
+
+        archive_self_test()
     print(
         "performance history self-test passed "
         "(mixed protocols, missing/new lanes, prior, anchor, regression, "
         f"{len(IDLE_CASES)} idle-comparability cases over {len(IDLE_BANDS)} bands, "
         f"{len(MODEL_DIAGNOSTIC)} diagnostic-only lanes, "
-        f"{len(MEASUREMENT_FIELDS)} measurement-configuration fields)"
+        f"{len(MEASUREMENT_FIELDS)} measurement-configuration fields, "
+        f"raw evidence archived for {len(archived_groups())} Criterion groups)"
     )
     return 0
 
