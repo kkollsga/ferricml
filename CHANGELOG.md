@@ -75,6 +75,22 @@ and releases use [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   kind `44`, and composes into a `StagedPipeline` as a persisted stage. The raw
   spread is what is stored and the divisor is recomputed on decode, so a fitted
   model has exactly one valid byte string.
+- `preprocessing::Normalizer`, `NormalizerParams`, and `Norm`: row-wise scaling
+  so each row has unit `L1`, `L2`, or `Max` norm, where `Max` is the largest
+  *magnitude*. A zero row has no direction to preserve, so it keeps a divisor
+  of one and passes through unchanged.
+- `preprocessing::Binarizer` and `BinarizerParams`: every value above a
+  threshold becomes `1.0` and every other value `0.0`. The comparison is
+  strictly greater-than, so a value exactly at the threshold becomes `0.0` and
+  the two output classes are `(-inf, t]` and `(t, +inf)`.
+
+  Both are stateless — they estimate nothing from the data beyond the width a
+  pipeline hands them — and both therefore declare **no** capabilities at all,
+  including no artifact. There is no fitted value to persist, so a persistence
+  promise would be about something that does not exist. This is the same
+  reasoning the baseline estimators already use.
+- `api::ModelError::InvalidThreshold`, raised when a decision threshold is not
+  finite.
 - `api::ModelError::InvalidQuantileRange`, raised when a quantile range is not
   two percentiles in `0.0..=100.0` with the lower value first. Equal
   percentiles are accepted and produce a zero spread, which is a legitimate way

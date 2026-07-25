@@ -33,8 +33,8 @@ use ferricml::linear_model::{
 };
 use ferricml::pipeline::{Pipeline, StagedPipeline};
 use ferricml::preprocessing::{
-    MaxAbsScaler, MinMaxScaler, MinMaxScalerParams, RobustScaler, StandardScaler,
-    StandardScalerParams,
+    Binarizer, MaxAbsScaler, MinMaxScaler, MinMaxScalerParams, Normalizer, RobustScaler,
+    StandardScaler, StandardScalerParams,
 };
 use ferricml::ranking::PairwiseLinearRanker;
 
@@ -100,6 +100,19 @@ fn the_robust_scaler_declares_persistence_but_not_weighted_fitting() {
     // form at all. Declaring weights would mean quietly fitting under a second
     // definition of the same statistic.
     assert_eq!(RobustScaler::CAPABILITIES, PERSISTED_ONLY);
+}
+
+#[test]
+fn stateless_transformers_declare_nothing_at_all() {
+    // `Normalizer` and `Binarizer` estimate nothing from the data: a row's norm
+    // is a property of that row, and a threshold is a parameter the caller
+    // chose. There is therefore no fitted value to persist and none a weight
+    // could move, and declaring an artifact would promise a stable encoding of
+    // something that does not exist. This follows the baseline estimators'
+    // precedent, where declaring nothing is the accurate statement rather than
+    // an omission.
+    assert_eq!(Normalizer::CAPABILITIES, Capabilities::NONE);
+    assert_eq!(Binarizer::CAPABILITIES, Capabilities::NONE);
 }
 
 #[test]

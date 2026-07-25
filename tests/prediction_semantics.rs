@@ -39,8 +39,9 @@ use ferricml::linear_model::{
     LogisticRegression, LogisticRegressionParams, Ridge, RidgeParams,
 };
 use ferricml::preprocessing::{
-    MaxAbsScaler, MaxAbsScalerParams, MinMaxScaler, MinMaxScalerParams, RobustScaler,
-    RobustScalerParams, StandardScaler, StandardScalerParams,
+    Binarizer, BinarizerParams, MaxAbsScaler, MaxAbsScalerParams, MinMaxScaler, MinMaxScalerParams,
+    Normalizer, NormalizerParams, RobustScaler, RobustScalerParams, StandardScaler,
+    StandardScalerParams,
 };
 use ferricml::ranking::{
     PairIndex, PairOutcome, PairwiseError, PairwiseLinearRanker, PairwiseLinearRankerParams,
@@ -759,6 +760,33 @@ impl TransformerCase for RobustScalerCase {
     }
 }
 
+/// Stateless, so it supplies no round-trip hook and must declare none.
+struct NormalizerCase;
+
+impl TransformerCase for NormalizerCase {
+    type Model = Normalizer;
+    const NAME: &'static str = "Normalizer";
+
+    fn fit(train: &Sample, _holdout: &Sample) -> Result<Self::Model, ModelError> {
+        Normalizer::fit(&train.view(), NormalizerParams::default())
+    }
+}
+
+/// Stateless, so it supplies no round-trip hook and must declare none.
+struct BinarizerCase;
+
+impl TransformerCase for BinarizerCase {
+    type Model = Binarizer;
+    const NAME: &'static str = "Binarizer";
+
+    fn fit(train: &Sample, _holdout: &Sample) -> Result<Self::Model, ModelError> {
+        Binarizer::fit(
+            &train.view(),
+            BinarizerParams::default().with_threshold(3.5),
+        )
+    }
+}
+
 struct IsotonicRegressionCase;
 
 impl RegressorCase for IsotonicRegressionCase {
@@ -1286,6 +1314,12 @@ fn max_abs_scaler_conforms() {
 #[test]
 fn robust_scaler_conforms() {
     check_transformer::<RobustScalerCase>();
+}
+
+#[test]
+fn stateless_transformers_conform() {
+    check_transformer::<NormalizerCase>();
+    check_transformer::<BinarizerCase>();
 }
 
 #[test]

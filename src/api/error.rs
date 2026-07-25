@@ -115,6 +115,8 @@ pub enum ModelError {
     /// A quantile range is not a pair of percentiles in `0.0..=100.0` with the
     /// lower value first.
     InvalidQuantileRange,
+    /// A decision threshold is not finite.
+    InvalidThreshold,
     /// A multiclass linear fit would need a second-order system larger than the
     /// supported bound, which is `classes * (features + intercept)` parameters.
     MulticlassSystemTooLarge {
@@ -236,6 +238,7 @@ impl fmt::Display for ModelError {
             Self::InvalidQuantileRange => {
                 f.write_str("quantile range must be two percentiles in 0..=100, lowest first")
             }
+            Self::InvalidThreshold => f.write_str("threshold must be finite"),
             Self::MulticlassSystemTooLarge {
                 classes,
                 features,
