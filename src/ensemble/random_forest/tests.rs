@@ -1,4 +1,4 @@
-use super::model::Forest;
+use super::super::forest::model::Forest;
 use super::*;
 use crate::api::ModelError;
 use crate::artifact::{
@@ -6,7 +6,9 @@ use crate::artifact::{
 };
 use crate::data::{BinaryTargets, ClassTargets, DenseMatrix, RegressionTargets, SampleWeights};
 use crate::ensemble::HistGradientBoostingRegressor;
+use crate::ensemble::{MaxFeatures, NJobs};
 use crate::linear_model::Ridge;
+use crate::tree::{FEATURE_MASK, LEFT_IS_LEAF, PackedNode, RIGHT_IS_LEAF};
 use sha2::{Digest, Sha256};
 
 fn matrix(rows: &[&[f32]]) -> DenseMatrix {
@@ -161,7 +163,7 @@ fn exact_regression_leaf_is_the_target_mean() {
         .with_bootstrap(false)
         .with_max_depth(Some(1));
     let stump = RandomForestRegressor::fit(&x.as_view(), &y, stump_cfg).unwrap();
-    assert_eq!(stump.trees[0].nodes[0].threshold, 1.5);
+    assert_eq!(stump.core.trees[0].nodes[0].threshold, 1.5);
     assert_eq!(stump.predict_one(&[-50.0]).unwrap(), 1.5);
     assert_eq!(stump.predict_one(&[100.0]).unwrap(), 3.5);
 }
@@ -871,7 +873,7 @@ fn every_packed_tree_has_valid_topology() {
         assert!(!tree.nodes.is_empty() || tree.root_leaf.is_some());
         assert!(tree.root_leaf.is_none_or(f32::is_finite));
         for node in &tree.nodes {
-            assert!(((node.feature_and_flags & FEATURE_MASK) as usize) < forest.n_features_in);
+            assert!(((node.feature_and_flags & FEATURE_MASK) as usize) < forest.n_features_in());
             assert!(node.threshold.is_finite());
             if node.feature_and_flags & LEFT_IS_LEAF != 0 {
                 assert!(f32::from_bits(node.left).is_finite());
@@ -1249,7 +1251,7 @@ fn the_ensemble_averages_per_tree_probability_vectors_rather_than_voting() {
     // per-tree rows, to the rounding of one division.
     for (row_index, row) in query.iter_rows().enumerate() {
         let mut expected = [0.0_f64; 3];
-        let Forest::Multiclass(trees) = &model.forest else {
+        let Forest::Multiclass(trees) = &model.core.forest else {
             unreachable!("multiclass fit");
         };
         for tree in trees {
@@ -1476,10 +1478,10 @@ fn multiclass_fits_are_deterministic_across_thread_counts() {
     // The thread count is retained in the parameters, so the trees themselves
     // are what must match — a parallel fit is the same forest, not the same
     // configuration.
-    assert_eq!(serial.forest, parallel.forest);
+    assert_eq!(serial.core.forest, parallel.core.forest);
     let different =
         RandomForestClassifier::fit_multiclass(&x.as_view(), &y, multiclass_params(12)).unwrap();
-    assert_ne!(serial.forest, different.forest);
+    assert_ne!(serial.core.forest, different.core.forest);
 }
 
 #[test]

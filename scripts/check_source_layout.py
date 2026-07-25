@@ -319,6 +319,29 @@ def tree_family_stays_private(root: Path) -> list[str]:
     ]
 
 
+def forest_core_sits_below_the_ensembles_that_consume_it(root: Path) -> list[str]:
+    """The shared ensemble core sits below every bagged ensemble facade.
+
+    A random forest and an extremely randomized ensemble are one implementation
+    with two split searches and two artifact kinds. That stays true only while
+    the dependency runs one way: each facade consumes `ensemble::forest`, and
+    the core names none of them. Naming a facade inside the core is the
+    observable symptom of the inversion, and it is what would let the shared
+    averaging, seeding, or metadata layout specialise for whichever ensemble
+    was written first — the same failure the standalone tree already has a rule
+    against, at the level above it. The module has to exist for the rule to
+    mean anything, so its absence is itself a finding.
+    """
+    text = directory_text(root / "src" / "ensemble" / "forest")
+    if not text:
+        return ["ensemble forest core is missing"]
+    return [
+        f"forest core depends on ensemble facade {facade}"
+        for facade in ("random_forest", "extra_trees", "hist_gradient_boosting")
+        if f"ensemble::{facade}" in text or f"super::{facade}" in text
+    ]
+
+
 RULES: tuple[tuple[str, Callable[[Path], list[str]]], ...] = (
     ("crate-root-lib-only", crate_root_is_lib_only),
     ("obsolete-root-implementations", obsolete_root_implementations_are_gone),
@@ -338,6 +361,7 @@ RULES: tuple[tuple[str, Callable[[Path], list[str]]], ...] = (
     ("calibration-public-surfaces-only", calibration_uses_only_public_surfaces),
     ("tree-below-estimators", tree_sits_below_the_estimators_that_consume_it),
     ("tree-family-private", tree_family_stays_private),
+    ("forest-core-below-facades", forest_core_sits_below_the_ensembles_that_consume_it),
 )
 
 
@@ -356,6 +380,8 @@ def write_clean_tree(root: Path) -> Path:
         "artifact/mod.rs": "//! artifact\npub(crate) use self::inner::Thing;\n",
         "ensemble/mod.rs": "//! ensemble\nmod random_forest;\npub use random_forest::Forest;\n",
         "ensemble/random_forest/mod.rs": "//! forest\nuse crate::tree::grow_tree;\n",
+        "ensemble/forest/mod.rs": "//! forest core\nmod training;\n",
+        "ensemble/forest/training.rs": "//! training\nuse crate::tree::grow_tree;\n",
         "tree/mod.rs": "//! tree\nmod grower;\npub use grower::DecisionTreeRegressor;\n",
         "tree/grower.rs": "//! grower\nuse crate::numeric::kernel;\npub struct DecisionTreeRegressor;\n",
         "numeric/mod.rs": "//! numeric\npub(crate) fn kernel() {}\n",
@@ -520,6 +546,14 @@ SYNTHETIC_VIOLATIONS: tuple[tuple[str, Callable[[Path], None], str], ...] = (
         "tree-family-private",
         lambda root: append(root / "src" / "tree" / "mod.rs", "pub mod grower;\n"),
         "tree facade exposes child module",
+    ),
+    (
+        "forest-core-below-facades",
+        lambda root: append(
+            root / "src" / "ensemble" / "forest" / "training.rs",
+            "use crate::ensemble::random_forest::RandomForestRegressor;\n",
+        ),
+        "forest core depends on ensemble facade random_forest",
     ),
 )
 

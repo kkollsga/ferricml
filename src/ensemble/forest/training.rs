@@ -1,9 +1,11 @@
-use super::parameters::{RandomForestClassifierParams, RandomForestRegressorParams};
+//! Growing one ensemble of trees, and everything an ensemble adds around the
+//! shared grower.
+
 use crate::api::ModelError;
 use crate::data::MatrixView;
 use crate::numeric::{OwnedRng, derive_tree_seed};
 use crate::tree::{
-    ClassTree, GrowerConfig, Objective, PackedTree, Splitter, grow_class_tree, grow_tree,
+    ClassTree, GrowerConfig, Objective, PackedTree, grow_class_tree, grow_tree,
     unbootstrapped_sample,
 };
 use std::thread;
@@ -12,54 +14,16 @@ use std::thread;
 ///
 /// The per-tree limits live in [`GrowerConfig`] rather than being repeated
 /// here, so a forest member and a standalone tree are grown under one type
-/// carrying one set of values.
+/// carrying one set of values. Each ensemble's parameter type builds one of
+/// these through the `From` impl its `forest_params!` expansion provides, which
+/// is where the split search an ensemble fixes by type is applied.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub(super) struct ForestConfig {
-    pub(super) n_estimators: usize,
-    pub(super) bootstrap: bool,
-    pub(super) random_state: u64,
-    pub(super) n_jobs: usize,
-    pub(super) grower: GrowerConfig,
-}
-
-impl From<&RandomForestClassifierParams> for ForestConfig {
-    fn from(params: &RandomForestClassifierParams) -> Self {
-        Self {
-            n_estimators: params.n_estimators(),
-            bootstrap: params.bootstrap(),
-            random_state: params.random_state(),
-            n_jobs: params.n_jobs().resolved(),
-            grower: GrowerConfig {
-                max_depth: params.max_depth(),
-                min_samples_split: params.min_samples_split(),
-                min_samples_leaf: params.min_samples_leaf(),
-                max_features: params.max_features(),
-                // A random forest optimizes within each candidate column; the
-                // randomized search belongs to the estimators that name it.
-                splitter: Splitter::Best,
-            },
-        }
-    }
-}
-
-impl From<&RandomForestRegressorParams> for ForestConfig {
-    fn from(params: &RandomForestRegressorParams) -> Self {
-        Self {
-            n_estimators: params.n_estimators(),
-            bootstrap: params.bootstrap(),
-            random_state: params.random_state(),
-            n_jobs: params.n_jobs().resolved(),
-            grower: GrowerConfig {
-                max_depth: params.max_depth(),
-                min_samples_split: params.min_samples_split(),
-                min_samples_leaf: params.min_samples_leaf(),
-                max_features: params.max_features(),
-                // A random forest optimizes within each candidate column; the
-                // randomized search belongs to the estimators that name it.
-                splitter: Splitter::Best,
-            },
-        }
-    }
+pub(crate) struct ForestConfig {
+    pub(crate) n_estimators: usize,
+    pub(crate) bootstrap: bool,
+    pub(crate) random_state: u64,
+    pub(crate) n_jobs: usize,
+    pub(crate) grower: GrowerConfig,
 }
 
 /// Runs `build` once per tree, in a fixed index order whatever the thread count.
@@ -161,7 +125,7 @@ fn tree_sample(
     (weights, retained)
 }
 
-pub(super) fn train_forest<Y, O>(
+pub(crate) fn train_forest<Y, O>(
     data: &MatrixView<'_>,
     targets: &[Y],
     sample_weights: Option<&[f32]>,
@@ -191,7 +155,7 @@ where
 ///
 /// `class_of_row` holds each row's column in the sorted class list, so the
 /// grower never touches a label value.
-pub(super) fn train_class_forest(
+pub(crate) fn train_class_forest(
     data: &MatrixView<'_>,
     class_of_row: &[usize],
     classes: usize,
