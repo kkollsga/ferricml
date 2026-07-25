@@ -9,6 +9,13 @@
 //! the estimator conformance battery, which selects its optional obligations
 //! from these same constants: an estimator that declares a capability it does
 //! not have, or has one it did not declare, fails there.
+//!
+//! Three mechanisms, deliberately not merged. `tests/capability_snapshot.rs`
+//! is the mechanical change detector — exact values, diffed beside the frozen
+//! API profile, and closed against it so no declaration escapes both. This
+//! file is the *reasoned* record: why each declaration is what it is, which a
+//! generated table cannot carry. The battery is the behavioral proof. A
+//! reviewer reads the snapshot diff; a maintainer reads the reasoning here.
 
 use ferricml::api::{AnyClassifier, AnyRegressor, Capabilities, HasCapabilities};
 use ferricml::calibration::{CalibratedClassifier, IsotonicRegression, PlattCalibrator};
