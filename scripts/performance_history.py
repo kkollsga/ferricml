@@ -43,6 +43,16 @@ INFERENCE_LIMIT = 1.10
 # sits at 5.57 points, and this runner's structural idle band is 86-90% — four
 # points wide — so the rule is: compare within the machine's idle regime and
 # refuse across it.
+#
+# The refusal is asymmetric, and the asymmetry belongs to the *direction of
+# the conclusion* rather than to the pair as a whole.  A quieter current run
+# has its ratios biased fast, because the noisier reference's own numbers are
+# inflated; a lane over limit despite that bias is therefore the most
+# conservatively established regression this gate can produce, and it stays a
+# regression no matter how large the favourable gap grows.  The same bias
+# cannot establish a *pass*, so a clean result across a large favourable gap
+# is still refused.  Getting this wrong once produced a non-monotone rule
+# where a 30%-slower lane was a regression at gap +2.0 and discarded at +5.0.
 IDLE_GAP_COMPARABLE = 1.0
 IDLE_GAP_MAX = 4.0
 IDLE_RATIO_PER_POINT = 0.01
@@ -357,6 +367,11 @@ def comparability(
     and the limits are *not* relaxed — that direction produces an optimistic
     pass rather than a false regression, and an optimistic pass has to stay
     legible instead of being rewarded.
+
+    Bands classify the pair; they do not by themselves decide the verdict.
+    `compare_one` keeps gating failures across a favourable gap of any size,
+    because a lane over limit despite a fast bias is conservatively
+    established.  Only the pass direction is refused there.
     """
     evidence = {
         "current_idle": current_idle,
@@ -430,11 +445,21 @@ def compare_one(
     ]
     failures: list[dict[str, Any]] = exceeded
     unexplained: list[dict[str, Any]] = []
-    if comparable["band"] == "not_comparable":
-        # The two machine states differ by more than the ratio limit they would
-        # be judged against, so neither a pass nor a regression is knowable.
-        # Say exactly that rather than picking whichever wrong answer the
-        # numbers happen to point at.
+    gap = comparable["gap"]
+    favourable = comparable["reason"] == "idle_gap" and gap is not None and gap > 0
+    if comparable["band"] == "not_comparable" and not (favourable and exceeded):
+        # The two runs differ by more than the ratio limit they would be judged
+        # against, so neither a pass nor a regression is knowable.  Say exactly
+        # that rather than picking whichever wrong answer the numbers point at.
+        #
+        # The one exception is direction.  When the current run was the quieter
+        # one, its ratios are biased *fast* — the reference's own numbers are
+        # inflated — so a lane over limit despite that bias is the most
+        # conservatively established regression the gate can produce, and
+        # discarding it would be strictly worse than the `favored` band that
+        # keeps it.  A favourable gap can establish a regression; it can never
+        # establish a pass, which is why a clean result in that direction is
+        # still refused below.
         failures, unexplained = [], exceeded
         status = "not_comparable"
     elif failures:
@@ -832,6 +857,10 @@ IDLE_CASES: tuple[tuple[str, str, list[float] | None, list[float] | None, float,
     # Beyond the maximum gap no verdict is knowable, in either direction.
     ("not_comparable_downgrade", "not_comparable", [87.0] * 3, [92.0] * 3, 130.0, "not_comparable"),
     ("not_comparable_symmetry", "not_comparable", [97.0] * 3, [92.0] * 3, 100.0, "not_comparable"),
+    # ... but only the pass direction is refused there.  A quieter current run
+    # biases its own ratios fast, so a lane over limit anyway is conservatively
+    # established and stays a regression however large the favourable gap is.
+    ("favorable_beyond_max_still_gates", "not_comparable", [97.0] * 3, [92.0] * 3, 130.0, "regression"),
     # Missing evidence on either side keeps the pre-existing behaviour.
     ("unknown_unchanged", "unknown", None, None, 110.1, "regression"),
     ("unknown_one_sided", "unknown", [92.0] * 3, None, 110.1, "regression"),
@@ -887,6 +916,29 @@ def idle_self_test(root: Path) -> None:
             assert not previous["unexplained_failures"], (
                 "a clean-looking comparison across the idle band is still refused"
             )
+        if label == "favorable_beyond_max_still_gates":
+            assert previous["failures"], "the established regression was discarded"
+            assert not previous["unexplained_failures"]
+
+    # Monotonicity.  The same over-limit lane must stay a regression as the
+    # reference gets noisier, across every band boundary.  The first
+    # implementation inverted here: a 30%-slower lane was a regression at gap
+    # +2.0 and discarded at +5.0, because the band was allowed to decide the
+    # verdict in both directions instead of only the pass direction.  Written
+    # as a loop so a future threshold change cannot reintroduce it.
+    for offset in (0.0, IDLE_GAP_COMPARABLE, 2.0, IDLE_GAP_MAX, 5.0, 12.0):
+        result = idle_case_result(
+            root, f"monotone_{offset}", [92.0 + offset] * 3, [92.0] * 3, 130.0
+        )
+        previous = result["suites"]["forest-v1"]["previous_release"]
+        assert previous["status"] == "regression", (
+            f"gap +{offset}: an over-limit lane produced {previous['status']}; a "
+            "favourable gap must still gate failures at every size"
+        )
+        assert previous["failures"], f"gap +{offset}: failures were emptied"
+        assert previous["comparability"]["limit_scale"] == 1.0, (
+            f"gap +{offset}: the favourable direction must never relax the limit"
+        )
 
     # Gap sign convention: negative means the current run was the noisier one.
     quiet, noisy = {"mean": 96.0, "min": 96.0, "samples": [96.0]}, {
