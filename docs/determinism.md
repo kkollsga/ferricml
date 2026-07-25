@@ -34,9 +34,13 @@ fitting evaluates a transcendental function:
 
 | Estimator | Artifact kind | Transcendental |
 |---|---|---|
-| `LogisticRegression` | 1 | `exp`, through the sigmoid |
+| `LogisticRegression`, binary | 1 | `exp`, through the sigmoid |
+| `LogisticRegression`, multiclass | — | `exp`, through the row softmax |
 | `PairwiseLinearRanker` | 8 | `exp`, through the logistic model it fits |
 | `Pipeline<StandardScaler, LogisticRegression>` | 5 | as above |
+
+A multiclass logistic fit has no artifact kind yet, so it has no frozen
+fingerprint and therefore no cross-platform evidence — see the last section.
 
 **Tier 3 — per runner only.** Wall-clock timings, throughput, and every
 `dev-docs/bench/` number. These are a property of one registered machine and

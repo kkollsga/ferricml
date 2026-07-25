@@ -85,6 +85,25 @@ pub enum ModelError {
     NonFinitePrediction { row: usize },
     /// The linear solver encountered a non-positive-definite system.
     LinearSolveFailed,
+    /// A scalar-valued operation was asked of a model that produces a vector.
+    ///
+    /// A multiclass fit has one raw score per class, so a method returning one
+    /// value per row reports this rather than silently returning one component
+    /// of the vector.
+    MulticlassOutput {
+        /// Number of values the fitted model produces for one row.
+        columns: usize,
+    },
+    /// A multiclass linear fit would need a second-order system larger than the
+    /// supported bound, which is `classes * (features + intercept)` parameters.
+    MulticlassSystemTooLarge {
+        /// Number of observed classes.
+        classes: usize,
+        /// Number of input features.
+        features: usize,
+        /// Largest supported parameter count.
+        limit: usize,
+    },
 }
 
 impl fmt::Display for ModelError {
@@ -181,6 +200,19 @@ impl fmt::Display for ModelError {
                 write!(f, "prediction for row {row} is not finite")
             }
             Self::LinearSolveFailed => f.write_str("linear solve failed during optimization"),
+            Self::MulticlassOutput { columns } => write!(
+                f,
+                "operation returns one value per row, but this model produces {columns}"
+            ),
+            Self::MulticlassSystemTooLarge {
+                classes,
+                features,
+                limit,
+            } => write!(
+                f,
+                "{classes} classes over {features} features exceed the {limit}-parameter \
+                 multiclass solver bound"
+            ),
         }
     }
 }

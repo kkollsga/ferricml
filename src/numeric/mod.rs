@@ -148,6 +148,121 @@ pub(crate) fn log_sum_exp(values: &[f64]) -> f64 {
     max + total.ln()
 }
 
+/// Softmax of one row of raw scores, computed in place.
+///
+/// This is the multiclass counterpart of [`sigmoid_f64`], and it is stabilized
+/// the same way [`log_sum_exp`] is: shifting by the row maximum keeps every
+/// exponential in `(0, 1]` and makes the largest term exactly `1`, so the sum
+/// is at least `1`. The naive `exp(v) / Σ exp(v)` instead overflows to `inf`
+/// above roughly `710` and underflows the whole sum to `0` below roughly
+/// `-746`, producing `NaN` for a result that is perfectly representable — and
+/// a raw score of either magnitude is reachable from finite data.
+///
+/// The reduction visits its terms in ascending index order, per rule 2 of the
+/// accumulation policy above, so the caller's column order is part of the
+/// result.
+///
+/// # Row sums
+///
+/// Each value is a quotient by the exact sum of the same values, so every
+/// result lies in `[0, 1]` by construction and rule 5's clamp would be a no-op.
+/// The *sum* of the results is `1` only to rounding. FerricML deliberately does
+/// not renormalize: a second pass would move mass without measuring anything,
+/// and the residual is a frozen part of the probability contract rather than a
+/// defect to correct.
+///
+/// # Boundary cases
+///
+/// A `NaN` anywhere makes the whole row `NaN`. An infinite maximum has no
+/// finite shift, so the limit is taken instead: `+inf` entries share the mass
+/// equally and every other entry is exactly `0`, and an all-`-inf` row is
+/// uniform. An empty row writes nothing.
+pub(crate) fn softmax_in_place(row: &mut [f64]) {
+    if row.is_empty() {
+        return;
+    }
+    let mut max = f64::NEG_INFINITY;
+    for &value in row.iter() {
+        if value.is_nan() {
+            row.fill(f64::NAN);
+            return;
+        }
+        if value > max {
+            max = value;
+        }
+    }
+    if !max.is_finite() {
+        let winners = if max == f64::INFINITY {
+            row.iter().filter(|value| **value == f64::INFINITY).count()
+        } else {
+            row.len()
+        };
+        let share = 1.0 / winners as f64;
+        for value in row.iter_mut() {
+            *value = if max == f64::INFINITY && *value != f64::INFINITY {
+                0.0
+            } else {
+                share
+            };
+        }
+        return;
+    }
+    let mut total = 0.0_f64;
+    for value in row.iter_mut() {
+        *value = (*value - max).exp();
+        total += *value;
+    }
+    for value in row {
+        *value /= total;
+    }
+}
+
+/// Softmax over `f32`, using the same shift and the same order as
+/// [`softmax_in_place`].
+///
+/// Inference accumulates in the storage width under rule 3 of the accumulation
+/// policy: the term count is bounded by the fitted class count and the caller
+/// validates the result. Fitting uses the `f64` form.
+pub(crate) fn softmax_in_place_f32(row: &mut [f32]) {
+    if row.is_empty() {
+        return;
+    }
+    let mut max = f32::NEG_INFINITY;
+    for &value in row.iter() {
+        if value.is_nan() {
+            row.fill(f32::NAN);
+            return;
+        }
+        if value > max {
+            max = value;
+        }
+    }
+    if !max.is_finite() {
+        let winners = if max == f32::INFINITY {
+            row.iter().filter(|value| **value == f32::INFINITY).count()
+        } else {
+            row.len()
+        };
+        let share = 1.0 / winners as f32;
+        for value in row.iter_mut() {
+            *value = if max == f32::INFINITY && *value != f32::INFINITY {
+                0.0
+            } else {
+                share
+            };
+        }
+        return;
+    }
+    let mut total = 0.0_f32;
+    for value in row.iter_mut() {
+        *value = (*value - max).exp();
+        total += *value;
+    }
+    for value in row {
+        *value /= total;
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -363,6 +478,208 @@ mod tests {
         assert_eq!(log_sum_exp(&[f64::INFINITY, 0.0]), f64::INFINITY);
         assert!(log_sum_exp(&[f64::NAN, 0.0]).is_nan());
         assert!(log_sum_exp(&[0.0, f64::NAN]).is_nan());
+    }
+
+    fn naive_softmax(values: &[f64]) -> Vec<f64> {
+        let total = values.iter().map(|value| value.exp()).sum::<f64>();
+        values.iter().map(|value| value.exp() / total).collect()
+    }
+
+    fn softmax(values: &[f64]) -> Vec<f64> {
+        let mut row = values.to_vec();
+        softmax_in_place(&mut row);
+        row
+    }
+
+    #[test]
+    fn softmax_agrees_with_the_naive_formulation_where_the_naive_one_is_safe() {
+        // The naive quotient is trustworthy only while every exponential is
+        // representable, which is exactly the range swept here.
+        for left in -30..=30 {
+            for right in -30..=30 {
+                for third in [-4, 0, 7] {
+                    let values = [
+                        f64::from(left) / 2.0,
+                        f64::from(right) / 2.0,
+                        f64::from(third),
+                    ];
+                    let stable = softmax(&values);
+                    let naive = naive_softmax(&values);
+                    for (index, (stable, naive)) in stable.iter().zip(&naive).enumerate() {
+                        assert!(
+                            (stable - naive).abs() <= 1.0e-14,
+                            "softmax{values:?}[{index}]: {stable} vs {naive}"
+                        );
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn softmax_survives_extreme_magnitudes_in_both_signs() {
+        // Past `exp`'s overflow and underflow boundaries the naive formulation
+        // returns NaN for a result that is perfectly ordinary. The shifted row
+        // stays exact, in both directions.
+        for &magnitude in &[300.0_f64, 750.0, 1.0e5, 1.0e300] {
+            for &sign in &[1.0_f64, -1.0] {
+                let base = sign * magnitude;
+                let uniform = softmax(&[base, base, base]);
+                for value in &uniform {
+                    assert!(
+                        (value - 1.0 / 3.0).abs() <= 1.0e-15,
+                        "equal scores at {base} must be uniform, got {uniform:?}"
+                    );
+                }
+                // A dominant entry saturates rather than producing NaN. The
+                // gap is scaled so it stays representable at every magnitude.
+                let gap = 1.0e4_f64.max(base.abs() * 1.0e-6);
+                let dominated = softmax(&[base, base - gap]);
+                assert_eq!(dominated, vec![1.0, 0.0], "dominant entry at {base}");
+            }
+            if magnitude > 750.0 {
+                let naive = naive_softmax(&[magnitude, magnitude, magnitude]);
+                assert!(
+                    naive.iter().any(|value| !value.is_finite()),
+                    "naive formulation unexpectedly survived +{magnitude}"
+                );
+                let naive = naive_softmax(&[-magnitude, -magnitude, -magnitude]);
+                assert!(
+                    naive.iter().any(|value| !value.is_finite()),
+                    "naive formulation unexpectedly survived -{magnitude}"
+                );
+            }
+        }
+        // The first magnitude past each boundary, stated exactly.
+        assert!(naive_softmax(&[710.0, 710.0])[0].is_nan());
+        assert!(naive_softmax(&[-746.0, -746.0])[0].is_nan());
+        assert_eq!(softmax(&[710.0, 710.0]), vec![0.5, 0.5]);
+        assert_eq!(softmax(&[-746.0, -746.0]), vec![0.5, 0.5]);
+    }
+
+    #[test]
+    fn softmax_stays_in_range_and_is_shift_invariant() {
+        let base = [-2.5_f64, 0.0, 1.25, 7.0, -13.0];
+        let reference = softmax(&base);
+        assert!(reference.iter().all(|value| (0.0..=1.0).contains(value)));
+        for shift in [-500.0_f64, -1.0, 0.0, 1.0, 500.0] {
+            let shifted = base.iter().map(|value| value + shift).collect::<Vec<_>>();
+            for (index, (shifted, reference)) in
+                softmax(&shifted).iter().zip(&reference).enumerate()
+            {
+                assert!(
+                    (shifted - reference).abs() <= 1.0e-15,
+                    "shift {shift} changed column {index}: {shifted} vs {reference}"
+                );
+            }
+        }
+        // Equal scores are exactly uniform, which is what makes an exact tie
+        // resolve on the class order rather than on rounding.
+        for width in 1..=8 {
+            let uniform = softmax(&vec![3.5_f64; width]);
+            assert!(uniform.iter().all(|&value| value == 1.0 / width as f64));
+        }
+    }
+
+    #[test]
+    fn softmax_rows_are_not_renormalized_and_may_miss_one_by_rounding() {
+        // The documented contract: a row sums to 1 only to floating-point
+        // rounding. This asserts the residual is bounded, not that it is zero.
+        let mut worst = 0.0_f64;
+        let mut inexact = 0_usize;
+        for step in -400..=400 {
+            let value = f64::from(step) / 7.0;
+            let row = softmax(&[value, -value, value / 3.0, 0.0, 1.0 - value]);
+            let deviation = (row.iter().sum::<f64>() - 1.0).abs();
+            worst = worst.max(deviation);
+            inexact += usize::from(row.iter().sum::<f64>() != 1.0);
+        }
+        assert!(worst <= 8.0 * f64::EPSILON, "row-sum deviation {worst}");
+        assert!(inexact > 0, "the residual is real, not hypothetical");
+    }
+
+    #[test]
+    fn softmax_boundary_inputs_are_exact() {
+        let mut empty: [f64; 0] = [];
+        softmax_in_place(&mut empty);
+
+        assert_eq!(softmax(&[7.5]), vec![1.0]);
+        assert!(softmax(&[f64::NAN, 0.0]).iter().all(|value| value.is_nan()));
+        assert!(softmax(&[0.0, f64::NAN]).iter().all(|value| value.is_nan()));
+        assert_eq!(
+            softmax(&[f64::INFINITY, 0.0, f64::INFINITY]),
+            vec![0.5, 0.0, 0.5]
+        );
+        assert_eq!(softmax(&[f64::INFINITY, 3.0]), vec![1.0, 0.0]);
+        assert_eq!(
+            softmax(&[f64::NEG_INFINITY, f64::NEG_INFINITY]),
+            vec![0.5, 0.5]
+        );
+        assert_eq!(softmax(&[f64::NEG_INFINITY, 2.0]), vec![0.0, 1.0]);
+    }
+
+    #[test]
+    fn softmax_agrees_with_the_sigmoid_on_two_centred_scores() {
+        // The binary path stays asymmetric on purpose, so this is the identity
+        // that keeps the two definitions from drifting apart.
+        for step in -600..=600 {
+            let raw = f64::from(step) / 20.0;
+            let row = softmax(&[-raw / 2.0, raw / 2.0]);
+            assert!(
+                (row[1] - sigmoid_f64(raw)).abs() <= 1.0e-15,
+                "centred pair at {raw}: {} vs {}",
+                row[1],
+                sigmoid_f64(raw)
+            );
+        }
+    }
+
+    fn softmax_f32(values: &[f32]) -> Vec<f32> {
+        let mut row = values.to_vec();
+        softmax_in_place_f32(&mut row);
+        row
+    }
+
+    #[test]
+    fn softmax_agrees_across_widths_and_keeps_its_boundaries_at_f32() {
+        for step in -600..=600 {
+            let raw = f64::from(step) / 20.0;
+            let wide = softmax(&[raw, -raw / 3.0, 0.5]);
+            let narrow = softmax_f32(&[raw as f32, (-raw / 3.0) as f32, 0.5]);
+            for (index, (narrow, wide)) in narrow.iter().zip(&wide).enumerate() {
+                assert!(
+                    (f64::from(*narrow) - wide).abs() <= 1.0e-6,
+                    "width agreement at {raw} column {index}: {narrow} vs {wide}"
+                );
+            }
+        }
+        // `f32::exp` overflows above roughly 88.7 and underflows below roughly
+        // -103.9, both far earlier than at f64, so the shift matters more here.
+        for &magnitude in &[50.0_f32, 100.0, 1.0e10, f32::MAX] {
+            for &sign in &[1.0_f32, -1.0] {
+                let base = sign * magnitude;
+                let uniform = softmax_f32(&[base, base, base]);
+                assert!(
+                    uniform
+                        .iter()
+                        .all(|value| (value - 1.0 / 3.0).abs() <= 1.0e-7),
+                    "equal scores at {base} must be uniform, got {uniform:?}"
+                );
+            }
+        }
+        assert!(
+            (f32::MAX.exp() / (f32::MAX.exp() + f32::MAX.exp())).is_nan(),
+            "the naive f32 quotient really does fail at this magnitude"
+        );
+        assert_eq!(softmax_f32(&[90.0, 90.0]), vec![0.5, 0.5]);
+        assert_eq!(softmax_f32(&[-110.0, -110.0]), vec![0.5, 0.5]);
+        assert!(softmax_f32(&[f32::NAN, 0.0]).iter().all(|v| v.is_nan()));
+        assert_eq!(softmax_f32(&[f32::INFINITY, 0.0]), vec![1.0, 0.0]);
+        assert!(
+            softmax_f32(&[1.0, 2.0, 3.0])
+                .iter()
+                .all(|&value| (0.0..=1.0).contains(&value))
+        );
     }
 
     #[test]

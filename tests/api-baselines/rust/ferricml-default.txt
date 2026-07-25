@@ -96,6 +96,12 @@ pub ferricml::api::ModelError::InvalidRegularization
 pub ferricml::api::ModelError::InvalidRidgeAlpha
 pub ferricml::api::ModelError::InvalidTolerance
 pub ferricml::api::ModelError::LinearSolveFailed
+pub ferricml::api::ModelError::MulticlassOutput
+pub ferricml::api::ModelError::MulticlassOutput::columns: usize
+pub ferricml::api::ModelError::MulticlassSystemTooLarge
+pub ferricml::api::ModelError::MulticlassSystemTooLarge::classes: usize
+pub ferricml::api::ModelError::MulticlassSystemTooLarge::features: usize
+pub ferricml::api::ModelError::MulticlassSystemTooLarge::limit: usize
 pub ferricml::api::ModelError::NonFiniteFeature
 pub ferricml::api::ModelError::NonFiniteFeature::column: usize
 pub ferricml::api::ModelError::NonFiniteFeature::row: usize
@@ -338,6 +344,7 @@ pub ferricml::artifact::ArtifactError::TrailingBytes
 pub ferricml::artifact::ArtifactError::Truncated
 pub ferricml::artifact::ArtifactError::UnsupportedModelKind
 pub ferricml::artifact::ArtifactError::UnsupportedModelKind::found: u16
+pub ferricml::artifact::ArtifactError::UnsupportedModelState
 pub ferricml::artifact::ArtifactError::UnsupportedPayloadVersion
 pub ferricml::artifact::ArtifactError::UnsupportedPayloadVersion::found: u16
 pub ferricml::artifact::ArtifactError::UnsupportedRequiredFlags
@@ -727,15 +734,20 @@ impl core::default::Default for ferricml::linear_model::LinearRegressionParams
 pub fn ferricml::linear_model::LinearRegressionParams::default() -> Self
 pub struct ferricml::linear_model::LogisticRegression
 impl ferricml::linear_model::LogisticRegression
+pub fn ferricml::linear_model::LogisticRegression::classes(&self) -> &[u8]
 pub fn ferricml::linear_model::LogisticRegression::coefficients(&self) -> &[f32]
 pub fn ferricml::linear_model::LogisticRegression::decision_function(&self, &ferricml::data::MatrixView<'_>) -> core::result::Result<alloc::vec::Vec<f32>, ferricml::api::ModelError>
 pub fn ferricml::linear_model::LogisticRegression::decision_function_into(&self, &ferricml::data::MatrixView<'_>, &mut [f32]) -> core::result::Result<(), ferricml::api::ModelError>
 pub fn ferricml::linear_model::LogisticRegression::decision_function_one(&self, &[f32]) -> core::result::Result<f32, ferricml::api::ModelError>
 pub fn ferricml::linear_model::LogisticRegression::fit(&ferricml::data::MatrixView<'_>, &ferricml::data::BinaryTargets, ferricml::linear_model::LogisticRegressionParams) -> core::result::Result<Self, ferricml::api::ModelError>
+pub fn ferricml::linear_model::LogisticRegression::fit_multiclass(&ferricml::data::MatrixView<'_>, &ferricml::data::ClassTargets, ferricml::linear_model::LogisticRegressionParams) -> core::result::Result<Self, ferricml::api::ModelError>
+pub fn ferricml::linear_model::LogisticRegression::fit_multiclass_weighted(&ferricml::data::MatrixView<'_>, &ferricml::data::ClassTargets, &ferricml::data::SampleWeights, ferricml::linear_model::LogisticRegressionParams) -> core::result::Result<Self, ferricml::api::ModelError>
 pub fn ferricml::linear_model::LogisticRegression::fit_weighted(&ferricml::data::MatrixView<'_>, &ferricml::data::BinaryTargets, &ferricml::data::SampleWeights, ferricml::linear_model::LogisticRegressionParams) -> core::result::Result<Self, ferricml::api::ModelError>
 pub fn ferricml::linear_model::LogisticRegression::from_artifact(&[u8], [u8; 32]) -> core::result::Result<Self, ferricml::artifact::ArtifactError>
 pub const fn ferricml::linear_model::LogisticRegression::get_params(&self) -> &ferricml::linear_model::LogisticRegressionParams
-pub const fn ferricml::linear_model::LogisticRegression::intercept(&self) -> f32
+pub fn ferricml::linear_model::LogisticRegression::intercept(&self) -> f32
+pub fn ferricml::linear_model::LogisticRegression::intercepts(&self) -> &[f32]
+pub fn ferricml::linear_model::LogisticRegression::n_decision_columns(&self) -> usize
 pub const fn ferricml::linear_model::LogisticRegression::n_features_in(&self) -> usize
 pub const fn ferricml::linear_model::LogisticRegression::n_iter(&self) -> usize
 pub fn ferricml::linear_model::LogisticRegression::predict(&self, &ferricml::data::MatrixView<'_>) -> core::result::Result<alloc::vec::Vec<u8>, ferricml::api::ModelError>

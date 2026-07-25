@@ -134,6 +134,15 @@ and releases use [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   any fitting (`Setup`) from a candidate's own failure (`Candidate`, keeping the
   fold index) and from a score that returns a value no ranking can order
   (`NonFiniteScore`).
+- `LogisticRegression::fit_multiclass` and `fit_multiclass_weighted`, a joint
+  multinomial fit over `data::ClassTargets`. It is one optimization over all
+  classes, not a wrapper around per-class binary models: probabilities are the
+  softmax of one centred score vector, and no class is pinned as a reference.
+  `decision_function` now returns `n_decision_columns` values per row, which is
+  one for a binary fit — that shape, and every binary fitted value, is
+  unchanged. `intercepts` and `n_decision_columns` are new; `intercept` reports
+  the first score row and is no longer `const`. Probability rows are **not**
+  renormalized: they sum to one only within `n_classes` `f32` ulps.
 - `data::ClassTargets`, validated general classification targets over arbitrary
   `u8` labels. It carries the sorted, deduplicated set of labels actually
   observed, which is the probability column order of any classifier fitted on

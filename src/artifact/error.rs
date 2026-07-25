@@ -27,6 +27,12 @@ pub enum ArtifactError {
     TrailingBytes,
     /// The encoded artifact exceeds the hard reader limit.
     SizeLimitExceeded { limit: usize, actual: usize },
+    /// The fitted model holds state this artifact schema cannot represent.
+    ///
+    /// Encoding refuses instead of writing bytes that would decode as a
+    /// different model. A schema that gains the missing state is a new payload
+    /// version, never a reinterpretation of the current one.
+    UnsupportedModelState,
 }
 
 impl fmt::Display for ArtifactError {
@@ -52,6 +58,9 @@ impl fmt::Display for ArtifactError {
             Self::TrailingBytes => f.write_str("model artifact contains trailing bytes"),
             Self::SizeLimitExceeded { limit, actual } => {
                 write!(f, "model artifact size {actual} exceeds limit {limit}")
+            }
+            Self::UnsupportedModelState => {
+                f.write_str("fitted model state is unsupported by this artifact schema")
             }
         }
     }

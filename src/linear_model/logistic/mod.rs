@@ -1,4 +1,6 @@
-//! Binary logistic regression.
+//! Logistic regression: an asymmetric binary fit and a joint multinomial fit.
+
+mod multinomial;
 
 use crate::api::{
     Capabilities, Classifier, Estimator, HasCapabilities, HasParams, ModelError,
@@ -9,11 +11,15 @@ use crate::artifact::{
     SchemaRole, artifact_version, decode_component, decode_legacy_envelope, decode_v2_envelope,
     encode_component, encode_v2_envelope,
 };
-use crate::data::{BinaryTargets, MatrixView, SampleWeights};
+use crate::data::{BinaryTargets, ClassTargets, MatrixView, SampleWeights};
 use crate::loss::{BinaryLogLoss, accumulate_newton_row, raw_score};
-use crate::numeric::sigmoid_f32;
+use crate::numeric::{sigmoid_f32, softmax_in_place_f32};
 
 const BINARY_CLASSES: [u8; 2] = [0, 1];
+/// Every class label is a `u8`, so no fit can observe more classes than this.
+/// Scalar and single-column prediction paths keep one row of scores on the
+/// stack at this width rather than allocating inside an `_into` method.
+const MAX_CLASSES: usize = 256;
 const MAX_ARTIFACT_FEATURES: usize = 1_000_000;
 const LOGISTIC_FIXED_PAYLOAD_BYTES: usize = 8 * 4;
 const LOGISTIC_PAYLOAD_VERSION: u16 = 1;
@@ -90,18 +96,37 @@ impl LogisticRegressionParams {
     }
 }
 
-/// Binary L2-regularized logistic regression.
+/// L2-regularized logistic regression.
 ///
 /// Fitting scales features internally for numerical conditioning and centers
 /// them only when an intercept is requested. The transformation is folded into
 /// the stored coefficients, so prediction is one allocation-free dot product
-/// and sigmoid per row.
+/// per score row.
+///
+/// # Two shapes, deliberately
+///
+/// A binary fit is **asymmetric**: it keeps one coefficient row, and
+/// [`decision_function`](Self::decision_function) produces one score per row,
+/// whose sigmoid is the probability of class `1`. A multiclass fit
+/// ([`fit_multiclass`](Self::fit_multiclass)) is **joint** — one multinomial
+/// optimization, not one binary model per class — and keeps one coefficient row
+/// per class, so `decision_function` produces
+/// [`n_decision_columns`](Self::n_decision_columns) scores per row whose softmax
+/// is the probability vector. Those scores are *centred*: no class is pinned as
+/// a reference, and each row of scores sums to approximately zero.
+///
+/// Probabilities are always `classes().len()` columns wide, so binary and
+/// multiclass agree there and only the raw scores differ.
 #[derive(Clone, Debug, PartialEq)]
 pub struct LogisticRegression {
     n_features_in: usize,
     params: LogisticRegressionParams,
+    /// Sorted observed labels; `[0, 1]` for every binary fit.
+    classes: Vec<u8>,
+    /// Row-major, `intercepts.len()` rows of `n_features_in` coefficients.
     coefficients: Vec<f32>,
-    intercept: f32,
+    /// One intercept per score row; exactly one for a binary fit.
+    intercepts: Vec<f32>,
     iterations: usize,
 }
 
@@ -125,6 +150,40 @@ impl LogisticRegression {
         Self::fit_internal(data, targets, Some(sample_weights), params)
     }
 
+    /// Fits one joint multinomial classifier over the observed class set.
+    ///
+    /// This is a single optimization over all classes at once, not a wrapper
+    /// around several binary fits: the probabilities are the softmax of one
+    /// centred score vector, which is a different — and not recoverable —
+    /// definition from normalizing independent per-class binary probabilities.
+    ///
+    /// Two observed classes are required. A single observed class is
+    /// [`ModelError::RequiresTwoClasses`], exactly as the binary entry point
+    /// already reports it: a one-class fit has no identifiable coefficients and
+    /// would claim certainty it never measured.
+    ///
+    /// Two observed classes are accepted here and produce a *two-row* centred
+    /// model, which is a different parametrization from [`Self::fit`]'s single
+    /// asymmetric row. Both are correct; they are not interchangeable, and only
+    /// [`Self::fit`] persists to an artifact today.
+    pub fn fit_multiclass(
+        data: &MatrixView<'_>,
+        targets: &ClassTargets,
+        params: LogisticRegressionParams,
+    ) -> Result<Self, ModelError> {
+        multinomial::fit(data, targets, None, params)
+    }
+
+    /// Fits a joint multinomial classifier with per-row sample weights.
+    pub fn fit_multiclass_weighted(
+        data: &MatrixView<'_>,
+        targets: &ClassTargets,
+        sample_weights: &SampleWeights,
+        params: LogisticRegressionParams,
+    ) -> Result<Self, ModelError> {
+        multinomial::fit(data, targets, Some(sample_weights), params)
+    }
+
     fn fit_internal(
         data: &MatrixView<'_>,
         targets: &BinaryTargets,
@@ -135,47 +194,12 @@ impl LogisticRegression {
         let rows = data.rows();
         let columns = data.columns();
         let total_weight = sample_weights.map_or(rows as f64, SampleWeights::total);
-        let mut means = vec![0.0_f64; columns];
-        if params.fit_intercept {
-            for (row_index, row) in data.iter_rows().enumerate() {
-                let sample_weight = sample_weight(sample_weights, row_index);
-                for (column, &value) in row.iter().enumerate() {
-                    means[column] += sample_weight * f64::from(value);
-                }
-            }
-            for mean in &mut means {
-                *mean /= total_weight;
-            }
-        }
-        let mut scales = vec![0.0_f64; columns];
-        for (row_index, row) in data.iter_rows().enumerate() {
-            let sample_weight = sample_weight(sample_weights, row_index);
-            for (column, &value) in row.iter().enumerate() {
-                let centered = f64::from(value) - means[column];
-                scales[column] += sample_weight * centered * centered;
-            }
-        }
-        for scale in &mut scales {
-            *scale = (*scale / total_weight).sqrt();
-            if *scale <= f64::EPSILON {
-                *scale = 1.0;
-            }
-        }
+        let Standardization { means, scales } =
+            standardize(data, sample_weights, total_weight, params.fit_intercept);
 
         let parameter_count = columns + usize::from(params.fit_intercept);
         let intercept_index = params.fit_intercept.then_some(columns);
-        let mut design = vec![0.0_f64; rows * parameter_count];
-        for (row, design_row) in data
-            .iter_rows()
-            .zip(design.chunks_exact_mut(parameter_count))
-        {
-            for column in 0..columns {
-                design_row[column] = (f64::from(row[column]) - means[column]) / scales[column];
-            }
-            if let Some(index) = intercept_index {
-                design_row[index] = 1.0;
-            }
-        }
+        let design = build_design(data, &means, &scales, parameter_count, intercept_index);
         let mut theta = vec![0.0_f64; parameter_count];
         let mut gradient = vec![0.0_f64; parameter_count];
         let mut hessian = vec![0.0_f64; parameter_count * parameter_count];
@@ -242,20 +266,67 @@ impl LogisticRegression {
         Ok(Self {
             n_features_in: columns,
             params,
+            classes: BINARY_CLASSES.to_vec(),
             coefficients,
-            intercept: intercept as f32,
+            intercepts: vec![intercept as f32],
             iterations,
         })
     }
 
     /// Returns fitted coefficients in input-feature order.
+    ///
+    /// A binary fit has exactly one row, so this is one coefficient per input
+    /// feature. A multiclass fit stores
+    /// [`n_decision_columns`](Self::n_decision_columns) rows of that width,
+    /// row-major and ordered like [`classes`](Self::classes).
     pub fn coefficients(&self) -> &[f32] {
         &self.coefficients
     }
 
-    /// Returns the fitted intercept.
-    pub const fn intercept(&self) -> f32 {
-        self.intercept
+    /// Returns the fitted intercept of the first score row.
+    ///
+    /// This is *the* intercept of a binary fit. A multiclass fit has one per
+    /// class; read them through [`intercepts`](Self::intercepts).
+    pub fn intercept(&self) -> f32 {
+        self.intercepts[0]
+    }
+
+    /// Returns one fitted intercept per score row, ordered like the
+    /// coefficient rows.
+    pub fn intercepts(&self) -> &[f32] {
+        &self.intercepts
+    }
+
+    /// Returns the number of raw decision scores produced for each input row.
+    ///
+    /// One for a binary fit, one per class for a multiclass fit. This is the
+    /// multiplier a caller sizes a [`decision_function_into`](
+    /// Self::decision_function_into) buffer by; probability buffers use
+    /// [`classes`](Self::classes)`.len()` instead, which differs from this for
+    /// a binary fit.
+    pub fn n_decision_columns(&self) -> usize {
+        self.intercepts.len()
+    }
+
+    /// Returns sorted class labels observed during fitting.
+    pub fn classes(&self) -> &[u8] {
+        &self.classes
+    }
+
+    /// Whether this model keeps the asymmetric single-row binary parametrization.
+    #[inline]
+    fn is_binary(&self) -> bool {
+        self.intercepts.len() == 1
+    }
+
+    /// Rejects a scalar-valued request against a model whose value is a vector.
+    fn require_scalar_output(&self) -> Result<(), ModelError> {
+        if self.is_binary() {
+            return Ok(());
+        }
+        Err(ModelError::MulticlassOutput {
+            columns: self.intercepts.len(),
+        })
     }
 
     /// Returns the number of optimization iterations performed.
@@ -274,47 +345,107 @@ impl LogisticRegression {
     }
 
     /// Returns the raw linear decision score for one row.
+    ///
+    /// Defined only for a binary fit, which produces one score per row. A
+    /// multiclass fit produces a vector, and reports
+    /// [`ModelError::MulticlassOutput`] rather than silently returning one of
+    /// its components.
     pub fn decision_function_one(&self, row: &[f32]) -> Result<f32, ModelError> {
+        self.require_scalar_output()?;
         validate_scalar_row(row, self.n_features_in)?;
         validate_prediction(self.decision_value(row), 0)
     }
 
+    /// The single raw score of a binary fit.
+    ///
+    /// The intercept seeds the accumulator and the feature terms follow in
+    /// ascending column order, matching the fitting-time reduction.
     fn decision_value(&self, row: &[f32]) -> f32 {
         row.iter()
             .zip(&self.coefficients)
-            .fold(self.intercept, |sum, (&value, &coefficient)| {
+            .fold(self.intercepts[0], |sum, (&value, &coefficient)| {
                 sum + value * coefficient
             })
     }
 
-    /// Returns one raw linear decision score per row.
+    /// Writes one raw score per class into `scores`, in class order.
+    fn decision_values_into(&self, row: &[f32], scores: &mut [f32]) {
+        for (class, slot) in scores.iter_mut().enumerate() {
+            let coefficients =
+                &self.coefficients[class * self.n_features_in..(class + 1) * self.n_features_in];
+            *slot = row
+                .iter()
+                .zip(coefficients)
+                .fold(self.intercepts[class], |sum, (&value, &coefficient)| {
+                    sum + value * coefficient
+                });
+        }
+    }
+
+    /// Returns raw linear decision scores, one row of
+    /// [`n_decision_columns`](Self::n_decision_columns) values per input row.
+    ///
+    /// A binary fit therefore returns one value per row, and a multiclass fit
+    /// returns a row-major matrix of centred scores.
     pub fn decision_function(&self, data: &MatrixView<'_>) -> Result<Vec<f32>, ModelError> {
-        let mut output = vec![0.0; data.rows()];
+        let output_len = decision_output_len(data.rows(), self.n_decision_columns())?;
+        let mut output = vec![0.0; output_len];
         self.decision_function_into(data, &mut output)?;
         Ok(output)
     }
 
     /// Writes raw linear decision scores into caller-owned storage.
+    ///
+    /// `output.len()` must equal
+    /// `data.rows() * self.n_decision_columns()`.
     pub fn decision_function_into(
         &self,
         data: &MatrixView<'_>,
         output: &mut [f32],
     ) -> Result<(), ModelError> {
-        validate_predict(data, output.len(), self.n_features_in)?;
-        for (row_index, (row, slot)) in data.iter_rows().zip(output).enumerate() {
-            *slot = validate_prediction(self.decision_value(row), row_index)?;
+        if self.is_binary() {
+            validate_predict(data, output.len(), self.n_features_in)?;
+            for (row_index, (row, slot)) in data.iter_rows().zip(output).enumerate() {
+                *slot = validate_prediction(self.decision_value(row), row_index)?;
+            }
+            return Ok(());
+        }
+        let columns = self.n_decision_columns();
+        validate_matrix_output(data, output.len(), columns, self.n_features_in)?;
+        for (row_index, (row, scores)) in data
+            .iter_rows()
+            .zip(output.chunks_exact_mut(columns))
+            .enumerate()
+        {
+            self.decision_values_into(row, scores);
+            for score in scores {
+                validate_prediction(*score, row_index)?;
+            }
         }
         Ok(())
     }
 
     /// Predicts one positive-class probability.
+    ///
+    /// Defined only for a binary fit; see [`Self::decision_function_one`].
     pub fn predict_positive_proba(&self, row: &[f32]) -> Result<f32, ModelError> {
         Ok(sigmoid_f32(self.decision_function_one(row)?))
     }
 
     /// Predicts one label.
     pub fn predict_one(&self, row: &[f32]) -> Result<u8, ModelError> {
-        Ok(u8::from(self.predict_positive_proba(row)? > 0.5))
+        if self.is_binary() {
+            return Ok(u8::from(self.predict_positive_proba(row)? > 0.5));
+        }
+        validate_scalar_row(row, self.n_features_in)?;
+        let mut storage = [0.0_f32; MAX_CLASSES];
+        let scores = &mut storage[..self.classes.len()];
+        self.decision_values_into(row, scores);
+        for score in scores.iter() {
+            validate_prediction(*score, 0)?;
+        }
+        softmax_in_place_f32(scores);
+        Ok(self.classes[argmax(scores)])
     }
 
     /// Allocating label prediction convenience method.
@@ -351,7 +482,15 @@ impl LogisticRegression {
     }
 
     /// Encodes this model in FerricML's stable checksummed artifact format.
+    ///
+    /// The v1 logistic schema stores one coefficient row, so only a binary fit
+    /// can be encoded. A multiclass fit reports
+    /// [`ArtifactError::UnsupportedModelState`] rather than writing bytes that
+    /// would decode as a different model.
     pub fn to_artifact(&self, feature_schema_sha256: [u8; 32]) -> Result<Vec<u8>, ArtifactError> {
+        if !self.is_binary() {
+            return Err(ArtifactError::UnsupportedModelState);
+        }
         if self.n_features_in > MAX_ARTIFACT_FEATURES {
             return Err(ArtifactError::InvalidPayload);
         }
@@ -370,7 +509,7 @@ impl LogisticRegression {
         state.u32(max_iter);
         state.f32(self.params.tol);
         state.u32(iterations);
-        state.f32(self.intercept);
+        state.f32(self.intercepts[0]);
         state.u32(n_features);
         for &coefficient in &self.coefficients {
             state.f32(coefficient);
@@ -468,8 +607,9 @@ impl LogisticRegression {
                 max_iter,
                 tol,
             },
+            classes: BINARY_CLASSES.to_vec(),
             coefficients,
-            intercept,
+            intercepts: vec![intercept],
             iterations,
         })
     }
@@ -497,14 +637,30 @@ impl HasParams for LogisticRegression {
 
 impl Classifier for LogisticRegression {
     fn classes(&self) -> &[u8] {
-        &BINARY_CLASSES
+        &self.classes
     }
 
     fn predict_into(&self, data: &MatrixView<'_>, output: &mut [u8]) -> Result<(), ModelError> {
         validate_predict(data, output.len(), self.n_features_in)?;
+        if self.is_binary() {
+            for (row_index, (row, slot)) in data.iter_rows().zip(output).enumerate() {
+                let decision = validate_prediction(self.decision_value(row), row_index)?;
+                *slot = u8::from(sigmoid_f32(decision) > 0.5);
+            }
+            return Ok(());
+        }
+        let mut storage = [0.0_f32; MAX_CLASSES];
+        let scores = &mut storage[..self.classes.len()];
         for (row_index, (row, slot)) in data.iter_rows().zip(output).enumerate() {
-            let decision = validate_prediction(self.decision_value(row), row_index)?;
-            *slot = u8::from(sigmoid_f32(decision) > 0.5);
+            self.decision_values_into(row, scores);
+            for score in scores.iter() {
+                validate_prediction(*score, row_index)?;
+            }
+            // Argmax of the probabilities, not of the scores: taking it from
+            // the same values the caller can read is what makes a label and its
+            // probability row impossible to disagree.
+            softmax_in_place_f32(scores);
+            *slot = self.classes[argmax(scores)];
         }
         Ok(())
     }
@@ -514,27 +670,31 @@ impl Classifier for LogisticRegression {
         data: &MatrixView<'_>,
         output: &mut [f32],
     ) -> Result<(), ModelError> {
-        let expected = data
-            .rows()
-            .checked_mul(2)
-            .ok_or(ModelError::OutputShapeOverflow {
-                rows: data.rows(),
-                columns: 2,
-            })?;
-        validate_feature_width(data, self.n_features_in)?;
-        if output.len() != expected {
-            return Err(ModelError::OutputLength {
-                expected,
-                actual: output.len(),
-            });
+        let columns = self.classes.len();
+        validate_matrix_output(data, output.len(), columns, self.n_features_in)?;
+        if self.is_binary() {
+            for (row_index, (row, probabilities)) in data
+                .iter_rows()
+                .zip(output.chunks_exact_mut(columns))
+                .enumerate()
+            {
+                let decision = validate_prediction(self.decision_value(row), row_index)?;
+                let positive = sigmoid_f32(decision);
+                probabilities[0] = 1.0 - positive;
+                probabilities[1] = positive;
+            }
+            return Ok(());
         }
-        for (row_index, (row, probabilities)) in
-            data.iter_rows().zip(output.chunks_exact_mut(2)).enumerate()
+        for (row_index, (row, probabilities)) in data
+            .iter_rows()
+            .zip(output.chunks_exact_mut(columns))
+            .enumerate()
         {
-            let decision = validate_prediction(self.decision_value(row), row_index)?;
-            let positive = sigmoid_f32(decision);
-            probabilities[0] = 1.0 - positive;
-            probabilities[1] = positive;
+            self.decision_values_into(row, probabilities);
+            for score in probabilities.iter() {
+                validate_prediction(*score, row_index)?;
+            }
+            softmax_in_place_f32(probabilities);
         }
         Ok(())
     }
@@ -545,29 +705,64 @@ impl Classifier for LogisticRegression {
         class: u8,
         output: &mut [f32],
     ) -> Result<(), ModelError> {
-        if class > 1 {
-            return Err(ModelError::UnknownClass { class });
-        }
+        let column = self
+            .classes
+            .binary_search(&class)
+            .map_err(|_| ModelError::UnknownClass { class })?;
         validate_predict(data, output.len(), self.n_features_in)?;
+        if self.is_binary() {
+            for (row_index, (row, slot)) in data.iter_rows().zip(output).enumerate() {
+                let decision = validate_prediction(self.decision_value(row), row_index)?;
+                let positive = sigmoid_f32(decision);
+                *slot = if column == 1 {
+                    positive
+                } else {
+                    1.0 - positive
+                };
+            }
+            return Ok(());
+        }
+        let mut storage = [0.0_f32; MAX_CLASSES];
+        let scores = &mut storage[..self.classes.len()];
         for (row_index, (row, slot)) in data.iter_rows().zip(output).enumerate() {
-            let decision = validate_prediction(self.decision_value(row), row_index)?;
-            let positive = sigmoid_f32(decision);
-            *slot = if class == 1 { positive } else { 1.0 - positive };
+            self.decision_values_into(row, scores);
+            for score in scores.iter() {
+                validate_prediction(*score, row_index)?;
+            }
+            softmax_in_place_f32(scores);
+            *slot = scores[column];
         }
         Ok(())
     }
 }
 
-fn validate_fit(
+/// Index of the largest value, with an exact tie going to the lowest index.
+///
+/// Class labels are sorted, so "lowest index" is "smallest tied label" — which
+/// is not the same as "the first class": with classes `[5, 9, 20]` a tie
+/// between the last two selects `9`.
+fn argmax(values: &[f32]) -> usize {
+    let mut best = 0;
+    for index in 1..values.len() {
+        if values[index] > values[best] {
+            best = index;
+        }
+    }
+    best
+}
+
+/// Shared length, weight, and parameter validation for every fitting entry
+/// point, in the order the frozen contract reports them.
+fn validate_common_fit(
     data: &MatrixView<'_>,
-    targets: &BinaryTargets,
+    target_len: usize,
     sample_weights: Option<&SampleWeights>,
     params: &LogisticRegressionParams,
 ) -> Result<(), ModelError> {
-    if data.rows() != targets.len() {
+    if data.rows() != target_len {
         return Err(ModelError::TargetLength {
             rows: data.rows(),
-            targets: targets.len(),
+            targets: target_len,
         });
     }
     if let Some(sample_weights) = sample_weights
@@ -587,6 +782,16 @@ fn validate_fit(
     if !params.tol.is_finite() || params.tol <= 0.0 {
         return Err(ModelError::InvalidTolerance);
     }
+    Ok(())
+}
+
+fn validate_fit(
+    data: &MatrixView<'_>,
+    targets: &BinaryTargets,
+    sample_weights: Option<&SampleWeights>,
+    params: &LogisticRegressionParams,
+) -> Result<(), ModelError> {
+    validate_common_fit(data, targets.len(), sample_weights, params)?;
     if !targets.as_slice().contains(&0) || !targets.as_slice().contains(&1) {
         return Err(ModelError::RequiresTwoClasses);
     }
@@ -595,6 +800,100 @@ fn validate_fit(
 
 fn sample_weight(sample_weights: Option<&SampleWeights>, row: usize) -> f64 {
     sample_weights.map_or(1.0, |weights| f64::from(weights.as_slice()[row]))
+}
+
+/// The per-column centering and scaling applied to the design matrix.
+///
+/// Centering happens only when an intercept is fitted, and a column with no
+/// spread scales by one rather than by zero.
+struct Standardization {
+    means: Vec<f64>,
+    scales: Vec<f64>,
+}
+
+fn standardize(
+    data: &MatrixView<'_>,
+    sample_weights: Option<&SampleWeights>,
+    total_weight: f64,
+    fit_intercept: bool,
+) -> Standardization {
+    let columns = data.columns();
+    let mut means = vec![0.0_f64; columns];
+    if fit_intercept {
+        for (row_index, row) in data.iter_rows().enumerate() {
+            let sample_weight = sample_weight(sample_weights, row_index);
+            for (column, &value) in row.iter().enumerate() {
+                means[column] += sample_weight * f64::from(value);
+            }
+        }
+        for mean in &mut means {
+            *mean /= total_weight;
+        }
+    }
+    let mut scales = vec![0.0_f64; columns];
+    for (row_index, row) in data.iter_rows().enumerate() {
+        let sample_weight = sample_weight(sample_weights, row_index);
+        for (column, &value) in row.iter().enumerate() {
+            let centered = f64::from(value) - means[column];
+            scales[column] += sample_weight * centered * centered;
+        }
+    }
+    for scale in &mut scales {
+        *scale = (*scale / total_weight).sqrt();
+        if *scale <= f64::EPSILON {
+            *scale = 1.0;
+        }
+    }
+    Standardization { means, scales }
+}
+
+fn build_design(
+    data: &MatrixView<'_>,
+    means: &[f64],
+    scales: &[f64],
+    parameter_count: usize,
+    intercept_index: Option<usize>,
+) -> Vec<f64> {
+    let columns = data.columns();
+    let mut design = vec![0.0_f64; data.rows() * parameter_count];
+    for (row, design_row) in data
+        .iter_rows()
+        .zip(design.chunks_exact_mut(parameter_count))
+    {
+        for column in 0..columns {
+            design_row[column] = (f64::from(row[column]) - means[column]) / scales[column];
+        }
+        if let Some(index) = intercept_index {
+            design_row[index] = 1.0;
+        }
+    }
+    design
+}
+
+fn decision_output_len(rows: usize, columns: usize) -> Result<usize, ModelError> {
+    rows.checked_mul(columns)
+        .ok_or(ModelError::OutputShapeOverflow { rows, columns })
+}
+
+/// Validates a caller-owned `rows x columns` output buffer before any write.
+///
+/// The shape overflow is reported before the feature width, and the feature
+/// width before the length, which is the order the frozen contract states.
+fn validate_matrix_output(
+    data: &MatrixView<'_>,
+    output_len: usize,
+    columns: usize,
+    features: usize,
+) -> Result<(), ModelError> {
+    let expected = decision_output_len(data.rows(), columns)?;
+    validate_feature_width(data, features)?;
+    if output_len != expected {
+        return Err(ModelError::OutputLength {
+            expected,
+            actual: output_len,
+        });
+    }
+    Ok(())
 }
 
 fn validate_predict(
@@ -729,8 +1028,9 @@ mod tests {
                 max_iter: 100,
                 tol: f32::from_bits(0x3586_37bd),
             },
+            classes: BINARY_CLASSES.to_vec(),
             coefficients: vec![f32::from_bits(0x3fb0_56aa), f32::from_bits(0x3eab_d102)],
-            intercept: f32::from_bits(0xc00e_fe0f),
+            intercepts: vec![f32::from_bits(0xc00e_fe0f)],
             iterations: 5,
         };
         let bytes = decode_hex(
