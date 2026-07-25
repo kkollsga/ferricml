@@ -84,7 +84,8 @@ impl Objective<f32> for Regression {
 
     fn impurity(self, sum: f64, sum_sq: f64, weight: u64) -> f64 {
         // Population variance.  Clamp cancellation noise at zero.
-        (sum_sq / weight as f64 - (sum / weight as f64).powi(2)).max(0.0)
+        let mean = sum / weight as f64;
+        (sum_sq / weight as f64 - mean * mean).max(0.0)
     }
 
     fn pure(self, sum: f64, sum_sq: f64, weight: u64) -> bool {

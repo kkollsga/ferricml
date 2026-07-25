@@ -37,7 +37,9 @@ supported typed pipeline models support bounded, versioned, checksummed binary
 artifacts with strict schema verification; logistic retains legacy-v1
 decoding. Boosted ensembles persist backend-neutral logical trees while their
 compact runtime layout stays private. See
-[artifact-envelope.md](docs/artifact-envelope.md).
+[artifact-envelope.md](docs/artifact-envelope.md). What reproducing a fitted
+artifact promises across operating systems and architectures, versus only per
+runner, is stated in [determinism.md](docs/determinism.md).
 
 The pairwise ranker consumes checked pairs over one item matrix and exposes raw
 item scores and score differences, not classifier probabilities. Its mirrored
