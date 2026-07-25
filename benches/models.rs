@@ -13,8 +13,8 @@ use ferricml::ensemble::{
 };
 use ferricml::inspection::{PermutationImportanceParams, permutation_importance_regressor_into};
 use ferricml::linear_model::{
-    LinearRegression, LinearRegressionParams, LogisticRegression, LogisticRegressionParams, Ridge,
-    RidgeParams,
+    ElasticNet, ElasticNetParams, Lasso, LassoParams, LinearRegression, LinearRegressionParams,
+    LogisticRegression, LogisticRegressionParams, LogisticSolver, Ridge, RidgeParams,
 };
 use ferricml::metrics::{
     Average, ConfusionMatrix, average_precision_score, mean_squared_error, roc_auc_score,
@@ -50,6 +50,13 @@ const INSPECTION_REPEATS: usize = 3;
 const SPLITTER_ROWS: usize = 16_384;
 const LEAVE_ONE_OUT_ROWS: usize = 512;
 const MULTICLASS_CLASSES: usize = 4;
+/// Wide enough that `classes * (features + intercept)` is 2052, one step past
+/// the exact solver's 2048-parameter refusal.
+const WIDE_MULTICLASS_COLUMNS: usize = 512;
+/// Rows for the wide multiclass lane; the cost there is the parameter count.
+const WIDE_MULTICLASS_ROWS: usize = 1_024;
+/// Strong enough to remove coefficients and weak enough to keep a real fit.
+const PENALTY_ALPHA: f32 = 0.05;
 const MULTICLASS_FOREST_TREES: usize = 16;
 
 fn fixture(rows: usize, columns: usize) -> (DenseMatrix, RegressionTargets) {
@@ -340,6 +347,105 @@ fn training(c: &mut Criterion) {
         },
     );
     group.finish();
+}
+
+/// The penalized linear fits and the matrix-free logistic solver.
+///
+/// A separate suite version from `..._v1_fit_...` because these lanes are
+/// iterative: their cost is a sweep or iteration count, not one factorization,
+/// so a change in convergence behaviour shows up here and nowhere else. The
+/// penalty strengths are chosen so each lane converges well inside its budget
+/// — a lane that refused would measure the refusal path rather than the solver.
+fn penalized_and_matrix_free(c: &mut Criterion) {
+    let (data, targets) = fixture(ROWS, COLUMNS);
+    let labels = BinaryTargets::new(
+        targets
+            .as_slice()
+            .iter()
+            .map(|&target| u8::from(target > 0.0))
+            .collect(),
+    )
+    .unwrap();
+
+    let mut fit = c.benchmark_group("ferricml_models_v3_penalized_fit_2048x48");
+    fit.throughput(Throughput::Elements(ROWS as u64));
+    fit.bench_function(BenchmarkId::from_parameter("lasso"), |bencher| {
+        bencher.iter_batched(
+            || LassoParams::default().with_alpha(PENALTY_ALPHA),
+            |params| {
+                black_box(Lasso::fit(&data.as_view(), &targets, params).unwrap());
+            },
+            BatchSize::SmallInput,
+        );
+    });
+    fit.bench_function(BenchmarkId::from_parameter("elastic_net"), |bencher| {
+        bencher.iter_batched(
+            || {
+                ElasticNetParams::default()
+                    .with_alpha(PENALTY_ALPHA)
+                    .with_l1_ratio(0.5)
+            },
+            |params| {
+                black_box(ElasticNet::fit(&data.as_view(), &targets, params).unwrap());
+            },
+            BatchSize::SmallInput,
+        );
+    });
+    fit.bench_function(BenchmarkId::from_parameter("logistic_lbfgs"), |bencher| {
+        bencher.iter_batched(
+            || LogisticRegressionParams::default().with_solver(LogisticSolver::Lbfgs),
+            |params| {
+                black_box(LogisticRegression::fit(&data.as_view(), &labels, params).unwrap());
+            },
+            BatchSize::SmallInput,
+        );
+    });
+    fit.finish();
+
+    // The lane the matrix-free solver exists for: a stacked system the exact
+    // path refuses outright, so there is nothing to compare it against.
+    let (wide_data, wide_targets) = fixture(WIDE_MULTICLASS_ROWS, WIDE_MULTICLASS_COLUMNS);
+    let wide_classes = multiclass_targets(&wide_targets);
+    let mut multiclass_fit =
+        c.benchmark_group("ferricml_models_v3_matrix_free_multiclass_fit_1024x512_4c");
+    multiclass_fit.throughput(Throughput::Elements(WIDE_MULTICLASS_ROWS as u64));
+    multiclass_fit.bench_function(BenchmarkId::from_parameter("logistic_lbfgs"), |bencher| {
+        bencher.iter_batched(
+            || {
+                LogisticRegressionParams::default()
+                    .with_solver(LogisticSolver::Lbfgs)
+                    .with_max_iter(200)
+            },
+            |params| {
+                black_box(
+                    LogisticRegression::fit_multiclass(&wide_data.as_view(), &wide_classes, params)
+                        .unwrap(),
+                );
+            },
+            BatchSize::SmallInput,
+        );
+    });
+    multiclass_fit.finish();
+
+    let inference_data = fixture(INFERENCE_ROWS, COLUMNS).0;
+    let lasso = Lasso::fit(
+        &data.as_view(),
+        &targets,
+        LassoParams::default().with_alpha(PENALTY_ALPHA),
+    )
+    .unwrap();
+    let mut into = c.benchmark_group("ferricml_models_v3_penalized_into_1024x48");
+    into.throughput(Throughput::Elements(INFERENCE_ROWS as u64));
+    into.bench_function(BenchmarkId::from_parameter("lasso"), |bencher| {
+        let mut output = vec![0.0_f32; INFERENCE_ROWS];
+        bencher.iter(|| {
+            lasso
+                .predict_into(black_box(&inference_data.as_view()), &mut output)
+                .unwrap();
+            black_box(&output);
+        });
+    });
+    into.finish();
 }
 
 fn logistic_and_scaler(c: &mut Criterion) {
@@ -1147,6 +1253,7 @@ criterion_group!(
     split_workloads,
     inspection,
     multiclass,
-    calibration
+    calibration,
+    penalized_and_matrix_free
 );
 criterion_main!(benches);

@@ -21,6 +21,7 @@ parameters, seed, and thread count. This covers:
 |---|---|
 | `LinearRegression` | 2 |
 | `Ridge` | 3 |
+| `Lasso`, `ElasticNet` | — |
 | `StandardScaler`, `MinMaxScaler`, `MaxAbsScaler` | 4, 14, 15 |
 | `RandomForestRegressor`, `RandomForestClassifier` | 10, — |
 | `HistGradientBoostingRegressor` | 9 |
@@ -36,6 +37,7 @@ fitting evaluates a transcendental function:
 |---|---|---|
 | `LogisticRegression`, binary | 1 | `exp`, through the sigmoid |
 | `LogisticRegression`, multiclass | — | `exp`, through the row softmax |
+| `LogisticRegression`, `LogisticSolver::Lbfgs` | — | `exp` and `ln`, through the loss value and the softmax |
 | `PairwiseLinearRanker` | 8 | `exp`, through the logistic model it fits |
 | `Pipeline<StandardScaler, LogisticRegression>` | 5 | as above |
 | `HistGradientBoostingClassifier` | 20 | `ln` for the baseline, `exp` once per row per iteration through the sigmoid |
@@ -67,7 +69,7 @@ and `f32`/`f64` conversions are likewise exact.
 Tier 1's fitting paths use only those operations. That is a checkable claim,
 not an assurance: searching `src/` for `exp`, `ln`, `log*`, `powf`, `powi`,
 `tanh`, `cbrt`, `mul_add`, and the trigonometric functions returns, outside the
-tier 2 estimators, only `sqrt` — in the scaler, in the least-squares weight
+tier 2 estimators and outside `#[cfg(test)]` code, only `sqrt` — in the scaler, in the least-squares weight
 transform, and in the forest's feature-subset size. The one previous exception
 was the forest's population-variance impurity, which used `powi(2)`; `powi` is
 not an IEEE-mandated operation and carries no correct-rounding guarantee, so it
@@ -81,6 +83,20 @@ row order and ascending column order within a row; `sum_in_order` is that rule
 written as code, and it seeds from `-0.0` because that is IEEE addition's true
 identity — seeding from `+0.0` would turn a sum of negative zeros positive and
 change the fitted bytes. No path may reorder a reduction for speed.
+
+**Iterative solvers are covered by the same reasoning, not exempted from it.**
+Coordinate descent and limited-memory BFGS both converge to a point that depends
+on the *sequence* of iterates, so their determinism is the determinism of every
+reduction inside them. Both reduce through `sum_in_order` in a fixed index
+order; coordinate descent sweeps columns in ascending order; and the L-BFGS line
+search bisects rather than interpolating, so its next trial is a function of the
+current bracket alone rather than of a fitted polynomial's rounding. Neither
+solver returns an iterate it did not converge — an exhausted budget is
+`ModelError::SolverDidNotConverge` — so there is no path on which a stopping
+condition that fired differently on two machines produces two "fitted" models
+instead of one model and one error. Coordinate descent evaluates no
+transcendental at all, which is why `Lasso` and `ElasticNet` are tier 1 despite
+being iterative.
 
 **Thread count.** Forest training is the only parallel fitting path. It derives
 tree `i`'s seed from `i` alone and sorts the finished trees back into index

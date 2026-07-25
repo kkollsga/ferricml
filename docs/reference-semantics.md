@@ -36,6 +36,43 @@ every weight is one, so every frozen unweighted fixture is unchanged. The
 weighted tree fixtures pin the bound at one, where it cannot bind, so they
 compare the weighted impurity and leaf arithmetic — where the two agree exactly.
 
+**A penalized linear model's `alpha` is measured against a mean, and its zeros
+are positive.** `Lasso` and `ElasticNet` minimize the weighted squared error
+divided by twice the total sample weight, plus `alpha * l1_ratio * ||b||_1` and
+`0.5 * alpha * (1 - l1_ratio) * ||b||_2^2`. Two consequences are contract, not
+implementation detail. First, that `alpha` is a different quantity from
+`Ridge`'s, which accompanies an *undivided* squared-error term: the two agree at
+`ridge_alpha = alpha * total_weight`. Second, the penalty applies to raw-scale
+coefficients — fitting centers the design when an intercept is requested and
+never rescales the columns — so a feature's units decide how strongly it is
+penalized, and scale-free selection is obtained by composing a
+`StandardScaler` in front where the transformation is explicit and persists.
+
+A coefficient the fit removes is exactly `0.0` and **positively signed**. The
+reference stores a negatively signed zero for a coefficient shrunk from below;
+FerricML deliberately does not, because a coefficient the fit removed has no
+sign to carry and a signed zero is a different byte pattern for a
+mathematically identical model. Convergence is the largest absolute coefficient
+change across one full sweep, which is FerricML's own criterion rather than the
+reference's duality gap; the two agree on the minimizer and not on the
+iteration at which they stop, so a fixture comparison runs both far past their
+default tolerances. Exhausting `max_iter` is
+`ModelError::SolverDidNotConverge`, never a fit that stopped part way and looks
+like one that arrived.
+
+**A logistic solver is selectable, and the default is unchanged.**
+`LogisticSolver::Newton` is the default and produced every fitted artifact
+FerricML has ever written. `LogisticSolver::Lbfgs` minimizes the same objective
+without forming a second-order system, which is what lets a joint multinomial
+fit exceed the exact path's parameter ceiling. The ceiling is a property of the
+selected solver's storage rather than of the model, so a shape the exact path
+accepts still takes the exact path and produces the identical fit. `tol` is the
+largest coefficient update under `Newton` and the mean objective's gradient norm
+under `Lbfgs` — different quantities, documented rather than conflated. Neither
+logistic payload schema records a solver, so a model fitted under a non-default
+one has no artifact representation rather than bytes that would decode as a
+`Newton`-provenance model.
+
 **Class weighting is a caller-side transformation, not a parameter.** No
 FerricML estimator takes a `class_weight`. A per-class weight is a function of
 the label and therefore already a per-row weight, so it is expressed by building

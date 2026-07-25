@@ -59,7 +59,17 @@ estimator meaning follow the reference contract.
   segment per stage, so multi-stage inference allocates nothing. Prediction
   stays on the generic callback rather than per-category convenience methods,
   which cannot coexist as inherent methods of one name.
-- `linear_model` separates estimator facades from private numerical seams.
+- `linear_model` separates estimator facades from private numerical seams, and
+  now holds two solver families rather than one. The closed-form fits — ordinary
+  least squares and ridge — stay closed form. `LogisticRegression` selects
+  between exact Newton steps and a matrix-free limited-memory quasi-Newton path
+  through `LogisticSolver`, defaulting to Newton and keeping every fitted
+  artifact it has ever produced; the matrix-free path exists because a joint
+  multinomial system is `classes * parameters` square, so the exact one refuses
+  shapes it cannot allocate. `Lasso` and `ElasticNet` are fitted by cyclic
+  coordinate descent, which is the solver an L1 penalty requires: the penalty is
+  not differentiable at zero, and that is precisely what makes it produce
+  coefficients that are exactly zero rather than small.
 - `metrics` owns deterministic classification and regression measures with
   explicit errors for invalid or undefined inputs.
 - `model_selection` owns validated index partitions, deterministic holdout and
