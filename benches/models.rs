@@ -1,9 +1,12 @@
 use criterion::{BatchSize, BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
-use ferricml::data::{BinaryTargets, DenseMatrix, RegressionTargets};
+use ferricml::data::{BinaryTargets, ClassTargets, DenseMatrix, RegressionTargets};
 use ferricml::dummy::{
     DummyClassifier, DummyClassifierParams, DummyRegressor, DummyRegressorParams,
 };
-use ferricml::ensemble::{MaxFeatures, RandomForestRegressor, RandomForestRegressorParams};
+use ferricml::ensemble::{
+    MaxFeatures, RandomForestClassifier, RandomForestClassifierParams, RandomForestRegressor,
+    RandomForestRegressorParams,
+};
 use ferricml::inspection::{PermutationImportanceParams, permutation_importance_regressor_into};
 use ferricml::linear_model::{
     LinearRegression, LinearRegressionParams, LogisticRegression, LogisticRegressionParams, Ridge,
@@ -42,6 +45,8 @@ const INSPECTION_COLUMNS: usize = 8;
 const INSPECTION_REPEATS: usize = 3;
 const SPLITTER_ROWS: usize = 16_384;
 const LEAVE_ONE_OUT_ROWS: usize = 512;
+const MULTICLASS_CLASSES: usize = 4;
+const MULTICLASS_FOREST_TREES: usize = 16;
 
 fn fixture(rows: usize, columns: usize) -> (DenseMatrix, RegressionTargets) {
     let mut state = 0x9e37_79b9_u32;
@@ -68,6 +73,130 @@ fn fixture(rows: usize, columns: usize) -> (DenseMatrix, RegressionTargets) {
         DenseMatrix::new(values, rows, columns).unwrap(),
         RegressionTargets::new(targets).unwrap(),
     )
+}
+
+/// Non-contiguous, non-zero-based labels derived from the shared fixture.
+///
+/// The labels are `{3, 7, 10, 20}` rather than `0..4` so the benchmark exercises
+/// the same class-lookup path a real caller does.
+fn multiclass_targets(targets: &RegressionTargets) -> ClassTargets {
+    const LABELS: [u8; MULTICLASS_CLASSES] = [3, 7, 10, 20];
+    let mut sorted = targets.as_slice().to_vec();
+    sorted.sort_by(f32::total_cmp);
+    let cuts: Vec<f32> = (1..MULTICLASS_CLASSES)
+        .map(|part| sorted[part * sorted.len() / MULTICLASS_CLASSES])
+        .collect();
+    ClassTargets::new(
+        targets
+            .as_slice()
+            .iter()
+            .map(|&value| LABELS[cuts.iter().filter(|&&cut| value >= cut).count()])
+            .collect(),
+    )
+    .unwrap()
+}
+
+/// Multiclass fitting and inference for both estimator families.
+///
+/// Registered with the sprint that added the capability so the paths are
+/// visible to `bench-history` from birth. Each family gets both halves that can
+/// drift independently: the fit, whose cost is the multiclass solver or the
+/// multiclass split search, and inference, whose cost is the softmax or the
+/// per-tree probability averaging.
+fn multiclass(c: &mut Criterion) {
+    let (training, training_targets) = fixture(ROWS, COLUMNS);
+    let (inference, _) = fixture(INFERENCE_ROWS, COLUMNS);
+    let labels = multiclass_targets(&training_targets);
+    let forest_params = RandomForestClassifierParams::default()
+        .with_n_estimators(MULTICLASS_FOREST_TREES)
+        .with_max_depth(Some(8))
+        .with_random_state(0);
+
+    let logistic = LogisticRegression::fit_multiclass(
+        &training.as_view(),
+        &labels,
+        LogisticRegressionParams::default(),
+    )
+    .unwrap();
+    let forest =
+        RandomForestClassifier::fit_multiclass(&training.as_view(), &labels, forest_params.clone())
+            .unwrap();
+
+    let mut probabilities = vec![0.0_f32; INFERENCE_ROWS * MULTICLASS_CLASSES];
+    let mut predicted = vec![0_u8; INFERENCE_ROWS];
+    let mut into = c.benchmark_group("ferricml_multiclass_v1_into_1024x48_4c");
+    into.throughput(Throughput::Elements(INFERENCE_ROWS as u64));
+    into.bench_function(BenchmarkId::from_parameter("logistic_proba"), |bencher| {
+        bencher.iter(|| {
+            logistic
+                .predict_proba_into(
+                    black_box(&inference.as_view()),
+                    black_box(&mut probabilities),
+                )
+                .unwrap();
+            black_box(&probabilities);
+        });
+    });
+    into.bench_function(BenchmarkId::from_parameter("logistic_label"), |bencher| {
+        bencher.iter(|| {
+            logistic
+                .predict_into(black_box(&inference.as_view()), black_box(&mut predicted))
+                .unwrap();
+            black_box(&predicted);
+        });
+    });
+    into.bench_function(BenchmarkId::from_parameter("forest_proba"), |bencher| {
+        bencher.iter(|| {
+            forest
+                .predict_proba_into(
+                    black_box(&inference.as_view()),
+                    black_box(&mut probabilities),
+                )
+                .unwrap();
+            black_box(&probabilities);
+        });
+    });
+    into.bench_function(BenchmarkId::from_parameter("forest_label"), |bencher| {
+        bencher.iter(|| {
+            forest
+                .predict_into(black_box(&inference.as_view()), black_box(&mut predicted))
+                .unwrap();
+            black_box(&predicted);
+        });
+    });
+    into.finish();
+
+    let mut fit = c.benchmark_group("ferricml_multiclass_v1_fit_2048x48_4c");
+    fit.throughput(Throughput::Elements(ROWS as u64));
+    fit.bench_function(BenchmarkId::from_parameter("logistic"), |bencher| {
+        bencher.iter(|| {
+            black_box(
+                LogisticRegression::fit_multiclass(
+                    black_box(&training.as_view()),
+                    black_box(&labels),
+                    LogisticRegressionParams::default(),
+                )
+                .unwrap(),
+            );
+        });
+    });
+    fit.bench_function(BenchmarkId::from_parameter("forest"), |bencher| {
+        bencher.iter_batched(
+            || forest_params.clone(),
+            |params| {
+                black_box(
+                    RandomForestClassifier::fit_multiclass(
+                        black_box(&training.as_view()),
+                        black_box(&labels),
+                        params,
+                    )
+                    .unwrap(),
+                );
+            },
+            BatchSize::SmallInput,
+        );
+    });
+    fit.finish();
 }
 
 fn observations(targets: &RegressionTargets, count: usize) -> Vec<PairwiseObservation> {
@@ -892,6 +1021,7 @@ criterion_group!(
     evaluation_splitters,
     parameter_search,
     split_workloads,
-    inspection
+    inspection,
+    multiclass
 );
 criterion_main!(benches);
