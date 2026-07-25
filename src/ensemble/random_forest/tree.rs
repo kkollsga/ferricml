@@ -394,18 +394,20 @@ impl ClassTree {
         &self.probabilities[ordinal * self.classes..(ordinal + 1) * self.classes]
     }
 
+    /// Traversal to a leaf ordinal, with ordinary checked indexing.
+    ///
+    /// The scalar tree next door elides its bounds checks, on measured
+    /// evidence, for the crate's most benchmarked inference path. This path is
+    /// new and unmeasured, and an unproven `unsafe` is a worse trade than a
+    /// bounds check: construction already guarantees every index is in range,
+    /// so the checks are provably redundant and can be removed later *with*
+    /// evidence rather than in anticipation of it.
     #[inline(always)]
     fn leaf_ordinal(&self, row: &[f32]) -> u32 {
         let mut index = 0usize;
         loop {
-            // SAFETY: `from_build_nodes` validates every branch token and every
-            // encoded feature against the immutable packed buffer before the
-            // model becomes observable, and public prediction validates `row`
-            // to the fitted width before entering traversal.
-            let node = unsafe { self.nodes.get_unchecked(index) };
-            // SAFETY: as above; the feature index is checked at construction.
-            let value =
-                unsafe { *row.get_unchecked((node.feature_and_flags & FEATURE_MASK) as usize) };
+            let node = self.nodes[index];
+            let value = row[(node.feature_and_flags & FEATURE_MASK) as usize];
             if value <= node.threshold {
                 if node.feature_and_flags & LEFT_IS_LEAF != 0 {
                     return node.left;
