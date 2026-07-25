@@ -844,6 +844,7 @@ pub ferricml::metrics::MetricError::InvalidBinaryTarget
 pub ferricml::metrics::MetricError::InvalidBinaryTarget::index: usize
 pub ferricml::metrics::MetricError::InvalidBinaryTarget::input: usize
 pub ferricml::metrics::MetricError::InvalidBinaryTarget::value: u8
+pub ferricml::metrics::MetricError::InvalidClassSet
 pub ferricml::metrics::MetricError::InvalidProbability
 pub ferricml::metrics::MetricError::InvalidProbability::index: usize
 pub ferricml::metrics::MetricError::LengthMismatch
@@ -855,6 +856,9 @@ pub ferricml::metrics::MetricError::NonFiniteValue::input: usize
 pub ferricml::metrics::MetricError::NotBinary
 pub ferricml::metrics::MetricError::NotBinary::labels: usize
 pub ferricml::metrics::MetricError::Undefined
+pub ferricml::metrics::MetricError::UnknownClass
+pub ferricml::metrics::MetricError::UnknownClass::index: usize
+pub ferricml::metrics::MetricError::UnknownClass::value: u8
 impl core::error::Error for ferricml::metrics::MetricError
 impl core::fmt::Display for ferricml::metrics::MetricError
 pub fn ferricml::metrics::MetricError::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
@@ -924,6 +928,8 @@ pub fn ferricml::metrics::mean_absolute_error(&[f32], &[f32]) -> core::result::R
 pub fn ferricml::metrics::mean_absolute_percentage_error(&[f32], &[f32]) -> core::result::Result<f64, ferricml::metrics::MetricError>
 pub fn ferricml::metrics::mean_squared_error(&[f32], &[f32]) -> core::result::Result<f64, ferricml::metrics::MetricError>
 pub fn ferricml::metrics::median_absolute_error(&[f32], &[f32]) -> core::result::Result<f64, ferricml::metrics::MetricError>
+pub fn ferricml::metrics::multiclass_brier_score(&[u8], &[u8], &[f32]) -> core::result::Result<f64, ferricml::metrics::MetricError>
+pub fn ferricml::metrics::multiclass_log_loss(&[u8], &[u8], &[f32]) -> core::result::Result<f64, ferricml::metrics::MetricError>
 pub fn ferricml::metrics::precision_recall_curve(&[u8], &[f32]) -> core::result::Result<ferricml::metrics::PrecisionRecallCurve, ferricml::metrics::MetricError>
 pub fn ferricml::metrics::precision_score(&[u8], &[u8]) -> core::result::Result<f64, ferricml::metrics::MetricError>
 pub fn ferricml::metrics::r2_score(&[f32], &[f32]) -> core::result::Result<f64, ferricml::metrics::MetricError>

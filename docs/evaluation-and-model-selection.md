@@ -25,6 +25,19 @@ whose threshold is above every score and is reported as `f32::INFINITY`.
 Average precision sums each threshold's precision weighted by the recall it
 gained, without interpolating between operating points.
 
+`multiclass_log_loss` and `multiclass_brier_score` score a whole probability
+matrix: row-major, one column per entry of a sorted class list, exactly as a
+fitted classifier's `predict_proba` produces it. Neither renormalizes a row.
+FerricML's probability rows sum to one only within the documented `f32`
+tolerance, and a metric that quietly rescaled them would be scoring numbers no
+model produced. Cross-entropy reads only the true class's column, so
+`multiclass_log_loss` agrees with `log_loss` on two-class predictions. The
+Brier scores deliberately do not coincide: `brier_score` squares the positive
+column alone while `multiclass_brier_score` squares every column, so on the
+same two-class predictions the multiclass value is exactly twice the binary
+one. Both conventions are standard; they are named apart and the relationship
+is stated rather than left to be discovered.
+
 Every metric rejects empty or mismatched inputs. Binary metrics reject labels
 outside zero and one; probability metrics also reject non-finite values and
 values outside `0..=1`. Precision, recall, F1, R2, and ROC AUC return

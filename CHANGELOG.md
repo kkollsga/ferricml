@@ -134,6 +134,15 @@ and releases use [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   any fitting (`Setup`) from a candidate's own failure (`Candidate`, keeping the
   fold index) and from a score that returns a value no ranking can order
   (`NonFiniteScore`).
+- `metrics::multiclass_log_loss` and `metrics::multiclass_brier_score`, which
+  score a whole row-major probability matrix against a sorted class list.
+  Neither renormalizes a row, because FerricML's rows sum to one only within
+  the documented `f32` tolerance. `multiclass_log_loss` agrees with `log_loss`
+  at two classes; `multiclass_brier_score` squares every column where
+  `brier_score` squares only the positive one, so it is exactly twice the
+  binary value there — stated rather than left to be discovered. The new
+  `MetricError::InvalidClassSet` and `MetricError::UnknownClass` report a class
+  list that cannot name columns and a label with no column.
 - `RandomForestClassifier::fit_multiclass`, a natively multiclass forest whose
   trees split on multiclass Gini impurity and store one probability per class
   at every leaf. The ensemble probability is the mean of the per-tree

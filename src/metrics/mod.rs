@@ -12,7 +12,8 @@ mod regression;
 pub use averaging::{Average, Averaging, ZeroDivision};
 pub use classification::{
     BinaryConfusionMatrix, accuracy_score, binary_confusion_matrix, brier_score, f1_score,
-    log_loss, precision_score, recall_score, roc_auc_score,
+    log_loss, multiclass_brier_score, multiclass_log_loss, precision_score, recall_score,
+    roc_auc_score,
 };
 pub use confusion::{ClassCounts, ConfusionMatrix};
 pub use ranking::{
@@ -67,6 +68,19 @@ pub enum MetricError {
     },
     /// An F-score beta was not finite and strictly positive.
     InvalidBeta,
+    /// A class list was empty or not strictly increasing.
+    ///
+    /// A probability matrix's columns are identified by position, so the class
+    /// list has to be the sorted, deduplicated set a classifier reports. A
+    /// repeated or out-of-order label would silently mislabel a column.
+    InvalidClassSet,
+    /// An expected label is absent from the supplied class list.
+    UnknownClass {
+        /// Position of the label.
+        index: usize,
+        /// The label that has no column.
+        value: u8,
+    },
     /// The metric denominator or required class distribution is undefined.
     Undefined,
 }
@@ -100,6 +114,13 @@ impl fmt::Display for MetricError {
                 "binary averaging requires labels 0 and 1, got {labels} distinct labels"
             ),
             Self::InvalidBeta => f.write_str("F-score beta must be finite and strictly positive"),
+            Self::InvalidClassSet => {
+                f.write_str("class list must be non-empty and strictly increasing")
+            }
+            Self::UnknownClass { index, value } => write!(
+                f,
+                "expected label at index {index} is {value}, which has no probability column"
+            ),
             Self::Undefined => f.write_str("metric is undefined for these observations"),
         }
     }
