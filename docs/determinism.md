@@ -47,8 +47,8 @@ same *kind* of reason it is unavoidable: its gradient is `y - sigmoid(raw)`, so 
 one-ulp libm difference at any iteration changes the next tree's leaf values and
 can change a split. Its squared-error sibling stays tier 1 — the two share a
 grower, and only the objective evaluates a transcendental. Its fitted bytes are
-frozen in `tests/artifact_fingerprints.rs`, so the same green-`main` argument
-covers it.
+**no longer frozen** — see "What establishes each claim" below for what that
+does and does not still guarantee.
 
 **Tier 3 — per runner only.** Wall-clock timings, throughput, and every
 `dev-docs/bench/` number. These are a property of one registered machine and
@@ -134,34 +134,44 @@ bytes agree today.
 
 ## What establishes each claim
 
-`tests/artifact_fingerprints.rs` freezes the exact length and SHA-256 digest of
-one fitted artifact per estimator. It runs inside `cargo test`, so it executes
-in two places:
+**Artifact fingerprints are unfrozen while the library shape settles** (user
+decision, 2026-07-25). `tests/artifact_fingerprints.rs` previously pinned an
+exact length and SHA-256 digest per estimator; it now asserts only that
+encoding a fitted model twice yields identical bytes. FerricML is pre-1.0 with
+no users, and a byte-stability promise to nobody constrains the format while
+biasing the design toward whatever is cheap not to change.
 
-- **`x86_64-unknown-linux-gnu`**, where CI runs `make gate-full` on
-  `ubuntu-latest` for every push and pull request; and
-- **`aarch64-apple-darwin`**, the registered local runner, on every `make gate`.
+**What that changed, stated plainly.** A pinned digest was doing two jobs, and
+only one of them was the promise being retired. It also served as the
+*cross-platform* channel: the same constant was checked on
+`x86_64-unknown-linux-gnu` (CI, `make gate-full` on every push) and on
+`aarch64-apple-darwin` (the registered local runner, every `make gate`), so a
+green `main` was itself the evidence that both platforms produced identical
+bytes. Nothing else compares the two, because no single test run sees both.
 
-A green `main` therefore *is* the cross-platform evidence, for every estimator
-that test covers: linear, ridge, standard scaler, all three scaler pipelines,
-the pairwise ranker, both histogram-boosted estimators, the forest regressor and
-classifier, and the staged pipeline. Every tier 2 estimator is covered — the
-pairwise ranker and the logistic pipeline each contain a fitted logistic model,
-and the boosted classifier is fingerprinted directly, so libm differences would
-show up as a digest mismatch.
+So today:
 
-Two gaps are worth naming rather than glossing:
+- **Still established:** determinism on one machine — same data, parameters,
+  seed and thread count produce identical bytes, asserted directly. Canonicity
+  and round-tripping, in `tests/artifact_hardening.rs`. Numerical agreement
+  with the reference, in `tests/reference_semantics.rs`, which is
+  platform-sensitive in its own right and would catch gross divergence.
+- **No longer established:** that a tier 2 estimator's fitted bytes are
+  *byte-identical across platforms*. Tier 1's argument is unaffected — it rests
+  on IEEE-754 arithmetic and fixed evaluation order, not on a test. Tier 2's
+  rested on the fingerprint, and now rests on reasoning alone until the
+  fingerprints return.
+
+Two gaps predating this decision, still open:
 
 1. **No third platform is tested.** `x86_64-apple-darwin`,
    `aarch64-unknown-linux-gnu`, Windows, and every 32-bit target are unverified.
-   Tier 1's reasoning covers them; tier 2's does not, and no promise is made.
-2. **A standalone `LogisticRegression` artifact has no frozen fingerprint**,
-   only the two nested ones. The fitting path is identical, so the coverage is
-   real, but the direct assertion is missing.
+2. **A standalone `LogisticRegression` artifact was never fingerprinted
+   directly**, only the two nested ones.
 
-Neither gap is closed by this document. Closing the first means adding a
-platform to the CI matrix; closing the second means one more entry in the
-fingerprint test.
+Re-freezing is the intended end state, not an abandoned idea: when the API and
+feature set settle, restoring the digests is one test run per estimator, and it
+restores the cross-platform evidence with them.
 
 ## What a caller may rely on
 
