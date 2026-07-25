@@ -6,6 +6,7 @@ use super::{BoostingError, MAX_BINS, MAX_TREE_LEAVES, MAX_TREE_NODES};
 use crate::loss::{
     Objective, constant_hessian_total, negative_gradient_sum, newton_leaf_value, newton_split_score,
 };
+use crate::numeric::sum_in_order;
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub(crate) struct GrowConfig {
@@ -64,13 +65,20 @@ struct SplitCandidate {
 /// why this function's error variants keep that name.
 ///
 /// `O` must declare a constant hessian: the split search carries one histogram
-/// of gradient sums plus a row count, and a per-sample hessian cannot be
-/// recovered from a count. That is a compile-time requirement, not a runtime
+/// of gradient sums plus a weight total, and a per-sample hessian cannot be
+/// recovered from either. That is a compile-time requirement, not a runtime
 /// check.
+///
+/// A sample weight scales that row's gradient and its share of every weight
+/// total, so the minimum leaf size counts weight rather than rows. That is what
+/// makes an integer weight the same tree as repeating the row. The bin grid is
+/// **not** weighted: it is fitted from the observed feature values, which
+/// repeating a row does not change either.
 pub(crate) fn grow_tree<O: Objective>(
     binned: &BinnedMatrix,
     binner: &Binner,
     negative_gradients: &[f32],
+    sample_weights: Option<&[f32]>,
     config: GrowConfig,
 ) -> Result<CompactTree, BoostingError> {
     config.validate()?;
@@ -93,13 +101,31 @@ pub(crate) fn grow_tree<O: Objective>(
         });
     }
 
+    if let Some(weights) = sample_weights
+        && weights.len() != binned.rows()
+    {
+        return Err(BoostingError::ResidualLength {
+            rows: binned.rows(),
+            residuals: weights.len(),
+        });
+    }
+
     let root_samples = (0..binned.rows()).collect::<Vec<_>>();
-    let root_value = leaf_value::<O>(&root_samples, negative_gradients, config.l2_regularization);
+    let root_weight = weight_total(&root_samples, sample_weights);
+    let root_value = leaf_value::<O>(
+        &root_samples,
+        negative_gradients,
+        sample_weights,
+        root_weight,
+        config.l2_regularization,
+    );
     let mut workspace = SplitWorkspace::new();
     let root_candidate = best_split::<O>(
         binned,
         negative_gradients,
+        sample_weights,
         &root_samples,
+        root_weight,
         config,
         &mut workspace,
     );
@@ -154,20 +180,34 @@ pub(crate) fn grow_tree<O: Objective>(
                 right_samples.push(sample);
             }
         }
-        debug_assert!(left_samples.len() >= config.min_samples_leaf);
-        debug_assert!(right_samples.len() >= config.min_samples_leaf);
+        let left_weight = weight_total(&left_samples, sample_weights);
+        let right_weight = weight_total(&right_samples, sample_weights);
+        debug_assert!(left_weight >= config.min_samples_leaf as f64);
+        debug_assert!(right_weight >= config.min_samples_leaf as f64);
         let depth = nodes[node_index].depth + 1;
         let left = nodes.len();
         let right = left + 1;
-        let left_value =
-            leaf_value::<O>(&left_samples, negative_gradients, config.l2_regularization);
-        let right_value =
-            leaf_value::<O>(&right_samples, negative_gradients, config.l2_regularization);
+        let left_value = leaf_value::<O>(
+            &left_samples,
+            negative_gradients,
+            sample_weights,
+            left_weight,
+            config.l2_regularization,
+        );
+        let right_value = leaf_value::<O>(
+            &right_samples,
+            negative_gradients,
+            sample_weights,
+            right_weight,
+            config.l2_regularization,
+        );
         let left_candidate = if config.max_depth.is_none_or(|max_depth| depth < max_depth) {
             best_split::<O>(
                 binned,
                 negative_gradients,
+                sample_weights,
                 &left_samples,
+                left_weight,
                 config,
                 &mut workspace,
             )
@@ -178,7 +218,9 @@ pub(crate) fn grow_tree<O: Objective>(
             best_split::<O>(
                 binned,
                 negative_gradients,
+                sample_weights,
                 &right_samples,
+                right_weight,
                 config,
                 &mut workspace,
             )
@@ -214,15 +256,17 @@ pub(crate) fn grow_tree<O: Objective>(
 fn best_split<O: Objective>(
     binned: &BinnedMatrix,
     negative_gradients: &[f32],
+    sample_weights: Option<&[f32]>,
     samples: &[usize],
+    total_weight: f64,
     config: GrowConfig,
     workspace: &mut SplitWorkspace,
 ) -> Option<SplitCandidate> {
-    if samples.len() < config.min_samples_leaf.checked_mul(2)? {
+    if total_weight < config.min_samples_leaf.checked_mul(2)? as f64 {
         return None;
     }
-    let total_sum = negative_gradient_sum(samples, negative_gradients);
-    let parent_score = score::<O>(total_sum, samples.len(), config.l2_regularization);
+    let total_sum = negative_gradient_sum(samples, negative_gradients, sample_weights);
+    let parent_score = score::<O>(total_sum, total_weight, config.l2_regularization);
     let mut best = None;
     for feature in 0..binned.columns() {
         let max_bin = samples
@@ -238,28 +282,45 @@ fn best_split<O: Objective>(
             continue;
         }
         let bin_count = usize::from(max_bin) + 1;
-        let (counts, sums) = workspace.reset(bin_count);
-        for &sample in samples {
-            let bin = usize::from(
-                binned
-                    .get(sample, feature)
-                    .expect("validated binned sample"),
-            );
-            counts[bin] += 1;
-            sums[bin] += f64::from(negative_gradients[sample]);
+        let (bin_weights, sums) = workspace.reset(bin_count);
+        match sample_weights {
+            None => {
+                for &sample in samples {
+                    let bin = usize::from(
+                        binned
+                            .get(sample, feature)
+                            .expect("validated binned sample"),
+                    );
+                    bin_weights[bin] += 1.0;
+                    sums[bin] += f64::from(negative_gradients[sample]);
+                }
+            }
+            Some(weights) => {
+                for &sample in samples {
+                    let bin = usize::from(
+                        binned
+                            .get(sample, feature)
+                            .expect("validated binned sample"),
+                    );
+                    let weight = f64::from(weights[sample]);
+                    bin_weights[bin] += weight;
+                    sums[bin] += weight * f64::from(negative_gradients[sample]);
+                }
+            }
         }
-        let mut left_count = 0_usize;
+        let mut left_weight = 0.0_f64;
         let mut left_sum = 0.0_f64;
+        let minimum = config.min_samples_leaf as f64;
         for threshold in 0..bin_count - 1 {
-            left_count += counts[threshold];
+            left_weight += bin_weights[threshold];
             left_sum += sums[threshold];
-            let right_count = samples.len() - left_count;
-            if left_count < config.min_samples_leaf || right_count < config.min_samples_leaf {
+            let right_weight = total_weight - left_weight;
+            if left_weight < minimum || right_weight < minimum {
                 continue;
             }
             let right_sum = total_sum - left_sum;
-            let gain = score::<O>(left_sum, left_count, config.l2_regularization)
-                + score::<O>(right_sum, right_count, config.l2_regularization)
+            let gain = score::<O>(left_sum, left_weight, config.l2_regularization)
+                + score::<O>(right_sum, right_weight, config.l2_regularization)
                 - parent_score;
             if gain > 0.0
                 && best
@@ -278,40 +339,54 @@ fn best_split<O: Objective>(
 }
 
 struct SplitWorkspace {
-    counts: Vec<usize>,
+    /// Total sample weight per bin; a plain count when unweighted.
+    bin_weights: Vec<f64>,
     sums: Vec<f64>,
 }
 
 impl SplitWorkspace {
     fn new() -> Self {
         Self {
-            counts: vec![0; MAX_BINS],
+            bin_weights: vec![0.0; MAX_BINS],
             sums: vec![0.0; MAX_BINS],
         }
     }
 
-    fn reset(&mut self, bin_count: usize) -> (&mut [usize], &mut [f64]) {
+    fn reset(&mut self, bin_count: usize) -> (&mut [f64], &mut [f64]) {
         debug_assert!(bin_count <= MAX_BINS);
-        let counts = &mut self.counts[..bin_count];
+        let bin_weights = &mut self.bin_weights[..bin_count];
         let sums = &mut self.sums[..bin_count];
-        counts.fill(0);
+        bin_weights.fill(0.0);
         sums.fill(0.0);
-        (counts, sums)
+        (bin_weights, sums)
     }
 }
 
-fn score<O: Objective>(sum: f64, count: usize, l2_regularization: f32) -> f64 {
-    newton_split_score(sum, constant_hessian_total::<O>(count), l2_regularization)
+/// Total sample weight of one node.
+///
+/// Unweighted this is the row count, produced without a pass over the samples,
+/// so an unweighted fit computes exactly the quantity it always did.
+fn weight_total(samples: &[usize], sample_weights: Option<&[f32]>) -> f64 {
+    match sample_weights {
+        None => samples.len() as f64,
+        Some(weights) => sum_in_order(samples.iter().map(|&sample| f64::from(weights[sample]))),
+    }
+}
+
+fn score<O: Objective>(sum: f64, weight: f64, l2_regularization: f32) -> f64 {
+    newton_split_score(sum, constant_hessian_total::<O>(weight), l2_regularization)
 }
 
 fn leaf_value<O: Objective>(
     samples: &[usize],
     negative_gradients: &[f32],
+    sample_weights: Option<&[f32]>,
+    weight: f64,
     l2_regularization: f32,
 ) -> f32 {
     newton_leaf_value(
-        negative_gradient_sum(samples, negative_gradients),
-        constant_hessian_total::<O>(samples.len()),
+        negative_gradient_sum(samples, negative_gradients, sample_weights),
+        constant_hessian_total::<O>(weight),
         l2_regularization,
     )
 }
@@ -377,8 +452,10 @@ mod tests {
         let binner = Binner::fit(&data.as_view(), 8).unwrap();
         let binned = binner.transform(&data.as_view()).unwrap();
         let residuals = [-2.0, -2.0, -2.0, -2.0, 3.0, 3.0, 3.0, 3.0];
-        let first = grow_tree::<SquaredError>(&binned, &binner, &residuals, config()).unwrap();
-        let second = grow_tree::<SquaredError>(&binned, &binner, &residuals, config()).unwrap();
+        let first =
+            grow_tree::<SquaredError>(&binned, &binner, &residuals, None, config()).unwrap();
+        let second =
+            grow_tree::<SquaredError>(&binned, &binner, &residuals, None, config()).unwrap();
         assert_eq!(first, second);
         assert_eq!(first.nodes().len(), 3);
         assert_eq!(first.predict_one(&[0.0]), -2.0);
@@ -403,6 +480,7 @@ mod tests {
             &binned,
             &binner,
             &[-1.0, -1.0, 1.0, 1.0],
+            None,
             GrowConfig {
                 max_leaf_nodes: 2,
                 ..config()
@@ -425,6 +503,7 @@ mod tests {
             &binned,
             &binner,
             &residuals,
+            None,
             GrowConfig {
                 max_leaf_nodes: 8,
                 max_depth: Some(1),
@@ -444,7 +523,7 @@ mod tests {
         let binner = Binner::fit(&data.as_view(), 4).unwrap();
         let binned = binner.transform(&data.as_view()).unwrap();
         assert_eq!(
-            grow_tree::<SquaredError>(&binned, &binner, &[1.0], config()),
+            grow_tree::<SquaredError>(&binned, &binner, &[1.0], None, config()),
             Err(BoostingError::ResidualLength {
                 rows: 8,
                 residuals: 1
@@ -453,7 +532,7 @@ mod tests {
         let mut residuals = [0.0; 8];
         residuals[3] = f32::NAN;
         assert_eq!(
-            grow_tree::<SquaredError>(&binned, &binner, &residuals, config()),
+            grow_tree::<SquaredError>(&binned, &binner, &residuals, None, config()),
             Err(BoostingError::NonFiniteResidual { index: 3 })
         );
         assert_eq!(
@@ -461,6 +540,7 @@ mod tests {
                 &binned,
                 &binner,
                 &[0.0; 8],
+                None,
                 GrowConfig {
                     max_leaf_nodes: 1,
                     ..config()

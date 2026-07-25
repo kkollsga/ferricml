@@ -60,7 +60,10 @@ fn range_scalers_declare_persistence_but_not_weighted_fitting() {
 #[test]
 fn tree_ensembles_declare_weighted_fitting_and_persistence() {
     assert_eq!(RandomForestRegressor::CAPABILITIES, WEIGHTED_AND_PERSISTED);
-    assert_eq!(HistGradientBoostingRegressor::CAPABILITIES, PERSISTED_ONLY);
+    assert_eq!(
+        HistGradientBoostingRegressor::CAPABILITIES,
+        WEIGHTED_AND_PERSISTED
+    );
 }
 
 #[test]

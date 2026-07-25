@@ -218,6 +218,13 @@ and releases use [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   many times, and a weight of zero removes the row — including from the
   bootstrap resample, which draws only among positively weighted rows. Both
   forests now declare `sample_weights` in their capability descriptor.
+- `HistGradientBoostingRegressor::fit_weighted`. A weight scales the row's
+  gradient and its share of every node's weight total, so the baseline is a
+  weighted mean and the minimum leaf size counts weight rather than rows.
+  Weights of exactly one reproduce the unweighted fit bit for bit, and an
+  integer weight is the same fit as repeating the row. The bin grid stays
+  unweighted: it is fitted from the distinct observed feature values, which
+  neither a weight nor a repeated row changes.
 
 ### Changed
 

@@ -14,31 +14,47 @@ use crate::numeric::sum_in_order;
 /// The reduction visits `samples` in the order the caller holds them, which is
 /// ascending row order for a freshly split node, and widens each `f32` term
 /// under rule 1 of the accumulation policy in [`crate::numeric`].
+///
+/// A sample weight scales that sample's gradient, which is what makes a weight
+/// of `k` the same contribution as `k` copies of the row. The unweighted arm is
+/// separate rather than a weight of one, so an unweighted fit performs exactly
+/// the multiplications it always did.
 #[inline]
-pub(crate) fn negative_gradient_sum(samples: &[usize], negative_gradients: &[f32]) -> f64 {
-    sum_in_order(
-        samples
-            .iter()
-            .map(|&sample| f64::from(negative_gradients[sample])),
-    )
+pub(crate) fn negative_gradient_sum(
+    samples: &[usize],
+    negative_gradients: &[f32],
+    sample_weights: Option<&[f32]>,
+) -> f64 {
+    match sample_weights {
+        None => sum_in_order(
+            samples
+                .iter()
+                .map(|&sample| f64::from(negative_gradients[sample])),
+        ),
+        Some(weights) => sum_in_order(
+            samples
+                .iter()
+                .map(|&sample| f64::from(weights[sample]) * f64::from(negative_gradients[sample])),
+        ),
+    }
 }
 
-/// Total hessian of `rows` samples of a constant-hessian objective.
+/// Total hessian of samples carrying `weight` in total.
 ///
-/// A constant hessian is exactly the property that lets a grower carry a row
-/// count where a general objective would have to carry a second per-sample
-/// histogram. The constant is read from the objective rather than assumed, so
-/// an objective that scales its loss differently scales the leaf denominator
-/// with it.
-pub(crate) fn constant_hessian_total<O: Objective>(rows: usize) -> f64 {
+/// A constant hessian is exactly the property that lets a grower carry one
+/// weight total where a general objective would have to carry a second
+/// per-sample histogram. The constant is read from the objective rather than
+/// assumed, so an objective that scales its loss differently scales the leaf
+/// denominator with it. Unweighted, `weight` is the node's row count.
+pub(crate) fn constant_hessian_total<O: Objective>(weight: f64) -> f64 {
     const {
         assert!(
             O::CONSTANT_HESSIAN,
-            "a per-sample hessian cannot be recovered from a row count"
+            "a per-sample hessian cannot be recovered from a weight total"
         );
     }
     // Any point evaluates the same, the hessian being constant by declaration.
-    rows as f64 * O::hessian(0.0, 0.0)
+    weight * O::hessian(0.0, 0.0)
 }
 
 /// Newton-optimal constant prediction for one leaf.
@@ -76,11 +92,11 @@ mod tests {
     use crate::loss::SquaredError;
 
     #[test]
-    fn a_constant_hessian_total_is_the_row_count_for_squared_error() {
-        for rows in [0_usize, 1, 7, 1_000_000] {
+    fn a_constant_hessian_total_is_the_weight_total_for_squared_error() {
+        for weight in [0.0_f64, 1.0, 7.0, 1_000_000.0, 2.5] {
             assert_eq!(
-                constant_hessian_total::<SquaredError>(rows).to_bits(),
-                (rows as f64).to_bits()
+                constant_hessian_total::<SquaredError>(weight).to_bits(),
+                weight.to_bits()
             );
         }
     }
@@ -89,9 +105,9 @@ mod tests {
     fn the_leaf_value_is_the_regularized_mean_of_the_negative_gradients() {
         let negative_gradients = [2.0_f32, 4.0, -3.0, 9.0];
         let samples = [0_usize, 1, 2];
-        let sum = negative_gradient_sum(&samples, &negative_gradients);
+        let sum = negative_gradient_sum(&samples, &negative_gradients, None);
         assert_eq!(sum, 3.0);
-        let total = constant_hessian_total::<SquaredError>(samples.len());
+        let total = constant_hessian_total::<SquaredError>(samples.len() as f64);
         assert_eq!(newton_leaf_value(sum, total, 0.0), 1.0);
         assert_eq!(newton_leaf_value(sum, total, 3.0), 0.5);
     }
@@ -100,8 +116,8 @@ mod tests {
     fn an_exactly_balanced_leaf_keeps_a_positively_signed_zero() {
         let negative_gradients = [1.5_f32, -1.5];
         let samples = [0_usize, 1];
-        let sum = negative_gradient_sum(&samples, &negative_gradients);
-        let value = newton_leaf_value(sum, constant_hessian_total::<SquaredError>(2), 0.0);
+        let sum = negative_gradient_sum(&samples, &negative_gradients, None);
+        let value = newton_leaf_value(sum, constant_hessian_total::<SquaredError>(2.0), 0.0);
         assert_eq!(value, 0.0);
         assert!(value.is_sign_positive());
     }
@@ -114,8 +130,8 @@ mod tests {
         let right = [2_usize, 3];
         let score = |samples: &[usize]| {
             newton_split_score(
-                negative_gradient_sum(samples, &negative_gradients),
-                constant_hessian_total::<SquaredError>(samples.len()),
+                negative_gradient_sum(samples, &negative_gradients, None),
+                constant_hessian_total::<SquaredError>(samples.len() as f64),
                 0.0,
             )
         };
@@ -125,20 +141,43 @@ mod tests {
         let uniform = [1.0_f32, 1.0, 1.0, 1.0];
         let flat = |samples: &[usize]| {
             newton_split_score(
-                negative_gradient_sum(samples, &uniform),
-                constant_hessian_total::<SquaredError>(samples.len()),
+                negative_gradient_sum(samples, &uniform, None),
+                constant_hessian_total::<SquaredError>(samples.len() as f64),
                 0.0,
             )
         };
         assert_eq!(flat(&left) + flat(&right), flat(&all));
     }
 
+    /// A weight of `k` contributes exactly what `k` copies of the row do, and
+    /// unit weights leave every bit of the unweighted reduction alone.
+    #[test]
+    fn a_sample_weight_scales_a_gradient_like_repeating_its_row() {
+        let negative_gradients = [2.0_f32, 4.0, -3.0];
+        let samples = [0_usize, 1, 2];
+        let unweighted = negative_gradient_sum(&samples, &negative_gradients, None);
+        assert_eq!(
+            negative_gradient_sum(&samples, &negative_gradients, Some(&[1.0, 1.0, 1.0])).to_bits(),
+            unweighted.to_bits()
+        );
+
+        let repeated = [0_usize, 1, 1, 1, 2];
+        assert_eq!(
+            negative_gradient_sum(&samples, &negative_gradients, Some(&[1.0, 3.0, 1.0])),
+            negative_gradient_sum(&repeated, &negative_gradients, None)
+        );
+        assert_eq!(
+            negative_gradient_sum(&samples, &negative_gradients, Some(&[1.0, 0.0, 1.0])),
+            negative_gradient_sum(&[0_usize, 2], &negative_gradients, None)
+        );
+    }
+
     #[test]
     fn regularization_shrinks_a_leaf_toward_zero_without_changing_its_sign() {
         let negative_gradients = [-6.0_f32, -6.0];
         let samples = [0_usize, 1];
-        let sum = negative_gradient_sum(&samples, &negative_gradients);
-        let total = constant_hessian_total::<SquaredError>(samples.len());
+        let sum = negative_gradient_sum(&samples, &negative_gradients, None);
+        let total = constant_hessian_total::<SquaredError>(samples.len() as f64);
         let plain = newton_leaf_value(sum, total, 0.0);
         let shrunk = newton_leaf_value(sum, total, 2.0);
         assert!(shrunk > plain && shrunk < 0.0);

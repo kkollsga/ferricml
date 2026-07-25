@@ -623,6 +623,7 @@ pub struct ferricml::ensemble::HistGradientBoostingRegressor
 impl ferricml::ensemble::HistGradientBoostingRegressor
 pub const fn ferricml::ensemble::HistGradientBoostingRegressor::baseline(&self) -> f32
 pub fn ferricml::ensemble::HistGradientBoostingRegressor::fit(&ferricml::data::MatrixView<'_>, &ferricml::data::RegressionTargets, ferricml::ensemble::HistGradientBoostingRegressorParams) -> core::result::Result<Self, ferricml::api::ModelError>
+pub fn ferricml::ensemble::HistGradientBoostingRegressor::fit_weighted(&ferricml::data::MatrixView<'_>, &ferricml::data::RegressionTargets, &ferricml::data::SampleWeights, ferricml::ensemble::HistGradientBoostingRegressorParams) -> core::result::Result<Self, ferricml::api::ModelError>
 pub fn ferricml::ensemble::HistGradientBoostingRegressor::from_artifact(&[u8], [u8; 32]) -> core::result::Result<Self, ferricml::artifact::ArtifactError>
 pub const fn ferricml::ensemble::HistGradientBoostingRegressor::get_params(&self) -> &ferricml::ensemble::HistGradientBoostingRegressorParams
 pub const fn ferricml::ensemble::HistGradientBoostingRegressor::n_features_in(&self) -> usize

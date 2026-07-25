@@ -356,6 +356,17 @@ impl RegressorCase for HistGradientBoostingRegressorCase {
         HistGradientBoostingRegressor::fit(data, values, boosting_params()).expect("fit")
     }
 
+    fn fit_weighted(
+        data: &MatrixView<'_>,
+        values: &RegressionTargets,
+        weights: &SampleWeights,
+    ) -> Option<Self::Model> {
+        Some(
+            HistGradientBoostingRegressor::fit_weighted(data, values, weights, boosting_params())
+                .expect("weighted fit"),
+        )
+    }
+
     fn round_trip(model: &Self::Model) -> RoundTrip<Self::Model> {
         round_trip(
             || model.to_artifact(SCHEMA),

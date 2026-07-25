@@ -16,7 +16,7 @@ use crate::artifact::{
     MIN_ENCODED_TREE_BYTES, SchemaRole, decode_component, decode_logical_tree, decode_v2_envelope,
     encode_component, encode_logical_tree, encode_v2_envelope,
 };
-use crate::data::{MatrixView, RegressionTargets};
+use crate::data::{MatrixView, RegressionTargets, SampleWeights};
 use crate::loss::{Objective, SquaredError};
 use crate::numeric::sum_in_order;
 
@@ -159,11 +159,55 @@ impl HistGradientBoostingRegressor {
         targets: &RegressionTargets,
         params: HistGradientBoostingRegressorParams,
     ) -> Result<Self, ModelError> {
-        validate_fit(data, targets, &params)?;
+        Self::fit_internal(data, targets, None, params)
+    }
+
+    /// Fits with per-row sample weights.
+    ///
+    /// A weight scales the row's gradient and its share of every node's weight
+    /// total, so the baseline is a weighted mean and the minimum leaf size
+    /// counts weight rather than rows. Weights of exactly one reproduce
+    /// [`Self::fit`] bit for bit, and an integer weight is the same fit as
+    /// repeating that row that many times.
+    ///
+    /// The bin grid is deliberately **not** weighted. It is fitted from the
+    /// distinct observed feature values, which neither a weight nor a repeated
+    /// row changes — which is precisely why repeating a row and weighting it
+    /// agree.
+    pub fn fit_weighted(
+        data: &MatrixView<'_>,
+        targets: &RegressionTargets,
+        sample_weights: &SampleWeights,
+        params: HistGradientBoostingRegressorParams,
+    ) -> Result<Self, ModelError> {
+        Self::fit_internal(data, targets, Some(sample_weights), params)
+    }
+
+    fn fit_internal(
+        data: &MatrixView<'_>,
+        targets: &RegressionTargets,
+        sample_weights: Option<&SampleWeights>,
+        params: HistGradientBoostingRegressorParams,
+    ) -> Result<Self, ModelError> {
+        validate_fit(data, targets, sample_weights, &params)?;
+        let weights = sample_weights.map(SampleWeights::as_slice);
         let binner = Binner::fit(data, params.max_bins).map_err(map_boosting_error)?;
         let binned = binner.transform(data).map_err(map_boosting_error)?;
-        let baseline = (sum_in_order(targets.as_slice().iter().map(|&target| f64::from(target)))
-            / targets.len() as f64) as f32;
+        let baseline = match sample_weights {
+            None => {
+                (sum_in_order(targets.as_slice().iter().map(|&target| f64::from(target)))
+                    / targets.len() as f64) as f32
+            }
+            Some(sample_weights) => {
+                (sum_in_order(
+                    targets
+                        .as_slice()
+                        .iter()
+                        .zip(sample_weights.as_slice())
+                        .map(|(&target, &weight)| f64::from(weight) * f64::from(target)),
+                ) / sample_weights.total()) as f32
+            }
+        };
         if !baseline.is_finite() {
             return Err(ModelError::NumericalOverflow);
         }
@@ -177,7 +221,7 @@ impl HistGradientBoostingRegressor {
             l2_regularization: params.l2_regularization,
         };
         for _ in 0..params.max_iter {
-            let tree = grow_tree::<SquaredError>(&binned, &binner, &residuals, config)
+            let tree = grow_tree::<SquaredError>(&binned, &binner, &residuals, weights, config)
                 .map_err(map_boosting_error)?;
             tree.add_predictions(data, params.learning_rate, &mut predictions);
             if predictions.iter().any(|value| !value.is_finite()) {
@@ -393,7 +437,9 @@ impl Estimator for HistGradientBoostingRegressor {
 }
 
 impl HasCapabilities for HistGradientBoostingRegressor {
-    const CAPABILITIES: Capabilities = Capabilities::NONE.with_artifact(true);
+    const CAPABILITIES: Capabilities = Capabilities::NONE
+        .with_sample_weights(true)
+        .with_artifact(true);
 }
 
 impl HasParams for HistGradientBoostingRegressor {
@@ -446,12 +492,21 @@ fn compute_residuals(targets: &[f32], predictions: &[f32]) -> Result<Vec<f32>, M
 fn validate_fit(
     data: &MatrixView<'_>,
     targets: &RegressionTargets,
+    sample_weights: Option<&SampleWeights>,
     params: &HistGradientBoostingRegressorParams,
 ) -> Result<(), ModelError> {
     if data.rows() != targets.len() {
         return Err(ModelError::TargetLength {
             rows: data.rows(),
             targets: targets.len(),
+        });
+    }
+    if let Some(sample_weights) = sample_weights
+        && data.rows() != sample_weights.len()
+    {
+        return Err(ModelError::SampleWeightLength {
+            rows: data.rows(),
+            weights: sample_weights.len(),
         });
     }
     validate_params(params)?;
@@ -547,6 +602,120 @@ mod tests {
             DenseMatrix::new((0..8).map(|value| value as f32).collect(), 8, 1).unwrap(),
             RegressionTargets::new(vec![0.0, 0.0, 0.0, 0.0, 4.0, 4.0, 4.0, 4.0]).unwrap(),
         )
+    }
+
+    /// Eight rows of distinct integer features and integer targets, so every
+    /// weighted accumulation over the fixture is exact and the equivalences
+    /// below can be asserted on artifact bytes rather than a tolerance.
+    fn weight_fixture() -> (DenseMatrix, Vec<f32>) {
+        (
+            DenseMatrix::new((0..8).map(|value| value as f32).collect(), 8, 1).unwrap(),
+            vec![0.0, 1.0, 2.0, 3.0, 8.0, 7.0, 6.0, 5.0],
+        )
+    }
+
+    fn weight_params() -> HistGradientBoostingRegressorParams {
+        HistGradientBoostingRegressorParams::default()
+            .with_max_iter(4)
+            .with_max_leaf_nodes(4)
+            .with_min_samples_leaf(1)
+            .with_max_bins(8)
+    }
+
+    #[test]
+    fn unit_weights_reproduce_the_unweighted_fit_bit_for_bit() {
+        let (data, values) = weight_fixture();
+        let targets = RegressionTargets::new(values).unwrap();
+        let ones = SampleWeights::new(vec![1.0; data.rows()]).unwrap();
+        let plain =
+            HistGradientBoostingRegressor::fit(&data.as_view(), &targets, weight_params()).unwrap();
+        let weighted = HistGradientBoostingRegressor::fit_weighted(
+            &data.as_view(),
+            &targets,
+            &ones,
+            weight_params(),
+        )
+        .unwrap();
+        assert_eq!(plain, weighted);
+        assert_eq!(
+            plain.to_artifact([5; 32]).unwrap(),
+            weighted.to_artifact([5; 32]).unwrap()
+        );
+    }
+
+    /// An integer weight is the same fit as repeating the row that many times.
+    ///
+    /// The bin grid survives the comparison because it is fitted from the
+    /// *distinct* observed values, which a repeated row does not change.
+    #[test]
+    fn an_integer_weight_is_the_same_fit_as_repeating_the_row() {
+        let (data, values) = weight_fixture();
+        let repeat = 5;
+        let times = 3;
+        let mut weights = vec![1.0_f32; values.len()];
+        weights[repeat] = times as f32;
+        let weighted = HistGradientBoostingRegressor::fit_weighted(
+            &data.as_view(),
+            &RegressionTargets::new(values.clone()).unwrap(),
+            &SampleWeights::new(weights).unwrap(),
+            weight_params(),
+        )
+        .unwrap();
+
+        let mut rows = Vec::new();
+        let mut repeated_values = Vec::new();
+        for (row, &value) in values.iter().enumerate() {
+            let copies = if row == repeat { times } else { 1 };
+            for _ in 0..copies {
+                rows.extend_from_slice(data.as_view().row(row).unwrap());
+                repeated_values.push(value);
+            }
+        }
+        let repeated_data = DenseMatrix::new(rows, repeated_values.len(), 1).unwrap();
+        let repeated = HistGradientBoostingRegressor::fit(
+            &repeated_data.as_view(),
+            &RegressionTargets::new(repeated_values).unwrap(),
+            weight_params(),
+        )
+        .unwrap();
+
+        assert_eq!(weighted.baseline(), repeated.baseline());
+        assert_eq!(
+            weighted.to_artifact([5; 32]).unwrap(),
+            repeated.to_artifact([5; 32]).unwrap()
+        );
+    }
+
+    #[test]
+    fn weighted_fitting_rejects_a_length_mismatch_and_is_not_inert() {
+        let (data, values) = weight_fixture();
+        let targets = RegressionTargets::new(values).unwrap();
+        assert_eq!(
+            HistGradientBoostingRegressor::fit_weighted(
+                &data.as_view(),
+                &targets,
+                &SampleWeights::new(vec![1.0; data.rows() - 1]).unwrap(),
+                weight_params(),
+            )
+            .unwrap_err(),
+            ModelError::SampleWeightLength {
+                rows: data.rows(),
+                weights: data.rows() - 1,
+            }
+        );
+
+        let mut skewed = vec![1.0_f32; data.rows()];
+        skewed[0] = 9.0;
+        let weighted = HistGradientBoostingRegressor::fit_weighted(
+            &data.as_view(),
+            &targets,
+            &SampleWeights::new(skewed).unwrap(),
+            weight_params(),
+        )
+        .unwrap();
+        let plain =
+            HistGradientBoostingRegressor::fit(&data.as_view(), &targets, weight_params()).unwrap();
+        assert_ne!(plain.baseline(), weighted.baseline());
     }
 
     fn one_tree_params() -> HistGradientBoostingRegressorParams {
