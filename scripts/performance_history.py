@@ -33,6 +33,21 @@ FERRICML_MODELS_SUITE = "ferricml-models-v2"
 FIT_LIMIT = 1.15
 INFERENCE_LIMIT = 1.10
 
+# Idle-aware comparability.  Two runs are judged against a 1.10/1.15 ratio
+# limit, so the machine states they were captured under have to be closer than
+# that limit or the comparison launders background load into a code verdict.
+# The recorded evidence is in dev-docs/plans/performance-gate-reliability.md
+# (G0 Finding 1): every recorded comparison at a gap of at most 0.47 points
+# stayed inside its limits, while both recorded `regression` verdicts came from
+# the two runs with the largest negative gap.  The reproduced false regression
+# sits at 5.57 points, and this runner's structural idle band is 86-90% — four
+# points wide — so the rule is: compare within the machine's idle regime and
+# refuse across it.
+IDLE_GAP_COMPARABLE = 1.0
+IDLE_GAP_MAX = 4.0
+IDLE_RATIO_PER_POINT = 0.01
+IDLE_BANDS = ("comparable", "widened", "favored", "not_comparable", "unknown")
+
 FIT = "forest_historical_fit_2048x64_20t/ferricml"
 INFERENCE = tuple(
     f"forest_historical_into_{rows}x64_100t/{operation}"
@@ -243,21 +258,95 @@ def load_history(
     return sorted(records, key=lambda item: version_key(item["version"]))
 
 
-def compare_one(
-    current: dict[str, Any], reference: dict[str, Any], reference_version: str, kind: str
+def idle_summary(record: dict[str, Any]) -> dict[str, Any] | None:
+    """Summarise a run's recorded idle evidence, or None when it has none."""
+    samples = (record.get("run") or {}).get("cpu_idle_percent_before")
+    if not isinstance(samples, list) or not samples:
+        return None
+    values = []
+    for sample in samples:
+        if isinstance(sample, bool) or not isinstance(sample, (int, float)):
+            return None
+        values.append(float(sample))
+    return {
+        "mean": sum(values) / len(values),
+        "min": min(values),
+        "samples": values,
+    }
+
+
+def comparability(
+    current_idle: dict[str, Any] | None, reference_idle: dict[str, Any] | None
 ) -> dict[str, Any]:
+    """Classify how comparable two runs' machine states were.
+
+    A negative gap means the current run was the noisier one, so its ratios are
+    inflated and the envelope is widened.  A positive gap means the current run
+    was the quieter one: the limits are *not* relaxed, because that direction
+    produces an optimistic pass rather than a false regression, and an
+    optimistic pass has to stay legible instead of being rewarded.
+    """
+    if current_idle is None or reference_idle is None:
+        return {
+            "band": "unknown",
+            "gap": None,
+            "limit_scale": 1.0,
+            "current_idle": current_idle,
+            "reference_idle": reference_idle,
+        }
+    gap = current_idle["mean"] - reference_idle["mean"]
+    distance = abs(gap)
+    scale = 1.0
+    if distance > IDLE_GAP_MAX:
+        band = "not_comparable"
+    elif distance > IDLE_GAP_COMPARABLE:
+        if gap < 0:
+            band = "widened"
+            scale = 1.0 + IDLE_RATIO_PER_POINT * (distance - IDLE_GAP_COMPARABLE)
+        else:
+            band = "favored"
+    else:
+        band = "comparable"
+    return {
+        "band": band,
+        "gap": gap,
+        "limit_scale": scale,
+        "current_idle": current_idle,
+        "reference_idle": reference_idle,
+    }
+
+
+def compare_one(
+    current: dict[str, Any],
+    reference: dict[str, Any],
+    reference_version: str,
+    kind: str,
+    comparable: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    comparable = comparable or comparability(None, None)
     current_metrics = current["metrics"]
     reference_metrics = reference["metrics"]
     shared = sorted(set(current_metrics) & set(reference_metrics))
     new_lanes = sorted(set(current_metrics) - set(reference_metrics))
     missing_lanes = sorted(set(reference_metrics) - set(current_metrics))
     ratios = {name: current_metrics[name] / reference_metrics[name] for name in shared}
-    failures = [
-        {"benchmark": name, "ratio": ratio, "limit": current["limits"][name]}
+    scale = comparable["limit_scale"]
+    limits = {name: limit * scale for name, limit in current["limits"].items()}
+    exceeded = [
+        {"benchmark": name, "ratio": ratio, "limit": limits[name]}
         for name, ratio in ratios.items()
-        if ratio > current["limits"][name]
+        if name in limits and ratio > limits[name]
     ]
-    if failures:
+    failures: list[dict[str, Any]] = exceeded
+    unexplained: list[dict[str, Any]] = []
+    if comparable["band"] == "not_comparable":
+        # The two machine states differ by more than the ratio limit they would
+        # be judged against, so neither a pass nor a regression is knowable.
+        # Say exactly that rather than picking whichever wrong answer the
+        # numbers happen to point at.
+        failures, unexplained = [], exceeded
+        status = "not_comparable"
+    elif failures:
         status = "regression"
     elif not shared or new_lanes or missing_lanes:
         status = "insufficient_history"
@@ -267,10 +356,12 @@ def compare_one(
         "kind": kind,
         "status": status,
         "reference_version": reference_version,
+        "comparability": comparable,
         "ratios": ratios,
         "new_lanes": new_lanes,
         "missing_lanes": missing_lanes,
         "failures": failures,
+        "unexplained_failures": unexplained,
     }
 
 
@@ -278,17 +369,24 @@ def comparisons(
     current: dict[str, Any], history_dir: Path, include_equal_version: bool = False
 ) -> dict[str, Any]:
     history = load_history(history_dir, current, include_equal_version)
+    current_idle = idle_summary(current)
     suite_results = {}
     for suite_name, current_suite in record_suites(current).items():
         compatible = []
         for candidate in history:
             candidate_suite = record_suites(candidate).get(suite_name)
             if candidate_suite and candidate_suite.get("protocol") == current_suite.get("protocol"):
-                compatible.append((candidate["version"], candidate_suite))
+                compatible.append(
+                    (candidate["version"], candidate_suite, idle_summary(candidate))
+                )
         if compatible:
-            reference_version, reference_suite = compatible[-1]
+            reference_version, reference_suite, reference_idle = compatible[-1]
             previous = compare_one(
-                current_suite, reference_suite, reference_version, "previous_release"
+                current_suite,
+                reference_suite,
+                reference_version,
+                "previous_release",
+                comparability(current_idle, reference_idle),
             )
         else:
             previous = {
@@ -297,12 +395,13 @@ def comparisons(
                 "reason": "no earlier compatible release exists for this runner and suite",
             }
         if len(compatible) >= 3:
-            reference_version, reference_suite = compatible[-3]
+            reference_version, reference_suite, reference_idle = compatible[-3]
             anchor = compare_one(
                 current_suite,
                 reference_suite,
                 reference_version,
                 "approximately_three_release_anchor",
+                comparability(current_idle, reference_idle),
             )
         else:
             anchor = {
@@ -322,6 +421,8 @@ def comparisons(
     ]
     if "regression" in statuses:
         verdict = "regression"
+    elif "not_comparable" in statuses:
+        verdict = "not_comparable"
     elif "insufficient_history" in statuses:
         verdict = "insufficient_history"
     else:
@@ -331,6 +432,44 @@ def comparisons(
         "suites": suite_results,
         "verdict": verdict,
     }
+
+
+def verdict_report(comparison: dict[str, Any]) -> list[str]:
+    """Explain a non-comparable verdict, naming both runs' idle evidence.
+
+    A `not_comparable` verdict means the tripwire did not run.  It is never
+    evidence that the tripwire passed, so the wording has to leave no room to
+    bank it as one.
+    """
+    lines = []
+    for suite_name, suite in comparison.get("suites", {}).items():
+        for key in ("previous_release", "anchor"):
+            result = suite.get(key, {})
+            if result.get("status") != "not_comparable":
+                continue
+            evidence = result["comparability"]
+            current, reference = evidence["current_idle"], evidence["reference_idle"]
+            lines.append(
+                f"not comparable: {suite_name} vs v{result['reference_version']} "
+                f"({result['kind']})"
+            )
+            lines.append(
+                f"  idle before this run: {current['samples']} (mean "
+                f"{current['mean']:.2f}%); reference: {reference['samples']} "
+                f"(mean {reference['mean']:.2f}%); gap {evidence['gap']:+.2f} points, "
+                f"limit {IDLE_GAP_MAX:.1f}"
+            )
+            for failure in result.get("unexplained_failures", []):
+                lines.append(
+                    f"  over limit but not attributable: {failure['benchmark']} "
+                    f"ratio {failure['ratio']:.4f} vs {failure['limit']:.4f}"
+                )
+            lines.append(
+                "  this is NOT a pass: the machine states differ by more than the "
+                "ratio limit they would be judged against, so neither a pass nor a "
+                "regression is knowable. Re-measure both points under one idle regime."
+            )
+    return lines
 
 
 def parse_model_metadata(console: str) -> dict[str, dict[str, Any]]:
@@ -493,6 +632,8 @@ def capture(args: argparse.Namespace) -> int:
     print(f"history verdict: {verdict}")
     if verdict == "insufficient_history":
         print("insufficient history is expected until prior and three-release anchors exist")
+    for line in verdict_report(record["comparison"]):
+        print(line)
     return 1 if verdict == "regression" and args.enforce else 0
 
 
@@ -503,6 +644,8 @@ def check(args: argparse.Namespace) -> int:
         summary, Path(args.history_dir).resolve(), include_equal_version=include_equal
     )
     print(json.dumps(result, indent=2, sort_keys=True))
+    for line in verdict_report(result):
+        print(line)
     return 1 if result["verdict"] == "regression" and args.enforce else 0
 
 
@@ -511,10 +654,11 @@ def fixture(
     fit: float = 100.0,
     inference: float = 100.0,
     include_models: bool = False,
+    idle: list[float] | None = None,
 ) -> dict[str, Any]:
     metrics = {FIT: fit}
     metrics.update({name: inference for name in INFERENCE})
-    record = {
+    record: dict[str, Any] = {
         "schema_version": 2,
         "version": version,
         "protocol": MULTI_SUITE_PROTOCOL,
@@ -527,6 +671,8 @@ def fixture(
             }
         },
     }
+    if idle is not None:
+        record["run"] = {"cpu_idle_percent_before": list(idle)}
     if include_models:
         model_metrics = {name: fit for name in MODEL_FIT}
         model_metrics.update({name: inference for name in MODEL_INFERENCE})
@@ -555,6 +701,99 @@ def legacy_models_fixture(version: str) -> dict[str, Any]:
     suite["protocol"] = "ferricml-models-v1"
     record["suites"]["ferricml-models-v1"] = suite
     return record
+
+
+# Every idle-comparability rule is proven to *fire* against a synthetic input,
+# not merely asserted to leave the live tree clean.  Reference metrics are
+# always 100.0, so `inference` is directly the ratio in percent.  Layout:
+# (label, expected band, current idle samples, reference idle samples,
+#  current inference metric, expected previous-release status).
+IDLE_CASES: tuple[tuple[str, str, list[float] | None, list[float] | None, float, str], ...] = (
+    # Matched machine states behave exactly as before this rule existed.
+    ("comparable_pass", "comparable", [92.0] * 3, [92.0] * 3, 109.9, "pass"),
+    ("comparable_regression", "comparable", [92.0] * 3, [92.0] * 3, 110.1, "regression"),
+    # The control for `widened_fires`: identical numbers, matched idle, fails.
+    ("widened_control", "comparable", [92.0] * 3, [92.0] * 3, 110.5, "regression"),
+    # Gap -2.0 widens the 1.10 limit to 1.111, so 1.105 now passes ...
+    ("widened_fires", "widened", [90.0] * 3, [92.0] * 3, 110.5, "pass"),
+    # ... but widening is bounded: 1.115 still exceeds it.
+    ("widened_bounded", "widened", [90.0] * 3, [92.0] * 3, 111.5, "regression"),
+    # A quieter current run is favoured, never relaxed: 1.105 still fails.
+    ("favored_never_relaxes", "favored", [94.0] * 3, [92.0] * 3, 110.5, "regression"),
+    # Beyond the maximum gap no verdict is knowable, in either direction.
+    ("not_comparable_downgrade", "not_comparable", [87.0] * 3, [92.0] * 3, 130.0, "not_comparable"),
+    ("not_comparable_symmetry", "not_comparable", [97.0] * 3, [92.0] * 3, 100.0, "not_comparable"),
+    # Missing evidence on either side keeps the pre-existing behaviour.
+    ("unknown_unchanged", "unknown", None, None, 110.1, "regression"),
+    ("unknown_one_sided", "unknown", [92.0] * 3, None, 110.1, "regression"),
+    # Band boundaries are pinned exactly: 1.0 still comparable, 4.0 still
+    # widened (gap -4.0 widens 1.10 to 1.133, so 1.130 passes).
+    ("boundary_comparable", "comparable", [91.0] * 3, [92.0] * 3, 110.1, "regression"),
+    ("boundary_widened", "widened", [88.0] * 3, [92.0] * 3, 113.0, "pass"),
+)
+
+
+def idle_case_result(
+    root: Path,
+    label: str,
+    current_idle: list[float] | None,
+    reference_idle: list[float] | None,
+    inference: float,
+) -> dict[str, Any]:
+    history = root / label
+    history.mkdir()
+    (history / "v0.1.0.json").write_text(json.dumps(fixture("0.1.0", idle=reference_idle)))
+    current = fixture("0.2.0", inference=inference, idle=current_idle)
+    return comparisons(current, history)
+
+
+def idle_self_test(root: Path) -> None:
+    covered = {band for _, band, _, _, _, _ in IDLE_CASES}
+    assert covered == set(IDLE_BANDS), (
+        f"every comparability band needs a synthetic case: "
+        f"missing={sorted(set(IDLE_BANDS) - covered)}, stale={sorted(covered - set(IDLE_BANDS))}"
+    )
+    for label, band, current_idle, reference_idle, inference, expected in IDLE_CASES:
+        result = idle_case_result(root, label, current_idle, reference_idle, inference)
+        previous = result["suites"]["forest-v1"]["previous_release"]
+        assert previous["comparability"]["band"] == band, (
+            f"{label}: expected band {band}, got {previous['comparability']['band']}"
+        )
+        assert previous["status"] == expected, (
+            f"{label}: expected status {expected}, got {previous['status']}"
+        )
+        if expected == "not_comparable":
+            # A non-comparable pair never reports a regression, and never
+            # silently swallows the lanes that were over limit either.
+            assert previous["failures"] == [], f"{label}: reported failures anyway"
+            assert result["verdict"] == "not_comparable", (
+                f"{label}: verdict {result['verdict']} outranked not_comparable"
+            )
+            assert verdict_report(result), f"{label}: produced no explanation"
+        if label == "not_comparable_downgrade":
+            assert previous["unexplained_failures"], (
+                "an over-limit lane must still be reported, just not as a regression"
+            )
+        if label == "not_comparable_symmetry":
+            assert not previous["unexplained_failures"], (
+                "a clean-looking comparison across the idle band is still refused"
+            )
+
+    # Gap sign convention: negative means the current run was the noisier one.
+    quiet, noisy = {"mean": 96.0, "min": 96.0, "samples": [96.0]}, {
+        "mean": 90.0,
+        "min": 90.0,
+        "samples": [90.0],
+    }
+    assert comparability(noisy, quiet)["gap"] < 0
+    assert comparability(quiet, noisy)["gap"] > 0
+    assert comparability(noisy, quiet)["limit_scale"] == 1.0, (
+        "beyond the maximum gap the widening model is out of range and must not apply"
+    )
+    assert idle_summary({"run": {"cpu_idle_percent_before": [90.0, 92.0]}})["mean"] == 91.0
+    assert idle_summary({}) is None
+    assert idle_summary({"run": {"cpu_idle_percent_before": []}}) is None
+    assert idle_summary({"run": {"cpu_idle_percent_before": ["90"]}}) is None
 
 
 def self_test() -> int:
@@ -651,9 +890,14 @@ def self_test() -> int:
         models = result["suites"][FERRICML_MODELS_SUITE]
         assert models["previous_release"]["status"] == "regression"
         assert models["anchor"]["status"] == "regression"
+
+        idle_root = Path(temporary) / "idle"
+        idle_root.mkdir()
+        idle_self_test(idle_root)
     print(
         "performance history self-test passed "
-        "(mixed protocols, missing/new lanes, prior, anchor, regression)"
+        "(mixed protocols, missing/new lanes, prior, anchor, regression, "
+        f"{len(IDLE_CASES)} idle-comparability cases over {len(IDLE_BANDS)} bands)"
     )
     return 0
 
