@@ -31,6 +31,7 @@ use ferricml::api::{AnyClassifier, AnyRegressor};
 use ferricml::artifact::ArtifactError;
 use ferricml::data::{BinaryTargets, ClassTargets, DenseMatrix, RegressionTargets};
 use ferricml::ensemble::{
+    HistGradientBoostingClassifier, HistGradientBoostingClassifierParams,
     HistGradientBoostingRegressor, HistGradientBoostingRegressorParams, MaxFeatures,
     RandomForestClassifier, RandomForestClassifierParams, RandomForestRegressor,
     RandomForestRegressorParams,
@@ -237,7 +238,13 @@ const INPUT_SCHEMA: [u8; 32] = [3; 32];
 const TRANSFORMED_SCHEMA: [u8; 32] = [4; 32];
 
 /// Every artifact kind the crate reads today, plus the neighbours it must not.
-const ARTIFACT_KINDS: [u16; 18] = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17];
+///
+/// `17`-`19` are reserved and unimplemented, and `0` is unassigned; keeping them
+/// in the sweep is what proves a decoder refuses a kind rather than merely
+/// missing one.
+const ARTIFACT_KINDS: [u16; 21] = [
+    0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20,
+];
 
 fn u16_at(bytes: &[u8], offset: usize) -> u16 {
     u16::from_le_bytes(bytes[offset..offset + 2].try_into().expect("two bytes"))
@@ -428,6 +435,12 @@ fn decoders() -> Vec<Decoder> {
                 |m| m.to_artifact(INPUT_SCHEMA),
             )
         }),
+        ("hist-gradient-boosting-classifier", |bytes| {
+            accepted(
+                HistGradientBoostingClassifier::from_artifact(bytes, INPUT_SCHEMA),
+                |m| m.to_artifact(INPUT_SCHEMA),
+            )
+        }),
         ("random-forest", |bytes| {
             accepted(
                 RandomForestRegressor::from_artifact(bytes, INPUT_SCHEMA),
@@ -590,6 +603,16 @@ fn seed_corpus() -> Vec<(&'static str, Vec<u8>)> {
             .with_max_bins(8),
     )
     .unwrap();
+    let boosting_classifier = HistGradientBoostingClassifier::fit(
+        &boosting_data.as_view(),
+        &BinaryTargets::new(vec![0, 0, 0, 0, 1, 1, 1, 1]).unwrap(),
+        HistGradientBoostingClassifierParams::default()
+            .with_max_iter(2)
+            .with_max_leaf_nodes(4)
+            .with_min_samples_leaf(1)
+            .with_max_bins(8),
+    )
+    .unwrap();
     let forest_classifier_params = RandomForestClassifierParams::default()
         .with_n_estimators(3)
         .with_max_depth(Some(4))
@@ -680,6 +703,10 @@ fn seed_corpus() -> Vec<(&'static str, Vec<u8>)> {
         ),
         ("pairwise-ranker", ranker.to_artifact(INPUT_SCHEMA).unwrap()),
         ("boosting", boosting.to_artifact(INPUT_SCHEMA).unwrap()),
+        (
+            "boosting-classifier",
+            boosting_classifier.to_artifact(INPUT_SCHEMA).unwrap(),
+        ),
         ("forest", forest.to_artifact(INPUT_SCHEMA).unwrap()),
         (
             "forest-classifier",
@@ -996,7 +1023,7 @@ fn perturb(rng: &mut Rng, fields: &mut [u32]) {
 fn synthesize(rng: &mut Rng) -> Vec<u8> {
     // Weighted towards the two tree-bearing kinds; the rest cover cross-kind
     // confusion, including kinds this build does not implement.
-    let kind = *rng.pick(&[9_u16, 9, 9, 10, 10, 10, 0, 1, 4, 11, 13, 16, 17]);
+    let kind = *rng.pick(&[9_u16, 9, 9, 10, 10, 10, 20, 20, 0, 1, 4, 11, 13, 16, 17, 19]);
     // Small widths keep generated feature indices inside the fitted width, so
     // the trees themselves are the variable rather than the metadata.
     let n_features = *rng.pick(&[1_u32, 1, 2, 3, 0, 1_000_001]);
@@ -1349,7 +1376,7 @@ fn valid_artifacts_decode_within_the_allocation_budget() {
         }
     }
     assert!(
-        reach.accepted >= 18,
+        reach.accepted >= 20,
         "only {} valid artifacts decoded",
         reach.accepted
     );
@@ -1411,9 +1438,14 @@ fn valid_forest_metadata(n_features: u32, trees: u32, nodes: u32) -> Vec<u8> {
 }
 
 /// Boosting metadata whose every field is the value a fitted model would write.
-fn valid_boosting_metadata(n_features: u32, trees: u32, nodes: u32) -> Vec<u8> {
+///
+/// `objective` is the first word and is the field that separates the two boosted
+/// estimators inside one payload shape: `1` is squared error, `2` binary log
+/// loss. Parameterising it is what lets the corpus state a crossed-objective
+/// case as bytes rather than as a comment.
+fn frozen_boosting_metadata(objective: u32, n_features: u32, trees: u32, nodes: u32) -> Vec<u8> {
     words(&[
-        1,
+        objective,
         n_features,
         0x3dcc_cccd,
         trees,
@@ -1426,6 +1458,15 @@ fn valid_boosting_metadata(n_features: u32, trees: u32, nodes: u32) -> Vec<u8> {
         trees,
         nodes,
     ])
+}
+
+fn valid_boosting_metadata(n_features: u32, trees: u32, nodes: u32) -> Vec<u8> {
+    frozen_boosting_metadata(1, n_features, trees, nodes)
+}
+
+/// The same twelve words a fitted boosted **classifier** writes.
+fn valid_boosting_classifier_metadata(n_features: u32, trees: u32, nodes: u32) -> Vec<u8> {
+    frozen_boosting_metadata(2, n_features, trees, nodes)
 }
 
 fn tree_component(records: &[[u32; 5]], leaves: u32, depth: u32) -> Vec<u8> {
@@ -1465,6 +1506,16 @@ fn boosting_with(records: &[[u32; 5]], leaves: u32, depth: u32) -> Vec<u8> {
     let mut payload = component(1, 1, &valid_boosting_metadata(1, 1, records.len() as u32));
     payload.extend_from_slice(&tree_component(records, leaves, depth));
     envelope(9, 1, &MODEL_ROLES, &payload)
+}
+
+fn boosting_classifier_with(records: &[[u32; 5]], leaves: u32, depth: u32) -> Vec<u8> {
+    let mut payload = component(
+        1,
+        1,
+        &valid_boosting_classifier_metadata(1, 1, records.len() as u32),
+    );
+    payload.extend_from_slice(&tree_component(records, leaves, depth));
+    envelope(20, 1, &MODEL_ROLES, &payload)
 }
 
 /// Copies `base` with `value` written at `offset`, resealing the footer.
@@ -1638,6 +1689,82 @@ fn corpus() -> Vec<Case> {
             decoder: "hist-gradient-boosting",
             expected: ArtifactError::InvalidPayload,
             bytes: boosting_with(&shuffled, 3, 2),
+        },
+        Case {
+            name: "boosting-classifier-non-canonical-preorder",
+            provenance: "the same layout against the boosted classifier",
+            decoder: "hist-gradient-boosting-classifier",
+            expected: ArtifactError::InvalidPayload,
+            bytes: boosting_classifier_with(&shuffled, 3, 2),
+        },
+    ]);
+
+    // The boosted classifier shares the regressor's payload shape, so its own
+    // cases are the ones the shape cannot express: the objective word that
+    // separates the two losses, and the fields a classifier reads differently.
+    let boosting_classifier = seed("boosting-classifier");
+    let (boosting_classifier_payload, _) =
+        payload_span(&boosting_classifier).expect("boosted classifier payload");
+    let boosting_classifier_metadata = boosting_classifier_payload + COMPONENT_HEADER_BYTES;
+    cases.extend([
+        Case {
+            name: "boosting-classifier-inflated-tree-count",
+            provenance: "4096 declared trees with no tree component encoded",
+            decoder: "hist-gradient-boosting-classifier",
+            expected: ArtifactError::Truncated,
+            bytes: envelope(
+                20,
+                1,
+                &MODEL_ROLES,
+                &component(1, 1, &valid_boosting_classifier_metadata(1, 4_096, 4_096)),
+            ),
+        },
+        Case {
+            name: "boosting-classifier-squared-error-objective",
+            provenance: "a fitted classifier claiming the regressor's objective under its own kind",
+            decoder: "hist-gradient-boosting-classifier",
+            expected: ArtifactError::InvalidPayload,
+            bytes: overwrite(
+                &boosting_classifier,
+                boosting_classifier_metadata,
+                &1_u32.to_le_bytes(),
+            ),
+        },
+        Case {
+            name: "boosting-classifier-relabelled-as-regressor",
+            provenance: "a fitted classifier payload under the regressor's estimator kind, which                          only the objective word refuses",
+            decoder: "hist-gradient-boosting",
+            expected: ArtifactError::InvalidPayload,
+            bytes: overwrite(&boosting_classifier, 10, &9_u16.to_le_bytes()),
+        },
+        Case {
+            name: "boosting-regressor-relabelled-as-classifier",
+            provenance: "the mirror image: a squared-error payload under the classifier's kind",
+            decoder: "hist-gradient-boosting-classifier",
+            expected: ArtifactError::InvalidPayload,
+            bytes: overwrite(&seed("boosting"), 10, &20_u16.to_le_bytes()),
+        },
+        Case {
+            name: "boosting-classifier-non-finite-baseline",
+            provenance: "a baseline log-odds of NaN, which no fitted model can hold",
+            decoder: "hist-gradient-boosting-classifier",
+            expected: ArtifactError::InvalidPayload,
+            bytes: overwrite(
+                &boosting_classifier,
+                boosting_classifier_metadata + 9 * 4,
+                &f32::NAN.to_bits().to_le_bytes(),
+            ),
+        },
+        Case {
+            name: "boosting-classifier-tree-count-past-max-iter",
+            provenance: "a tree count that disagrees with the iteration count it must equal",
+            decoder: "hist-gradient-boosting-classifier",
+            expected: ArtifactError::InvalidPayload,
+            bytes: overwrite(
+                &boosting_classifier,
+                boosting_classifier_metadata + 10 * 4,
+                &3_u32.to_le_bytes(),
+            ),
         },
     ]);
 
@@ -2343,7 +2470,7 @@ fn the_frozen_adversarial_corpus_decodes_exactly_as_recorded() {
         cases.len()
     );
     assert!(
-        cases.len() >= 40,
+        cases.len() >= 75,
         "the corpus shrank to {} cases",
         cases.len()
     );
