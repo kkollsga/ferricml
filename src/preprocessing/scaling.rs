@@ -11,7 +11,7 @@ use crate::artifact::{
     ArtifactCursor, ArtifactError, ArtifactPayloadWriter, MODEL_ARTIFACT_VERSION, SchemaRole,
     artifact_version, decode_component, decode_v2_envelope, encode_component, encode_v2_envelope,
 };
-use crate::data::MatrixView;
+use crate::data::{DenseMatrix, MatrixView};
 
 /// Feature count below which extrema are screened on the stack.
 const STACK_PREFLIGHT_FEATURES: usize = 256;
@@ -41,6 +41,45 @@ const STATE_COMPONENT_VERSION: u16 = 1;
 /// written. A magnitude threshold would instead silently decline to scale it.
 pub(super) fn substituted_divisor(spread: f64) -> f64 {
     if spread == 0.0 { 1.0 } else { spread }
+}
+
+/// Validates an inverse-transform request against the fitted width.
+///
+/// The scalers here all preserve width, so an inverse request has exactly the
+/// same shape obligations as a forward one; this exists so the *name* at the
+/// call site says which direction is being validated.
+pub(super) fn validate_inverse_request(
+    n_features_in: usize,
+    data: &MatrixView<'_>,
+    output: &[f32],
+) -> Result<usize, ModelError> {
+    validate_transform_request(n_features_in, data, output)
+}
+
+/// Allocates an inverse-transform output and fills it through `inverse`.
+///
+/// The width-preserving scalers all owe the same allocating convenience beside
+/// their caller-owned path, and the overflow check on the output length is the
+/// part worth stating once rather than four times.
+pub(super) fn inverse_transform_allocating(
+    n_features_in: usize,
+    data: &MatrixView<'_>,
+    inverse: impl FnOnce(&MatrixView<'_>, &mut [f32]) -> Result<(), ModelError>,
+) -> Result<DenseMatrix, ModelError> {
+    let len = data
+        .rows()
+        .checked_mul(n_features_in)
+        .ok_or(ModelError::OutputShapeOverflow {
+            rows: data.rows(),
+            columns: n_features_in,
+        })?;
+    let mut output = vec![0.0; len];
+    inverse(data, &mut output)?;
+    Ok(DenseMatrix::from_validated_parts(
+        output,
+        data.rows(),
+        n_features_in,
+    ))
 }
 
 /// Applies `transform` to every value after proving the batch cannot overflow.

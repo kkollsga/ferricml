@@ -105,6 +105,7 @@ pub ferricml::api::ModelError::MulticlassSystemTooLarge
 pub ferricml::api::ModelError::MulticlassSystemTooLarge::classes: usize
 pub ferricml::api::ModelError::MulticlassSystemTooLarge::features: usize
 pub ferricml::api::ModelError::MulticlassSystemTooLarge::limit: usize
+pub ferricml::api::ModelError::NoInverseFunction
 pub ferricml::api::ModelError::NonFiniteFeature
 pub ferricml::api::ModelError::NonFiniteFeature::column: usize
 pub ferricml::api::ModelError::NonFiniteFeature::row: usize
@@ -1763,6 +1764,8 @@ pub struct ferricml::preprocessing::FunctionTransformer
 impl ferricml::preprocessing::FunctionTransformer
 pub fn ferricml::preprocessing::FunctionTransformer::fit(&ferricml::data::MatrixView<'_>, ferricml::preprocessing::FunctionTransformerParams) -> core::result::Result<Self, ferricml::api::ModelError>
 pub const fn ferricml::preprocessing::FunctionTransformer::get_params(&self) -> &ferricml::preprocessing::FunctionTransformerParams
+pub fn ferricml::preprocessing::FunctionTransformer::inverse_transform(&self, &ferricml::data::MatrixView<'_>) -> core::result::Result<ferricml::data::DenseMatrix, ferricml::api::ModelError>
+pub fn ferricml::preprocessing::FunctionTransformer::inverse_transform_into<'output>(&self, &ferricml::data::MatrixView<'_>, &'output mut [f32]) -> core::result::Result<ferricml::data::MatrixView<'output>, ferricml::api::ModelError>
 pub const fn ferricml::preprocessing::FunctionTransformer::n_features_in(&self) -> usize
 pub const fn ferricml::preprocessing::FunctionTransformer::n_features_out(&self) -> usize
 pub fn ferricml::preprocessing::FunctionTransformer::transform(&self, &ferricml::data::MatrixView<'_>) -> core::result::Result<ferricml::data::DenseMatrix, ferricml::api::ModelError>
@@ -1791,6 +1794,8 @@ impl ferricml::preprocessing::MaxAbsScaler
 pub fn ferricml::preprocessing::MaxAbsScaler::fit(&ferricml::data::MatrixView<'_>, ferricml::preprocessing::MaxAbsScalerParams) -> core::result::Result<Self, ferricml::api::ModelError>
 pub fn ferricml::preprocessing::MaxAbsScaler::from_artifact(&[u8], [u8; 32], [u8; 32]) -> core::result::Result<Self, ferricml::artifact::ArtifactError>
 pub const fn ferricml::preprocessing::MaxAbsScaler::get_params(&self) -> &ferricml::preprocessing::MaxAbsScalerParams
+pub fn ferricml::preprocessing::MaxAbsScaler::inverse_transform(&self, &ferricml::data::MatrixView<'_>) -> core::result::Result<ferricml::data::DenseMatrix, ferricml::api::ModelError>
+pub fn ferricml::preprocessing::MaxAbsScaler::inverse_transform_into<'output>(&self, &ferricml::data::MatrixView<'_>, &'output mut [f32]) -> core::result::Result<ferricml::data::MatrixView<'output>, ferricml::api::ModelError>
 pub fn ferricml::preprocessing::MaxAbsScaler::max_abs(&self) -> &[f64]
 pub const fn ferricml::preprocessing::MaxAbsScaler::n_features_in(&self) -> usize
 pub const fn ferricml::preprocessing::MaxAbsScaler::n_features_out(&self) -> usize
@@ -1821,6 +1826,8 @@ pub fn ferricml::preprocessing::MinMaxScaler::data_min(&self) -> &[f64]
 pub fn ferricml::preprocessing::MinMaxScaler::fit(&ferricml::data::MatrixView<'_>, ferricml::preprocessing::MinMaxScalerParams) -> core::result::Result<Self, ferricml::api::ModelError>
 pub fn ferricml::preprocessing::MinMaxScaler::from_artifact(&[u8], [u8; 32], [u8; 32]) -> core::result::Result<Self, ferricml::artifact::ArtifactError>
 pub const fn ferricml::preprocessing::MinMaxScaler::get_params(&self) -> &ferricml::preprocessing::MinMaxScalerParams
+pub fn ferricml::preprocessing::MinMaxScaler::inverse_transform(&self, &ferricml::data::MatrixView<'_>) -> core::result::Result<ferricml::data::DenseMatrix, ferricml::api::ModelError>
+pub fn ferricml::preprocessing::MinMaxScaler::inverse_transform_into<'output>(&self, &ferricml::data::MatrixView<'_>, &'output mut [f32]) -> core::result::Result<ferricml::data::MatrixView<'output>, ferricml::api::ModelError>
 pub const fn ferricml::preprocessing::MinMaxScaler::n_features_in(&self) -> usize
 pub const fn ferricml::preprocessing::MinMaxScaler::n_features_out(&self) -> usize
 pub fn ferricml::preprocessing::MinMaxScaler::offsets(&self) -> &[f64]
@@ -1876,6 +1883,8 @@ pub fn ferricml::preprocessing::RobustScaler::centers(&self) -> &[f64]
 pub fn ferricml::preprocessing::RobustScaler::fit(&ferricml::data::MatrixView<'_>, ferricml::preprocessing::RobustScalerParams) -> core::result::Result<Self, ferricml::api::ModelError>
 pub fn ferricml::preprocessing::RobustScaler::from_artifact(&[u8], [u8; 32], [u8; 32]) -> core::result::Result<Self, ferricml::artifact::ArtifactError>
 pub const fn ferricml::preprocessing::RobustScaler::get_params(&self) -> &ferricml::preprocessing::RobustScalerParams
+pub fn ferricml::preprocessing::RobustScaler::inverse_transform(&self, &ferricml::data::MatrixView<'_>) -> core::result::Result<ferricml::data::DenseMatrix, ferricml::api::ModelError>
+pub fn ferricml::preprocessing::RobustScaler::inverse_transform_into<'output>(&self, &ferricml::data::MatrixView<'_>, &'output mut [f32]) -> core::result::Result<ferricml::data::MatrixView<'output>, ferricml::api::ModelError>
 pub const fn ferricml::preprocessing::RobustScaler::n_features_in(&self) -> usize
 pub const fn ferricml::preprocessing::RobustScaler::n_features_out(&self) -> usize
 pub fn ferricml::preprocessing::RobustScaler::scales(&self) -> &[f64]
@@ -1914,6 +1923,8 @@ pub fn ferricml::preprocessing::StandardScaler::fit(&ferricml::data::MatrixView<
 pub fn ferricml::preprocessing::StandardScaler::fit_weighted(&ferricml::data::MatrixView<'_>, &ferricml::data::SampleWeights, ferricml::preprocessing::StandardScalerParams) -> core::result::Result<Self, ferricml::api::ModelError>
 pub fn ferricml::preprocessing::StandardScaler::from_artifact(&[u8], [u8; 32], [u8; 32]) -> core::result::Result<Self, ferricml::artifact::ArtifactError>
 pub const fn ferricml::preprocessing::StandardScaler::get_params(&self) -> &ferricml::preprocessing::StandardScalerParams
+pub fn ferricml::preprocessing::StandardScaler::inverse_transform(&self, &ferricml::data::MatrixView<'_>) -> core::result::Result<ferricml::data::DenseMatrix, ferricml::api::ModelError>
+pub fn ferricml::preprocessing::StandardScaler::inverse_transform_into<'output>(&self, &ferricml::data::MatrixView<'_>, &'output mut [f32]) -> core::result::Result<ferricml::data::MatrixView<'output>, ferricml::api::ModelError>
 pub fn ferricml::preprocessing::StandardScaler::means(&self) -> &[f64]
 pub const fn ferricml::preprocessing::StandardScaler::n_features_in(&self) -> usize
 pub const fn ferricml::preprocessing::StandardScaler::n_features_out(&self) -> usize

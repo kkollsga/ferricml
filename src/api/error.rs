@@ -117,6 +117,9 @@ pub enum ModelError {
     InvalidQuantileRange,
     /// A decision threshold is not finite.
     InvalidThreshold,
+    /// An inverse transformation was requested of a transformer that was not
+    /// given one.
+    NoInverseFunction,
     /// A multiclass linear fit would need a second-order system larger than the
     /// supported bound, which is `classes * (features + intercept)` parameters.
     MulticlassSystemTooLarge {
@@ -239,6 +242,9 @@ impl fmt::Display for ModelError {
                 f.write_str("quantile range must be two percentiles in 0..=100, lowest first")
             }
             Self::InvalidThreshold => f.write_str("threshold must be finite"),
+            Self::NoInverseFunction => {
+                f.write_str("this transformer was not given an inverse function")
+            }
             Self::MulticlassSystemTooLarge {
                 classes,
                 features,

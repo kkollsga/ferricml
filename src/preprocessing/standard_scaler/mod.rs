@@ -6,7 +6,8 @@ use crate::data::{MatrixView, SampleWeights};
 
 use super::scaling::{
     ScalerHeader, ScalerParameters, decode_flag, decode_scaler_artifact, encode_scaler_artifact,
-    substituted_divisor, transform_preflighted, validate_transform_request,
+    inverse_transform_allocating, substituted_divisor, transform_preflighted,
+    validate_inverse_request, validate_transform_request,
 };
 
 /// Parameters for [`StandardScaler`].
@@ -180,6 +181,54 @@ impl StandardScaler {
     /// Transforms a batch into a newly allocated dense matrix.
     pub fn transform(&self, data: &MatrixView<'_>) -> Result<crate::data::DenseMatrix, ModelError> {
         <Self as Transformer>::transform(self, data)
+    }
+
+    /// Undoes [`StandardScaler::transform`] into caller-owned storage.
+    ///
+    /// The inverse of `(x - mean) / scale` is `x * scale + mean`, applied only
+    /// through the toggles that were enabled at fit time.
+    ///
+    /// # Exactness
+    ///
+    /// The round trip is **exact by construction** only when both statistics
+    /// are disabled, and on a degenerate column whose divisor was substituted
+    /// to one. Everywhere else it is exact only when the arithmetic happens to
+    /// be: dividing by a scale and multiplying back is not an identity in
+    /// floating point, and neither is subtracting a mean and adding it back.
+    /// Callers needing an exact recovery keep the original values.
+    pub fn inverse_transform_into<'output>(
+        &self,
+        data: &MatrixView<'_>,
+        output: &'output mut [f32],
+    ) -> Result<MatrixView<'output>, ModelError> {
+        validate_inverse_request(self.n_features_in, data, output)?;
+        match (self.params.with_mean, self.params.with_std) {
+            (false, false) => transform_preflighted(data, output, |value, _| value)?,
+            (true, false) => transform_preflighted(data, output, |value, column| {
+                (f64::from(value) + self.means[column]) as f32
+            })?,
+            (false, true) => transform_preflighted(data, output, |value, column| {
+                (f64::from(value) * self.scales[column]) as f32
+            })?,
+            (true, true) => transform_preflighted(data, output, |value, column| {
+                (f64::from(value) * self.scales[column] + self.means[column]) as f32
+            })?,
+        }
+        Ok(MatrixView::from_validated_parts(
+            output,
+            data.rows(),
+            self.n_features_in,
+        ))
+    }
+
+    /// Undoes [`StandardScaler::transform`], allocating the output matrix.
+    pub fn inverse_transform(
+        &self,
+        data: &MatrixView<'_>,
+    ) -> Result<crate::data::DenseMatrix, ModelError> {
+        inverse_transform_allocating(self.n_features_in, data, |batch, output| {
+            self.inverse_transform_into(batch, output).map(|_| ())
+        })
     }
 
     /// Encodes fitted scaling state with explicit input and transformed schemas.
@@ -477,6 +526,59 @@ mod tests {
             ModelError::NonFiniteTransform { row: 0, column: 1 }
         );
         assert_eq!(output, [41.0; 4]);
+    }
+
+    #[test]
+    fn the_inverse_round_trips_within_a_bounded_envelope_and_exactly_where_promised() {
+        let data = matrix();
+        let base = StandardScalerParams::default();
+
+        // Exact by construction: nothing is removed.
+        let identity = StandardScaler::fit(
+            &data.as_view(),
+            base.clone().with_mean(false).with_std(false),
+        )
+        .unwrap();
+        let transformed = identity.transform(&data.as_view()).unwrap();
+        assert_eq!(
+            identity
+                .inverse_transform(&transformed.as_view())
+                .unwrap()
+                .as_slice(),
+            data.as_slice()
+        );
+
+        // General case: a bound, not an identity.
+        let scaler = StandardScaler::fit(&data.as_view(), base).unwrap();
+        let transformed = scaler.transform(&data.as_view()).unwrap();
+        let recovered = scaler.inverse_transform(&transformed.as_view()).unwrap();
+        for (original, recovered) in data.as_slice().iter().zip(recovered.as_slice()) {
+            let tolerance = 8.0 * f32::EPSILON * original.abs().max(1.0);
+            assert!(
+                (original - recovered).abs() <= tolerance,
+                "{original} recovered as {recovered}"
+            );
+        }
+
+        // Out-of-sample rows invert too: the inverse is a map, not a lookup.
+        let unseen = DenseMatrix::new(vec![9.0, -4.0, 0.5], 1, 3).unwrap();
+        let recovered = scaler.inverse_transform(&unseen.as_view()).unwrap();
+        let back = scaler.transform(&recovered.as_view()).unwrap();
+        for (original, back) in unseen.as_slice().iter().zip(back.as_slice()) {
+            assert!((original - back).abs() <= 8.0 * f32::EPSILON * original.abs().max(1.0));
+        }
+
+        let mut short = [91.0; 8];
+        assert_eq!(
+            scaler
+                .inverse_transform_into(&data.as_view(), &mut short)
+                .unwrap_err(),
+            ModelError::OutputLength {
+                expected: 9,
+                actual: 8
+            }
+        );
+        assert_eq!(short, [91.0; 8]);
     }
 
     #[test]

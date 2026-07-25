@@ -7,7 +7,8 @@ use crate::numeric::{QuantileRule, quantile_sorted, sort_for_quantiles};
 
 use super::scaling::{
     ScalerHeader, ScalerParameters, decode_flag, decode_scaler_artifact, encode_scaler_artifact,
-    substituted_divisor, transform_preflighted, validate_transform_request,
+    inverse_transform_allocating, substituted_divisor, transform_preflighted,
+    validate_inverse_request, validate_transform_request,
 };
 
 /// The quantile definition every fitted [`RobustScaler`] statistic is taken
@@ -224,6 +225,54 @@ impl RobustScaler {
     /// Transforms a batch into a newly allocated dense matrix.
     pub fn transform(&self, data: &MatrixView<'_>) -> Result<crate::data::DenseMatrix, ModelError> {
         <Self as Transformer>::transform(self, data)
+    }
+
+    /// Undoes [`RobustScaler::transform`] into caller-owned storage.
+    ///
+    /// The inverse of `(x - center) / scale` is `x * scale + center`, applied
+    /// only through the toggles that were enabled at fit time.
+    ///
+    /// # Exactness
+    ///
+    /// The round trip is **exact by construction** only when both statistics
+    /// are disabled, and on a degenerate column whose divisor was substituted
+    /// to one. Everywhere else it is exact only when the arithmetic happens to
+    /// be: dividing by a spread and multiplying back is not an identity in
+    /// floating point, and neither is subtracting a centre and adding it back.
+    /// A caller who needs the original values keeps them.
+    pub fn inverse_transform_into<'output>(
+        &self,
+        data: &MatrixView<'_>,
+        output: &'output mut [f32],
+    ) -> Result<MatrixView<'output>, ModelError> {
+        validate_inverse_request(self.n_features_in, data, output)?;
+        match (self.params.with_centering, self.params.with_scaling) {
+            (false, false) => transform_preflighted(data, output, |value, _| value)?,
+            (true, false) => transform_preflighted(data, output, |value, column| {
+                (f64::from(value) + self.centers[column]) as f32
+            })?,
+            (false, true) => transform_preflighted(data, output, |value, column| {
+                (f64::from(value) * self.scales[column]) as f32
+            })?,
+            (true, true) => transform_preflighted(data, output, |value, column| {
+                (f64::from(value) * self.scales[column] + self.centers[column]) as f32
+            })?,
+        }
+        Ok(MatrixView::from_validated_parts(
+            output,
+            data.rows(),
+            self.n_features_in,
+        ))
+    }
+
+    /// Undoes [`RobustScaler::transform`], allocating the output matrix.
+    pub fn inverse_transform(
+        &self,
+        data: &MatrixView<'_>,
+    ) -> Result<crate::data::DenseMatrix, ModelError> {
+        inverse_transform_allocating(self.n_features_in, data, |batch, output| {
+            self.inverse_transform_into(batch, output).map(|_| ())
+        })
     }
 
     /// Encodes fitted scaling state with explicit input and transformed schemas.
@@ -635,6 +684,95 @@ mod tests {
         let backward = fitted(&reversed, RobustScalerParams::default());
         assert_eq!(forward.centers(), backward.centers());
         assert_eq!(forward.spreads(), backward.spreads());
+    }
+
+    #[test]
+    fn the_inverse_recovers_out_of_sample_rows_and_round_trips_them_exactly() {
+        let scaler = fitted(&worked_examples(), RobustScalerParams::default());
+        // Values never seen at fit time: the inverse is a map, not a lookup.
+        let unseen = matrix(&[100.0, -50.0, 7.5, 0.25, 0.0, -1.0], 2, 3);
+        let recovered = scaler.inverse_transform(&unseen.as_view()).unwrap();
+        let back = scaler.transform(&recovered.as_view()).unwrap();
+        assert_eq!(
+            back.as_slice(),
+            unseen.as_slice(),
+            "transform after inverse_transform is exact on this probe"
+        );
+    }
+
+    #[test]
+    fn the_round_trip_is_exact_wherever_the_arithmetic_is() {
+        let data = worked_examples();
+        let base = RobustScalerParams::default();
+        // With both statistics disabled the transform is the identity, so the
+        // round trip is exact by construction rather than by luck. Note what is
+        // *not* claimed: disabling only centring still divides and multiplies
+        // back, which is not an identity in floating point, and this data
+        // demonstrates it — see the bounded-envelope test.
+        let params = base.with_centering(false).with_scaling(false);
+        let scaler = fitted(&data, params);
+        let transformed = scaler.transform(&data.as_view()).unwrap();
+        let recovered = scaler.inverse_transform(&transformed.as_view()).unwrap();
+        assert_eq!(recovered.as_slice(), data.as_slice());
+
+        let constant = matrix(&[3.0, 3.0, 3.0, 3.0], 4, 1);
+        let scaler = fitted(&constant, base);
+        let transformed = scaler.transform(&constant.as_view()).unwrap();
+        let recovered = scaler.inverse_transform(&transformed.as_view()).unwrap();
+        assert_eq!(
+            recovered.as_slice(),
+            constant.as_slice(),
+            "a degenerate column divides by the substituted one, so it round \
+             trips exactly"
+        );
+    }
+
+    #[test]
+    fn dividing_and_multiplying_back_is_not_an_identity() {
+        // The negative case for the exactness claim above, pinned so the
+        // documentation cannot quietly overstate what the inverse guarantees.
+        let data = worked_examples();
+        let scaler = fitted(&data, RobustScalerParams::default().with_centering(false));
+        let transformed = scaler.transform(&data.as_view()).unwrap();
+        let recovered = scaler.inverse_transform(&transformed.as_view()).unwrap();
+        assert_ne!(
+            recovered.as_slice(),
+            data.as_slice(),
+            "scaling alone loses bits on this data, and the docs say so"
+        );
+    }
+
+    #[test]
+    fn a_general_round_trip_stays_within_a_bounded_envelope() {
+        // With a general spread the round trip is not an identity, so the
+        // honest assertion is a bound rather than equality.
+        let data = worked_examples();
+        let scaler = fitted(&data, RobustScalerParams::default());
+        let transformed = scaler.transform(&data.as_view()).unwrap();
+        let recovered = scaler.inverse_transform(&transformed.as_view()).unwrap();
+        for (original, recovered) in data.as_slice().iter().zip(recovered.as_slice()) {
+            let tolerance = 8.0 * f32::EPSILON * original.abs().max(1.0);
+            assert!(
+                (original - recovered).abs() <= tolerance,
+                "{original} recovered as {recovered}"
+            );
+        }
+    }
+
+    #[test]
+    fn the_inverse_validates_width_and_output_before_writing() {
+        let scaler = fitted(&worked_examples(), RobustScalerParams::default());
+        let mut short = [91.0; 11];
+        assert_eq!(
+            scaler
+                .inverse_transform_into(&worked_examples().as_view(), &mut short)
+                .unwrap_err(),
+            ModelError::OutputLength {
+                expected: 12,
+                actual: 11
+            }
+        );
+        assert_eq!(short, [91.0; 11]);
     }
 
     #[test]

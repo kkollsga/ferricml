@@ -6,7 +6,8 @@ use crate::data::MatrixView;
 
 use super::scaling::{
     ScalerHeader, ScalerParameters, decode_scaler_artifact, encode_scaler_artifact,
-    substituted_divisor, transform_preflighted, validate_transform_request,
+    inverse_transform_allocating, substituted_divisor, transform_preflighted,
+    validate_inverse_request, validate_transform_request,
 };
 
 /// Parameters for [`MaxAbsScaler`].
@@ -88,6 +89,41 @@ impl MaxAbsScaler {
     /// Transforms a batch into a newly allocated dense matrix.
     pub fn transform(&self, data: &MatrixView<'_>) -> Result<crate::data::DenseMatrix, ModelError> {
         <Self as Transformer>::transform(self, data)
+    }
+
+    /// Undoes [`MaxAbsScaler::transform`] into caller-owned storage.
+    ///
+    /// The inverse of `x / scale` is `x * scale`.
+    ///
+    /// # Exactness
+    ///
+    /// Exact on an all-zero column, whose divisor was substituted to one, and
+    /// otherwise exact only when the arithmetic happens to be — dividing by a
+    /// magnitude and multiplying back is not an identity in floating point.
+    pub fn inverse_transform_into<'output>(
+        &self,
+        data: &MatrixView<'_>,
+        output: &'output mut [f32],
+    ) -> Result<MatrixView<'output>, ModelError> {
+        validate_inverse_request(self.n_features_in, data, output)?;
+        transform_preflighted(data, output, |value, column| {
+            (f64::from(value) * self.scales[column]) as f32
+        })?;
+        Ok(MatrixView::from_validated_parts(
+            output,
+            data.rows(),
+            self.n_features_in,
+        ))
+    }
+
+    /// Undoes [`MaxAbsScaler::transform`], allocating the output matrix.
+    pub fn inverse_transform(
+        &self,
+        data: &MatrixView<'_>,
+    ) -> Result<crate::data::DenseMatrix, ModelError> {
+        inverse_transform_allocating(self.n_features_in, data, |batch, output| {
+            self.inverse_transform_into(batch, output).map(|_| ())
+        })
     }
 
     /// Encodes fitted scaling state with explicit input and transformed schemas.
@@ -298,6 +334,46 @@ mod tests {
             ModelError::NonFiniteTransform { row: 1, column: 0 }
         );
         assert_eq!(output, [73.0; 2]);
+    }
+
+    #[test]
+    fn the_inverse_round_trips_within_a_bounded_envelope_and_exactly_on_a_zero_column() {
+        let data = matrix();
+        let scaler = MaxAbsScaler::fit(&data.as_view(), MaxAbsScalerParams).unwrap();
+        let transformed = scaler.transform(&data.as_view()).unwrap();
+        let recovered = scaler.inverse_transform(&transformed.as_view()).unwrap();
+        for (original, recovered) in data.as_slice().iter().zip(recovered.as_slice()) {
+            let tolerance = 8.0 * f32::EPSILON * original.abs().max(1.0);
+            assert!(
+                (original - recovered).abs() <= tolerance,
+                "{original} recovered as {recovered}"
+            );
+        }
+
+        // An all-zero column keeps the substituted divisor of one, so its round
+        // trip is exact rather than merely close.
+        let zeros = DenseMatrix::new(vec![0.0, 0.0, 0.0, 0.0], 2, 2).unwrap();
+        let scaler = MaxAbsScaler::fit(&zeros.as_view(), MaxAbsScalerParams).unwrap();
+        let transformed = scaler.transform(&zeros.as_view()).unwrap();
+        assert_eq!(
+            scaler
+                .inverse_transform(&transformed.as_view())
+                .unwrap()
+                .as_slice(),
+            zeros.as_slice()
+        );
+
+        let mut short = [91.0; 8];
+        assert_eq!(
+            scaler
+                .inverse_transform_into(&zeros.as_view(), &mut short)
+                .unwrap_err(),
+            ModelError::OutputLength {
+                expected: 4,
+                actual: 8
+            }
+        );
+        assert_eq!(short, [91.0; 8]);
     }
 
     #[test]

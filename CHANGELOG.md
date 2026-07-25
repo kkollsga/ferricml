@@ -112,6 +112,26 @@ and releases use [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   comparing function pointers compares addresses and one function is not
   guaranteed to have one address; an equality that is quietly wrong at a
   boundary is worse than none. Compare behaviour instead.
+- `inverse_transform` and `inverse_transform_into` on `StandardScaler`,
+  `MinMaxScaler`, `MaxAbsScaler`, `RobustScaler`, and `FunctionTransformer`,
+  recovering pre-transform values into an allocated matrix or caller-owned
+  storage.
+
+  Exactness is stated rather than implied. The round trip is exact by
+  construction only where no lossy operation happens — both statistics
+  disabled, or a degenerate column whose divisor was substituted to one — and
+  elsewhere is exact only when the arithmetic happens to be, since dividing by
+  a scale and multiplying back is not a floating-point identity. `MinMaxScaler`
+  with clipping enabled is deliberately **not** invertible in the usual sense:
+  clipping is a projection, so inverting a clamped value recovers the fitted
+  bound rather than the original.
+
+  `FunctionTransformer::inverse_transform` returns
+  `ModelError::NoInverseFunction` when no inverse was supplied, rather than
+  silently applying the identity — which would look exactly like a successful
+  recovery.
+- `api::ModelError::NoInverseFunction`, raised when an inverse transformation is
+  requested of a transformer that was not given one.
 - `api::ModelError::InvalidThreshold`, raised when a decision threshold is not
   finite.
 - `api::ModelError::InvalidQuantileRange`, raised when a quantile range is not

@@ -6,7 +6,8 @@ use crate::data::MatrixView;
 
 use super::scaling::{
     ScalerHeader, ScalerParameters, decode_flag, decode_scaler_artifact, encode_scaler_artifact,
-    substituted_divisor, transform_preflighted, validate_transform_request,
+    inverse_transform_allocating, substituted_divisor, transform_preflighted,
+    validate_inverse_request, validate_transform_request,
 };
 
 /// Parameters for [`MinMaxScaler`].
@@ -136,6 +137,44 @@ impl MinMaxScaler {
     /// Transforms a batch into a newly allocated dense matrix.
     pub fn transform(&self, data: &MatrixView<'_>) -> Result<crate::data::DenseMatrix, ModelError> {
         <Self as Transformer>::transform(self, data)
+    }
+
+    /// Undoes [`MinMaxScaler::transform`] into caller-owned storage.
+    ///
+    /// The inverse of `x * scale + offset` is `(x - offset) / scale`.
+    ///
+    /// # Exactness
+    ///
+    /// Clipping is **not** invertible: it is a projection, so a value that was
+    /// clamped no longer records where it came from, and inverting a clipped
+    /// batch recovers the bound rather than the original. With clipping off,
+    /// the round trip is exact on a degenerate column whose divisor was
+    /// substituted to one, and otherwise exact only when the arithmetic happens
+    /// to be.
+    pub fn inverse_transform_into<'output>(
+        &self,
+        data: &MatrixView<'_>,
+        output: &'output mut [f32],
+    ) -> Result<MatrixView<'output>, ModelError> {
+        validate_inverse_request(self.n_features_in, data, output)?;
+        transform_preflighted(data, output, |value, column| {
+            ((f64::from(value) - self.offsets[column]) / self.scales[column]) as f32
+        })?;
+        Ok(MatrixView::from_validated_parts(
+            output,
+            data.rows(),
+            self.n_features_in,
+        ))
+    }
+
+    /// Undoes [`MinMaxScaler::transform`], allocating the output matrix.
+    pub fn inverse_transform(
+        &self,
+        data: &MatrixView<'_>,
+    ) -> Result<crate::data::DenseMatrix, ModelError> {
+        inverse_transform_allocating(self.n_features_in, data, |batch, output| {
+            self.inverse_transform_into(batch, output).map(|_| ())
+        })
     }
 
     /// Encodes fitted scaling state with explicit input and transformed schemas.
@@ -391,6 +430,53 @@ mod tests {
             ModelError::NonFiniteTransform { row: 1, column: 0 }
         );
         assert_eq!(output, [73.0; 2]);
+    }
+
+    #[test]
+    fn the_inverse_round_trips_and_clipping_is_deliberately_not_invertible() {
+        let data = matrix();
+        let scaler = MinMaxScaler::fit(&data.as_view(), MinMaxScalerParams::default()).unwrap();
+        let transformed = scaler.transform(&data.as_view()).unwrap();
+        let recovered = scaler.inverse_transform(&transformed.as_view()).unwrap();
+        for (original, recovered) in data.as_slice().iter().zip(recovered.as_slice()) {
+            let tolerance = 8.0 * f32::EPSILON * original.abs().max(1.0);
+            assert!(
+                (original - recovered).abs() <= tolerance,
+                "{original} recovered as {recovered}"
+            );
+        }
+
+        // A zero-range column transforms to zero and inverts back to its single
+        // fitted value exactly, because its divisor is the substituted one.
+        assert_eq!(recovered.get(0, 2), Some(5.0));
+
+        // Clipping is a projection: a clamped value no longer records where it
+        // came from, so inverting recovers the bound rather than the original.
+        let clipped = MinMaxScaler::fit(
+            &data.as_view(),
+            MinMaxScalerParams::default().with_clip(true),
+        )
+        .unwrap();
+        let beyond = DenseMatrix::new(vec![-3.0, 10.0, 5.0], 1, 3).unwrap();
+        let forward = clipped.transform(&beyond.as_view()).unwrap();
+        let back = clipped.inverse_transform(&forward.as_view()).unwrap();
+        assert_eq!(
+            back.as_slice(),
+            &[1.0, 6.0, 5.0],
+            "the fitted bounds come back, not the out-of-range inputs"
+        );
+
+        let mut short = [91.0; 8];
+        assert_eq!(
+            scaler
+                .inverse_transform_into(&data.as_view(), &mut short)
+                .unwrap_err(),
+            ModelError::OutputLength {
+                expected: 9,
+                actual: 8
+            }
+        );
+        assert_eq!(short, [91.0; 8]);
     }
 
     #[test]

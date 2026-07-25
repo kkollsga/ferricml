@@ -3,7 +3,7 @@
 use crate::api::{Capabilities, Estimator, HasCapabilities, HasParams, ModelError, Transformer};
 use crate::data::MatrixView;
 
-use super::scaling::validate_transform_request;
+use super::scaling::{inverse_transform_allocating, validate_transform_request};
 
 /// A caller-supplied elementwise map.
 ///
@@ -199,6 +199,46 @@ impl FunctionTransformer {
         <Self as Transformer>::transform(self, data)
     }
 
+    /// Undoes [`FunctionTransformer::transform`] into caller-owned storage.
+    ///
+    /// Returns [`ModelError::NoInverseFunction`] when no inverse was supplied.
+    /// A missing inverse is refused rather than silently treated as the
+    /// identity, which would return the transformed values while looking like a
+    /// recovery of the originals.
+    ///
+    /// FerricML applies exactly the function supplied and does not verify that
+    /// it inverts the forward map; that pairing is the caller's claim.
+    pub fn inverse_transform_into<'output>(
+        &self,
+        data: &MatrixView<'_>,
+        output: &'output mut [f32],
+    ) -> Result<MatrixView<'output>, ModelError> {
+        let inverse = self
+            .params
+            .inverse_func
+            .ok_or(ModelError::NoInverseFunction)?;
+        validate_transform_request(self.n_features_in, data, output)?;
+        self.apply(inverse, data, output)?;
+        Ok(MatrixView::from_validated_parts(
+            output,
+            data.rows(),
+            self.n_features_in,
+        ))
+    }
+
+    /// Undoes [`FunctionTransformer::transform`], allocating the output matrix.
+    pub fn inverse_transform(
+        &self,
+        data: &MatrixView<'_>,
+    ) -> Result<crate::data::DenseMatrix, ModelError> {
+        if self.params.inverse_func.is_none() {
+            return Err(ModelError::NoInverseFunction);
+        }
+        inverse_transform_allocating(self.n_features_in, data, |batch, output| {
+            self.inverse_transform_into(batch, output).map(|_| ())
+        })
+    }
+
     /// Applies every value in fixed row-major order, after proving the whole
     /// batch stays finite.
     ///
@@ -388,6 +428,62 @@ mod tests {
         let second = fitted(params).transform(&data.as_view()).unwrap();
         assert_eq!(first.as_slice(), second.as_slice());
         assert_eq!(fitted(params).n_features_in(), 2);
+    }
+
+    #[test]
+    fn the_inverse_applies_exactly_the_supplied_function() {
+        let data = matrix(&[1.0, 2.0, 3.0, 4.0], 2, 2);
+        let transformer = fitted(
+            FunctionTransformerParams::default()
+                .with_func(double)
+                .with_inverse_func(halve),
+        );
+        let transformed = transformer.transform(&data.as_view()).unwrap();
+        let recovered = transformer
+            .inverse_transform(&transformed.as_view())
+            .unwrap();
+        assert_eq!(recovered.as_slice(), data.as_slice());
+    }
+
+    #[test]
+    fn a_missing_inverse_is_refused_rather_than_treated_as_the_identity() {
+        // Silently returning the transformed values would look exactly like a
+        // successful recovery of the originals, which is the worst available
+        // failure mode.
+        let data = matrix(&[1.0, 2.0, 3.0, 4.0], 2, 2);
+        let transformer = fitted(FunctionTransformerParams::default().with_func(double));
+        assert_eq!(
+            transformer.inverse_transform(&data.as_view()).unwrap_err(),
+            ModelError::NoInverseFunction
+        );
+        let mut output = [91.0; 4];
+        assert_eq!(
+            transformer
+                .inverse_transform_into(&data.as_view(), &mut output)
+                .unwrap_err(),
+            ModelError::NoInverseFunction
+        );
+        assert_eq!(output, [91.0; 4]);
+    }
+
+    #[test]
+    fn a_wrong_inverse_is_applied_as_given_rather_than_checked() {
+        // FerricML does not verify that the pair actually inverts: doing so
+        // would mean picking a tolerance and probe points for the caller. The
+        // guarantee is that exactly the supplied function is applied.
+        let data = matrix(&[1.0, 2.0, 3.0, 4.0], 2, 2);
+        let transformer = fitted(
+            FunctionTransformerParams::default()
+                .with_func(double)
+                .with_inverse_func(double),
+        );
+        assert_eq!(
+            transformer
+                .inverse_transform(&data.as_view())
+                .unwrap()
+                .as_slice(),
+            &[2.0, 4.0, 6.0, 8.0]
+        );
     }
 
     #[test]
