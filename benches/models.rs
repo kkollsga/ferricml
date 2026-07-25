@@ -1,4 +1,8 @@
 use criterion::{BatchSize, BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
+use ferricml::api::Classifier;
+use ferricml::calibration::{
+    CalibratedClassifier, IsotonicRegression, PlattCalibrator, PlattParams,
+};
 use ferricml::data::{BinaryTargets, ClassTargets, DenseMatrix, RegressionTargets};
 use ferricml::dummy::{
     DummyClassifier, DummyClassifierParams, DummyRegressor, DummyRegressorParams,
@@ -1009,6 +1013,126 @@ fn transformers_and_staged_pipelines(c: &mut Criterion) {
     artifact.finish();
 }
 
+/// Calibration fitting and calibrated inference.
+///
+/// Registered with the sprint that added the capability, so both halves are
+/// visible to `bench-history` from birth. The two halves drift independently:
+/// a calibrator fit is one sort plus one linear pass over the calibration
+/// scores or a handful of Newton passes, while calibrated inference is the
+/// wrapped model's own prediction plus one map per row, which is the cost the
+/// wrapper has to justify.
+fn calibration(c: &mut Criterion) {
+    let (training, regression_targets) = fixture(ROWS, COLUMNS);
+    let labels = BinaryTargets::new(
+        regression_targets
+            .as_slice()
+            .iter()
+            .map(|&target| u8::from(target > 0.0))
+            .collect(),
+    )
+    .unwrap();
+    let forest = RandomForestClassifier::fit(
+        &training.as_view(),
+        &labels,
+        RandomForestClassifierParams::default()
+            .with_n_estimators(16)
+            .with_max_depth(Some(8))
+            .with_random_state(0),
+    )
+    .unwrap();
+    let inference = DenseMatrix::new(
+        training.as_slice()[..INFERENCE_ROWS * COLUMNS].to_vec(),
+        INFERENCE_ROWS,
+        COLUMNS,
+    )
+    .unwrap();
+
+    let scores = forest.predict_class_proba(&training.as_view(), 1).unwrap();
+    let mut fit = c.benchmark_group("ferricml_calibration_v1_fit_2048x48");
+    fit.throughput(Throughput::Elements(ROWS as u64));
+    fit.bench_function(BenchmarkId::from_parameter("isotonic"), |bencher| {
+        bencher.iter(|| {
+            black_box(
+                IsotonicRegression::fit_calibration(black_box(&scores), black_box(&labels))
+                    .unwrap(),
+            );
+        });
+    });
+    fit.bench_function(BenchmarkId::from_parameter("platt"), |bencher| {
+        bencher.iter(|| {
+            black_box(
+                PlattCalibrator::fit(
+                    black_box(&scores),
+                    black_box(&labels),
+                    PlattParams::default(),
+                )
+                .unwrap(),
+            );
+        });
+    });
+    fit.finish();
+
+    let isotonic =
+        CalibratedClassifier::fit_isotonic(forest.clone(), &training.as_view(), &labels).unwrap();
+    let platt = CalibratedClassifier::fit_platt(
+        forest.clone(),
+        &training.as_view(),
+        &labels,
+        PlattParams::default(),
+    )
+    .unwrap();
+
+    let mut positive = vec![0.0_f32; INFERENCE_ROWS];
+    let mut matrix = vec![0.0_f32; INFERENCE_ROWS * 2];
+    let mut predicted = vec![0_u8; INFERENCE_ROWS];
+    let mut into = c.benchmark_group("ferricml_calibration_v1_into_1024x48");
+    into.throughput(Throughput::Elements(INFERENCE_ROWS as u64));
+    into.bench_function(BenchmarkId::from_parameter("uncalibrated"), |bencher| {
+        bencher.iter(|| {
+            forest
+                .predict_class_proba_into(
+                    black_box(&inference.as_view()),
+                    1,
+                    black_box(&mut positive),
+                )
+                .unwrap();
+        });
+    });
+    into.bench_function(BenchmarkId::from_parameter("isotonic_proba"), |bencher| {
+        bencher.iter(|| {
+            isotonic
+                .predict_proba_into(black_box(&inference.as_view()), black_box(&mut matrix))
+                .unwrap();
+        });
+    });
+    into.bench_function(BenchmarkId::from_parameter("platt_proba"), |bencher| {
+        bencher.iter(|| {
+            platt
+                .predict_proba_into(black_box(&inference.as_view()), black_box(&mut matrix))
+                .unwrap();
+        });
+    });
+    into.bench_function(BenchmarkId::from_parameter("platt_decision"), |bencher| {
+        bencher.iter(|| {
+            platt
+                .decision_function_into(black_box(&inference.as_view()), black_box(&mut positive))
+                .unwrap();
+        });
+    });
+    into.bench_function(BenchmarkId::from_parameter("isotonic_predict"), |bencher| {
+        bencher.iter(|| {
+            isotonic
+                .predict_into_with(
+                    black_box(&inference.as_view()),
+                    black_box(&mut positive),
+                    black_box(&mut predicted),
+                )
+                .unwrap();
+        });
+    });
+    into.finish();
+}
+
 criterion_group!(
     benches,
     baselines,
@@ -1022,6 +1146,7 @@ criterion_group!(
     parameter_search,
     split_workloads,
     inspection,
-    multiclass
+    multiclass,
+    calibration
 );
 criterion_main!(benches);
