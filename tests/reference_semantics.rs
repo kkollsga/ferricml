@@ -19,9 +19,9 @@ use ferricml::metrics::{
 };
 use ferricml::model_selection::{
     ClassificationScorer, CrossValidationError, HoldoutParams, KFold, RegressionScorer,
-    ScoringError, SplitError, SplitPartition, StratifiedKFold, TestSize, cross_validate_classifier,
-    cross_validate_regressor, score_classifier, score_regressor, stratified_train_test_split,
-    train_test_split,
+    ScorableClassifier, ScoringError, SplitError, SplitPartition, StratifiedKFold, TestSize,
+    cross_validate_classifier, cross_validate_regressor, score_classifier, score_regressor,
+    stratified_train_test_split, train_test_split,
 };
 use ferricml::preprocessing::{StandardScaler, StandardScalerParams};
 
@@ -223,7 +223,7 @@ fn direct_estimator_scores_and_errors_are_frozen() {
     let expected_labels = BinaryTargets::new(reference::EXACT_LABELS.to_vec()).unwrap();
     assert_eq!(
         score_classifier(
-            &classifier,
+            ScorableClassifier::probabilistic(&classifier),
             &test.as_view(),
             &expected_labels,
             ClassificationScorer::Accuracy,
@@ -232,7 +232,7 @@ fn direct_estimator_scores_and_errors_are_frozen() {
     );
     assert_eq!(
         score_classifier(
-            &classifier,
+            ScorableClassifier::probabilistic(&classifier),
             &test.as_view(),
             &expected_labels,
             ClassificationScorer::Brier,

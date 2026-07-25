@@ -26,13 +26,17 @@ gate-full: gate
 	cargo test --locked --all-features
 	RUSTDOCFLAGS="-D warnings" cargo doc --locked --no-deps --all-features
 
-## Compare the public Rust surface with its exact snapshot.
+## Compare the public Rust surface with its exact snapshot. The capability
+## snapshot is a separate mechanism because cargo-public-api cannot see const
+## values; both are part of the same public contract.
 api-check:
 	$(PYTHON) scripts/rust_api_profiles.py check
+	cargo test --locked --test capability_snapshot
 
 ## Refresh exact API snapshots only when their complete content input changed.
 api-refresh:
 	$(PYTHON) scripts/rust_api_profiles.py refresh --skip-if-unchanged
+	FERRICML_REFRESH_CAPABILITY_SNAPSHOT=1 cargo test --locked --test capability_snapshot
 
 ## Verify FerricML's frozen behavior, shape, validation, and quality contract.
 reference-check:

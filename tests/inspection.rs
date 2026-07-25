@@ -13,7 +13,7 @@ use ferricml::inspection::{
 use ferricml::linear_model::{LinearRegression, LinearRegressionParams, Ridge, RidgeParams};
 use ferricml::metrics::mean_squared_error;
 use ferricml::model_selection::{
-    ClassificationScorer, RegressionScore, RegressionScorer, ScoringError,
+    ClassificationScorer, RegressionScore, RegressionScorer, ScorableClassifier, ScoringError,
 };
 
 /// Four columns: a dominant signal, a weak signal, a constant, and a copy of
@@ -248,7 +248,7 @@ fn classifier_importance_covers_label_and_probability_scorers() {
         ClassificationScorer::RocAuc,
     ] {
         let importance = permutation_importance_classifier(
-            &model,
+            ScorableClassifier::probabilistic(&model),
             &data.as_view(),
             &targets,
             scorer,
@@ -276,7 +276,7 @@ fn classifier_importance_covers_label_and_probability_scorers() {
     .unwrap();
     assert_eq!(single.classes(), &[1]);
     let importance = permutation_importance_classifier(
-        &single,
+        ScorableClassifier::probabilistic(&single),
         &data.as_view(),
         &targets,
         ClassificationScorer::Brier,
@@ -364,7 +364,7 @@ fn shape_and_parameter_problems_are_rejected_before_any_prediction() {
     .unwrap();
     assert_eq!(
         permutation_importance_classifier_into(
-            &classifier,
+            ScorableClassifier::probabilistic(&classifier),
             &classification_data.as_view(),
             &BinaryTargets::new(vec![0, 1]).unwrap(),
             ClassificationScorer::Accuracy,

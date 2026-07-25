@@ -16,15 +16,13 @@ mod support;
 
 use ferricml::api::{
     AnyClassifier, AnyClassifierParams, AnyRegressor, AnyRegressorParams, Classifier, ModelError,
-    Regressor,
+    ProbabilisticClassifier, Regressor,
 };
 use ferricml::artifact::ArtifactError;
 use ferricml::calibration::{
     CalibratedClassifier, IsotonicRegression, PlattCalibrator, PlattParams,
 };
-use ferricml::data::{
-    BinaryTargets, ClassTargets, DenseMatrix, MatrixView, RegressionTargets, SampleWeights,
-};
+use ferricml::data::{BinaryTargets, DenseMatrix, MatrixView, RegressionTargets};
 use ferricml::dummy::{
     DummyClassifier, DummyClassifierParams, DummyRegressor, DummyRegressorParams,
 };
@@ -34,6 +32,8 @@ use ferricml::ensemble::{
     RandomForestClassifier, RandomForestClassifierParams, RandomForestRegressor,
     RandomForestRegressorParams,
 };
+use ferricml::pipeline::{Pipeline, StagedPipeline};
+
 use ferricml::linear_model::{
     ElasticNet, ElasticNetParams, Lasso, LassoParams, LinearRegression, LinearRegressionParams,
     LogisticRegression, LogisticRegressionParams, Ridge, RidgeParams,
@@ -48,9 +48,12 @@ use ferricml::ranking::{
 };
 
 use support::conformance::{
-    ClassifierCase, RegressorCase, RoundTrip, SCHEMA, ScalarClassifierCase, ScalarRegressorCase,
-    TransformerCase, check_batch_only_classifier, check_batch_only_regressor, check_classifier,
-    check_regressor, check_transformer,
+    ClassifierCase, FixtureShape, OptionalFit, RegressorCase, RoundTrip, SCHEMA, Sample,
+    ScalarClassifierCase, ScalarRegressorCase, ScalarWorkspaceRegressorCase, TransformerCase,
+    WorkspaceClassifierCase, WorkspaceRegressorCase, check_batch_only_classifier,
+    check_batch_only_regressor, check_classifier, check_regressor,
+    check_scalar_workspace_regressor, check_transformer, check_workspace_classifier,
+    check_workspace_regressor, probabilistic_hooks,
 };
 
 /// Second schema identity, for artifacts that bind an input and an output
@@ -103,29 +106,30 @@ fn boosting_classifier_params() -> HistGradientBoostingClassifierParams {
 struct RandomForestClassifierCase;
 
 impl ClassifierCase for RandomForestClassifierCase {
+    probabilistic_hooks!();
+
     type Model = RandomForestClassifier;
     const NAME: &'static str = "RandomForestClassifier";
 
-    fn fit(data: &MatrixView<'_>, labels: &BinaryTargets) -> Self::Model {
-        RandomForestClassifier::fit(data, labels, forest_classifier_params()).expect("fit")
+    fn fit(train: &Sample, _holdout: &Sample) -> Result<Self::Model, ModelError> {
+        RandomForestClassifier::fit(&train.view(), &train.labels, forest_classifier_params())
     }
 
-    fn fit_multiclass(data: &MatrixView<'_>, labels: &ClassTargets) -> Option<Self::Model> {
-        Some(
-            RandomForestClassifier::fit_multiclass(data, labels, forest_classifier_params())
-                .expect("multiclass fit"),
-        )
+    fn fit_multiclass(train: &Sample, _holdout: &Sample) -> OptionalFit<Self::Model> {
+        Some(RandomForestClassifier::fit_multiclass(
+            &train.view(),
+            &train.class_labels,
+            forest_classifier_params(),
+        ))
     }
 
-    fn fit_weighted(
-        data: &MatrixView<'_>,
-        labels: &BinaryTargets,
-        weights: &SampleWeights,
-    ) -> Option<Self::Model> {
-        Some(
-            RandomForestClassifier::fit_weighted(data, labels, weights, forest_classifier_params())
-                .expect("weighted fit"),
-        )
+    fn fit_weighted(train: &Sample, _holdout: &Sample) -> OptionalFit<Self::Model> {
+        Some(RandomForestClassifier::fit_weighted(
+            &train.view(),
+            &train.labels,
+            &train.unit_weights(),
+            forest_classifier_params(),
+        ))
     }
 
     fn round_trip(model: &Self::Model) -> RoundTrip<Self::Model> {
@@ -145,34 +149,34 @@ impl ScalarClassifierCase for RandomForestClassifierCase {
 struct LogisticRegressionCase;
 
 impl ClassifierCase for LogisticRegressionCase {
+    probabilistic_hooks!();
+
     type Model = LogisticRegression;
     const NAME: &'static str = "LogisticRegression";
 
-    fn fit(data: &MatrixView<'_>, labels: &BinaryTargets) -> Self::Model {
-        LogisticRegression::fit(data, labels, LogisticRegressionParams::default()).expect("fit")
-    }
-
-    fn fit_multiclass(data: &MatrixView<'_>, labels: &ClassTargets) -> Option<Self::Model> {
-        Some(
-            LogisticRegression::fit_multiclass(data, labels, LogisticRegressionParams::default())
-                .expect("multiclass fit"),
+    fn fit(train: &Sample, _holdout: &Sample) -> Result<Self::Model, ModelError> {
+        LogisticRegression::fit(
+            &train.view(),
+            &train.labels,
+            LogisticRegressionParams::default(),
         )
     }
 
-    fn fit_weighted(
-        data: &MatrixView<'_>,
-        labels: &BinaryTargets,
-        weights: &SampleWeights,
-    ) -> Option<Self::Model> {
-        Some(
-            LogisticRegression::fit_weighted(
-                data,
-                labels,
-                weights,
-                LogisticRegressionParams::default(),
-            )
-            .expect("weighted fit"),
-        )
+    fn fit_multiclass(train: &Sample, _holdout: &Sample) -> OptionalFit<Self::Model> {
+        Some(LogisticRegression::fit_multiclass(
+            &train.view(),
+            &train.class_labels,
+            LogisticRegressionParams::default(),
+        ))
+    }
+
+    fn fit_weighted(train: &Sample, _holdout: &Sample) -> OptionalFit<Self::Model> {
+        Some(LogisticRegression::fit_weighted(
+            &train.view(),
+            &train.labels,
+            &train.unit_weights(),
+            LogisticRegressionParams::default(),
+        ))
     }
 
     fn round_trip(model: &Self::Model) -> RoundTrip<Self::Model> {
@@ -180,6 +184,21 @@ impl ClassifierCase for LogisticRegressionCase {
             || model.to_artifact(SCHEMA),
             |bytes| LogisticRegression::from_artifact(bytes, SCHEMA),
         )
+    }
+
+    fn decision_function(
+        model: &Self::Model,
+        data: &MatrixView<'_>,
+    ) -> Option<Result<Vec<f32>, ModelError>> {
+        Some(model.decision_function(data))
+    }
+
+    fn decision_function_into(
+        model: &Self::Model,
+        data: &MatrixView<'_>,
+        output: &mut [f32],
+    ) -> Option<Result<(), ModelError>> {
+        Some(model.decision_function_into(data, output))
     }
 }
 
@@ -189,97 +208,138 @@ impl ScalarClassifierCase for LogisticRegressionCase {
     }
 }
 
-struct AnyForestClassifierCase;
+macro_rules! any_classifier_case {
+    ($case:ident, $inner:ty, $name:literal) => {
+        struct $case;
 
-impl ClassifierCase for AnyForestClassifierCase {
-    type Model = AnyClassifier;
-    const NAME: &'static str = "AnyClassifier::RandomForest";
+        impl ClassifierCase for $case {
+            type Model = AnyClassifier;
+            const NAME: &'static str = $name;
 
-    fn fit(data: &MatrixView<'_>, labels: &BinaryTargets) -> Self::Model {
-        RandomForestClassifierCase::fit(data, labels).into()
-    }
+            fn predict_proba(
+                model: &Self::Model,
+                data: &MatrixView<'_>,
+            ) -> Option<Result<Vec<f32>, ModelError>> {
+                model
+                    .as_probabilistic()
+                    .map(|model| model.predict_proba(data))
+            }
 
-    fn round_trip(model: &Self::Model) -> RoundTrip<Self::Model> {
-        round_trip(
-            || model.to_artifact(SCHEMA),
-            |bytes| AnyClassifier::from_artifact(bytes, SCHEMA),
-        )
-    }
+            fn predict_proba_into(
+                model: &Self::Model,
+                data: &MatrixView<'_>,
+                output: &mut [f32],
+            ) -> Option<Result<(), ModelError>> {
+                model
+                    .as_probabilistic()
+                    .map(|model| model.predict_proba_into(data, output))
+            }
+
+            fn predict_class_proba(
+                model: &Self::Model,
+                data: &MatrixView<'_>,
+                class: u8,
+            ) -> Option<Result<Vec<f32>, ModelError>> {
+                model
+                    .as_probabilistic()
+                    .map(|model| model.predict_class_proba(data, class))
+            }
+
+            fn predict_class_proba_into(
+                model: &Self::Model,
+                data: &MatrixView<'_>,
+                class: u8,
+                output: &mut [f32],
+            ) -> Option<Result<(), ModelError>> {
+                model
+                    .as_probabilistic()
+                    .map(|model| model.predict_class_proba_into(data, class, output))
+            }
+
+            fn fit(train: &Sample, holdout: &Sample) -> Result<Self::Model, ModelError> {
+                <$inner as ClassifierCase>::fit(train, holdout).map(Into::into)
+            }
+
+            fn round_trip(model: &Self::Model) -> RoundTrip<Self::Model> {
+                round_trip(
+                    || model.to_artifact(SCHEMA),
+                    |bytes| AnyClassifier::from_artifact(bytes, SCHEMA),
+                )
+            }
+        }
+    };
 }
 
-struct AnyBoostedClassifierCase;
-
-impl ClassifierCase for AnyBoostedClassifierCase {
-    type Model = AnyClassifier;
-    const NAME: &'static str = "AnyClassifier::HistGradientBoosting";
-
-    fn fit(data: &MatrixView<'_>, labels: &BinaryTargets) -> Self::Model {
-        HistGradientBoostingClassifierCase::fit(data, labels).into()
-    }
-
-    fn round_trip(model: &Self::Model) -> RoundTrip<Self::Model> {
-        round_trip(
-            || model.to_artifact(SCHEMA),
-            |bytes| AnyClassifier::from_artifact(bytes, SCHEMA),
-        )
-    }
-}
-
-struct AnyLogisticClassifierCase;
-
-impl ClassifierCase for AnyLogisticClassifierCase {
-    type Model = AnyClassifier;
-    const NAME: &'static str = "AnyClassifier::LogisticRegression";
-
-    fn fit(data: &MatrixView<'_>, labels: &BinaryTargets) -> Self::Model {
-        LogisticRegressionCase::fit(data, labels).into()
-    }
-
-    fn round_trip(model: &Self::Model) -> RoundTrip<Self::Model> {
-        round_trip(
-            || model.to_artifact(SCHEMA),
-            |bytes| AnyClassifier::from_artifact(bytes, SCHEMA),
-        )
-    }
-}
+any_classifier_case!(
+    AnyForestClassifierCase,
+    RandomForestClassifierCase,
+    "AnyClassifier::RandomForest"
+);
+any_classifier_case!(
+    AnyLogisticClassifierCase,
+    LogisticRegressionCase,
+    "AnyClassifier::LogisticRegression"
+);
+any_classifier_case!(
+    AnyBoostedClassifierCase,
+    HistGradientBoostingClassifierCase,
+    "AnyClassifier::HistGradientBoosting"
+);
 
 /// The two calibrated compositions, registered like any other classifier.
 ///
-/// The battery's one fixture is both the training and the calibration sample
-/// here, which is deliberately *not* how a calibrated model should be built —
-/// but these obligations are structural, and the fixture is the only data the
-/// battery has. Held-out calibration is proven in `tests/calibration.rs`, where
-/// there is room for two folds.
+/// The inner forest is fitted on `train` and the calibrator on `holdout`,
+/// which is what the composition's own documentation requires: a calibrator
+/// fitted on the rows its model already memorised measures that memory rather
+/// than the model's probabilities. The battery supplies the second sample, so
+/// the registration is honest rather than a structural approximation.
 struct IsotonicCalibratedForestCase;
 
 impl ClassifierCase for IsotonicCalibratedForestCase {
+    probabilistic_hooks!();
+
     type Model = CalibratedClassifier<RandomForestClassifier, IsotonicRegression>;
     const NAME: &'static str = "CalibratedClassifier<RandomForestClassifier, IsotonicRegression>";
 
-    fn fit(data: &MatrixView<'_>, labels: &BinaryTargets) -> Self::Model {
+    fn fit(train: &Sample, holdout: &Sample) -> Result<Self::Model, ModelError> {
         CalibratedClassifier::fit_isotonic(
-            RandomForestClassifierCase::fit(data, labels),
-            data,
-            labels,
+            RandomForestClassifierCase::fit(train, holdout)?,
+            &holdout.view(),
+            &holdout.labels,
         )
-        .expect("isotonic calibration of the fixture forest")
     }
 }
 
 struct PlattCalibratedForestCase;
 
 impl ClassifierCase for PlattCalibratedForestCase {
+    probabilistic_hooks!();
+
     type Model = CalibratedClassifier<RandomForestClassifier, PlattCalibrator>;
     const NAME: &'static str = "CalibratedClassifier<RandomForestClassifier, PlattCalibrator>";
 
-    fn fit(data: &MatrixView<'_>, labels: &BinaryTargets) -> Self::Model {
+    fn fit(train: &Sample, holdout: &Sample) -> Result<Self::Model, ModelError> {
         CalibratedClassifier::fit_platt(
-            RandomForestClassifierCase::fit(data, labels),
-            data,
-            labels,
+            RandomForestClassifierCase::fit(train, holdout)?,
+            &holdout.view(),
+            &holdout.labels,
             PlattParams::default(),
         )
-        .expect("Platt calibration of the fixture forest")
+    }
+
+    fn decision_function(
+        model: &Self::Model,
+        data: &MatrixView<'_>,
+    ) -> Option<Result<Vec<f32>, ModelError>> {
+        Some(model.decision_function(data))
+    }
+
+    fn decision_function_into(
+        model: &Self::Model,
+        data: &MatrixView<'_>,
+        output: &mut [f32],
+    ) -> Option<Result<(), ModelError>> {
+        Some(model.decision_function_into(data, output))
     }
 }
 
@@ -289,19 +349,17 @@ impl RegressorCase for RandomForestRegressorCase {
     type Model = RandomForestRegressor;
     const NAME: &'static str = "RandomForestRegressor";
 
-    fn fit(data: &MatrixView<'_>, values: &RegressionTargets) -> Self::Model {
-        RandomForestRegressor::fit(data, values, forest_regressor_params()).expect("fit")
+    fn fit(train: &Sample, _holdout: &Sample) -> Result<Self::Model, ModelError> {
+        RandomForestRegressor::fit(&train.view(), &train.values, forest_regressor_params())
     }
 
-    fn fit_weighted(
-        data: &MatrixView<'_>,
-        values: &RegressionTargets,
-        weights: &SampleWeights,
-    ) -> Option<Self::Model> {
-        Some(
-            RandomForestRegressor::fit_weighted(data, values, weights, forest_regressor_params())
-                .expect("weighted fit"),
-        )
+    fn fit_weighted(train: &Sample, _holdout: &Sample) -> OptionalFit<Self::Model> {
+        Some(RandomForestRegressor::fit_weighted(
+            &train.view(),
+            &train.values,
+            &train.unit_weights(),
+            forest_regressor_params(),
+        ))
     }
 
     fn round_trip(model: &Self::Model) -> RoundTrip<Self::Model> {
@@ -324,24 +382,21 @@ impl RegressorCase for LinearRegressionCase {
     type Model = LinearRegression;
     const NAME: &'static str = "LinearRegression";
 
-    fn fit(data: &MatrixView<'_>, values: &RegressionTargets) -> Self::Model {
-        LinearRegression::fit(data, values, LinearRegressionParams::default()).expect("fit")
+    fn fit(train: &Sample, _holdout: &Sample) -> Result<Self::Model, ModelError> {
+        LinearRegression::fit(
+            &train.view(),
+            &train.values,
+            LinearRegressionParams::default(),
+        )
     }
 
-    fn fit_weighted(
-        data: &MatrixView<'_>,
-        values: &RegressionTargets,
-        weights: &SampleWeights,
-    ) -> Option<Self::Model> {
-        Some(
-            LinearRegression::fit_weighted(
-                data,
-                values,
-                weights,
-                LinearRegressionParams::default(),
-            )
-            .expect("weighted fit"),
-        )
+    fn fit_weighted(train: &Sample, _holdout: &Sample) -> OptionalFit<Self::Model> {
+        Some(LinearRegression::fit_weighted(
+            &train.view(),
+            &train.values,
+            &train.unit_weights(),
+            LinearRegressionParams::default(),
+        ))
     }
 
     fn round_trip(model: &Self::Model) -> RoundTrip<Self::Model> {
@@ -364,19 +419,17 @@ impl RegressorCase for RidgeCase {
     type Model = Ridge;
     const NAME: &'static str = "Ridge";
 
-    fn fit(data: &MatrixView<'_>, values: &RegressionTargets) -> Self::Model {
-        Ridge::fit(data, values, RidgeParams::default()).expect("fit")
+    fn fit(train: &Sample, _holdout: &Sample) -> Result<Self::Model, ModelError> {
+        Ridge::fit(&train.view(), &train.values, RidgeParams::default())
     }
 
-    fn fit_weighted(
-        data: &MatrixView<'_>,
-        values: &RegressionTargets,
-        weights: &SampleWeights,
-    ) -> Option<Self::Model> {
-        Some(
-            Ridge::fit_weighted(data, values, weights, RidgeParams::default())
-                .expect("weighted fit"),
-        )
+    fn fit_weighted(train: &Sample, _holdout: &Sample) -> OptionalFit<Self::Model> {
+        Some(Ridge::fit_weighted(
+            &train.view(),
+            &train.values,
+            &train.unit_weights(),
+            RidgeParams::default(),
+        ))
     }
 
     fn round_trip(model: &Self::Model) -> RoundTrip<Self::Model> {
@@ -399,16 +452,17 @@ impl RegressorCase for LassoCase {
     type Model = Lasso;
     const NAME: &'static str = "Lasso";
 
-    fn fit(data: &MatrixView<'_>, values: &RegressionTargets) -> Self::Model {
-        Lasso::fit(data, values, lasso_params()).expect("fit")
+    fn fit(train: &Sample, _holdout: &Sample) -> Result<Self::Model, ModelError> {
+        Lasso::fit(&train.view(), &train.values, lasso_params())
     }
 
-    fn fit_weighted(
-        data: &MatrixView<'_>,
-        values: &RegressionTargets,
-        weights: &SampleWeights,
-    ) -> Option<Self::Model> {
-        Some(Lasso::fit_weighted(data, values, weights, lasso_params()).expect("weighted fit"))
+    fn fit_weighted(train: &Sample, _holdout: &Sample) -> OptionalFit<Self::Model> {
+        Some(Lasso::fit_weighted(
+            &train.view(),
+            &train.values,
+            &train.unit_weights(),
+            lasso_params(),
+        ))
     }
 }
 
@@ -432,19 +486,17 @@ impl RegressorCase for ElasticNetCase {
     type Model = ElasticNet;
     const NAME: &'static str = "ElasticNet";
 
-    fn fit(data: &MatrixView<'_>, values: &RegressionTargets) -> Self::Model {
-        ElasticNet::fit(data, values, elastic_net_params()).expect("fit")
+    fn fit(train: &Sample, _holdout: &Sample) -> Result<Self::Model, ModelError> {
+        ElasticNet::fit(&train.view(), &train.values, elastic_net_params())
     }
 
-    fn fit_weighted(
-        data: &MatrixView<'_>,
-        values: &RegressionTargets,
-        weights: &SampleWeights,
-    ) -> Option<Self::Model> {
-        Some(
-            ElasticNet::fit_weighted(data, values, weights, elastic_net_params())
-                .expect("weighted fit"),
-        )
+    fn fit_weighted(train: &Sample, _holdout: &Sample) -> OptionalFit<Self::Model> {
+        Some(ElasticNet::fit_weighted(
+            &train.view(),
+            &train.values,
+            &train.unit_weights(),
+            elastic_net_params(),
+        ))
     }
 }
 
@@ -466,19 +518,17 @@ impl RegressorCase for HistGradientBoostingRegressorCase {
     type Model = HistGradientBoostingRegressor;
     const NAME: &'static str = "HistGradientBoostingRegressor";
 
-    fn fit(data: &MatrixView<'_>, values: &RegressionTargets) -> Self::Model {
-        HistGradientBoostingRegressor::fit(data, values, boosting_params()).expect("fit")
+    fn fit(train: &Sample, _holdout: &Sample) -> Result<Self::Model, ModelError> {
+        HistGradientBoostingRegressor::fit(&train.view(), &train.values, boosting_params())
     }
 
-    fn fit_weighted(
-        data: &MatrixView<'_>,
-        values: &RegressionTargets,
-        weights: &SampleWeights,
-    ) -> Option<Self::Model> {
-        Some(
-            HistGradientBoostingRegressor::fit_weighted(data, values, weights, boosting_params())
-                .expect("weighted fit"),
-        )
+    fn fit_weighted(train: &Sample, _holdout: &Sample) -> OptionalFit<Self::Model> {
+        Some(HistGradientBoostingRegressor::fit_weighted(
+            &train.view(),
+            &train.values,
+            &train.unit_weights(),
+            boosting_params(),
+        ))
     }
 
     fn round_trip(model: &Self::Model) -> RoundTrip<Self::Model> {
@@ -498,28 +548,26 @@ impl ScalarRegressorCase for HistGradientBoostingRegressorCase {
 struct HistGradientBoostingClassifierCase;
 
 impl ClassifierCase for HistGradientBoostingClassifierCase {
+    probabilistic_hooks!();
+
     type Model = HistGradientBoostingClassifier;
     const NAME: &'static str = "HistGradientBoostingClassifier";
 
-    fn fit(data: &MatrixView<'_>, labels: &BinaryTargets) -> Self::Model {
-        HistGradientBoostingClassifier::fit(data, labels, boosting_classifier_params())
-            .expect("fit")
+    fn fit(train: &Sample, _holdout: &Sample) -> Result<Self::Model, ModelError> {
+        HistGradientBoostingClassifier::fit(
+            &train.view(),
+            &train.labels,
+            boosting_classifier_params(),
+        )
     }
 
-    fn fit_weighted(
-        data: &MatrixView<'_>,
-        labels: &BinaryTargets,
-        weights: &SampleWeights,
-    ) -> Option<Self::Model> {
-        Some(
-            HistGradientBoostingClassifier::fit_weighted(
-                data,
-                labels,
-                weights,
-                boosting_classifier_params(),
-            )
-            .expect("weighted fit"),
-        )
+    fn fit_weighted(train: &Sample, _holdout: &Sample) -> OptionalFit<Self::Model> {
+        Some(HistGradientBoostingClassifier::fit_weighted(
+            &train.view(),
+            &train.labels,
+            &train.unit_weights(),
+            boosting_classifier_params(),
+        ))
     }
 
     fn round_trip(model: &Self::Model) -> RoundTrip<Self::Model> {
@@ -527,6 +575,21 @@ impl ClassifierCase for HistGradientBoostingClassifierCase {
             || model.to_artifact(SCHEMA),
             |bytes| HistGradientBoostingClassifier::from_artifact(bytes, SCHEMA),
         )
+    }
+
+    fn decision_function(
+        model: &Self::Model,
+        data: &MatrixView<'_>,
+    ) -> Option<Result<Vec<f32>, ModelError>> {
+        Some(model.decision_function(data))
+    }
+
+    fn decision_function_into(
+        model: &Self::Model,
+        data: &MatrixView<'_>,
+        output: &mut [f32],
+    ) -> Option<Result<(), ModelError>> {
+        Some(model.decision_function_into(data, output))
     }
 }
 
@@ -544,8 +607,8 @@ macro_rules! any_regressor_case {
             type Model = AnyRegressor;
             const NAME: &'static str = $name;
 
-            fn fit(data: &MatrixView<'_>, values: &RegressionTargets) -> Self::Model {
-                <$inner as RegressorCase>::fit(data, values).into()
+            fn fit(train: &Sample, holdout: &Sample) -> Result<Self::Model, ModelError> {
+                <$inner as RegressorCase>::fit(train, holdout).map(Into::into)
             }
 
             fn round_trip(model: &Self::Model) -> RoundTrip<Self::Model> {
@@ -578,11 +641,13 @@ any_regressor_case!(
 struct DummyClassifierCase;
 
 impl ClassifierCase for DummyClassifierCase {
+    probabilistic_hooks!();
+
     type Model = DummyClassifier;
     const NAME: &'static str = "DummyClassifier";
 
-    fn fit(data: &MatrixView<'_>, labels: &BinaryTargets) -> Self::Model {
-        DummyClassifier::fit(data, labels, DummyClassifierParams).expect("fit")
+    fn fit(train: &Sample, _holdout: &Sample) -> Result<Self::Model, ModelError> {
+        DummyClassifier::fit(&train.view(), &train.labels, DummyClassifierParams)
     }
 }
 
@@ -598,8 +663,8 @@ impl RegressorCase for DummyRegressorCase {
     type Model = DummyRegressor;
     const NAME: &'static str = "DummyRegressor";
 
-    fn fit(data: &MatrixView<'_>, values: &RegressionTargets) -> Self::Model {
-        DummyRegressor::fit(data, values, DummyRegressorParams).expect("fit")
+    fn fit(train: &Sample, _holdout: &Sample) -> Result<Self::Model, ModelError> {
+        DummyRegressor::fit(&train.view(), &train.values, DummyRegressorParams)
     }
 }
 
@@ -615,15 +680,16 @@ impl TransformerCase for StandardScalerCase {
     type Model = StandardScaler;
     const NAME: &'static str = "StandardScaler";
 
-    fn fit(data: &MatrixView<'_>) -> Self::Model {
-        StandardScaler::fit(data, StandardScalerParams::default()).expect("fit")
+    fn fit(train: &Sample, _holdout: &Sample) -> Result<Self::Model, ModelError> {
+        StandardScaler::fit(&train.view(), StandardScalerParams::default())
     }
 
-    fn fit_weighted(data: &MatrixView<'_>, weights: &SampleWeights) -> Option<Self::Model> {
-        Some(
-            StandardScaler::fit_weighted(data, weights, StandardScalerParams::default())
-                .expect("weighted fit"),
-        )
+    fn fit_weighted(train: &Sample, _holdout: &Sample) -> OptionalFit<Self::Model> {
+        Some(StandardScaler::fit_weighted(
+            &train.view(),
+            &train.unit_weights(),
+            StandardScalerParams::default(),
+        ))
     }
 
     fn round_trip(model: &Self::Model) -> RoundTrip<Self::Model> {
@@ -640,8 +706,8 @@ impl TransformerCase for MinMaxScalerCase {
     type Model = MinMaxScaler;
     const NAME: &'static str = "MinMaxScaler";
 
-    fn fit(data: &MatrixView<'_>) -> Self::Model {
-        MinMaxScaler::fit(data, MinMaxScalerParams::default()).expect("fit")
+    fn fit(train: &Sample, _holdout: &Sample) -> Result<Self::Model, ModelError> {
+        MinMaxScaler::fit(&train.view(), MinMaxScalerParams::default())
     }
 
     fn round_trip(model: &Self::Model) -> RoundTrip<Self::Model> {
@@ -658,8 +724,8 @@ impl TransformerCase for MaxAbsScalerCase {
     type Model = MaxAbsScaler;
     const NAME: &'static str = "MaxAbsScaler";
 
-    fn fit(data: &MatrixView<'_>) -> Self::Model {
-        MaxAbsScaler::fit(data, MaxAbsScalerParams).expect("fit")
+    fn fit(train: &Sample, _holdout: &Sample) -> Result<Self::Model, ModelError> {
+        MaxAbsScaler::fit(&train.view(), MaxAbsScalerParams)
     }
 
     fn round_trip(model: &Self::Model) -> RoundTrip<Self::Model> {
@@ -667,6 +733,439 @@ impl TransformerCase for MaxAbsScalerCase {
             || model.to_artifact(SCHEMA, TRANSFORMED_SCHEMA),
             |bytes| MaxAbsScaler::from_artifact(bytes, SCHEMA, TRANSFORMED_SCHEMA),
         )
+    }
+}
+
+/// A monotone map of one feature, registered on the univariate fixture.
+///
+/// It is a real `Regressor` and could not be registered at all while the
+/// battery had one eight-by-two dataset: a univariate estimator is required to
+/// reject a wider matrix, so the only shape on offer was one it must refuse.
+struct IsotonicRegressionCase;
+
+impl RegressorCase for IsotonicRegressionCase {
+    type Model = IsotonicRegression;
+    const NAME: &'static str = "IsotonicRegression";
+    const FIXTURE: FixtureShape = FixtureShape::Univariate;
+
+    fn fit(train: &Sample, _holdout: &Sample) -> Result<Self::Model, ModelError> {
+        IsotonicRegression::fit(&train.view(), &train.values)
+    }
+}
+
+impl ScalarRegressorCase for IsotonicRegressionCase {
+    fn predict_one(model: &Self::Model, row: &[f32]) -> Result<f32, ModelError> {
+        model.predict_one(row)
+    }
+}
+
+/// One fitted scaler and one fitted classifier, predicted through a workspace.
+struct ScaledLogisticPipelineCase;
+
+impl WorkspaceClassifierCase for ScaledLogisticPipelineCase {
+    type Model = Pipeline<StandardScaler, LogisticRegression>;
+    const NAME: &'static str = "Pipeline<StandardScaler, LogisticRegression>";
+
+    fn fit(train: &Sample, _holdout: &Sample) -> Result<Self::Model, ModelError> {
+        let scaler = StandardScaler::fit(&train.view(), StandardScalerParams::default())?;
+        let transformed = scaler.transform(&train.view())?;
+        let estimator = LogisticRegression::fit(
+            &transformed.as_view(),
+            &train.labels,
+            LogisticRegressionParams::default(),
+        )?;
+        Pipeline::new(scaler, estimator)
+    }
+
+    fn round_trip(model: &Self::Model) -> RoundTrip<Self::Model> {
+        round_trip(
+            || model.to_artifact(SCHEMA, TRANSFORMED_SCHEMA),
+            |bytes| {
+                Pipeline::<StandardScaler, LogisticRegression>::from_artifact(
+                    bytes,
+                    SCHEMA,
+                    TRANSFORMED_SCHEMA,
+                )
+            },
+        )
+    }
+
+    fn workspace_len(model: &Self::Model, rows: usize) -> Result<usize, ModelError> {
+        model.workspace_len(rows)
+    }
+
+    fn classes(model: &Self::Model) -> Vec<u8> {
+        model.estimator().classes().to_vec()
+    }
+
+    fn predict(
+        model: &Self::Model,
+        data: &MatrixView<'_>,
+        workspace: &mut [f32],
+    ) -> Result<Vec<u8>, ModelError> {
+        model.with_transformed(data, workspace, |estimator, transformed| {
+            estimator.predict(transformed)
+        })
+    }
+
+    fn predict_into(
+        model: &Self::Model,
+        data: &MatrixView<'_>,
+        workspace: &mut [f32],
+        output: &mut [u8],
+    ) -> Result<(), ModelError> {
+        model.predict_into(data, workspace, output)
+    }
+
+    fn predict_proba(
+        model: &Self::Model,
+        data: &MatrixView<'_>,
+        workspace: &mut [f32],
+    ) -> Option<Result<Vec<f32>, ModelError>> {
+        Some(
+            model.with_transformed(data, workspace, |estimator, transformed| {
+                estimator.predict_proba(transformed)
+            }),
+        )
+    }
+
+    fn predict_proba_into(
+        model: &Self::Model,
+        data: &MatrixView<'_>,
+        workspace: &mut [f32],
+        output: &mut [f32],
+    ) -> Option<Result<(), ModelError>> {
+        Some(model.predict_proba_into(data, workspace, output))
+    }
+
+    fn predict_class_proba(
+        model: &Self::Model,
+        data: &MatrixView<'_>,
+        workspace: &mut [f32],
+        class: u8,
+    ) -> Option<Result<Vec<f32>, ModelError>> {
+        Some(
+            model.with_transformed(data, workspace, |estimator, transformed| {
+                ProbabilisticClassifier::predict_class_proba(estimator, transformed, class)
+            }),
+        )
+    }
+
+    fn predict_class_proba_into(
+        model: &Self::Model,
+        data: &MatrixView<'_>,
+        workspace: &mut [f32],
+        class: u8,
+        output: &mut [f32],
+    ) -> Option<Result<(), ModelError>> {
+        Some(model.predict_class_proba_into(data, class, workspace, output))
+    }
+
+    fn decision_function(
+        model: &Self::Model,
+        data: &MatrixView<'_>,
+        workspace: &mut [f32],
+    ) -> Option<Result<Vec<f32>, ModelError>> {
+        Some(
+            model.with_transformed(data, workspace, |estimator, transformed| {
+                estimator.decision_function(transformed)
+            }),
+        )
+    }
+
+    fn decision_function_into(
+        model: &Self::Model,
+        data: &MatrixView<'_>,
+        workspace: &mut [f32],
+        output: &mut [f32],
+    ) -> Option<Result<(), ModelError>> {
+        Some(model.decision_function_into(data, workspace, output))
+    }
+}
+
+macro_rules! scaled_regression_pipeline_case {
+    ($case:ident, $estimator:ty, $params:expr, $name:literal) => {
+        struct $case;
+
+        impl WorkspaceRegressorCase for $case {
+            type Model = Pipeline<StandardScaler, $estimator>;
+            const NAME: &'static str = $name;
+
+            fn fit(train: &Sample, _holdout: &Sample) -> Result<Self::Model, ModelError> {
+                let scaler = StandardScaler::fit(&train.view(), StandardScalerParams::default())?;
+                let transformed = scaler.transform(&train.view())?;
+                let estimator = <$estimator>::fit(&transformed.as_view(), &train.values, $params)?;
+                Pipeline::new(scaler, estimator)
+            }
+
+            fn round_trip(model: &Self::Model) -> RoundTrip<Self::Model> {
+                round_trip(
+                    || model.to_artifact(SCHEMA, TRANSFORMED_SCHEMA),
+                    |bytes| {
+                        Pipeline::<StandardScaler, $estimator>::from_artifact(
+                            bytes,
+                            SCHEMA,
+                            TRANSFORMED_SCHEMA,
+                        )
+                    },
+                )
+            }
+
+            fn workspace_len(model: &Self::Model, rows: usize) -> Result<usize, ModelError> {
+                model.workspace_len(rows)
+            }
+
+            fn predict(
+                model: &Self::Model,
+                data: &MatrixView<'_>,
+                workspace: &mut [f32],
+            ) -> Result<Vec<f32>, ModelError> {
+                model.with_transformed(data, workspace, |estimator, transformed| {
+                    estimator.predict(transformed)
+                })
+            }
+
+            fn predict_into(
+                model: &Self::Model,
+                data: &MatrixView<'_>,
+                workspace: &mut [f32],
+                output: &mut [f32],
+            ) -> Result<(), ModelError> {
+                model.predict_into(data, workspace, output)
+            }
+        }
+    };
+}
+
+scaled_regression_pipeline_case!(
+    ScaledRidgePipelineCase,
+    Ridge,
+    RidgeParams::default(),
+    "Pipeline<StandardScaler, Ridge>"
+);
+scaled_regression_pipeline_case!(
+    ScaledLinearPipelineCase,
+    LinearRegression,
+    LinearRegressionParams::default(),
+    "Pipeline<StandardScaler, LinearRegression>"
+);
+
+/// Two fitted transform stages and an estimator, predicted through one
+/// workspace split per stage.
+struct TwoStagePipelineCase;
+
+impl WorkspaceRegressorCase for TwoStagePipelineCase {
+    type Model = StagedPipeline<(MinMaxScaler, StandardScaler), Ridge>;
+    const NAME: &'static str = "StagedPipeline<(MinMaxScaler, StandardScaler), Ridge>";
+
+    fn fit(train: &Sample, _holdout: &Sample) -> Result<Self::Model, ModelError> {
+        StagedPipeline::fit(
+            &train.view(),
+            |batch| MinMaxScaler::fit(batch, MinMaxScalerParams::default()),
+            |batch| StandardScaler::fit(batch, StandardScalerParams::default()),
+            |batch| Ridge::fit(batch, &train.values, RidgeParams::default()),
+        )
+    }
+
+    fn round_trip(model: &Self::Model) -> RoundTrip<Self::Model> {
+        round_trip(
+            || model.to_artifact(SCHEMA, TRANSFORMED_SCHEMA),
+            |bytes| {
+                StagedPipeline::<(MinMaxScaler, StandardScaler), Ridge>::from_artifact(
+                    bytes,
+                    SCHEMA,
+                    TRANSFORMED_SCHEMA,
+                )
+            },
+        )
+    }
+
+    fn workspace_len(model: &Self::Model, rows: usize) -> Result<usize, ModelError> {
+        model.workspace_len(rows)
+    }
+
+    fn predict(
+        model: &Self::Model,
+        data: &MatrixView<'_>,
+        workspace: &mut [f32],
+    ) -> Result<Vec<f32>, ModelError> {
+        model.with_transformed(data, workspace, |estimator, transformed| {
+            estimator.predict(transformed)
+        })
+    }
+
+    fn predict_into(
+        model: &Self::Model,
+        data: &MatrixView<'_>,
+        workspace: &mut [f32],
+        output: &mut [f32],
+    ) -> Result<(), ModelError> {
+        model.with_transformed(data, workspace, |estimator, transformed| {
+            estimator.predict_into(transformed, output)
+        })
+    }
+}
+
+/// The three-stage arity, so both `TransformerStack` implementations are
+/// covered by a registration rather than by a bespoke test.
+struct ThreeStagePipelineCase;
+
+impl WorkspaceRegressorCase for ThreeStagePipelineCase {
+    type Model = StagedPipeline<(StandardScaler, MaxAbsScaler, MinMaxScaler), LinearRegression>;
+    const NAME: &'static str =
+        "StagedPipeline<(StandardScaler, MaxAbsScaler, MinMaxScaler), LinearRegression>";
+
+    fn fit(train: &Sample, _holdout: &Sample) -> Result<Self::Model, ModelError> {
+        let first = StandardScaler::fit(&train.view(), StandardScalerParams::default())?;
+        let after_first = first.transform(&train.view())?;
+        let second = MaxAbsScaler::fit(&after_first.as_view(), MaxAbsScalerParams)?;
+        let after_second = second.transform(&after_first.as_view())?;
+        let third = MinMaxScaler::fit(&after_second.as_view(), MinMaxScalerParams::default())?;
+        let transformed = third.transform(&after_second.as_view())?;
+        let estimator = LinearRegression::fit(
+            &transformed.as_view(),
+            &train.values,
+            LinearRegressionParams::default(),
+        )?;
+        StagedPipeline::new((first, second, third), estimator)
+    }
+
+    fn round_trip(model: &Self::Model) -> RoundTrip<Self::Model> {
+        round_trip(
+            || model.to_artifact(SCHEMA, TRANSFORMED_SCHEMA),
+            |bytes| {
+                StagedPipeline::<
+                    (StandardScaler, MaxAbsScaler, MinMaxScaler),
+                    LinearRegression,
+                >::from_artifact(bytes, SCHEMA, TRANSFORMED_SCHEMA)
+            },
+        )
+    }
+
+    fn workspace_len(model: &Self::Model, rows: usize) -> Result<usize, ModelError> {
+        model.workspace_len(rows)
+    }
+
+    fn predict(
+        model: &Self::Model,
+        data: &MatrixView<'_>,
+        workspace: &mut [f32],
+    ) -> Result<Vec<f32>, ModelError> {
+        model.with_transformed(data, workspace, |estimator, transformed| {
+            estimator.predict(transformed)
+        })
+    }
+
+    fn predict_into(
+        model: &Self::Model,
+        data: &MatrixView<'_>,
+        workspace: &mut [f32],
+        output: &mut [f32],
+    ) -> Result<(), ModelError> {
+        model.with_transformed(data, workspace, |estimator, transformed| {
+            estimator.predict_into(transformed, output)
+        })
+    }
+}
+
+/// The ranker, registered as an ordinary member of the battery.
+///
+/// **Ranking sits inside the battery.** Excluding it is exactly the
+/// special-casing the capability descriptor exists to abolish, and every
+/// structural obligation the battery states is meaningful for a ranker:
+/// metadata, caller-owned output matching the allocating form, feature width
+/// and output length validated before any write, scalar and batch agreement,
+/// non-finite rejection, a deterministic refit, and an artifact declaration
+/// that matches behavior.
+///
+/// The two things it does not share are absorbed here, at the case boundary,
+/// rather than by giving ranking a category of its own:
+///
+/// - *Error type.* Scoring returns [`PairwiseError`]; this case unwraps its
+///   `Model` variant. Any other variant would be a pair-construction error
+///   escaping a scoring path, which cannot happen by construction — scoring is
+///   a thin wrapper over the linear model — so it is asserted rather than
+///   handled.
+/// - *Fit input.* Fitting takes pair observations rather than a target vector,
+///   so the case builds them from the fixture's monotone values.
+///
+/// It produces one real-valued score per row through a caller-owned buffer,
+/// which is exactly [`WorkspaceRegressorCase`]'s shape, so it needs no
+/// workspace at all and no new obligation list. The pairwise surface —
+/// `pair_margin`, `compare`, `compare_into`, pair-index validation — is not a
+/// shared obligation and stays in the estimator-specific tests below.
+struct PairwiseLinearRankerCase;
+
+/// Unwraps the only error variant a scoring path can produce.
+fn scoring_error(error: PairwiseError) -> ModelError {
+    match error {
+        PairwiseError::Model(error) => error,
+        other => panic!("scoring produced a non-model pairwise error: {other:?}"),
+    }
+}
+
+/// Consecutive pairs of the fixture, each preferring the higher-valued row.
+///
+/// The fixture's targets increase with the row index, so this is a total order
+/// the ranker can reproduce, built from the same data every other case uses.
+fn fixture_pairs(train: &Sample) -> Vec<PairwiseObservation> {
+    (1..train.rows())
+        .map(|row| {
+            PairwiseObservation::new(
+                PairIndex::new(row, row - 1).expect("distinct fixture pair"),
+                PairOutcome::LeftPreferred,
+                1.0,
+            )
+            .expect("valid fixture observation")
+        })
+        .collect()
+}
+
+impl WorkspaceRegressorCase for PairwiseLinearRankerCase {
+    type Model = PairwiseLinearRanker;
+    const NAME: &'static str = "PairwiseLinearRanker";
+
+    fn fit(train: &Sample, _holdout: &Sample) -> Result<Self::Model, ModelError> {
+        PairwiseLinearRanker::fit(
+            &train.view(),
+            &fixture_pairs(train),
+            PairwiseLinearRankerParams::default(),
+        )
+        .map_err(scoring_error)
+    }
+
+    fn round_trip(model: &Self::Model) -> RoundTrip<Self::Model> {
+        round_trip(
+            || model.to_artifact(SCHEMA),
+            |bytes| PairwiseLinearRanker::from_artifact(bytes, SCHEMA),
+        )
+    }
+
+    fn workspace_len(_model: &Self::Model, _rows: usize) -> Result<usize, ModelError> {
+        Ok(0)
+    }
+
+    fn predict(
+        model: &Self::Model,
+        data: &MatrixView<'_>,
+        _workspace: &mut [f32],
+    ) -> Result<Vec<f32>, ModelError> {
+        model.score_items(data).map_err(scoring_error)
+    }
+
+    fn predict_into(
+        model: &Self::Model,
+        data: &MatrixView<'_>,
+        _workspace: &mut [f32],
+        output: &mut [f32],
+    ) -> Result<(), ModelError> {
+        model.score_items_into(data, output).map_err(scoring_error)
+    }
+}
+
+impl ScalarWorkspaceRegressorCase for PairwiseLinearRankerCase {
+    fn predict_one(model: &Self::Model, row: &[f32]) -> Result<f32, ModelError> {
+        model.score_one(row).map_err(scoring_error)
     }
 }
 
@@ -765,6 +1264,40 @@ fn min_max_scaler_conforms() {
 fn max_abs_scaler_conforms() {
     check_transformer::<MaxAbsScalerCase>();
 }
+
+#[test]
+fn isotonic_regression_conforms() {
+    check_regressor::<IsotonicRegressionCase>();
+}
+
+#[test]
+fn fitted_pipelines_conform() {
+    check_workspace_classifier::<ScaledLogisticPipelineCase>();
+    check_workspace_regressor::<ScaledRidgePipelineCase>();
+    check_workspace_regressor::<ScaledLinearPipelineCase>();
+}
+
+#[test]
+fn pairwise_linear_ranker_conforms() {
+    check_scalar_workspace_regressor::<PairwiseLinearRankerCase>();
+}
+
+#[test]
+fn staged_pipelines_conform_at_both_arities() {
+    check_workspace_regressor::<TwoStagePipelineCase>();
+    check_workspace_regressor::<ThreeStagePipelineCase>();
+}
+
+// Deliberately unregistered, with the reason stated rather than left as a gap:
+//
+// - `PlattCalibrator` is a `Calibrator`, not an `Estimator`: a fitted map of
+//   one score, with no fitted input width, no batch surface, and no capability
+//   declaration to check against behavior. Its obligations are in
+//   `tests/calibration.rs`.
+// - `TransformerStack` tuples are not `Estimator`s either. A stack is reached
+//   only through `StagedPipeline`, which is registered above at both arities,
+//   so its handoff validation and its disjoint workspace segments are covered
+//   by a registration rather than by a bespoke test.
 
 // -------------------------------------------------- estimator-specific tests
 
@@ -900,8 +1433,14 @@ fn runtime_dispatch_preserves_predictions_and_parameter_identity() {
     let dispatched: AnyClassifier = concrete.into();
     let erased: &dyn Classifier = &dispatched;
     assert_eq!(erased.predict(&data.as_view()).unwrap(), expected_labels);
+    // Probabilities are reached through the fallible accessor rather than
+    // through the dispatch enum's own trait impl; see the shape test below.
     assert_eq!(
-        erased.predict_proba(&data.as_view()).unwrap(),
+        dispatched
+            .as_probabilistic()
+            .expect("every shipped variant produces probabilities")
+            .predict_proba(&data.as_view())
+            .unwrap(),
         expected_probabilities
     );
     assert!(matches!(
@@ -917,7 +1456,14 @@ fn runtime_dispatch_preserves_predictions_and_parameter_identity() {
     .unwrap();
     let expected = logistic.predict_proba(&data.as_view()).unwrap();
     let dispatched: AnyClassifier = logistic.into();
-    assert_eq!(dispatched.predict_proba(&data.as_view()).unwrap(), expected);
+    assert_eq!(
+        dispatched
+            .as_probabilistic()
+            .expect("every shipped variant produces probabilities")
+            .predict_proba(&data.as_view())
+            .unwrap(),
+        expected
+    );
     assert!(matches!(
         dispatched.get_params(),
         AnyClassifierParams::LogisticRegression(_)

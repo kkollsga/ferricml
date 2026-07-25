@@ -9,7 +9,7 @@ use super::grower::{SampleStatistics, grow_tree};
 use super::predictor::{CompactTree, prediction_bound_is_finite};
 use crate::api::{
     Capabilities, Classifier, Estimator, HasCapabilities, HasParams, ModelError,
-    validate_prediction, validate_scalar_row,
+    ProbabilisticClassifier, validate_prediction, validate_scalar_row,
 };
 use crate::artifact::{
     ArtifactError, ArtifactPayloadWriter, HIST_GRADIENT_BOOSTING_CLASSIFIER_ARTIFACT_KIND,
@@ -386,7 +386,7 @@ impl HistGradientBoostingClassifier {
 
     /// Predicts row-major probabilities with one column per class.
     pub fn predict_proba(&self, data: &MatrixView<'_>) -> Result<Vec<f32>, ModelError> {
-        <Self as Classifier>::predict_proba(self, data)
+        <Self as ProbabilisticClassifier>::predict_proba(self, data)
     }
 
     /// Predicts row-major probabilities into caller-owned storage.
@@ -395,7 +395,7 @@ impl HistGradientBoostingClassifier {
         data: &MatrixView<'_>,
         output: &mut [f32],
     ) -> Result<(), ModelError> {
-        <Self as Classifier>::predict_proba_into(self, data, output)
+        <Self as ProbabilisticClassifier>::predict_proba_into(self, data, output)
     }
 
     /// Predicts one requested class probability column, allocating the output.
@@ -404,7 +404,7 @@ impl HistGradientBoostingClassifier {
         data: &MatrixView<'_>,
         class: u8,
     ) -> Result<Vec<f32>, ModelError> {
-        <Self as Classifier>::predict_class_proba(self, data, class)
+        <Self as ProbabilisticClassifier>::predict_class_proba(self, data, class)
     }
 
     /// Predicts one requested class probability column without allocating.
@@ -414,7 +414,7 @@ impl HistGradientBoostingClassifier {
         class: u8,
         output: &mut [f32],
     ) -> Result<(), ModelError> {
-        <Self as Classifier>::predict_class_proba_into(self, data, class, output)
+        <Self as ProbabilisticClassifier>::predict_class_proba_into(self, data, class, output)
     }
 
     /// Encodes the fitted baseline, parameters, and canonical logical trees.
@@ -618,7 +618,8 @@ impl HasCapabilities for HistGradientBoostingClassifier {
     const CAPABILITIES: Capabilities = Capabilities::NONE
         .with_sample_weights(true)
         .with_artifact(true)
-        .with_decision_function(true);
+        .with_decision_function(true)
+        .with_probability(true);
 }
 
 impl HasParams for HistGradientBoostingClassifier {
@@ -642,7 +643,9 @@ impl Classifier for HistGradientBoostingClassifier {
         }
         Ok(())
     }
+}
 
+impl ProbabilisticClassifier for HistGradientBoostingClassifier {
     fn predict_proba_into(
         &self,
         data: &MatrixView<'_>,

@@ -9,8 +9,17 @@
 //! the estimator conformance battery, which selects its optional obligations
 //! from these same constants: an estimator that declares a capability it does
 //! not have, or has one it did not declare, fails there.
+//!
+//! Three mechanisms, deliberately not merged. `tests/capability_snapshot.rs`
+//! is the mechanical change detector — exact values, diffed beside the frozen
+//! API profile, and closed against it so no declaration escapes both. This
+//! file is the *reasoned* record: why each declaration is what it is, which a
+//! generated table cannot carry. The battery is the behavioral proof. A
+//! reviewer reads the snapshot diff; a maintainer reads the reasoning here.
 
-use ferricml::api::{AnyClassifier, AnyRegressor, Capabilities, HasCapabilities};
+use ferricml::api::{
+    AnyClassifier, AnyRegressor, Capabilities, HasCapabilities, ProbabilisticClassifier,
+};
 use ferricml::calibration::{CalibratedClassifier, IsotonicRegression, PlattCalibrator};
 use ferricml::data::{BinaryTargets, DenseMatrix, RegressionTargets};
 use ferricml::dummy::{DummyClassifier, DummyRegressor};
@@ -26,11 +35,16 @@ use ferricml::pipeline::{Pipeline, StagedPipeline};
 use ferricml::preprocessing::{
     MaxAbsScaler, MinMaxScaler, MinMaxScalerParams, StandardScaler, StandardScalerParams,
 };
+use ferricml::ranking::PairwiseLinearRanker;
 
 const WEIGHTED_AND_PERSISTED: Capabilities = Capabilities::NONE
     .with_sample_weights(true)
     .with_artifact(true);
 const PERSISTED_ONLY: Capabilities = Capabilities::NONE.with_artifact(true);
+/// Every classifier that produces probabilities declares it. The field only
+/// varies once a margin-based classifier exists, which is why the trait split
+/// came first: the tag records a real distinction rather than a constant.
+const PROBABILITY: Capabilities = Capabilities::NONE.with_probability(true);
 
 #[test]
 fn linear_estimators_declare_weighted_fitting_and_persistence() {
@@ -38,7 +52,8 @@ fn linear_estimators_declare_weighted_fitting_and_persistence() {
         LogisticRegression::CAPABILITIES,
         WEIGHTED_AND_PERSISTED
             .with_multiclass(true)
-            .with_decision_function(true),
+            .with_decision_function(true)
+            .with_probability(true),
         "logistic regression is the one linear model that also fits a class set, \
          and the only shipped estimator exposing a raw unsquashed score"
     );
@@ -93,7 +108,9 @@ fn the_boosted_classifier_declares_weighted_fitting_persistence_and_a_decision_s
     // iteration, not a wider fit of this one.
     assert_eq!(
         HistGradientBoostingClassifier::CAPABILITIES,
-        WEIGHTED_AND_PERSISTED.with_decision_function(true)
+        WEIGHTED_AND_PERSISTED
+            .with_decision_function(true)
+            .with_probability(true)
     );
     assert!(!HistGradientBoostingClassifier::CAPABILITIES.multiclass());
 }
@@ -104,7 +121,9 @@ fn the_forest_classifier_declares_weighted_and_multiclass_fitting_and_persistenc
     // every fit the type offers rather than for one of its two entry points.
     assert_eq!(
         RandomForestClassifier::CAPABILITIES,
-        WEIGHTED_AND_PERSISTED.with_multiclass(true)
+        WEIGHTED_AND_PERSISTED
+            .with_multiclass(true)
+            .with_probability(true)
     );
 }
 
@@ -128,7 +147,9 @@ fn multiclass_fitting_is_declared_by_the_types_that_offer_it() {
 fn baseline_estimators_declare_nothing() {
     // A baseline is refitted rather than persisted and has no weighted entry
     // point, so the conservative default is the whole truth.
-    assert_eq!(DummyClassifier::CAPABILITIES, Capabilities::NONE);
+    // A baseline still produces probabilities — the observed class
+    // frequencies — so the one thing it declares is the one thing it does.
+    assert_eq!(DummyClassifier::CAPABILITIES, PROBABILITY);
     assert_eq!(DummyRegressor::CAPABILITIES, Capabilities::NONE);
 }
 
@@ -140,7 +161,7 @@ fn a_calibrated_composition_declares_only_what_its_calibrator_gives_it() {
     // have promised entry points the wrapper does not have at all.
     assert_eq!(
         <CalibratedClassifier<RandomForestClassifier, IsotonicRegression> as HasCapabilities>::CAPABILITIES,
-        Capabilities::NONE
+        PROBABILITY
     );
     // The parametric calibrator does add one thing the wrapped model never had:
     // a raw decision score, `slope * score + intercept`, whose sigmoid is the
@@ -148,7 +169,7 @@ fn a_calibrated_composition_declares_only_what_its_calibrator_gives_it() {
     // being a constant dressed up as a capability.
     assert_eq!(
         <CalibratedClassifier<RandomForestClassifier, PlattCalibrator> as HasCapabilities>::CAPABILITIES,
-        Capabilities::NONE.with_decision_function(true)
+        PROBABILITY.with_decision_function(true)
     );
 }
 
@@ -168,6 +189,17 @@ fn a_decision_function_is_declared_by_nothing_that_only_produces_probabilities()
     assert!(!AnyClassifier::CAPABILITIES.decision_function());
     assert!(!AnyRegressor::CAPABILITIES.decision_function());
     assert!(!IsotonicRegression::CAPABILITIES.decision_function());
+    // A composition takes this one from its *estimator*, not from an
+    // intersection: a transformer never has a decision function, so
+    // intersecting would make the field structurally unable to be true for any
+    // pipeline while the composition really does expose the method.
+    assert!(
+        <Pipeline<StandardScaler, LogisticRegression> as HasCapabilities>::CAPABILITIES
+            .decision_function()
+    );
+    assert!(
+        !<Pipeline<StandardScaler, Ridge> as HasCapabilities>::CAPABILITIES.decision_function()
+    );
 }
 
 #[test]
@@ -179,13 +211,34 @@ fn the_monotone_calibrator_declares_nothing() {
 }
 
 #[test]
+fn the_ranker_declares_persistence_and_nothing_else() {
+    // The one fitted estimator that could never answer a capability query, and
+    // therefore the one every meta-layer would have had to special-case.
+    //
+    // Weighted fitting is absent because a pairwise weight belongs to a *pair
+    // observation*, not to a row of the item matrix, so there is no
+    // `SampleWeights` entry point to declare. A decision function is absent for
+    // the reason that keeps that field honest: it records that a classifier
+    // exposes a raw score whose squashing is its probability, and a ranker has
+    // no probability to squash to — raw scores and pair margins are not
+    // probabilities.
+    assert_eq!(PairwiseLinearRanker::CAPABILITIES, PERSISTED_ONLY);
+    assert!(!PairwiseLinearRanker::CAPABILITIES.sample_weights());
+    assert!(!PairwiseLinearRanker::CAPABILITIES.decision_function());
+    assert!(!PairwiseLinearRanker::CAPABILITIES.multiclass());
+}
+
+#[test]
 fn runtime_dispatch_declares_only_what_every_variant_offers() {
     // Both classifier variants persist every fit they offer, so the enum does
     // too. Multiclass *fitting* is declared away structurally rather than
     // intersected: both variants offer it, but the enum owns fitted models and
     // no fitting entry point, so an intersection would have promised an entry
     // point that does not exist.
-    assert_eq!(AnyClassifier::CAPABILITIES, PERSISTED_ONLY);
+    assert_eq!(
+        AnyClassifier::CAPABILITIES,
+        PERSISTED_ONLY.with_probability(true)
+    );
     assert!(LogisticRegression::CAPABILITIES.multiclass());
     assert!(RandomForestClassifier::CAPABILITIES.multiclass());
     assert!(!AnyClassifier::CAPABILITIES.multiclass());
@@ -232,10 +285,13 @@ fn runtime_dispatch_reports_the_selected_variant_without_type_matching() {
         WEIGHTED_AND_PERSISTED
             .with_multiclass(true)
             .with_decision_function(true)
+            .with_probability(true)
     );
     assert_eq!(
         forest_classifier.capabilities(),
-        WEIGHTED_AND_PERSISTED.with_multiclass(true)
+        WEIGHTED_AND_PERSISTED
+            .with_multiclass(true)
+            .with_probability(true)
     );
 }
 
@@ -300,6 +356,8 @@ fn a_fitted_composition_persists_when_both_parts_do() {
     assert_eq!(
         <Pipeline<StandardScaler, LogisticRegression> as HasCapabilities>::CAPABILITIES,
         PERSISTED_ONLY
+            .with_decision_function(true)
+            .with_probability(true)
     );
     assert_eq!(
         <Pipeline<StandardScaler, Ridge> as HasCapabilities>::CAPABILITIES,
@@ -352,4 +410,84 @@ fn a_multi_stage_composition_persists_when_every_part_does() {
             .sample_weights()
     );
     assert!(staged.to_artifact([1; 32], [2; 32]).is_ok());
+}
+
+/// Adding a non-probabilistic variant to `AnyClassifier` must not be a
+/// breaking change.
+///
+/// This is the property the whole `ProbabilisticClassifier` split is shaped
+/// around, and runtime dispatch is where it is easiest to get wrong. Every
+/// variant shipped today produces probabilities, so implementing the trait for
+/// the enum would compile and look harmless — and would then have to be
+/// *removed* the first time a margin-based classifier joins, which is a second
+/// breaking change to the same surface one sprint later.
+///
+/// Two mechanisms hold it, because a test cannot observe the absence of a
+/// trait impl directly:
+///
+/// 1. The probability path is a fallible accessor, and its exact signature is
+///    pinned below. A future variant returning `None` changes nothing about
+///    it, so no caller breaks.
+/// 2. Adding `impl ProbabilisticClassifier for AnyClassifier` would appear in
+///    the frozen public API profile, where `make api-check` fails until a
+///    reviewer approves it. The snapshot is the negative-impl detector, and it
+///    is the same mechanism that already guards every other trait impl.
+const _ANY_CLASSIFIER_PROBABILITY_PATH_IS_FALLIBLE: fn(
+    &AnyClassifier,
+) -> Option<&dyn ProbabilisticClassifier> = AnyClassifier::as_probabilistic;
+
+#[test]
+fn the_dispatch_probability_accessor_agrees_with_the_declaration() {
+    // The value-level capability and the accessor answer the same question, so
+    // a caller may use either. Both stay correct when a variant is added.
+    let data = DenseMatrix::new(vec![0.0, 1.0, 2.0, 3.0], 4, 1).unwrap();
+    let binary = BinaryTargets::new(vec![0, 0, 1, 1]).unwrap();
+    let dispatched: [AnyClassifier; 2] = [
+        LogisticRegression::fit(
+            &data.as_view(),
+            &binary,
+            LogisticRegressionParams::default(),
+        )
+        .unwrap()
+        .into(),
+        RandomForestClassifier::fit(
+            &data.as_view(),
+            &binary,
+            RandomForestClassifierParams::default(),
+        )
+        .unwrap()
+        .into(),
+    ];
+    for model in &dispatched {
+        assert_eq!(
+            model.as_probabilistic().is_some(),
+            model.capabilities().probability()
+        );
+        assert!(model.as_probabilistic().is_some());
+    }
+    // The type-level declaration is an intersection, true only while *every*
+    // variant is probabilistic. It becomes false when one is not, which is a
+    // reviewable snapshot diff rather than a breaking change.
+    assert!(AnyClassifier::CAPABILITIES.probability());
+}
+
+#[test]
+fn compositions_do_not_promise_probabilities_their_parts_lack() {
+    // `AnyRegressor` sets no trap: regression has no probability concept, and
+    // `Regressor` is universal for regressors by definition.
+    assert!(!AnyRegressor::CAPABILITIES.probability());
+    // `Pipeline` is generic over its final estimator, so its declaration is
+    // taken from that estimator and stays honest without anyone maintaining it.
+    assert!(
+        <Pipeline<StandardScaler, LogisticRegression> as HasCapabilities>::CAPABILITIES
+            .probability()
+    );
+    assert!(!<Pipeline<StandardScaler, Ridge> as HasCapabilities>::CAPABILITIES.probability());
+    // `StagedPipeline` has no probability entry point at all — prediction goes
+    // through `with_transformed` — so declaring none is the whole truth rather
+    // than an omission.
+    assert!(
+        !<StagedPipeline<(MinMaxScaler, StandardScaler), Ridge> as HasCapabilities>::CAPABILITIES
+            .probability()
+    );
 }

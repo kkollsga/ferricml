@@ -171,6 +171,20 @@ Capabilities a composition cannot have at all — weighted fitting, when the
 composition owns only already-fitted parts — are declared away structurally
 instead of being inherited.
 
+A declared capability is public, semver-relevant surface, and it is frozen by
+**two** snapshots rather than one. `cargo-public-api` records that a type
+declares capabilities but never which — the API profile contains
+`pub const Ridge::CAPABILITIES: Capabilities` with no value — so a flipped
+declaration would otherwise be invisible to the exact API check. The declared
+*values* therefore live in their own generated companion snapshot beside the
+API profile, and `api-check` compares both. The two are closed against each
+other: every `HasCapabilities` impl the API profile records must have a value
+row, and every row must correspond to such an impl, so a new estimator cannot
+declare a capability that nothing change-detects. Behavioral agreement between
+a declaration and its estimator is a third, separate contract, proven
+generically by the conformance battery; a snapshot cannot substitute for it,
+and it cannot substitute for a snapshot.
+
 Artifact support composes through a bound rather than a list. A
 `StagedPipeline` declares persistence exactly where every stage and its
 estimator really have a schema-bound artifact, so one declaration covers every

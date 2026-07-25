@@ -7,8 +7,73 @@ and releases use [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Changed
+
+- **Breaking.** Producing probabilities is no longer required of every
+  classifier. `predict_proba`, `predict_proba_into`, `predict_class_proba`, and
+  `predict_class_proba_into` move off `api::Classifier` onto a new
+  dyn-compatible sub-trait, `api::ProbabilisticClassifier`. **Callers that
+  invoke any of those four through a generic bound or a trait object must
+  require `ProbabilisticClassifier` instead of `Classifier`**; concrete calls
+  on a shipped estimator are unaffected, since every classifier FerricML ships
+  today implements the sub-trait. Trait upcasting means a
+  `&dyn ProbabilisticClassifier` is still accepted wherever a `&dyn Classifier`
+  is wanted.
+
+  The split exists because margin-based classifiers — ridge classification,
+  discriminant analysis, discrete boosting — have a natural output that is a
+  score rather than a distribution. A required probability method would have
+  forced each of them either to fabricate a number it never earned or to fail
+  at run time on a method the type system promised. A caller that needs
+  probabilities now says so in its bounds and gets a compile error rather than
+  a surprise.
+
+  Consequently `score_classifier`, `score_classifier_with`,
+  `score_multiclass_classifier`, `score_multiclass_classifier_with`,
+  `permutation_importance_classifier`,
+  `permutation_importance_classifier_into`, and the classifier
+  cross-validation and search entry points now take a probability-producing
+  classifier, and `CalibratedClassifier` requires one — a calibrator maps a
+  probability, so there is nothing to calibrate without one. The classifier
+  scoring and permutation-importance entry points take a
+  `ScorableClassifier` view rather than a bare reference, so a label-only
+  classifier remains scorable on a label metric.
+
+- **Breaking.** `AnyClassifier` no longer exposes `predict_proba`,
+  `predict_proba_into`, `predict_class_proba`, or `predict_class_proba_into`
+  directly, and deliberately does **not** implement
+  `api::ProbabilisticClassifier`. Reach probabilities through
+  `AnyClassifier::as_probabilistic`, which returns
+  `Option<&dyn ProbabilisticClassifier>`. Runtime dispatch is the one place the
+  concrete type is erased by construction, so it is the one place the question
+  can only be asked rather than proven in the bounds — and the fallible
+  accessor is what lets a future margin-based variant be added without
+  breaking this surface a second time.
+
 ### Added
 
+- `model_selection::ScorableClassifier`, the view the scoring layer takes of a
+  fitted classifier: `probabilistic` for one that produces probabilities,
+  `labels_only` for one that does not. A label metric works for either; a
+  probability metric applied to a labels-only view is
+  `ScoringError::UnsupportedOutput` naming what was required and what was
+  supplied, never a substituted value. One type rather than a parallel family
+  of entry points, and it makes "the labels and the probabilities come from the
+  same model" true by construction.
+- `model_selection::cross_validate_classifier_labels` and
+  `model_selection::grid_search_classifier_labels`, for cross-validating and
+  searching a classifier that produces labels but no probabilities. These build
+  the model themselves, so the requirement is expressed in the bound rather
+  than in an argument.
+- `api::Capabilities::probability`, declaring whether a fitted classifier
+  produces a probability per class. It is queryable on a runtime dispatch value
+  through `capabilities()`, which is where a compile-time bound is unavailable.
+
+- A capability declaration on `ranking::PairwiseLinearRanker`, which was the
+  one fitted estimator that could not answer a capability query. It declares
+  artifact persistence and nothing else: its weights belong to a pair
+  observation rather than to a row, and a ranking score is not a probability,
+  so it exposes neither a per-sample weighted fit nor a decision function.
 - Schema-bound `RandomForestRegressor` artifacts that persist backend-neutral
   logical trees and revalidate every decoded topology, count, and parameter.
 - `AnyRegressor` dispatch artifacts that record the fitted runtime variant and
@@ -318,6 +383,15 @@ and releases use [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- `Pipeline<StandardScaler, LogisticRegression>` now declares the
+  `decision_function` capability it has. It exposes `decision_function_into`,
+  but computed its declaration by intersecting both parts — and a transformer
+  never has a decision function, so the intersection made that field
+  structurally unable to be true for any pipeline. A raw decision score is a
+  property of the final estimator alone, so it is now taken from there, as
+  weighted fitting and multiclass fitting already were. A caller querying the
+  capability to decide whether to threshold on raw scores was previously told
+  no for a composition that could.
 - Report `ModelError::NonFinitePrediction` from `RandomForestRegressor` instead
   of returning a non-finite averaged prediction, matching every other
   regressor.

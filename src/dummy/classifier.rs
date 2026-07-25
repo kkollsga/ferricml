@@ -1,6 +1,6 @@
 use crate::api::{
     Capabilities, Classifier, Estimator, HasCapabilities, HasParams, ModelError,
-    validate_scalar_row,
+    ProbabilisticClassifier, validate_scalar_row,
 };
 use crate::data::{BinaryTargets, MatrixView};
 
@@ -127,7 +127,7 @@ impl DummyClassifier {
 
     /// Predicts row-major probabilities, allocating the output.
     pub fn predict_proba(&self, data: &MatrixView<'_>) -> Result<Vec<f32>, ModelError> {
-        <Self as Classifier>::predict_proba(self, data)
+        <Self as ProbabilisticClassifier>::predict_proba(self, data)
     }
 
     /// Predicts row-major probabilities into caller-owned storage.
@@ -136,7 +136,7 @@ impl DummyClassifier {
         data: &MatrixView<'_>,
         output: &mut [f32],
     ) -> Result<(), ModelError> {
-        <Self as Classifier>::predict_proba_into(self, data, output)
+        <Self as ProbabilisticClassifier>::predict_proba_into(self, data, output)
     }
 
     /// Predicts one requested probability column, allocating the output.
@@ -145,7 +145,7 @@ impl DummyClassifier {
         data: &MatrixView<'_>,
         class: u8,
     ) -> Result<Vec<f32>, ModelError> {
-        <Self as Classifier>::predict_class_proba(self, data, class)
+        <Self as ProbabilisticClassifier>::predict_class_proba(self, data, class)
     }
 
     /// Predicts one requested probability column into caller-owned storage.
@@ -155,7 +155,7 @@ impl DummyClassifier {
         class: u8,
         output: &mut [f32],
     ) -> Result<(), ModelError> {
-        <Self as Classifier>::predict_class_proba_into(self, data, class, output)
+        <Self as ProbabilisticClassifier>::predict_class_proba_into(self, data, class, output)
     }
 
     fn validate_batch(&self, data: &MatrixView<'_>) -> Result<(), ModelError> {
@@ -193,7 +193,7 @@ impl HasParams for DummyClassifier {
 /// Declares nothing: a baseline is refitted rather than persisted, and has no
 /// weighted entry point.
 impl HasCapabilities for DummyClassifier {
-    const CAPABILITIES: Capabilities = Capabilities::NONE;
+    const CAPABILITIES: Capabilities = Capabilities::NONE.with_probability(true);
 }
 
 impl Classifier for DummyClassifier {
@@ -207,7 +207,9 @@ impl Classifier for DummyClassifier {
         output.fill(self.majority);
         Ok(())
     }
+}
 
+impl ProbabilisticClassifier for DummyClassifier {
     fn predict_proba_into(
         &self,
         data: &MatrixView<'_>,

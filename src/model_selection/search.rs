@@ -3,13 +3,13 @@
 use std::error::Error;
 use std::fmt;
 
-use crate::api::{Classifier, ModelError, Regressor};
+use crate::api::{Classifier, ModelError, ProbabilisticClassifier, Regressor};
 use crate::data::{BinaryTargets, MatrixView, RegressionTargets};
 
 use super::cross_validation::{validate_split_sample_count, validate_target_length};
 use super::{
     ClassificationScore, CrossValidationError, CrossValidationResult, RegressionScore, Split,
-    cross_validate_classifier, cross_validate_regressor,
+    cross_validate_classifier, cross_validate_classifier_labels, cross_validate_regressor,
 };
 
 /// An ordered, explicit set of typed parameter candidates.
@@ -303,7 +303,7 @@ pub fn grid_search_classifier<M, P, I, F, S>(
     mut fit: F,
 ) -> Result<SearchResult<P>, SearchError>
 where
-    M: Classifier,
+    M: ProbabilisticClassifier,
     P: Clone,
     I: IntoIterator<Item = Split>,
     F: FnMut(&MatrixView<'_>, &BinaryTargets, &P) -> Result<M, ModelError>,
@@ -313,6 +313,49 @@ where
     let mut candidates = Vec::with_capacity(grid.len());
     for (candidate, params) in grid.candidates().iter().enumerate() {
         let folds = cross_validate_classifier(
+            data,
+            targets,
+            splits.iter().cloned(),
+            &scorer,
+            |train, train_targets| fit(train, train_targets, params),
+        )
+        .map_err(|source| SearchError::Candidate { candidate, source })?;
+        candidates.push(finish_candidate(candidate, params.clone(), folds)?);
+    }
+    Ok(select_best(candidates, scorer.greater_is_better()))
+}
+
+/// Searches a typed parameter grid for a label-producing classifier.
+///
+/// This is [`grid_search_classifier`] for a classifier that produces no
+/// probabilities, evaluating candidates through
+/// [`cross_validate_classifier_labels`]. Only label metrics apply; a
+/// probability metric is reported as an error rather than scored against a
+/// substituted value.
+///
+/// The loop is spelled out rather than shared with [`grid_search_classifier`]:
+/// the only difference is which cross-validation entry point it calls, and
+/// threading that through a higher-ranked function parameter costs more in
+/// bounds than the fourteen lines it saves.
+pub fn grid_search_classifier_labels<M, P, I, F, S>(
+    data: &MatrixView<'_>,
+    targets: &BinaryTargets,
+    splits: I,
+    grid: &ParameterGrid<P>,
+    scorer: S,
+    mut fit: F,
+) -> Result<SearchResult<P>, SearchError>
+where
+    M: Classifier,
+    P: Clone,
+    I: IntoIterator<Item = Split>,
+    F: FnMut(&MatrixView<'_>, &BinaryTargets, &P) -> Result<M, ModelError>,
+    S: ClassificationScore,
+{
+    let splits = validated_setup(data.rows(), targets.len(), grid, splits)?;
+    let mut candidates = Vec::with_capacity(grid.len());
+    for (candidate, params) in grid.candidates().iter().enumerate() {
+        let folds = cross_validate_classifier_labels(
             data,
             targets,
             splits.iter().cloned(),

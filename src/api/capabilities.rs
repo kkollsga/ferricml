@@ -41,6 +41,7 @@ pub struct Capabilities {
     artifact: bool,
     multiclass: bool,
     decision_function: bool,
+    probability: bool,
 }
 
 impl Capabilities {
@@ -54,6 +55,7 @@ impl Capabilities {
         artifact: false,
         multiclass: false,
         decision_function: false,
+        probability: false,
     };
 
     /// Declares whether fitting accepts per-sample weights.
@@ -81,6 +83,13 @@ impl Capabilities {
     #[must_use]
     pub const fn with_decision_function(mut self, supported: bool) -> Self {
         self.decision_function = supported;
+        self
+    }
+
+    /// Declares whether the fitted classifier produces probabilities.
+    #[must_use]
+    pub const fn with_probability(mut self, supported: bool) -> Self {
+        self.probability = supported;
         self
     }
 
@@ -135,6 +144,27 @@ impl Capabilities {
         self.decision_function
     }
 
+    /// Whether the fitted classifier produces a probability per class.
+    ///
+    /// A type declaring this implements
+    /// [`ProbabilisticClassifier`](super::ProbabilisticClassifier), so the
+    /// declaration is normally a restatement of a bound a generic caller can
+    /// simply require. It exists as a tag for the one place that bound is
+    /// unavailable: a runtime dispatch value, where the concrete type is erased
+    /// by construction and the question can only be asked, not proven.
+    ///
+    /// Producing probabilities used to be required of every
+    /// [`Classifier`](super::Classifier), which is why this was not a field
+    /// before. It is one now because margin-based classifiers — ridge
+    /// classification, discriminant analysis, discrete boosting — have a
+    /// natural output that is a score rather than a distribution, and forcing
+    /// them to squash it would have been fabricating a number they never
+    /// earned.
+    #[must_use]
+    pub const fn probability(self) -> bool {
+        self.probability
+    }
+
     /// Capabilities declared by both descriptors.
     ///
     /// This is what a runtime dispatch enum or a fitted composition can promise
@@ -147,6 +177,7 @@ impl Capabilities {
             artifact: self.artifact && other.artifact,
             multiclass: self.multiclass && other.multiclass,
             decision_function: self.decision_function && other.decision_function,
+            probability: self.probability && other.probability,
         }
     }
 }
@@ -179,6 +210,7 @@ mod tests {
         assert!(!Capabilities::NONE.artifact());
         assert!(!Capabilities::NONE.multiclass());
         assert!(!Capabilities::NONE.decision_function());
+        assert!(!Capabilities::NONE.probability());
     }
 
     #[test]
@@ -187,6 +219,7 @@ mod tests {
         const ARTIFACT: Capabilities = Capabilities::NONE.with_artifact(true);
         const MULTICLASS: Capabilities = Capabilities::NONE.with_multiclass(true);
         const DECISION: Capabilities = Capabilities::NONE.with_decision_function(true);
+        const PROBABILITY: Capabilities = Capabilities::NONE.with_probability(true);
         const BOTH: Capabilities = WEIGHTS.with_artifact(true);
 
         assert!(WEIGHTS.sample_weights() && !WEIGHTS.artifact() && !WEIGHTS.multiclass());
@@ -198,6 +231,9 @@ mod tests {
         assert_eq!(BOTH.with_sample_weights(false), ARTIFACT);
         assert_eq!(MULTICLASS.with_multiclass(false), Capabilities::NONE);
         assert_eq!(DECISION.with_decision_function(false), Capabilities::NONE);
+        assert!(PROBABILITY.probability() && !PROBABILITY.decision_function());
+        assert!(!DECISION.probability() && !BOTH.probability());
+        assert_eq!(PROBABILITY.with_probability(false), Capabilities::NONE);
     }
 
     #[test]
@@ -216,6 +252,11 @@ mod tests {
             BOTH.with_decision_function(true).intersection(BOTH),
             BOTH,
             "a decision function only one side has is not promised"
+        );
+        assert_eq!(
+            BOTH.with_probability(true).intersection(BOTH),
+            BOTH,
+            "probabilities only one side produces are not promised"
         );
         assert_eq!(BOTH.intersection(Capabilities::NONE), Capabilities::NONE);
         assert_eq!(WEIGHTS.intersection(BOTH), BOTH.intersection(WEIGHTS));

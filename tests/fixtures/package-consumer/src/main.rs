@@ -1,5 +1,6 @@
 use ferricml::api::{
-    AnyClassifier, AnyClassifierParams, AnyRegressor, AnyRegressorParams, Classifier, Regressor,
+    AnyClassifier, AnyClassifierParams, AnyRegressor, AnyRegressorParams, Classifier,
+    ProbabilisticClassifier, Regressor,
 };
 use ferricml::data::{
     BinaryTargets, ClassTargets, DenseMatrix, RegressionTargets, SampleWeights,
@@ -29,6 +30,22 @@ use ferricml::ranking::{
     PairwiseObservation, kendall_tau_b,
 };
 
+/// Reaches a runtime dispatch value's probabilities from outside the crate.
+///
+/// `AnyClassifier` does not implement `ProbabilisticClassifier`: the concrete
+/// variant is erased, so the question is asked rather than proven. Every
+/// shipped variant answers yes today, and a future margin-based variant would
+/// answer no without this signature changing.
+fn probabilities_of(
+    model: &AnyClassifier,
+    data: &ferricml::data::MatrixView<'_>,
+) -> Result<Vec<f32>, Box<dyn std::error::Error>> {
+    let probabilistic = model
+        .as_probabilistic()
+        .ok_or("this dispatch variant produces no probabilities")?;
+    Ok(probabilistic.predict_proba(data)?)
+}
+
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let features = DenseMatrix::new(vec![0.0, 0.0, 1.0, 1.0, 2.0, 4.0, 3.0, 9.0], 4, 2)?;
     let classifier = RandomForestClassifier::fit(
@@ -40,7 +57,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             .with_random_state(7),
     )?;
     let labels = Classifier::predict(&classifier, &features.as_view())?;
-    let probabilities = Classifier::predict_proba(&classifier, &features.as_view())?;
+    let probabilities = ProbabilisticClassifier::predict_proba(&classifier, &features.as_view())?;
     assert_eq!(labels.len(), features.rows());
     assert_eq!(probabilities.len(), features.rows() * 2);
     assert_eq!(accuracy_score(&[0, 0, 1, 1], &labels)?, 1.0);
@@ -56,7 +73,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     assert_eq!(decoded.classes(), classifier.classes());
     assert_eq!(Classifier::predict(&decoded, &features.as_view())?, labels);
     assert_eq!(
-        Classifier::predict_proba(&decoded, &features.as_view())?,
+        ProbabilisticClassifier::predict_proba(&decoded, &features.as_view())?,
         probabilities
     );
     assert!(RandomForestClassifier::from_artifact(&encoded, [8; 32]).is_err());
@@ -73,8 +90,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let multiclass_decoded = RandomForestClassifier::from_artifact(&multiclass_encoded, schema)?;
     assert_eq!(multiclass_decoded.classes(), &[3, 7, 10]);
     assert_eq!(
-        Classifier::predict_proba(&multiclass_decoded, &features.as_view())?,
-        Classifier::predict_proba(&multiclass, &features.as_view())?
+        ProbabilisticClassifier::predict_proba(&multiclass_decoded, &features.as_view())?,
+        ProbabilisticClassifier::predict_proba(&multiclass, &features.as_view())?
     );
     assert_eq!(multiclass_decoded.to_artifact(schema)?, multiclass_encoded);
 
@@ -83,8 +100,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let dispatch_decoded = AnyClassifier::from_artifact(&dispatch_encoded, schema)?;
     assert_eq!(dispatch_decoded.classes(), &[3, 7, 10]);
     assert_eq!(
-        dispatch_decoded.predict_proba(&features.as_view())?,
-        erased.predict_proba(&features.as_view())?
+        probabilities_of(&dispatch_decoded, &features.as_view())?,
+        probabilities_of(&erased, &features.as_view())?
     );
     // A bare classifier artifact is not a dispatch artifact.
     assert!(AnyClassifier::from_artifact(&multiclass_encoded, schema).is_err());
@@ -322,7 +339,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     assert_eq!(erased.to_artifact(schema)?, erased_encoded);
     assert_eq!(erased.classes(), &[0, 1]);
     assert_eq!(erased.predict(&features.as_view())?, boosted_labels);
-    assert_eq!(erased.predict_proba(&features.as_view())?, boosted_proba);
+    assert_eq!(probabilities_of(&erased, &features.as_view())?, boosted_proba);
 
     let regressor = RandomForestRegressor::fit(
         &features.as_view(),

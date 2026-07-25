@@ -14,9 +14,19 @@ use super::ModelError;
 
 /// A fitted classification estimator.
 ///
-/// Batch methods are the shared, object-safe contract. Implementations must
-/// order probability columns exactly as [`Classifier::classes`] and must
-/// validate caller-provided output lengths before writing to them.
+/// Batch methods are the shared, object-safe contract. Every classifier
+/// predicts a label; **not** every classifier produces a probability. The
+/// probability half lives on [`ProbabilisticClassifier`], because a
+/// margin-based estimator — ridge classification, discriminant analysis, a
+/// discrete boosting variant — has a natural output that is a score rather
+/// than a distribution, and a required probability method would have forced it
+/// either to squash a number it never earned or to fail at run time on a
+/// method the type system promised. Both are worse than an honest split.
+///
+/// A caller that needs probabilities asks for them in its bounds, and gets a
+/// compile error rather than a surprise. The one place that is impossible is a
+/// runtime dispatch value, where the concrete type is erased by construction;
+/// see [`AnyClassifier::as_probabilistic`](crate::api::AnyClassifier::as_probabilistic).
 pub trait Classifier: Estimator {
     /// Sorted class labels observed during fitting.
     fn classes(&self) -> &[u8];
@@ -30,7 +40,23 @@ pub trait Classifier: Estimator {
         self.predict_into(data, &mut output)?;
         Ok(output)
     }
+}
 
+/// A fitted classifier that also produces a probability per class.
+///
+/// Implementations must order probability columns exactly as
+/// [`Classifier::classes`] and must validate caller-provided output lengths
+/// before writing to them.
+///
+/// This is a separate trait rather than defaulted methods on [`Classifier`]
+/// deliberately. A default body would invert the failure it is meant to
+/// prevent: a classifier that *has* probabilities but forgets to override one
+/// would silently report that it has none, and every generic caller would
+/// still compile against a promise that only breaks at run time. The trait
+/// stays dyn-compatible, and trait upcasting means a
+/// `&dyn ProbabilisticClassifier` is still accepted wherever a
+/// `&dyn Classifier` is wanted.
+pub trait ProbabilisticClassifier: Classifier {
     /// Predicts row-major probabilities with `classes().len()` columns.
     fn predict_proba_into(
         &self,

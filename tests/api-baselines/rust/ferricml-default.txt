@@ -5,17 +5,14 @@ pub ferricml::api::AnyClassifier::HistGradientBoosting(ferricml::ensemble::HistG
 pub ferricml::api::AnyClassifier::LogisticRegression(ferricml::linear_model::LogisticRegression)
 pub ferricml::api::AnyClassifier::RandomForest(ferricml::ensemble::RandomForestClassifier)
 impl ferricml::api::AnyClassifier
+pub fn ferricml::api::AnyClassifier::as_probabilistic(&self) -> core::option::Option<&dyn ferricml::api::ProbabilisticClassifier>
 pub fn ferricml::api::AnyClassifier::capabilities(&self) -> ferricml::api::Capabilities
 pub fn ferricml::api::AnyClassifier::classes(&self) -> &[u8]
 pub fn ferricml::api::AnyClassifier::from_artifact(&[u8], [u8; 32]) -> core::result::Result<Self, ferricml::artifact::ArtifactError>
 pub fn ferricml::api::AnyClassifier::get_params(&self) -> ferricml::api::AnyClassifierParams<'_>
 pub fn ferricml::api::AnyClassifier::n_features_in(&self) -> usize
 pub fn ferricml::api::AnyClassifier::predict(&self, &ferricml::data::MatrixView<'_>) -> core::result::Result<alloc::vec::Vec<u8>, ferricml::api::ModelError>
-pub fn ferricml::api::AnyClassifier::predict_class_proba(&self, &ferricml::data::MatrixView<'_>, u8) -> core::result::Result<alloc::vec::Vec<f32>, ferricml::api::ModelError>
-pub fn ferricml::api::AnyClassifier::predict_class_proba_into(&self, &ferricml::data::MatrixView<'_>, u8, &mut [f32]) -> core::result::Result<(), ferricml::api::ModelError>
 pub fn ferricml::api::AnyClassifier::predict_into(&self, &ferricml::data::MatrixView<'_>, &mut [u8]) -> core::result::Result<(), ferricml::api::ModelError>
-pub fn ferricml::api::AnyClassifier::predict_proba(&self, &ferricml::data::MatrixView<'_>) -> core::result::Result<alloc::vec::Vec<f32>, ferricml::api::ModelError>
-pub fn ferricml::api::AnyClassifier::predict_proba_into(&self, &ferricml::data::MatrixView<'_>, &mut [f32]) -> core::result::Result<(), ferricml::api::ModelError>
 pub fn ferricml::api::AnyClassifier::to_artifact(&self, [u8; 32]) -> core::result::Result<alloc::vec::Vec<u8>, ferricml::artifact::ArtifactError>
 impl core::convert::From<ferricml::ensemble::HistGradientBoostingClassifier> for ferricml::api::AnyClassifier
 pub fn ferricml::api::AnyClassifier::from(ferricml::ensemble::HistGradientBoostingClassifier) -> Self
@@ -26,11 +23,7 @@ pub fn ferricml::api::AnyClassifier::from(ferricml::linear_model::LogisticRegres
 impl ferricml::api::Classifier for ferricml::api::AnyClassifier
 pub fn ferricml::api::AnyClassifier::classes(&self) -> &[u8]
 pub fn ferricml::api::AnyClassifier::predict(&self, &ferricml::data::MatrixView<'_>) -> core::result::Result<alloc::vec::Vec<u8>, ferricml::api::ModelError>
-pub fn ferricml::api::AnyClassifier::predict_class_proba(&self, &ferricml::data::MatrixView<'_>, u8) -> core::result::Result<alloc::vec::Vec<f32>, ferricml::api::ModelError>
-pub fn ferricml::api::AnyClassifier::predict_class_proba_into(&self, &ferricml::data::MatrixView<'_>, u8, &mut [f32]) -> core::result::Result<(), ferricml::api::ModelError>
 pub fn ferricml::api::AnyClassifier::predict_into(&self, &ferricml::data::MatrixView<'_>, &mut [u8]) -> core::result::Result<(), ferricml::api::ModelError>
-pub fn ferricml::api::AnyClassifier::predict_proba(&self, &ferricml::data::MatrixView<'_>) -> core::result::Result<alloc::vec::Vec<f32>, ferricml::api::ModelError>
-pub fn ferricml::api::AnyClassifier::predict_proba_into(&self, &ferricml::data::MatrixView<'_>, &mut [f32]) -> core::result::Result<(), ferricml::api::ModelError>
 impl ferricml::api::Estimator for ferricml::api::AnyClassifier
 pub fn ferricml::api::AnyClassifier::n_features_in(&self) -> usize
 impl ferricml::api::HasCapabilities for ferricml::api::AnyClassifier
@@ -154,67 +147,41 @@ pub const fn ferricml::api::Capabilities::artifact(self) -> bool
 pub const fn ferricml::api::Capabilities::decision_function(self) -> bool
 pub const fn ferricml::api::Capabilities::intersection(self, Self) -> Self
 pub const fn ferricml::api::Capabilities::multiclass(self) -> bool
+pub const fn ferricml::api::Capabilities::probability(self) -> bool
 pub const fn ferricml::api::Capabilities::sample_weights(self) -> bool
 pub const fn ferricml::api::Capabilities::with_artifact(self, bool) -> Self
 pub const fn ferricml::api::Capabilities::with_decision_function(self, bool) -> Self
 pub const fn ferricml::api::Capabilities::with_multiclass(self, bool) -> Self
+pub const fn ferricml::api::Capabilities::with_probability(self, bool) -> Self
 pub const fn ferricml::api::Capabilities::with_sample_weights(self, bool) -> Self
 pub trait ferricml::api::Classifier: ferricml::api::Estimator
 pub fn ferricml::api::Classifier::classes(&self) -> &[u8]
 pub fn ferricml::api::Classifier::predict(&self, &ferricml::data::MatrixView<'_>) -> core::result::Result<alloc::vec::Vec<u8>, ferricml::api::ModelError>
-pub fn ferricml::api::Classifier::predict_class_proba(&self, &ferricml::data::MatrixView<'_>, u8) -> core::result::Result<alloc::vec::Vec<f32>, ferricml::api::ModelError>
-pub fn ferricml::api::Classifier::predict_class_proba_into(&self, &ferricml::data::MatrixView<'_>, u8, &mut [f32]) -> core::result::Result<(), ferricml::api::ModelError>
 pub fn ferricml::api::Classifier::predict_into(&self, &ferricml::data::MatrixView<'_>, &mut [u8]) -> core::result::Result<(), ferricml::api::ModelError>
-pub fn ferricml::api::Classifier::predict_proba(&self, &ferricml::data::MatrixView<'_>) -> core::result::Result<alloc::vec::Vec<f32>, ferricml::api::ModelError>
-pub fn ferricml::api::Classifier::predict_proba_into(&self, &ferricml::data::MatrixView<'_>, &mut [f32]) -> core::result::Result<(), ferricml::api::ModelError>
 impl ferricml::api::Classifier for ferricml::api::AnyClassifier
 pub fn ferricml::api::AnyClassifier::classes(&self) -> &[u8]
 pub fn ferricml::api::AnyClassifier::predict(&self, &ferricml::data::MatrixView<'_>) -> core::result::Result<alloc::vec::Vec<u8>, ferricml::api::ModelError>
-pub fn ferricml::api::AnyClassifier::predict_class_proba(&self, &ferricml::data::MatrixView<'_>, u8) -> core::result::Result<alloc::vec::Vec<f32>, ferricml::api::ModelError>
-pub fn ferricml::api::AnyClassifier::predict_class_proba_into(&self, &ferricml::data::MatrixView<'_>, u8, &mut [f32]) -> core::result::Result<(), ferricml::api::ModelError>
 pub fn ferricml::api::AnyClassifier::predict_into(&self, &ferricml::data::MatrixView<'_>, &mut [u8]) -> core::result::Result<(), ferricml::api::ModelError>
-pub fn ferricml::api::AnyClassifier::predict_proba(&self, &ferricml::data::MatrixView<'_>) -> core::result::Result<alloc::vec::Vec<f32>, ferricml::api::ModelError>
-pub fn ferricml::api::AnyClassifier::predict_proba_into(&self, &ferricml::data::MatrixView<'_>, &mut [f32]) -> core::result::Result<(), ferricml::api::ModelError>
 impl ferricml::api::Classifier for ferricml::dummy::DummyClassifier
 pub fn ferricml::dummy::DummyClassifier::classes(&self) -> &[u8]
 pub fn ferricml::dummy::DummyClassifier::predict(&self, &ferricml::data::MatrixView<'_>) -> core::result::Result<alloc::vec::Vec<u8>, ferricml::api::ModelError>
-pub fn ferricml::dummy::DummyClassifier::predict_class_proba(&self, &ferricml::data::MatrixView<'_>, u8) -> core::result::Result<alloc::vec::Vec<f32>, ferricml::api::ModelError>
-pub fn ferricml::dummy::DummyClassifier::predict_class_proba_into(&self, &ferricml::data::MatrixView<'_>, u8, &mut [f32]) -> core::result::Result<(), ferricml::api::ModelError>
 pub fn ferricml::dummy::DummyClassifier::predict_into(&self, &ferricml::data::MatrixView<'_>, &mut [u8]) -> core::result::Result<(), ferricml::api::ModelError>
-pub fn ferricml::dummy::DummyClassifier::predict_proba(&self, &ferricml::data::MatrixView<'_>) -> core::result::Result<alloc::vec::Vec<f32>, ferricml::api::ModelError>
-pub fn ferricml::dummy::DummyClassifier::predict_proba_into(&self, &ferricml::data::MatrixView<'_>, &mut [f32]) -> core::result::Result<(), ferricml::api::ModelError>
 impl ferricml::api::Classifier for ferricml::ensemble::HistGradientBoostingClassifier
 pub fn ferricml::ensemble::HistGradientBoostingClassifier::classes(&self) -> &[u8]
 pub fn ferricml::ensemble::HistGradientBoostingClassifier::predict(&self, &ferricml::data::MatrixView<'_>) -> core::result::Result<alloc::vec::Vec<u8>, ferricml::api::ModelError>
-pub fn ferricml::ensemble::HistGradientBoostingClassifier::predict_class_proba(&self, &ferricml::data::MatrixView<'_>, u8) -> core::result::Result<alloc::vec::Vec<f32>, ferricml::api::ModelError>
-pub fn ferricml::ensemble::HistGradientBoostingClassifier::predict_class_proba_into(&self, &ferricml::data::MatrixView<'_>, u8, &mut [f32]) -> core::result::Result<(), ferricml::api::ModelError>
 pub fn ferricml::ensemble::HistGradientBoostingClassifier::predict_into(&self, &ferricml::data::MatrixView<'_>, &mut [u8]) -> core::result::Result<(), ferricml::api::ModelError>
-pub fn ferricml::ensemble::HistGradientBoostingClassifier::predict_proba(&self, &ferricml::data::MatrixView<'_>) -> core::result::Result<alloc::vec::Vec<f32>, ferricml::api::ModelError>
-pub fn ferricml::ensemble::HistGradientBoostingClassifier::predict_proba_into(&self, &ferricml::data::MatrixView<'_>, &mut [f32]) -> core::result::Result<(), ferricml::api::ModelError>
 impl ferricml::api::Classifier for ferricml::ensemble::RandomForestClassifier
 pub fn ferricml::ensemble::RandomForestClassifier::classes(&self) -> &[u8]
 pub fn ferricml::ensemble::RandomForestClassifier::predict(&self, &ferricml::data::MatrixView<'_>) -> core::result::Result<alloc::vec::Vec<u8>, ferricml::api::ModelError>
-pub fn ferricml::ensemble::RandomForestClassifier::predict_class_proba(&self, &ferricml::data::MatrixView<'_>, u8) -> core::result::Result<alloc::vec::Vec<f32>, ferricml::api::ModelError>
-pub fn ferricml::ensemble::RandomForestClassifier::predict_class_proba_into(&self, &ferricml::data::MatrixView<'_>, u8, &mut [f32]) -> core::result::Result<(), ferricml::api::ModelError>
 pub fn ferricml::ensemble::RandomForestClassifier::predict_into(&self, &ferricml::data::MatrixView<'_>, &mut [u8]) -> core::result::Result<(), ferricml::api::ModelError>
-pub fn ferricml::ensemble::RandomForestClassifier::predict_proba(&self, &ferricml::data::MatrixView<'_>) -> core::result::Result<alloc::vec::Vec<f32>, ferricml::api::ModelError>
-pub fn ferricml::ensemble::RandomForestClassifier::predict_proba_into(&self, &ferricml::data::MatrixView<'_>, &mut [f32]) -> core::result::Result<(), ferricml::api::ModelError>
 impl ferricml::api::Classifier for ferricml::linear_model::LogisticRegression
 pub fn ferricml::linear_model::LogisticRegression::classes(&self) -> &[u8]
 pub fn ferricml::linear_model::LogisticRegression::predict(&self, &ferricml::data::MatrixView<'_>) -> core::result::Result<alloc::vec::Vec<u8>, ferricml::api::ModelError>
-pub fn ferricml::linear_model::LogisticRegression::predict_class_proba(&self, &ferricml::data::MatrixView<'_>, u8) -> core::result::Result<alloc::vec::Vec<f32>, ferricml::api::ModelError>
-pub fn ferricml::linear_model::LogisticRegression::predict_class_proba_into(&self, &ferricml::data::MatrixView<'_>, u8, &mut [f32]) -> core::result::Result<(), ferricml::api::ModelError>
 pub fn ferricml::linear_model::LogisticRegression::predict_into(&self, &ferricml::data::MatrixView<'_>, &mut [u8]) -> core::result::Result<(), ferricml::api::ModelError>
-pub fn ferricml::linear_model::LogisticRegression::predict_proba(&self, &ferricml::data::MatrixView<'_>) -> core::result::Result<alloc::vec::Vec<f32>, ferricml::api::ModelError>
-pub fn ferricml::linear_model::LogisticRegression::predict_proba_into(&self, &ferricml::data::MatrixView<'_>, &mut [f32]) -> core::result::Result<(), ferricml::api::ModelError>
-impl<C: ferricml::api::Classifier, K: ferricml::calibration::Calibrator> ferricml::api::Classifier for ferricml::calibration::CalibratedClassifier<C, K>
+impl<C: ferricml::api::ProbabilisticClassifier, K: ferricml::calibration::Calibrator> ferricml::api::Classifier for ferricml::calibration::CalibratedClassifier<C, K>
 pub fn ferricml::calibration::CalibratedClassifier<C, K>::classes(&self) -> &[u8]
 pub fn ferricml::calibration::CalibratedClassifier<C, K>::predict(&self, &ferricml::data::MatrixView<'_>) -> core::result::Result<alloc::vec::Vec<u8>, ferricml::api::ModelError>
-pub fn ferricml::calibration::CalibratedClassifier<C, K>::predict_class_proba(&self, &ferricml::data::MatrixView<'_>, u8) -> core::result::Result<alloc::vec::Vec<f32>, ferricml::api::ModelError>
-pub fn ferricml::calibration::CalibratedClassifier<C, K>::predict_class_proba_into(&self, &ferricml::data::MatrixView<'_>, u8, &mut [f32]) -> core::result::Result<(), ferricml::api::ModelError>
 pub fn ferricml::calibration::CalibratedClassifier<C, K>::predict_into(&self, &ferricml::data::MatrixView<'_>, &mut [u8]) -> core::result::Result<(), ferricml::api::ModelError>
-pub fn ferricml::calibration::CalibratedClassifier<C, K>::predict_proba(&self, &ferricml::data::MatrixView<'_>) -> core::result::Result<alloc::vec::Vec<f32>, ferricml::api::ModelError>
-pub fn ferricml::calibration::CalibratedClassifier<C, K>::predict_proba_into(&self, &ferricml::data::MatrixView<'_>, &mut [f32]) -> core::result::Result<(), ferricml::api::ModelError>
 pub trait ferricml::api::Estimator
 pub fn ferricml::api::Estimator::n_features_in(&self) -> usize
 impl ferricml::api::Estimator for ferricml::api::AnyClassifier
@@ -253,7 +220,7 @@ impl ferricml::api::Estimator for ferricml::preprocessing::StandardScaler
 pub fn ferricml::preprocessing::StandardScaler::n_features_in(&self) -> usize
 impl ferricml::api::Estimator for ferricml::ranking::PairwiseLinearRanker
 pub fn ferricml::ranking::PairwiseLinearRanker::n_features_in(&self) -> usize
-impl<C: ferricml::api::Classifier, K: ferricml::calibration::Calibrator> ferricml::api::Estimator for ferricml::calibration::CalibratedClassifier<C, K>
+impl<C: ferricml::api::ProbabilisticClassifier, K: ferricml::calibration::Calibrator> ferricml::api::Estimator for ferricml::calibration::CalibratedClassifier<C, K>
 pub fn ferricml::calibration::CalibratedClassifier<C, K>::n_features_in(&self) -> usize
 impl<S, E> ferricml::api::Estimator for ferricml::pipeline::StagedPipeline<S, E> where S: ferricml::pipeline::TransformerStack, E: ferricml::api::Estimator
 pub fn ferricml::pipeline::StagedPipeline<S, E>::n_features_in(&self) -> usize
@@ -301,9 +268,11 @@ impl ferricml::api::HasCapabilities for ferricml::preprocessing::MinMaxScaler
 pub const ferricml::preprocessing::MinMaxScaler::CAPABILITIES: ferricml::api::Capabilities
 impl ferricml::api::HasCapabilities for ferricml::preprocessing::StandardScaler
 pub const ferricml::preprocessing::StandardScaler::CAPABILITIES: ferricml::api::Capabilities
-impl<C: ferricml::api::Classifier> ferricml::api::HasCapabilities for ferricml::calibration::CalibratedClassifier<C, ferricml::calibration::IsotonicRegression>
+impl ferricml::api::HasCapabilities for ferricml::ranking::PairwiseLinearRanker
+pub const ferricml::ranking::PairwiseLinearRanker::CAPABILITIES: ferricml::api::Capabilities
+impl<C: ferricml::api::ProbabilisticClassifier> ferricml::api::HasCapabilities for ferricml::calibration::CalibratedClassifier<C, ferricml::calibration::IsotonicRegression>
 pub const ferricml::calibration::CalibratedClassifier<C, ferricml::calibration::IsotonicRegression>::CAPABILITIES: ferricml::api::Capabilities
-impl<C: ferricml::api::Classifier> ferricml::api::HasCapabilities for ferricml::calibration::CalibratedClassifier<C, ferricml::calibration::PlattCalibrator>
+impl<C: ferricml::api::ProbabilisticClassifier> ferricml::api::HasCapabilities for ferricml::calibration::CalibratedClassifier<C, ferricml::calibration::PlattCalibrator>
 pub const ferricml::calibration::CalibratedClassifier<C, ferricml::calibration::PlattCalibrator>::CAPABILITIES: ferricml::api::Capabilities
 impl<S, E> ferricml::api::HasCapabilities for ferricml::pipeline::StagedPipeline<S, E> where S: ferricml::pipeline::TransformerStack + ferricml::pipeline::PersistedStack, E: ferricml::api::Estimator + ferricml::pipeline::ModelArtifact
 pub const ferricml::pipeline::StagedPipeline<S, E>::CAPABILITIES: ferricml::api::Capabilities
@@ -355,6 +324,36 @@ pub fn ferricml::preprocessing::StandardScaler::get_params(&self) -> &Self::Para
 impl ferricml::api::HasParams for ferricml::ranking::PairwiseLinearRanker
 pub type ferricml::ranking::PairwiseLinearRanker::Params = ferricml::ranking::PairwiseLinearRankerParams
 pub fn ferricml::ranking::PairwiseLinearRanker::get_params(&self) -> &Self::Params
+pub trait ferricml::api::ProbabilisticClassifier: ferricml::api::Classifier
+pub fn ferricml::api::ProbabilisticClassifier::predict_class_proba(&self, &ferricml::data::MatrixView<'_>, u8) -> core::result::Result<alloc::vec::Vec<f32>, ferricml::api::ModelError>
+pub fn ferricml::api::ProbabilisticClassifier::predict_class_proba_into(&self, &ferricml::data::MatrixView<'_>, u8, &mut [f32]) -> core::result::Result<(), ferricml::api::ModelError>
+pub fn ferricml::api::ProbabilisticClassifier::predict_proba(&self, &ferricml::data::MatrixView<'_>) -> core::result::Result<alloc::vec::Vec<f32>, ferricml::api::ModelError>
+pub fn ferricml::api::ProbabilisticClassifier::predict_proba_into(&self, &ferricml::data::MatrixView<'_>, &mut [f32]) -> core::result::Result<(), ferricml::api::ModelError>
+impl ferricml::api::ProbabilisticClassifier for ferricml::dummy::DummyClassifier
+pub fn ferricml::dummy::DummyClassifier::predict_class_proba(&self, &ferricml::data::MatrixView<'_>, u8) -> core::result::Result<alloc::vec::Vec<f32>, ferricml::api::ModelError>
+pub fn ferricml::dummy::DummyClassifier::predict_class_proba_into(&self, &ferricml::data::MatrixView<'_>, u8, &mut [f32]) -> core::result::Result<(), ferricml::api::ModelError>
+pub fn ferricml::dummy::DummyClassifier::predict_proba(&self, &ferricml::data::MatrixView<'_>) -> core::result::Result<alloc::vec::Vec<f32>, ferricml::api::ModelError>
+pub fn ferricml::dummy::DummyClassifier::predict_proba_into(&self, &ferricml::data::MatrixView<'_>, &mut [f32]) -> core::result::Result<(), ferricml::api::ModelError>
+impl ferricml::api::ProbabilisticClassifier for ferricml::ensemble::HistGradientBoostingClassifier
+pub fn ferricml::ensemble::HistGradientBoostingClassifier::predict_class_proba(&self, &ferricml::data::MatrixView<'_>, u8) -> core::result::Result<alloc::vec::Vec<f32>, ferricml::api::ModelError>
+pub fn ferricml::ensemble::HistGradientBoostingClassifier::predict_class_proba_into(&self, &ferricml::data::MatrixView<'_>, u8, &mut [f32]) -> core::result::Result<(), ferricml::api::ModelError>
+pub fn ferricml::ensemble::HistGradientBoostingClassifier::predict_proba(&self, &ferricml::data::MatrixView<'_>) -> core::result::Result<alloc::vec::Vec<f32>, ferricml::api::ModelError>
+pub fn ferricml::ensemble::HistGradientBoostingClassifier::predict_proba_into(&self, &ferricml::data::MatrixView<'_>, &mut [f32]) -> core::result::Result<(), ferricml::api::ModelError>
+impl ferricml::api::ProbabilisticClassifier for ferricml::ensemble::RandomForestClassifier
+pub fn ferricml::ensemble::RandomForestClassifier::predict_class_proba(&self, &ferricml::data::MatrixView<'_>, u8) -> core::result::Result<alloc::vec::Vec<f32>, ferricml::api::ModelError>
+pub fn ferricml::ensemble::RandomForestClassifier::predict_class_proba_into(&self, &ferricml::data::MatrixView<'_>, u8, &mut [f32]) -> core::result::Result<(), ferricml::api::ModelError>
+pub fn ferricml::ensemble::RandomForestClassifier::predict_proba(&self, &ferricml::data::MatrixView<'_>) -> core::result::Result<alloc::vec::Vec<f32>, ferricml::api::ModelError>
+pub fn ferricml::ensemble::RandomForestClassifier::predict_proba_into(&self, &ferricml::data::MatrixView<'_>, &mut [f32]) -> core::result::Result<(), ferricml::api::ModelError>
+impl ferricml::api::ProbabilisticClassifier for ferricml::linear_model::LogisticRegression
+pub fn ferricml::linear_model::LogisticRegression::predict_class_proba(&self, &ferricml::data::MatrixView<'_>, u8) -> core::result::Result<alloc::vec::Vec<f32>, ferricml::api::ModelError>
+pub fn ferricml::linear_model::LogisticRegression::predict_class_proba_into(&self, &ferricml::data::MatrixView<'_>, u8, &mut [f32]) -> core::result::Result<(), ferricml::api::ModelError>
+pub fn ferricml::linear_model::LogisticRegression::predict_proba(&self, &ferricml::data::MatrixView<'_>) -> core::result::Result<alloc::vec::Vec<f32>, ferricml::api::ModelError>
+pub fn ferricml::linear_model::LogisticRegression::predict_proba_into(&self, &ferricml::data::MatrixView<'_>, &mut [f32]) -> core::result::Result<(), ferricml::api::ModelError>
+impl<C: ferricml::api::ProbabilisticClassifier, K: ferricml::calibration::Calibrator> ferricml::api::ProbabilisticClassifier for ferricml::calibration::CalibratedClassifier<C, K>
+pub fn ferricml::calibration::CalibratedClassifier<C, K>::predict_class_proba(&self, &ferricml::data::MatrixView<'_>, u8) -> core::result::Result<alloc::vec::Vec<f32>, ferricml::api::ModelError>
+pub fn ferricml::calibration::CalibratedClassifier<C, K>::predict_class_proba_into(&self, &ferricml::data::MatrixView<'_>, u8, &mut [f32]) -> core::result::Result<(), ferricml::api::ModelError>
+pub fn ferricml::calibration::CalibratedClassifier<C, K>::predict_proba(&self, &ferricml::data::MatrixView<'_>) -> core::result::Result<alloc::vec::Vec<f32>, ferricml::api::ModelError>
+pub fn ferricml::calibration::CalibratedClassifier<C, K>::predict_proba_into(&self, &ferricml::data::MatrixView<'_>, &mut [f32]) -> core::result::Result<(), ferricml::api::ModelError>
 pub trait ferricml::api::Regressor: ferricml::api::Estimator
 pub fn ferricml::api::Regressor::predict(&self, &ferricml::data::MatrixView<'_>) -> core::result::Result<alloc::vec::Vec<f32>, ferricml::api::ModelError>
 pub fn ferricml::api::Regressor::predict_into(&self, &ferricml::data::MatrixView<'_>, &mut [f32]) -> core::result::Result<(), ferricml::api::ModelError>
@@ -428,31 +427,32 @@ pub const ferricml::artifact::MAX_MODEL_ARTIFACT_BYTES: usize
 pub const ferricml::artifact::MODEL_ARTIFACT_VERSION: u16
 pub mod ferricml::calibration
 pub struct ferricml::calibration::CalibratedClassifier<C, K>
-impl<C: ferricml::api::Classifier, K: ferricml::calibration::Calibrator> ferricml::calibration::CalibratedClassifier<C, K>
+impl<C: ferricml::api::ProbabilisticClassifier, K: ferricml::calibration::Calibrator> ferricml::calibration::CalibratedClassifier<C, K>
 pub const fn ferricml::calibration::CalibratedClassifier<C, K>::calibrator(&self) -> &K
 pub const fn ferricml::calibration::CalibratedClassifier<C, K>::inner(&self) -> &C
 pub fn ferricml::calibration::CalibratedClassifier<C, K>::into_parts(self) -> (C, K)
 pub fn ferricml::calibration::CalibratedClassifier<C, K>::new(C, K) -> core::result::Result<Self, ferricml::api::ModelError>
 pub fn ferricml::calibration::CalibratedClassifier<C, K>::predict_into_with(&self, &ferricml::data::MatrixView<'_>, &mut [f32], &mut [u8]) -> core::result::Result<(), ferricml::api::ModelError>
-impl<C: ferricml::api::Classifier> ferricml::calibration::CalibratedClassifier<C, ferricml::calibration::IsotonicRegression>
+impl<C: ferricml::api::ProbabilisticClassifier> ferricml::calibration::CalibratedClassifier<C, ferricml::calibration::IsotonicRegression>
 pub fn ferricml::calibration::CalibratedClassifier<C, ferricml::calibration::IsotonicRegression>::fit_isotonic(C, &ferricml::data::MatrixView<'_>, &ferricml::data::BinaryTargets) -> core::result::Result<Self, ferricml::api::ModelError>
-impl<C: ferricml::api::Classifier> ferricml::calibration::CalibratedClassifier<C, ferricml::calibration::PlattCalibrator>
+impl<C: ferricml::api::ProbabilisticClassifier> ferricml::calibration::CalibratedClassifier<C, ferricml::calibration::PlattCalibrator>
 pub fn ferricml::calibration::CalibratedClassifier<C, ferricml::calibration::PlattCalibrator>::decision_function(&self, &ferricml::data::MatrixView<'_>) -> core::result::Result<alloc::vec::Vec<f32>, ferricml::api::ModelError>
 pub fn ferricml::calibration::CalibratedClassifier<C, ferricml::calibration::PlattCalibrator>::decision_function_into(&self, &ferricml::data::MatrixView<'_>, &mut [f32]) -> core::result::Result<(), ferricml::api::ModelError>
 pub fn ferricml::calibration::CalibratedClassifier<C, ferricml::calibration::PlattCalibrator>::fit_platt(C, &ferricml::data::MatrixView<'_>, &ferricml::data::BinaryTargets, ferricml::calibration::PlattParams) -> core::result::Result<Self, ferricml::api::ModelError>
-impl<C: ferricml::api::Classifier, K: ferricml::calibration::Calibrator> ferricml::api::Classifier for ferricml::calibration::CalibratedClassifier<C, K>
+impl<C: ferricml::api::ProbabilisticClassifier, K: ferricml::calibration::Calibrator> ferricml::api::Classifier for ferricml::calibration::CalibratedClassifier<C, K>
 pub fn ferricml::calibration::CalibratedClassifier<C, K>::classes(&self) -> &[u8]
 pub fn ferricml::calibration::CalibratedClassifier<C, K>::predict(&self, &ferricml::data::MatrixView<'_>) -> core::result::Result<alloc::vec::Vec<u8>, ferricml::api::ModelError>
+pub fn ferricml::calibration::CalibratedClassifier<C, K>::predict_into(&self, &ferricml::data::MatrixView<'_>, &mut [u8]) -> core::result::Result<(), ferricml::api::ModelError>
+impl<C: ferricml::api::ProbabilisticClassifier, K: ferricml::calibration::Calibrator> ferricml::api::Estimator for ferricml::calibration::CalibratedClassifier<C, K>
+pub fn ferricml::calibration::CalibratedClassifier<C, K>::n_features_in(&self) -> usize
+impl<C: ferricml::api::ProbabilisticClassifier, K: ferricml::calibration::Calibrator> ferricml::api::ProbabilisticClassifier for ferricml::calibration::CalibratedClassifier<C, K>
 pub fn ferricml::calibration::CalibratedClassifier<C, K>::predict_class_proba(&self, &ferricml::data::MatrixView<'_>, u8) -> core::result::Result<alloc::vec::Vec<f32>, ferricml::api::ModelError>
 pub fn ferricml::calibration::CalibratedClassifier<C, K>::predict_class_proba_into(&self, &ferricml::data::MatrixView<'_>, u8, &mut [f32]) -> core::result::Result<(), ferricml::api::ModelError>
-pub fn ferricml::calibration::CalibratedClassifier<C, K>::predict_into(&self, &ferricml::data::MatrixView<'_>, &mut [u8]) -> core::result::Result<(), ferricml::api::ModelError>
 pub fn ferricml::calibration::CalibratedClassifier<C, K>::predict_proba(&self, &ferricml::data::MatrixView<'_>) -> core::result::Result<alloc::vec::Vec<f32>, ferricml::api::ModelError>
 pub fn ferricml::calibration::CalibratedClassifier<C, K>::predict_proba_into(&self, &ferricml::data::MatrixView<'_>, &mut [f32]) -> core::result::Result<(), ferricml::api::ModelError>
-impl<C: ferricml::api::Classifier, K: ferricml::calibration::Calibrator> ferricml::api::Estimator for ferricml::calibration::CalibratedClassifier<C, K>
-pub fn ferricml::calibration::CalibratedClassifier<C, K>::n_features_in(&self) -> usize
-impl<C: ferricml::api::Classifier> ferricml::api::HasCapabilities for ferricml::calibration::CalibratedClassifier<C, ferricml::calibration::IsotonicRegression>
+impl<C: ferricml::api::ProbabilisticClassifier> ferricml::api::HasCapabilities for ferricml::calibration::CalibratedClassifier<C, ferricml::calibration::IsotonicRegression>
 pub const ferricml::calibration::CalibratedClassifier<C, ferricml::calibration::IsotonicRegression>::CAPABILITIES: ferricml::api::Capabilities
-impl<C: ferricml::api::Classifier> ferricml::api::HasCapabilities for ferricml::calibration::CalibratedClassifier<C, ferricml::calibration::PlattCalibrator>
+impl<C: ferricml::api::ProbabilisticClassifier> ferricml::api::HasCapabilities for ferricml::calibration::CalibratedClassifier<C, ferricml::calibration::PlattCalibrator>
 pub const ferricml::calibration::CalibratedClassifier<C, ferricml::calibration::PlattCalibrator>::CAPABILITIES: ferricml::api::Capabilities
 pub struct ferricml::calibration::IsotonicRegression
 impl ferricml::calibration::IsotonicRegression
@@ -622,11 +622,7 @@ pub fn ferricml::dummy::DummyClassifier::predict_proba_into(&self, &ferricml::da
 impl ferricml::api::Classifier for ferricml::dummy::DummyClassifier
 pub fn ferricml::dummy::DummyClassifier::classes(&self) -> &[u8]
 pub fn ferricml::dummy::DummyClassifier::predict(&self, &ferricml::data::MatrixView<'_>) -> core::result::Result<alloc::vec::Vec<u8>, ferricml::api::ModelError>
-pub fn ferricml::dummy::DummyClassifier::predict_class_proba(&self, &ferricml::data::MatrixView<'_>, u8) -> core::result::Result<alloc::vec::Vec<f32>, ferricml::api::ModelError>
-pub fn ferricml::dummy::DummyClassifier::predict_class_proba_into(&self, &ferricml::data::MatrixView<'_>, u8, &mut [f32]) -> core::result::Result<(), ferricml::api::ModelError>
 pub fn ferricml::dummy::DummyClassifier::predict_into(&self, &ferricml::data::MatrixView<'_>, &mut [u8]) -> core::result::Result<(), ferricml::api::ModelError>
-pub fn ferricml::dummy::DummyClassifier::predict_proba(&self, &ferricml::data::MatrixView<'_>) -> core::result::Result<alloc::vec::Vec<f32>, ferricml::api::ModelError>
-pub fn ferricml::dummy::DummyClassifier::predict_proba_into(&self, &ferricml::data::MatrixView<'_>, &mut [f32]) -> core::result::Result<(), ferricml::api::ModelError>
 impl ferricml::api::Estimator for ferricml::dummy::DummyClassifier
 pub fn ferricml::dummy::DummyClassifier::n_features_in(&self) -> usize
 impl ferricml::api::HasCapabilities for ferricml::dummy::DummyClassifier
@@ -634,6 +630,11 @@ pub const ferricml::dummy::DummyClassifier::CAPABILITIES: ferricml::api::Capabil
 impl ferricml::api::HasParams for ferricml::dummy::DummyClassifier
 pub type ferricml::dummy::DummyClassifier::Params = ferricml::dummy::DummyClassifierParams
 pub fn ferricml::dummy::DummyClassifier::get_params(&self) -> &Self::Params
+impl ferricml::api::ProbabilisticClassifier for ferricml::dummy::DummyClassifier
+pub fn ferricml::dummy::DummyClassifier::predict_class_proba(&self, &ferricml::data::MatrixView<'_>, u8) -> core::result::Result<alloc::vec::Vec<f32>, ferricml::api::ModelError>
+pub fn ferricml::dummy::DummyClassifier::predict_class_proba_into(&self, &ferricml::data::MatrixView<'_>, u8, &mut [f32]) -> core::result::Result<(), ferricml::api::ModelError>
+pub fn ferricml::dummy::DummyClassifier::predict_proba(&self, &ferricml::data::MatrixView<'_>) -> core::result::Result<alloc::vec::Vec<f32>, ferricml::api::ModelError>
+pub fn ferricml::dummy::DummyClassifier::predict_proba_into(&self, &ferricml::data::MatrixView<'_>, &mut [f32]) -> core::result::Result<(), ferricml::api::ModelError>
 pub struct ferricml::dummy::DummyClassifierParams
 pub struct ferricml::dummy::DummyRegressor
 impl ferricml::dummy::DummyRegressor
@@ -691,11 +692,7 @@ pub fn ferricml::api::AnyClassifier::from(ferricml::ensemble::HistGradientBoosti
 impl ferricml::api::Classifier for ferricml::ensemble::HistGradientBoostingClassifier
 pub fn ferricml::ensemble::HistGradientBoostingClassifier::classes(&self) -> &[u8]
 pub fn ferricml::ensemble::HistGradientBoostingClassifier::predict(&self, &ferricml::data::MatrixView<'_>) -> core::result::Result<alloc::vec::Vec<u8>, ferricml::api::ModelError>
-pub fn ferricml::ensemble::HistGradientBoostingClassifier::predict_class_proba(&self, &ferricml::data::MatrixView<'_>, u8) -> core::result::Result<alloc::vec::Vec<f32>, ferricml::api::ModelError>
-pub fn ferricml::ensemble::HistGradientBoostingClassifier::predict_class_proba_into(&self, &ferricml::data::MatrixView<'_>, u8, &mut [f32]) -> core::result::Result<(), ferricml::api::ModelError>
 pub fn ferricml::ensemble::HistGradientBoostingClassifier::predict_into(&self, &ferricml::data::MatrixView<'_>, &mut [u8]) -> core::result::Result<(), ferricml::api::ModelError>
-pub fn ferricml::ensemble::HistGradientBoostingClassifier::predict_proba(&self, &ferricml::data::MatrixView<'_>) -> core::result::Result<alloc::vec::Vec<f32>, ferricml::api::ModelError>
-pub fn ferricml::ensemble::HistGradientBoostingClassifier::predict_proba_into(&self, &ferricml::data::MatrixView<'_>, &mut [f32]) -> core::result::Result<(), ferricml::api::ModelError>
 impl ferricml::api::Estimator for ferricml::ensemble::HistGradientBoostingClassifier
 pub fn ferricml::ensemble::HistGradientBoostingClassifier::n_features_in(&self) -> usize
 impl ferricml::api::HasCapabilities for ferricml::ensemble::HistGradientBoostingClassifier
@@ -703,6 +700,11 @@ pub const ferricml::ensemble::HistGradientBoostingClassifier::CAPABILITIES: ferr
 impl ferricml::api::HasParams for ferricml::ensemble::HistGradientBoostingClassifier
 pub type ferricml::ensemble::HistGradientBoostingClassifier::Params = ferricml::ensemble::HistGradientBoostingClassifierParams
 pub fn ferricml::ensemble::HistGradientBoostingClassifier::get_params(&self) -> &Self::Params
+impl ferricml::api::ProbabilisticClassifier for ferricml::ensemble::HistGradientBoostingClassifier
+pub fn ferricml::ensemble::HistGradientBoostingClassifier::predict_class_proba(&self, &ferricml::data::MatrixView<'_>, u8) -> core::result::Result<alloc::vec::Vec<f32>, ferricml::api::ModelError>
+pub fn ferricml::ensemble::HistGradientBoostingClassifier::predict_class_proba_into(&self, &ferricml::data::MatrixView<'_>, u8, &mut [f32]) -> core::result::Result<(), ferricml::api::ModelError>
+pub fn ferricml::ensemble::HistGradientBoostingClassifier::predict_proba(&self, &ferricml::data::MatrixView<'_>) -> core::result::Result<alloc::vec::Vec<f32>, ferricml::api::ModelError>
+pub fn ferricml::ensemble::HistGradientBoostingClassifier::predict_proba_into(&self, &ferricml::data::MatrixView<'_>, &mut [f32]) -> core::result::Result<(), ferricml::api::ModelError>
 pub struct ferricml::ensemble::HistGradientBoostingClassifierParams
 impl ferricml::ensemble::HistGradientBoostingClassifierParams
 pub const fn ferricml::ensemble::HistGradientBoostingClassifierParams::l2_regularization(&self) -> f32
@@ -796,11 +798,7 @@ pub fn ferricml::api::AnyClassifier::from(ferricml::ensemble::RandomForestClassi
 impl ferricml::api::Classifier for ferricml::ensemble::RandomForestClassifier
 pub fn ferricml::ensemble::RandomForestClassifier::classes(&self) -> &[u8]
 pub fn ferricml::ensemble::RandomForestClassifier::predict(&self, &ferricml::data::MatrixView<'_>) -> core::result::Result<alloc::vec::Vec<u8>, ferricml::api::ModelError>
-pub fn ferricml::ensemble::RandomForestClassifier::predict_class_proba(&self, &ferricml::data::MatrixView<'_>, u8) -> core::result::Result<alloc::vec::Vec<f32>, ferricml::api::ModelError>
-pub fn ferricml::ensemble::RandomForestClassifier::predict_class_proba_into(&self, &ferricml::data::MatrixView<'_>, u8, &mut [f32]) -> core::result::Result<(), ferricml::api::ModelError>
 pub fn ferricml::ensemble::RandomForestClassifier::predict_into(&self, &ferricml::data::MatrixView<'_>, &mut [u8]) -> core::result::Result<(), ferricml::api::ModelError>
-pub fn ferricml::ensemble::RandomForestClassifier::predict_proba(&self, &ferricml::data::MatrixView<'_>) -> core::result::Result<alloc::vec::Vec<f32>, ferricml::api::ModelError>
-pub fn ferricml::ensemble::RandomForestClassifier::predict_proba_into(&self, &ferricml::data::MatrixView<'_>, &mut [f32]) -> core::result::Result<(), ferricml::api::ModelError>
 impl ferricml::api::Estimator for ferricml::ensemble::RandomForestClassifier
 pub fn ferricml::ensemble::RandomForestClassifier::n_features_in(&self) -> usize
 impl ferricml::api::HasCapabilities for ferricml::ensemble::RandomForestClassifier
@@ -808,6 +806,11 @@ pub const ferricml::ensemble::RandomForestClassifier::CAPABILITIES: ferricml::ap
 impl ferricml::api::HasParams for ferricml::ensemble::RandomForestClassifier
 pub type ferricml::ensemble::RandomForestClassifier::Params = ferricml::ensemble::RandomForestClassifierParams
 pub fn ferricml::ensemble::RandomForestClassifier::get_params(&self) -> &Self::Params
+impl ferricml::api::ProbabilisticClassifier for ferricml::ensemble::RandomForestClassifier
+pub fn ferricml::ensemble::RandomForestClassifier::predict_class_proba(&self, &ferricml::data::MatrixView<'_>, u8) -> core::result::Result<alloc::vec::Vec<f32>, ferricml::api::ModelError>
+pub fn ferricml::ensemble::RandomForestClassifier::predict_class_proba_into(&self, &ferricml::data::MatrixView<'_>, u8, &mut [f32]) -> core::result::Result<(), ferricml::api::ModelError>
+pub fn ferricml::ensemble::RandomForestClassifier::predict_proba(&self, &ferricml::data::MatrixView<'_>) -> core::result::Result<alloc::vec::Vec<f32>, ferricml::api::ModelError>
+pub fn ferricml::ensemble::RandomForestClassifier::predict_proba_into(&self, &ferricml::data::MatrixView<'_>, &mut [f32]) -> core::result::Result<(), ferricml::api::ModelError>
 pub struct ferricml::ensemble::RandomForestClassifierParams
 impl ferricml::ensemble::RandomForestClassifierParams
 pub const fn ferricml::ensemble::RandomForestClassifierParams::bootstrap(&self) -> bool
@@ -900,8 +903,8 @@ pub fn ferricml::inspection::PermutationImportanceParams::with_n_repeats(self, u
 pub fn ferricml::inspection::PermutationImportanceParams::with_random_state(self, u64) -> Self
 impl core::default::Default for ferricml::inspection::PermutationImportanceParams
 pub fn ferricml::inspection::PermutationImportanceParams::default() -> Self
-pub fn ferricml::inspection::permutation_importance_classifier<S: ferricml::model_selection::ClassificationScore>(&dyn ferricml::api::Classifier, &ferricml::data::MatrixView<'_>, &ferricml::data::BinaryTargets, S, ferricml::inspection::PermutationImportanceParams) -> core::result::Result<ferricml::inspection::PermutationImportance, ferricml::inspection::InspectionError>
-pub fn ferricml::inspection::permutation_importance_classifier_into<S: ferricml::model_selection::ClassificationScore>(&dyn ferricml::api::Classifier, &ferricml::data::MatrixView<'_>, &ferricml::data::BinaryTargets, S, ferricml::inspection::PermutationImportanceParams, &mut [f64], &mut [f64]) -> core::result::Result<(), ferricml::inspection::InspectionError>
+pub fn ferricml::inspection::permutation_importance_classifier<S: ferricml::model_selection::ClassificationScore>(ferricml::model_selection::ScorableClassifier<'_>, &ferricml::data::MatrixView<'_>, &ferricml::data::BinaryTargets, S, ferricml::inspection::PermutationImportanceParams) -> core::result::Result<ferricml::inspection::PermutationImportance, ferricml::inspection::InspectionError>
+pub fn ferricml::inspection::permutation_importance_classifier_into<S: ferricml::model_selection::ClassificationScore>(ferricml::model_selection::ScorableClassifier<'_>, &ferricml::data::MatrixView<'_>, &ferricml::data::BinaryTargets, S, ferricml::inspection::PermutationImportanceParams, &mut [f64], &mut [f64]) -> core::result::Result<(), ferricml::inspection::InspectionError>
 pub fn ferricml::inspection::permutation_importance_regressor<S: ferricml::model_selection::RegressionScore>(&dyn ferricml::api::Regressor, &ferricml::data::MatrixView<'_>, &ferricml::data::RegressionTargets, S, ferricml::inspection::PermutationImportanceParams) -> core::result::Result<ferricml::inspection::PermutationImportance, ferricml::inspection::InspectionError>
 pub fn ferricml::inspection::permutation_importance_regressor_into<S: ferricml::model_selection::RegressionScore>(&dyn ferricml::api::Regressor, &ferricml::data::MatrixView<'_>, &ferricml::data::RegressionTargets, S, ferricml::inspection::PermutationImportanceParams, &mut [f64], &mut [f64]) -> core::result::Result<(), ferricml::inspection::InspectionError>
 pub mod ferricml::linear_model
@@ -1049,11 +1052,7 @@ pub fn ferricml::api::AnyClassifier::from(ferricml::linear_model::LogisticRegres
 impl ferricml::api::Classifier for ferricml::linear_model::LogisticRegression
 pub fn ferricml::linear_model::LogisticRegression::classes(&self) -> &[u8]
 pub fn ferricml::linear_model::LogisticRegression::predict(&self, &ferricml::data::MatrixView<'_>) -> core::result::Result<alloc::vec::Vec<u8>, ferricml::api::ModelError>
-pub fn ferricml::linear_model::LogisticRegression::predict_class_proba(&self, &ferricml::data::MatrixView<'_>, u8) -> core::result::Result<alloc::vec::Vec<f32>, ferricml::api::ModelError>
-pub fn ferricml::linear_model::LogisticRegression::predict_class_proba_into(&self, &ferricml::data::MatrixView<'_>, u8, &mut [f32]) -> core::result::Result<(), ferricml::api::ModelError>
 pub fn ferricml::linear_model::LogisticRegression::predict_into(&self, &ferricml::data::MatrixView<'_>, &mut [u8]) -> core::result::Result<(), ferricml::api::ModelError>
-pub fn ferricml::linear_model::LogisticRegression::predict_proba(&self, &ferricml::data::MatrixView<'_>) -> core::result::Result<alloc::vec::Vec<f32>, ferricml::api::ModelError>
-pub fn ferricml::linear_model::LogisticRegression::predict_proba_into(&self, &ferricml::data::MatrixView<'_>, &mut [f32]) -> core::result::Result<(), ferricml::api::ModelError>
 impl ferricml::api::Estimator for ferricml::linear_model::LogisticRegression
 pub fn ferricml::linear_model::LogisticRegression::n_features_in(&self) -> usize
 impl ferricml::api::HasCapabilities for ferricml::linear_model::LogisticRegression
@@ -1061,6 +1060,11 @@ pub const ferricml::linear_model::LogisticRegression::CAPABILITIES: ferricml::ap
 impl ferricml::api::HasParams for ferricml::linear_model::LogisticRegression
 pub type ferricml::linear_model::LogisticRegression::Params = ferricml::linear_model::LogisticRegressionParams
 pub fn ferricml::linear_model::LogisticRegression::get_params(&self) -> &Self::Params
+impl ferricml::api::ProbabilisticClassifier for ferricml::linear_model::LogisticRegression
+pub fn ferricml::linear_model::LogisticRegression::predict_class_proba(&self, &ferricml::data::MatrixView<'_>, u8) -> core::result::Result<alloc::vec::Vec<f32>, ferricml::api::ModelError>
+pub fn ferricml::linear_model::LogisticRegression::predict_class_proba_into(&self, &ferricml::data::MatrixView<'_>, u8, &mut [f32]) -> core::result::Result<(), ferricml::api::ModelError>
+pub fn ferricml::linear_model::LogisticRegression::predict_proba(&self, &ferricml::data::MatrixView<'_>) -> core::result::Result<alloc::vec::Vec<f32>, ferricml::api::ModelError>
+pub fn ferricml::linear_model::LogisticRegression::predict_proba_into(&self, &ferricml::data::MatrixView<'_>, &mut [f32]) -> core::result::Result<(), ferricml::api::ModelError>
 impl ferricml::pipeline::ModelArtifact for ferricml::linear_model::LogisticRegression
 pub const ferricml::linear_model::LogisticRegression::MODEL_TAG: u16
 pub fn ferricml::linear_model::LogisticRegression::from_model_artifact(&[u8], [u8; 32]) -> core::result::Result<Self, ferricml::artifact::ArtifactError>
@@ -1468,6 +1472,10 @@ impl core::iter::traits::iterator::Iterator for ferricml::model_selection::Repea
 pub type ferricml::model_selection::RepeatedKFoldIter::Item = ferricml::model_selection::Split
 pub fn ferricml::model_selection::RepeatedKFoldIter::next(&mut self) -> core::option::Option<Self::Item>
 pub fn ferricml::model_selection::RepeatedKFoldIter::size_hint(&self) -> (usize, core::option::Option<usize>)
+pub struct ferricml::model_selection::ScorableClassifier<'a>
+impl<'a> ferricml::model_selection::ScorableClassifier<'a>
+pub const fn ferricml::model_selection::ScorableClassifier<'a>::labels_only(&'a dyn ferricml::api::Classifier) -> Self
+pub fn ferricml::model_selection::ScorableClassifier<'a>::probabilistic(&'a dyn ferricml::api::ProbabilisticClassifier) -> Self
 pub struct ferricml::model_selection::ScoringWorkspace
 impl ferricml::model_selection::ScoringWorkspace
 pub fn ferricml::model_selection::ScoringWorkspace::new() -> Self
@@ -1536,14 +1544,16 @@ pub fn ferricml::model_selection::RegressionScorer::score(&self, &[f32], &[f32])
 impl<S: ferricml::model_selection::RegressionScore + ?core::marker::Sized> ferricml::model_selection::RegressionScore for &S
 pub fn &S::greater_is_better(&self) -> bool
 pub fn &S::score(&self, &[f32], &[f32]) -> core::result::Result<f64, ferricml::model_selection::ScoringError>
-pub fn ferricml::model_selection::cross_validate_classifier<M, I, F, S>(&ferricml::data::MatrixView<'_>, &ferricml::data::BinaryTargets, I, S, F) -> core::result::Result<ferricml::model_selection::CrossValidationResult, ferricml::model_selection::CrossValidationError> where M: ferricml::api::Classifier, I: core::iter::traits::collect::IntoIterator<Item = ferricml::model_selection::Split>, F: core::ops::function::FnMut(&ferricml::data::MatrixView<'_>, &ferricml::data::BinaryTargets) -> core::result::Result<M, ferricml::api::ModelError>, S: ferricml::model_selection::ClassificationScore
+pub fn ferricml::model_selection::cross_validate_classifier<M, I, F, S>(&ferricml::data::MatrixView<'_>, &ferricml::data::BinaryTargets, I, S, F) -> core::result::Result<ferricml::model_selection::CrossValidationResult, ferricml::model_selection::CrossValidationError> where M: ferricml::api::ProbabilisticClassifier, I: core::iter::traits::collect::IntoIterator<Item = ferricml::model_selection::Split>, F: core::ops::function::FnMut(&ferricml::data::MatrixView<'_>, &ferricml::data::BinaryTargets) -> core::result::Result<M, ferricml::api::ModelError>, S: ferricml::model_selection::ClassificationScore
+pub fn ferricml::model_selection::cross_validate_classifier_labels<M, I, F, S>(&ferricml::data::MatrixView<'_>, &ferricml::data::BinaryTargets, I, S, F) -> core::result::Result<ferricml::model_selection::CrossValidationResult, ferricml::model_selection::CrossValidationError> where M: ferricml::api::Classifier, I: core::iter::traits::collect::IntoIterator<Item = ferricml::model_selection::Split>, F: core::ops::function::FnMut(&ferricml::data::MatrixView<'_>, &ferricml::data::BinaryTargets) -> core::result::Result<M, ferricml::api::ModelError>, S: ferricml::model_selection::ClassificationScore
 pub fn ferricml::model_selection::cross_validate_regressor<M, I, F, S>(&ferricml::data::MatrixView<'_>, &ferricml::data::RegressionTargets, I, S, F) -> core::result::Result<ferricml::model_selection::CrossValidationResult, ferricml::model_selection::CrossValidationError> where M: ferricml::api::Regressor, I: core::iter::traits::collect::IntoIterator<Item = ferricml::model_selection::Split>, F: core::ops::function::FnMut(&ferricml::data::MatrixView<'_>, &ferricml::data::RegressionTargets) -> core::result::Result<M, ferricml::api::ModelError>, S: ferricml::model_selection::RegressionScore
-pub fn ferricml::model_selection::grid_search_classifier<M, P, I, F, S>(&ferricml::data::MatrixView<'_>, &ferricml::data::BinaryTargets, I, &ferricml::model_selection::ParameterGrid<P>, S, F) -> core::result::Result<ferricml::model_selection::SearchResult<P>, ferricml::model_selection::SearchError> where M: ferricml::api::Classifier, P: core::clone::Clone, I: core::iter::traits::collect::IntoIterator<Item = ferricml::model_selection::Split>, F: core::ops::function::FnMut(&ferricml::data::MatrixView<'_>, &ferricml::data::BinaryTargets, &P) -> core::result::Result<M, ferricml::api::ModelError>, S: ferricml::model_selection::ClassificationScore
+pub fn ferricml::model_selection::grid_search_classifier<M, P, I, F, S>(&ferricml::data::MatrixView<'_>, &ferricml::data::BinaryTargets, I, &ferricml::model_selection::ParameterGrid<P>, S, F) -> core::result::Result<ferricml::model_selection::SearchResult<P>, ferricml::model_selection::SearchError> where M: ferricml::api::ProbabilisticClassifier, P: core::clone::Clone, I: core::iter::traits::collect::IntoIterator<Item = ferricml::model_selection::Split>, F: core::ops::function::FnMut(&ferricml::data::MatrixView<'_>, &ferricml::data::BinaryTargets, &P) -> core::result::Result<M, ferricml::api::ModelError>, S: ferricml::model_selection::ClassificationScore
+pub fn ferricml::model_selection::grid_search_classifier_labels<M, P, I, F, S>(&ferricml::data::MatrixView<'_>, &ferricml::data::BinaryTargets, I, &ferricml::model_selection::ParameterGrid<P>, S, F) -> core::result::Result<ferricml::model_selection::SearchResult<P>, ferricml::model_selection::SearchError> where M: ferricml::api::Classifier, P: core::clone::Clone, I: core::iter::traits::collect::IntoIterator<Item = ferricml::model_selection::Split>, F: core::ops::function::FnMut(&ferricml::data::MatrixView<'_>, &ferricml::data::BinaryTargets, &P) -> core::result::Result<M, ferricml::api::ModelError>, S: ferricml::model_selection::ClassificationScore
 pub fn ferricml::model_selection::grid_search_regressor<M, P, I, F, S>(&ferricml::data::MatrixView<'_>, &ferricml::data::RegressionTargets, I, &ferricml::model_selection::ParameterGrid<P>, S, F) -> core::result::Result<ferricml::model_selection::SearchResult<P>, ferricml::model_selection::SearchError> where M: ferricml::api::Regressor, P: core::clone::Clone, I: core::iter::traits::collect::IntoIterator<Item = ferricml::model_selection::Split>, F: core::ops::function::FnMut(&ferricml::data::MatrixView<'_>, &ferricml::data::RegressionTargets, &P) -> core::result::Result<M, ferricml::api::ModelError>, S: ferricml::model_selection::RegressionScore
-pub fn ferricml::model_selection::score_classifier<S: ferricml::model_selection::ClassificationScore>(&dyn ferricml::api::Classifier, &ferricml::data::MatrixView<'_>, &ferricml::data::BinaryTargets, S) -> core::result::Result<f64, ferricml::model_selection::ScoringError>
-pub fn ferricml::model_selection::score_classifier_with<S: ferricml::model_selection::ClassificationScore>(&dyn ferricml::api::Classifier, &ferricml::data::MatrixView<'_>, &ferricml::data::BinaryTargets, S, &mut ferricml::model_selection::ScoringWorkspace) -> core::result::Result<f64, ferricml::model_selection::ScoringError>
-pub fn ferricml::model_selection::score_multiclass_classifier<S: ferricml::model_selection::ClassificationScore>(&dyn ferricml::api::Classifier, &ferricml::data::MatrixView<'_>, &ferricml::data::ClassTargets, S) -> core::result::Result<f64, ferricml::model_selection::ScoringError>
-pub fn ferricml::model_selection::score_multiclass_classifier_with<S: ferricml::model_selection::ClassificationScore>(&dyn ferricml::api::Classifier, &ferricml::data::MatrixView<'_>, &ferricml::data::ClassTargets, S, &mut ferricml::model_selection::ScoringWorkspace) -> core::result::Result<f64, ferricml::model_selection::ScoringError>
+pub fn ferricml::model_selection::score_classifier<S: ferricml::model_selection::ClassificationScore>(ferricml::model_selection::ScorableClassifier<'_>, &ferricml::data::MatrixView<'_>, &ferricml::data::BinaryTargets, S) -> core::result::Result<f64, ferricml::model_selection::ScoringError>
+pub fn ferricml::model_selection::score_classifier_with<S: ferricml::model_selection::ClassificationScore>(ferricml::model_selection::ScorableClassifier<'_>, &ferricml::data::MatrixView<'_>, &ferricml::data::BinaryTargets, S, &mut ferricml::model_selection::ScoringWorkspace) -> core::result::Result<f64, ferricml::model_selection::ScoringError>
+pub fn ferricml::model_selection::score_multiclass_classifier<S: ferricml::model_selection::ClassificationScore>(ferricml::model_selection::ScorableClassifier<'_>, &ferricml::data::MatrixView<'_>, &ferricml::data::ClassTargets, S) -> core::result::Result<f64, ferricml::model_selection::ScoringError>
+pub fn ferricml::model_selection::score_multiclass_classifier_with<S: ferricml::model_selection::ClassificationScore>(ferricml::model_selection::ScorableClassifier<'_>, &ferricml::data::MatrixView<'_>, &ferricml::data::ClassTargets, S, &mut ferricml::model_selection::ScoringWorkspace) -> core::result::Result<f64, ferricml::model_selection::ScoringError>
 pub fn ferricml::model_selection::score_regressor<S: ferricml::model_selection::RegressionScore>(&dyn ferricml::api::Regressor, &ferricml::data::MatrixView<'_>, &ferricml::data::RegressionTargets, S) -> core::result::Result<f64, ferricml::model_selection::ScoringError>
 pub fn ferricml::model_selection::score_regressor_with<S: ferricml::model_selection::RegressionScore>(&dyn ferricml::api::Regressor, &ferricml::data::MatrixView<'_>, &ferricml::data::RegressionTargets, S, &mut ferricml::model_selection::ScoringWorkspace) -> core::result::Result<f64, ferricml::model_selection::ScoringError>
 pub fn ferricml::model_selection::stratified_train_test_split(&[u8], ferricml::model_selection::HoldoutParams) -> core::result::Result<ferricml::model_selection::Split, ferricml::model_selection::SplitError>
@@ -1839,6 +1849,8 @@ pub fn ferricml::ranking::PairwiseLinearRanker::score_one(&self, &[f32]) -> core
 pub fn ferricml::ranking::PairwiseLinearRanker::to_artifact(&self, [u8; 32]) -> core::result::Result<alloc::vec::Vec<u8>, ferricml::artifact::ArtifactError>
 impl ferricml::api::Estimator for ferricml::ranking::PairwiseLinearRanker
 pub fn ferricml::ranking::PairwiseLinearRanker::n_features_in(&self) -> usize
+impl ferricml::api::HasCapabilities for ferricml::ranking::PairwiseLinearRanker
+pub const ferricml::ranking::PairwiseLinearRanker::CAPABILITIES: ferricml::api::Capabilities
 impl ferricml::api::HasParams for ferricml::ranking::PairwiseLinearRanker
 pub type ferricml::ranking::PairwiseLinearRanker::Params = ferricml::ranking::PairwiseLinearRankerParams
 pub fn ferricml::ranking::PairwiseLinearRanker::get_params(&self) -> &Self::Params
