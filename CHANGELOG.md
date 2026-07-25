@@ -75,7 +75,16 @@ and releases use [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   `metrics::mean_absolute_percentage_error`. The percentage error treats every
   expected value as a denominator, so a single expected zero is
   `MetricError::Undefined` rather than a silently clamped floor.
-
+- `model_selection::TimeSeriesSplit`, a forward-chaining splitter for ordered
+  observations. Each fold trains on a prefix and tests on the window that
+  follows it, with an optional `gap`, so no fold is ever fitted on a row that
+  comes after the rows it is evaluated on.
+- `model_selection::LeaveOneOut`, which holds out one sample per split.
+- `Split::partial`, for a split that deliberately leaves rows out of both
+  partitions — what a forward-chaining fold needs so that the rows after its
+  test window leak into neither side — plus `Split::covered_samples`.
+  `Split::sample_count` now reports the dataset size a split was built for,
+  which is unchanged for every complete split.
 - `model_selection::ClassificationScore` and `model_selection::RegressionScore`,
   the open scorer contract that batch scoring, cross-validation, and
   permutation importance all consume identically. The existing

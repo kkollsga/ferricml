@@ -998,6 +998,10 @@ pub ferricml::model_selection::SplitError::InvalidTestCount
 pub ferricml::model_selection::SplitError::InvalidTestCount::samples: usize
 pub ferricml::model_selection::SplitError::InvalidTestCount::test: usize
 pub ferricml::model_selection::SplitError::InvalidTestFraction
+pub ferricml::model_selection::SplitError::InvalidTimeSeriesWindow
+pub ferricml::model_selection::SplitError::InvalidTimeSeriesWindow::gap: usize
+pub ferricml::model_selection::SplitError::InvalidTimeSeriesWindow::samples: usize
+pub ferricml::model_selection::SplitError::InvalidTimeSeriesWindow::splits: usize
 pub ferricml::model_selection::SplitError::NotEnoughSamples
 pub ferricml::model_selection::SplitError::NotEnoughSamples::samples: usize
 pub ferricml::model_selection::SplitError::OverlappingIndex
@@ -1047,13 +1051,25 @@ impl core::iter::traits::iterator::Iterator for ferricml::model_selection::KFold
 pub type ferricml::model_selection::KFoldIter::Item = ferricml::model_selection::Split
 pub fn ferricml::model_selection::KFoldIter::next(&mut self) -> core::option::Option<Self::Item>
 pub fn ferricml::model_selection::KFoldIter::size_hint(&self) -> (usize, core::option::Option<usize>)
+pub struct ferricml::model_selection::LeaveOneOut
+impl ferricml::model_selection::LeaveOneOut
+pub const fn ferricml::model_selection::LeaveOneOut::new() -> Self
+pub fn ferricml::model_selection::LeaveOneOut::split(&self, usize) -> core::result::Result<ferricml::model_selection::LeaveOneOutIter, ferricml::model_selection::SplitError>
+pub struct ferricml::model_selection::LeaveOneOutIter
+impl core::iter::traits::exact_size::ExactSizeIterator for ferricml::model_selection::LeaveOneOutIter
+impl core::iter::traits::iterator::Iterator for ferricml::model_selection::LeaveOneOutIter
+pub type ferricml::model_selection::LeaveOneOutIter::Item = ferricml::model_selection::Split
+pub fn ferricml::model_selection::LeaveOneOutIter::next(&mut self) -> core::option::Option<Self::Item>
+pub fn ferricml::model_selection::LeaveOneOutIter::size_hint(&self) -> (usize, core::option::Option<usize>)
 pub struct ferricml::model_selection::ScoringWorkspace
 impl ferricml::model_selection::ScoringWorkspace
 pub fn ferricml::model_selection::ScoringWorkspace::new() -> Self
 pub struct ferricml::model_selection::Split
 impl ferricml::model_selection::Split
+pub fn ferricml::model_selection::Split::covered_samples(&self) -> usize
 pub fn ferricml::model_selection::Split::new(usize, alloc::vec::Vec<usize>, alloc::vec::Vec<usize>) -> core::result::Result<Self, ferricml::model_selection::SplitError>
-pub fn ferricml::model_selection::Split::sample_count(&self) -> usize
+pub fn ferricml::model_selection::Split::partial(usize, alloc::vec::Vec<usize>, alloc::vec::Vec<usize>) -> core::result::Result<Self, ferricml::model_selection::SplitError>
+pub const fn ferricml::model_selection::Split::sample_count(&self) -> usize
 pub fn ferricml::model_selection::Split::test_indices(&self) -> &[usize]
 pub fn ferricml::model_selection::Split::train_indices(&self) -> &[usize]
 pub struct ferricml::model_selection::StratifiedKFold
@@ -1071,6 +1087,19 @@ impl core::iter::traits::iterator::Iterator for ferricml::model_selection::Strat
 pub type ferricml::model_selection::StratifiedKFoldIter::Item = ferricml::model_selection::Split
 pub fn ferricml::model_selection::StratifiedKFoldIter::next(&mut self) -> core::option::Option<Self::Item>
 pub fn ferricml::model_selection::StratifiedKFoldIter::size_hint(&self) -> (usize, core::option::Option<usize>)
+pub struct ferricml::model_selection::TimeSeriesSplit
+impl ferricml::model_selection::TimeSeriesSplit
+pub const fn ferricml::model_selection::TimeSeriesSplit::gap(&self) -> usize
+pub const fn ferricml::model_selection::TimeSeriesSplit::n_splits(&self) -> usize
+pub const fn ferricml::model_selection::TimeSeriesSplit::new(usize) -> Self
+pub fn ferricml::model_selection::TimeSeriesSplit::split(&self, usize) -> core::result::Result<ferricml::model_selection::TimeSeriesSplitIter, ferricml::model_selection::SplitError>
+pub const fn ferricml::model_selection::TimeSeriesSplit::with_gap(self, usize) -> Self
+pub struct ferricml::model_selection::TimeSeriesSplitIter
+impl core::iter::traits::exact_size::ExactSizeIterator for ferricml::model_selection::TimeSeriesSplitIter
+impl core::iter::traits::iterator::Iterator for ferricml::model_selection::TimeSeriesSplitIter
+pub type ferricml::model_selection::TimeSeriesSplitIter::Item = ferricml::model_selection::Split
+pub fn ferricml::model_selection::TimeSeriesSplitIter::next(&mut self) -> core::option::Option<Self::Item>
+pub fn ferricml::model_selection::TimeSeriesSplitIter::size_hint(&self) -> (usize, core::option::Option<usize>)
 pub trait ferricml::model_selection::ClassificationScore
 pub fn ferricml::model_selection::ClassificationScore::greater_is_better(&self) -> bool
 pub fn ferricml::model_selection::ClassificationScore::output_kind(&self) -> ferricml::model_selection::ClassifierOutputKind

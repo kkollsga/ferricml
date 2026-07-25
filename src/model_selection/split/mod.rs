@@ -4,6 +4,10 @@ use std::collections::BinaryHeap;
 use std::error::Error;
 use std::fmt;
 
+mod time_series;
+
+pub use time_series::{LeaveOneOut, LeaveOneOutIter, TimeSeriesSplit, TimeSeriesSplitIter};
+
 /// Identifies one side of a train/test split.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum SplitPartition {
@@ -82,6 +86,15 @@ pub enum SplitError {
         /// Required partition count.
         partitions: usize,
     },
+    /// A forward-chaining split left no room for a train or test window.
+    InvalidTimeSeriesWindow {
+        /// Requested splits.
+        splits: usize,
+        /// Rows skipped between each train window and its test window.
+        gap: usize,
+        /// Available sample count.
+        samples: usize,
+    },
     /// A stratified holdout side could not contain every observed class.
     PartitionTooSmallForClasses {
         /// Side that is too small.
@@ -139,6 +152,15 @@ impl fmt::Display for SplitError {
                 f,
                 "class {label} has {count} rows but needs at least {partitions}"
             ),
+            Self::InvalidTimeSeriesWindow {
+                splits,
+                gap,
+                samples,
+            } => write!(
+                f,
+                "{splits} forward-chaining splits with gap {gap} leave an empty window for \
+                 {samples} samples"
+            ),
             Self::PartitionTooSmallForClasses {
                 partition,
                 rows,
@@ -153,9 +175,10 @@ impl fmt::Display for SplitError {
 
 impl Error for SplitError {}
 
-/// Owned indices for one complete train/test partition.
+/// Owned indices for one train/test partition of a known dataset size.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Split {
+    samples: usize,
     train_indices: Vec<usize>,
     test_indices: Vec<usize>,
 }
@@ -167,6 +190,33 @@ impl Split {
         samples: usize,
         train_indices: Vec<usize>,
         test_indices: Vec<usize>,
+    ) -> Result<Self, SplitError> {
+        Self::validated(samples, train_indices, test_indices, Coverage::Complete)
+    }
+
+    /// Validates a split that deliberately leaves some samples out of both
+    /// partitions.
+    ///
+    /// Forward-chaining time-series folds are the reason this exists: an early
+    /// fold must not train on rows that come after its test window, so those
+    /// rows belong to neither side. Every other guarantee of
+    /// [`Split::new`] still holds — in-bounds, unique, and disjoint — and
+    /// [`Split::sample_count`] still reports the dataset the split was built
+    /// for, so cross-validation validates it exactly as it does a complete
+    /// split.
+    pub fn partial(
+        samples: usize,
+        train_indices: Vec<usize>,
+        test_indices: Vec<usize>,
+    ) -> Result<Self, SplitError> {
+        Self::validated(samples, train_indices, test_indices, Coverage::Partial)
+    }
+
+    fn validated(
+        samples: usize,
+        train_indices: Vec<usize>,
+        test_indices: Vec<usize>,
+        coverage: Coverage,
     ) -> Result<Self, SplitError> {
         validate_sample_count(samples)?;
         if train_indices.is_empty() {
@@ -182,7 +232,7 @@ impl Split {
         validate_bounds(samples, SplitPartition::Train, &train_indices)?;
         validate_bounds(samples, SplitPartition::Test, &test_indices)?;
         let actual = train_indices.len().saturating_add(test_indices.len());
-        if actual != samples {
+        if coverage == Coverage::Complete && actual != samples {
             return Err(SplitError::IncompleteCoverage {
                 expected: samples,
                 actual,
@@ -211,13 +261,14 @@ impl Split {
                 }
             }
         }
-        if membership.contains(&0) {
+        if coverage == Coverage::Complete && membership.contains(&0) {
             return Err(SplitError::IncompleteCoverage {
                 expected: samples,
                 actual,
             });
         }
         Ok(Self {
+            samples,
             train_indices,
             test_indices,
         })
@@ -233,8 +284,20 @@ impl Split {
         &self.test_indices
     }
 
-    /// Total number of samples covered by this split.
-    pub fn sample_count(&self) -> usize {
+    /// Number of dataset samples this split was built for.
+    ///
+    /// This is the dataset size, not the number of indices the split names, so
+    /// it identifies the dataset a split belongs to whether or not the split
+    /// covers all of it.
+    pub const fn sample_count(&self) -> usize {
+        self.samples
+    }
+
+    /// Number of samples named by either partition.
+    ///
+    /// Equal to [`Split::sample_count`] for a complete split, and smaller for
+    /// a [`Split::partial`] one.
+    pub fn covered_samples(&self) -> usize {
         self.train_indices.len() + self.test_indices.len()
     }
 
@@ -250,10 +313,18 @@ impl Split {
             }
         }
         Self {
+            samples,
             train_indices,
             test_indices,
         }
     }
+}
+
+/// Whether a split must name every sample.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum Coverage {
+    Complete,
+    Partial,
 }
 
 /// Requested holdout test size.
@@ -327,6 +398,7 @@ pub fn train_test_split(samples: usize, params: HoldoutParams) -> Result<Split, 
     let train_count = samples - test_count;
     if !params.shuffle {
         return Ok(Split {
+            samples,
             train_indices: (0..train_count).collect(),
             test_indices: (train_count..samples).collect(),
         });
@@ -716,6 +788,7 @@ fn split_from_test_membership(test_membership: &[u8], test_count: usize) -> Spli
         }
     }
     Split {
+        samples: test_membership.len(),
         train_indices,
         test_indices,
     }
@@ -835,6 +908,7 @@ mod tests {
         train_indices.sort_unstable();
         test_indices.sort_unstable();
         Ok(Split {
+            samples,
             train_indices,
             test_indices,
         })
@@ -892,6 +966,7 @@ mod tests {
         train_indices.sort_unstable();
         test_indices.sort_unstable();
         Ok(Split {
+            samples,
             train_indices,
             test_indices,
         })

@@ -313,7 +313,9 @@ mod tests {
     use crate::api::Estimator;
     use crate::data::DenseMatrix;
     use crate::linear_model::{LogisticRegression, LogisticRegressionParams, Ridge, RidgeParams};
-    use crate::model_selection::{ClassificationScorer, KFold, RegressionScorer, StratifiedKFold};
+    use crate::model_selection::{
+        ClassificationScorer, KFold, RegressionScorer, StratifiedKFold, TimeSeriesSplit,
+    };
     use std::cell::Cell;
     use std::rc::Rc;
 
@@ -400,6 +402,39 @@ mod tests {
                         .iter_rows()
                         .zip(train_targets.as_slice())
                         .all(|(row, &target)| row[0] == target)
+                );
+                Ridge::fit(train, train_targets, RidgeParams::default())
+            },
+        )
+        .unwrap();
+        assert_eq!(calls.get(), 3);
+        assert_eq!(result.len(), 3);
+    }
+
+    #[test]
+    fn a_partial_time_series_split_never_lets_a_fold_train_on_its_future() {
+        let data = data();
+        let targets = RegressionTargets::new((0..12).map(|row| row as f32).collect()).unwrap();
+        let splits = TimeSeriesSplit::new(3)
+            .split(12)
+            .unwrap()
+            .collect::<Vec<_>>();
+        assert!(splits.iter().any(|split| split.covered_samples() < 12));
+
+        let calls = Rc::new(Cell::new(0_usize));
+        let fit_calls = Rc::clone(&calls);
+        let result = cross_validate_regressor(
+            &data.as_view(),
+            &targets,
+            splits.clone(),
+            RegressionScorer::MeanAbsoluteError,
+            move |train, train_targets| {
+                let fold = fit_calls.get();
+                fit_calls.set(fold + 1);
+                let first_test = splits[fold].test_indices()[0] as f32;
+                assert!(
+                    train.iter_rows().all(|row| row[0] < first_test),
+                    "fold {fold} trained on a row at or after {first_test}"
                 );
                 Ridge::fit(train, train_targets, RidgeParams::default())
             },

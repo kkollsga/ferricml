@@ -71,6 +71,18 @@ coverage. `TestSize` accepts an exact count or a fraction rounded upward.
 Seeded shuffling uses a stable crate-owned algorithm, so identical parameters
 produce identical membership across supported platforms.
 
+`TimeSeriesSplit` treats rows as ordered, index zero oldest. Each fold trains
+on a prefix and tests on the window immediately after it, so no fold is fitted
+on a row that comes after the rows it is evaluated on, and later folds train on
+strictly more history. Test windows all hold `samples / (n_splits + 1)` rows and
+end at the last row, so any remainder lengthens the first training window.
+`with_gap` drops rows between each training window and its test window for
+targets that are not knowable immediately. Every fold except the last therefore
+leaves later rows out of both partitions: a `Split::partial`, which keeps every
+other split guarantee and still reports the dataset size through
+`sample_count`, so cross-validation validates it exactly as it does a complete
+split. `LeaveOneOut` holds out one sample per split.
+
 `KFold` and `StratifiedKFold` validate before returning lazy, exact-size fold
 iterators. Fold sizes differ by at most one. Stratification accepts arbitrary
 `u8` labels and requires enough members of every observed class to place that
