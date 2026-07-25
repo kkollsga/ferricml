@@ -68,6 +68,9 @@ and releases use [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   canonical pre-order the writer produces. Such a layout described a model that
   already had an encoding, so one fitted forest or boosted ensemble had more
   than one accepted artifact.
+- Apply the documented 32 MiB reader limit to the legacy version-1 envelope as
+  well as version 2. An oversized buffer whose version field read 1 was
+  checksummed in full before being rejected.
 
 ## [0.1.2] - 2026-07-24
 

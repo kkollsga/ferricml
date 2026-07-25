@@ -2061,3 +2061,28 @@ fn the_frozen_adversarial_corpus_decodes_exactly_as_recorded() {
         cases.len()
     );
 }
+
+/// The documented 32 MiB ceiling has to hold on *both* envelope versions.
+///
+/// This case is a size rather than a byte string, so it is built here instead
+/// of being frozen as a fixture; a 32 MiB file does not belong in a repository.
+/// Before the check was mirrored onto the legacy reader, flipping the version
+/// field from 2 to 1 turned a constant-time refusal into a full SHA-256 pass
+/// over the whole attacker-supplied buffer.
+#[test]
+fn both_envelope_versions_refuse_an_oversized_artifact() {
+    let oversize = ferricml::artifact::MAX_MODEL_ARTIFACT_BYTES + 1_024;
+    for version in [1_u16, 2] {
+        let mut bytes = vec![0_u8; oversize];
+        bytes[..8].copy_from_slice(MAGIC);
+        bytes[8..10].copy_from_slice(&version.to_le_bytes());
+        assert_eq!(
+            LogisticRegression::from_artifact(&bytes, INPUT_SCHEMA),
+            Err(ArtifactError::SizeLimitExceeded {
+                limit: ferricml::artifact::MAX_MODEL_ARTIFACT_BYTES,
+                actual: oversize,
+            }),
+            "envelope version {version} accepted an oversized artifact for hashing"
+        );
+    }
+}

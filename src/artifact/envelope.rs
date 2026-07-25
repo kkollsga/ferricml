@@ -253,6 +253,16 @@ pub(crate) fn decode_legacy_envelope<'a>(
     expected_feature_schema_sha256: [u8; 32],
     minimum_payload_bytes: usize,
 ) -> Result<ArtifactCursor<'a>, ArtifactError> {
+    // The hard reader limit applies to every envelope version, and it applies
+    // before the checksum: hashing is linear in the input, so a reader that
+    // accepted an oversized buffer here would do unbounded work that the
+    // version-2 path refuses outright, chosen by one two-byte header field.
+    if bytes.len() > MAX_MODEL_ARTIFACT_BYTES {
+        return Err(ArtifactError::SizeLimitExceeded {
+            limit: MAX_MODEL_ARTIFACT_BYTES,
+            actual: bytes.len(),
+        });
+    }
     let minimum_len = LEGACY_HEADER_BYTES
         .checked_add(minimum_payload_bytes)
         .and_then(|length| length.checked_add(ARTIFACT_CHECKSUM_BYTES))
