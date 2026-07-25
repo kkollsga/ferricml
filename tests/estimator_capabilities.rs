@@ -15,8 +15,8 @@ use ferricml::calibration::{CalibratedClassifier, IsotonicRegression, PlattCalib
 use ferricml::data::{BinaryTargets, DenseMatrix, RegressionTargets};
 use ferricml::dummy::{DummyClassifier, DummyRegressor};
 use ferricml::ensemble::{
-    HistGradientBoostingRegressor, RandomForestClassifier, RandomForestClassifierParams,
-    RandomForestRegressor,
+    HistGradientBoostingClassifier, HistGradientBoostingRegressor, RandomForestClassifier,
+    RandomForestClassifierParams, RandomForestRegressor,
 };
 use ferricml::linear_model::{
     LinearRegression, LinearRegressionParams, LogisticRegression, LogisticRegressionParams, Ridge,
@@ -69,6 +69,20 @@ fn tree_ensembles_declare_weighted_fitting_and_persistence() {
 }
 
 #[test]
+fn the_boosted_classifier_declares_weighted_fitting_persistence_and_a_decision_score() {
+    // Binary log loss is fitted in raw-score space, so the additive score the
+    // trees sum into is the model's own quantity rather than something derived
+    // for the declaration's sake. Multiclass is absent because a multiclass
+    // boosted model needs a different objective and one tree per class per
+    // iteration, not a wider fit of this one.
+    assert_eq!(
+        HistGradientBoostingClassifier::CAPABILITIES,
+        WEIGHTED_AND_PERSISTED.with_decision_function(true)
+    );
+    assert!(!HistGradientBoostingClassifier::CAPABILITIES.multiclass());
+}
+
+#[test]
 fn the_forest_classifier_declares_weighted_and_multiclass_fitting_and_persistence() {
     // Its artifact covers both leaf representations, so persistence holds for
     // every fit the type offers rather than for one of its two entry points.
@@ -85,6 +99,7 @@ fn multiclass_fitting_is_declared_by_the_types_that_offer_it() {
     assert!(LogisticRegression::CAPABILITIES.multiclass());
     assert!(RandomForestClassifier::CAPABILITIES.multiclass());
     assert!(!DummyClassifier::CAPABILITIES.multiclass());
+    assert!(!HistGradientBoostingClassifier::CAPABILITIES.multiclass());
     // A composition whose `fit` takes binary targets does not offer it, and
     // the intersection says so without anyone maintaining a second table.
     assert!(
@@ -123,13 +138,15 @@ fn a_calibrated_composition_declares_only_what_its_calibrator_gives_it() {
 
 #[test]
 fn a_decision_function_is_declared_by_nothing_that_only_produces_probabilities() {
-    // `LogisticRegression` is the one shipped type with a decision function,
-    // and it declares one. The declaration was applied by the coordinator at
-    // merge rather than by the sprint that added the field: declarations live
-    // beside their estimator, so the consumer that needed the capability could
-    // not also land the declaration from another track. Every other estimator
-    // only produces probabilities, which is not what this field records.
+    // `LogisticRegression` and the boosted classifier are the shipped types
+    // whose model is defined in raw-score space, and both declare one. The
+    // logistic declaration was applied by the coordinator at merge rather than
+    // by the sprint that added the field: declarations live beside their
+    // estimator, so the consumer that needed the capability could not also land
+    // the declaration from another track. Every other estimator only produces
+    // probabilities, which is not what this field records.
     assert!(LogisticRegression::CAPABILITIES.decision_function());
+    assert!(HistGradientBoostingClassifier::CAPABILITIES.decision_function());
     assert!(!RandomForestClassifier::CAPABILITIES.decision_function());
     assert!(!DummyClassifier::CAPABILITIES.decision_function());
     assert!(!AnyClassifier::CAPABILITIES.decision_function());

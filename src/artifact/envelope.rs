@@ -25,6 +25,11 @@ pub(crate) const ANY_CLASSIFIER_ARTIFACT_KIND: u16 = 13;
 pub(crate) const MIN_MAX_SCALER_ARTIFACT_KIND: u16 = 14;
 pub(crate) const MAX_ABS_SCALER_ARTIFACT_KIND: u16 = 15;
 pub(crate) const STAGED_PIPELINE_ARTIFACT_KIND: u16 = 16;
+// Kinds 17-19 were reserved for scaler/pipeline compositions that a staged
+// design made unnecessary. They stay reserved rather than recycled: a kind is a
+// permanent name in the on-disk format, and reusing a reserved number is exactly
+// the crossed-schema confusion the adversarial corpus exists to catch.
+pub(crate) const HIST_GRADIENT_BOOSTING_CLASSIFIER_ARTIFACT_KIND: u16 = 20;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum SchemaRole {

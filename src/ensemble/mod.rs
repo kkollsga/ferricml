@@ -4,6 +4,7 @@ mod hist_gradient_boosting;
 mod random_forest;
 
 pub use hist_gradient_boosting::{
+    HistGradientBoostingClassifier, HistGradientBoostingClassifierParams,
     HistGradientBoostingRegressor, HistGradientBoostingRegressorParams,
 };
 

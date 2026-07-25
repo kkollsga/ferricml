@@ -54,6 +54,14 @@ and releases use [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   selected runtime variant's capabilities. The declared constant on each
   dispatch enum and each concrete pipeline is composed from its variants or
   parts, so it promises only what holds whichever one is held.
+- `ensemble::HistGradientBoostingClassifier`, a deterministic serial histogram
+  gradient-boosted binary classifier fitted against binary log loss. It shares
+  the regressor's binner, grower, and seven growth controls, and differs in
+  dividing each leaf by the summed curvature of its rows rather than by their
+  count. It reports a raw decision score, probabilities in `classes()` order,
+  weighted fitting whose integer weights equal repeated rows, and schema-bound
+  artifacts under an artifact kind of its own whose objective field names the
+  loss the leaves were fitted to descend. Fitting requires both class labels.
 - `metrics::ConfusionMatrix`, counting one classification result over the
   sorted union of the observed labels, and the `metrics::Average` vocabulary
   that combines its per-class precision, recall, F1, and F-beta as a binary,

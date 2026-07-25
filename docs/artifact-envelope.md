@@ -1,8 +1,9 @@
 # Model artifact envelope
 
 FerricML writes artifact envelope version 2 for fitted logistic, linear, ridge,
-histogram-gradient-boosting, random-forest regression and classification,
-standard-scaler, and supported typed pipeline models. It continues to read the legacy version-1
+histogram-gradient-boosting regression and classification, random-forest
+regression and classification, standard-scaler, and supported typed pipeline
+models. It continues to read the legacy version-1
 logistic format. The private packed forest representation remains outside the
 persistence contract: forests persist as backend-neutral logical trees, and no
 byte sequence produced from packed forest nodes is a compatibility promise.
@@ -74,6 +75,30 @@ child is the record after that branch's whole left subtree, so a tree has
 exactly one accepted record order and an artifact is a canonical name for the
 model it holds. The private compact node
 representation and traversal layout remain free to change.
+
+`HistGradientBoostingClassifier` has its own never-reused estimator kind and
+writes the same twelve metadata words and the same length-delimited logical
+trees, because the two boosted models differ in what a leaf *means* rather than
+in what a tree record has to say. Two independent fields keep them apart. The
+**estimator kind** is what stops one from decoding as the other, and it is
+checked before a byte is hashed. The **objective word** names the loss the leaf
+values were fitted to descend — squared error for the regressor, binary log loss
+for the classifier — and each reader requires exactly its own value, so a payload
+relabelled with the other kind is still refused. The kind separates model types;
+the objective separates losses *within* a kind, which is the distinction a kind
+cannot make and the hook a second loss under one kind would select on. The
+objective word is derived from the objective type the model was fitted with
+rather than written by hand, so it cannot name a loss the model did not descend.
+
+A classifier's baseline is a raw score — the log-odds of the training positive
+rate — rather than a mean, and its leaves are Newton steps in that same space.
+The class list is deliberately **not** stored: both labels must be present to
+fit, so `[0, 1]` is a property of the payload version rather than of the fitted
+data, and a field whose only valid value the reader would have to re-derive is a
+field that can only disagree. A multiclass boosted model would be a second
+payload version under the same kind, carrying its observed class list and one
+tree per class per iteration; the binary reader's requirement that the tree count
+equal the iteration count is what makes that widening visible rather than silent.
 
 `RandomForestRegressor` artifacts use the same logical-tree records. Their
 metadata component freezes the averaging objective, feature width, every

@@ -29,6 +29,7 @@ use ferricml::dummy::{
     DummyClassifier, DummyClassifierParams, DummyRegressor, DummyRegressorParams,
 };
 use ferricml::ensemble::{
+    HistGradientBoostingClassifier, HistGradientBoostingClassifierParams,
     HistGradientBoostingRegressor, HistGradientBoostingRegressorParams, MaxFeatures, NJobs,
     RandomForestClassifier, RandomForestClassifierParams, RandomForestRegressor,
     RandomForestRegressorParams,
@@ -85,6 +86,13 @@ fn forest_regressor_params() -> RandomForestRegressorParams {
 
 fn boosting_params() -> HistGradientBoostingRegressorParams {
     HistGradientBoostingRegressorParams::default()
+        .with_max_iter(3)
+        .with_max_leaf_nodes(2)
+        .with_min_samples_leaf(1)
+}
+
+fn boosting_classifier_params() -> HistGradientBoostingClassifierParams {
+    HistGradientBoostingClassifierParams::default()
         .with_max_iter(3)
         .with_max_leaf_nodes(2)
         .with_min_samples_leaf(1)
@@ -402,6 +410,47 @@ impl ScalarRegressorCase for HistGradientBoostingRegressorCase {
     }
 }
 
+struct HistGradientBoostingClassifierCase;
+
+impl ClassifierCase for HistGradientBoostingClassifierCase {
+    type Model = HistGradientBoostingClassifier;
+    const NAME: &'static str = "HistGradientBoostingClassifier";
+
+    fn fit(data: &MatrixView<'_>, labels: &BinaryTargets) -> Self::Model {
+        HistGradientBoostingClassifier::fit(data, labels, boosting_classifier_params())
+            .expect("fit")
+    }
+
+    fn fit_weighted(
+        data: &MatrixView<'_>,
+        labels: &BinaryTargets,
+        weights: &SampleWeights,
+    ) -> Option<Self::Model> {
+        Some(
+            HistGradientBoostingClassifier::fit_weighted(
+                data,
+                labels,
+                weights,
+                boosting_classifier_params(),
+            )
+            .expect("weighted fit"),
+        )
+    }
+
+    fn round_trip(model: &Self::Model) -> RoundTrip<Self::Model> {
+        round_trip(
+            || model.to_artifact(SCHEMA),
+            |bytes| HistGradientBoostingClassifier::from_artifact(bytes, SCHEMA),
+        )
+    }
+}
+
+impl ScalarClassifierCase for HistGradientBoostingClassifierCase {
+    fn predict_one(model: &Self::Model, row: &[f32]) -> Result<u8, ModelError> {
+        model.predict_one(row)
+    }
+}
+
 macro_rules! any_regressor_case {
     ($case:ident, $inner:ty, $name:literal) => {
         struct $case;
@@ -549,6 +598,11 @@ fn random_forest_classifier_conforms() {
 #[test]
 fn logistic_regression_conforms() {
     check_classifier::<LogisticRegressionCase>();
+}
+
+#[test]
+fn hist_gradient_boosting_classifier_conforms() {
+    check_classifier::<HistGradientBoostingClassifierCase>();
 }
 
 #[test]

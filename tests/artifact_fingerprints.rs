@@ -1,5 +1,6 @@
 use ferricml::data::{BinaryTargets, ClassTargets, DenseMatrix, RegressionTargets};
 use ferricml::ensemble::{
+    HistGradientBoostingClassifier, HistGradientBoostingClassifierParams,
     HistGradientBoostingRegressor, HistGradientBoostingRegressorParams, MaxFeatures,
     RandomForestClassifier, RandomForestClassifierParams, RandomForestRegressor,
     RandomForestRegressorParams,
@@ -202,6 +203,32 @@ fn fitted_artifact_fingerprints_are_frozen() {
         [
             113, 238, 99, 34, 64, 238, 241, 189, 162, 243, 18, 101, 151, 94, 20, 11, 136, 11, 11,
             45, 74, 88, 55, 16, 252, 131, 234, 252, 147, 96, 194, 153,
+        ],
+    );
+
+    // Tier 2: the fitting path evaluates `ln` for the baseline and `exp` once
+    // per row per iteration for the gradient, so these bytes are promised on the
+    // two tested targets rather than on every IEEE-754 one. Freezing them is
+    // still what turns a green `main` into cross-platform evidence.
+    let boosted_classifier = HistGradientBoostingClassifier::fit(
+        &data.as_view(),
+        &binary,
+        HistGradientBoostingClassifierParams::default()
+            .with_learning_rate(0.5)
+            .with_max_iter(3)
+            .with_max_leaf_nodes(2)
+            .with_min_samples_leaf(1)
+            .with_max_bins(4),
+    )
+    .unwrap();
+    assert_fingerprint(
+        "boosting-classifier",
+        boosted_classifier.to_artifact([23; 32]).unwrap(),
+        boosted_classifier.to_artifact([23; 32]).unwrap(),
+        388,
+        [
+            111, 189, 143, 235, 218, 45, 37, 198, 223, 13, 116, 171, 127, 173, 155, 206, 98, 41,
+            135, 47, 117, 89, 55, 72, 135, 29, 143, 215, 65, 44, 53, 255,
         ],
     );
 

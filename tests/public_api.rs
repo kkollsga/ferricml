@@ -3,6 +3,7 @@ use ferricml::data::{
     BinaryTargets, DenseMatrix, MatrixView, RegressionTargets, SampleWeights, SelectionError,
 };
 use ferricml::ensemble::{
+    HistGradientBoostingClassifier, HistGradientBoostingClassifierParams,
     HistGradientBoostingRegressor, HistGradientBoostingRegressorParams, MaxFeatures, NJobs,
     RandomForestClassifier, RandomForestClassifierParams, RandomForestRegressor,
     RandomForestRegressorParams,
@@ -674,5 +675,61 @@ fn histogram_boosting_paths_builders_and_traits_are_stable() {
     assert_eq!(model.predict(&matrix.as_view()).unwrap().len(), 4);
     let artifact = model.to_artifact([17; 32]).unwrap();
     let decoded = HistGradientBoostingRegressor::from_artifact(&artifact, [17; 32]).unwrap();
+    assert_eq!(decoded, model);
+}
+
+#[test]
+fn boosted_classifier_paths_builders_and_traits_are_stable() {
+    let matrix = training_matrix();
+    let targets = BinaryTargets::new(vec![0, 0, 1, 1]).unwrap();
+    let params = HistGradientBoostingClassifierParams::default()
+        .with_learning_rate(0.2)
+        .with_max_iter(4)
+        .with_max_leaf_nodes(3)
+        .with_max_depth(Some(2))
+        .with_min_samples_leaf(1)
+        .with_l2_regularization(0.5)
+        .with_max_bins(8);
+    let model =
+        HistGradientBoostingClassifier::fit(&matrix.as_view(), &targets, params.clone()).unwrap();
+    assert_eq!(estimator_width(&model), 2);
+    assert_eq!(classifier_width(&model), 2);
+    assert_eq!(
+        retained_params::<_, HistGradientBoostingClassifierParams>(&model),
+        &params
+    );
+    assert_eq!(params.learning_rate(), 0.2);
+    assert_eq!(params.max_iter(), 4);
+    assert_eq!(params.max_leaf_nodes(), 3);
+    assert_eq!(params.max_depth(), Some(2));
+    assert_eq!(params.min_samples_leaf(), 1);
+    assert_eq!(params.l2_regularization(), 0.5);
+    assert_eq!(params.max_bins(), 8);
+    assert_eq!(model.n_iter(), 4);
+    assert_eq!(model.classes(), &[0, 1]);
+    assert_eq!(model.predict(&matrix.as_view()).unwrap().len(), 4);
+    assert_eq!(model.predict_proba(&matrix.as_view()).unwrap().len(), 8);
+    assert_eq!(model.decision_function(&matrix.as_view()).unwrap().len(), 4);
+    assert_eq!(
+        model
+            .predict_class_proba(&matrix.as_view(), 1)
+            .unwrap()
+            .len(),
+        4
+    );
+    let row = matrix.row(0).unwrap();
+    assert!(model.decision_function_one(row).unwrap().is_finite());
+    assert!((0.0..=1.0).contains(&model.predict_positive_proba(row).unwrap()));
+    assert!(model.predict_one(row).unwrap() <= 1);
+    assert!(model.baseline().is_finite());
+
+    let weights = SampleWeights::new(vec![1.0, 2.0, 1.0, 2.0]).unwrap();
+    let weighted =
+        HistGradientBoostingClassifier::fit_weighted(&matrix.as_view(), &targets, &weights, params)
+            .unwrap();
+    assert_eq!(weighted.n_iter(), 4);
+
+    let artifact = model.to_artifact([17; 32]).unwrap();
+    let decoded = HistGradientBoostingClassifier::from_artifact(&artifact, [17; 32]).unwrap();
     assert_eq!(decoded, model);
 }

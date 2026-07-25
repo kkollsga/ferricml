@@ -1,4 +1,10 @@
-//! Deterministic dense histogram gradient-boosted regression.
+//! Deterministic dense histogram gradient-boosted regression and binary
+//! classification.
+//!
+//! Both estimators share one binner, one grower, and one set of growth
+//! controls, and differ only in the objective they descend: squared error for
+//! the regressor, binary log loss for the classifier. The grower is generic over
+//! that objective, so neither estimator contains a copy of the other's search.
 
 use self::binning::Binner;
 use self::controls::{
@@ -35,10 +41,13 @@ const COMPONENT_VERSION: u16 = 1;
 const OBJECTIVE_VERSION: u32 = <SquaredError as BoostingObjective>::ARTIFACT_OBJECTIVE_TAG;
 
 mod binning;
+mod classifier;
 mod controls;
 mod error;
 mod grower;
 mod predictor;
+
+pub use classifier::{HistGradientBoostingClassifier, HistGradientBoostingClassifierParams};
 
 /// Parameters for [`HistGradientBoostingRegressor`].
 #[derive(Clone, Debug, PartialEq)]

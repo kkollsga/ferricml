@@ -175,6 +175,14 @@ pub fn ferricml::dummy::DummyClassifier::predict_class_proba_into(&self, &ferric
 pub fn ferricml::dummy::DummyClassifier::predict_into(&self, &ferricml::data::MatrixView<'_>, &mut [u8]) -> core::result::Result<(), ferricml::api::ModelError>
 pub fn ferricml::dummy::DummyClassifier::predict_proba(&self, &ferricml::data::MatrixView<'_>) -> core::result::Result<alloc::vec::Vec<f32>, ferricml::api::ModelError>
 pub fn ferricml::dummy::DummyClassifier::predict_proba_into(&self, &ferricml::data::MatrixView<'_>, &mut [f32]) -> core::result::Result<(), ferricml::api::ModelError>
+impl ferricml::api::Classifier for ferricml::ensemble::HistGradientBoostingClassifier
+pub fn ferricml::ensemble::HistGradientBoostingClassifier::classes(&self) -> &[u8]
+pub fn ferricml::ensemble::HistGradientBoostingClassifier::predict(&self, &ferricml::data::MatrixView<'_>) -> core::result::Result<alloc::vec::Vec<u8>, ferricml::api::ModelError>
+pub fn ferricml::ensemble::HistGradientBoostingClassifier::predict_class_proba(&self, &ferricml::data::MatrixView<'_>, u8) -> core::result::Result<alloc::vec::Vec<f32>, ferricml::api::ModelError>
+pub fn ferricml::ensemble::HistGradientBoostingClassifier::predict_class_proba_into(&self, &ferricml::data::MatrixView<'_>, u8, &mut [f32]) -> core::result::Result<(), ferricml::api::ModelError>
+pub fn ferricml::ensemble::HistGradientBoostingClassifier::predict_into(&self, &ferricml::data::MatrixView<'_>, &mut [u8]) -> core::result::Result<(), ferricml::api::ModelError>
+pub fn ferricml::ensemble::HistGradientBoostingClassifier::predict_proba(&self, &ferricml::data::MatrixView<'_>) -> core::result::Result<alloc::vec::Vec<f32>, ferricml::api::ModelError>
+pub fn ferricml::ensemble::HistGradientBoostingClassifier::predict_proba_into(&self, &ferricml::data::MatrixView<'_>, &mut [f32]) -> core::result::Result<(), ferricml::api::ModelError>
 impl ferricml::api::Classifier for ferricml::ensemble::RandomForestClassifier
 pub fn ferricml::ensemble::RandomForestClassifier::classes(&self) -> &[u8]
 pub fn ferricml::ensemble::RandomForestClassifier::predict(&self, &ferricml::data::MatrixView<'_>) -> core::result::Result<alloc::vec::Vec<u8>, ferricml::api::ModelError>
@@ -211,6 +219,8 @@ impl ferricml::api::Estimator for ferricml::dummy::DummyClassifier
 pub fn ferricml::dummy::DummyClassifier::n_features_in(&self) -> usize
 impl ferricml::api::Estimator for ferricml::dummy::DummyRegressor
 pub fn ferricml::dummy::DummyRegressor::n_features_in(&self) -> usize
+impl ferricml::api::Estimator for ferricml::ensemble::HistGradientBoostingClassifier
+pub fn ferricml::ensemble::HistGradientBoostingClassifier::n_features_in(&self) -> usize
 impl ferricml::api::Estimator for ferricml::ensemble::HistGradientBoostingRegressor
 pub fn ferricml::ensemble::HistGradientBoostingRegressor::n_features_in(&self) -> usize
 impl ferricml::api::Estimator for ferricml::ensemble::RandomForestClassifier
@@ -249,6 +259,8 @@ impl ferricml::api::HasCapabilities for ferricml::dummy::DummyClassifier
 pub const ferricml::dummy::DummyClassifier::CAPABILITIES: ferricml::api::Capabilities
 impl ferricml::api::HasCapabilities for ferricml::dummy::DummyRegressor
 pub const ferricml::dummy::DummyRegressor::CAPABILITIES: ferricml::api::Capabilities
+impl ferricml::api::HasCapabilities for ferricml::ensemble::HistGradientBoostingClassifier
+pub const ferricml::ensemble::HistGradientBoostingClassifier::CAPABILITIES: ferricml::api::Capabilities
 impl ferricml::api::HasCapabilities for ferricml::ensemble::HistGradientBoostingRegressor
 pub const ferricml::ensemble::HistGradientBoostingRegressor::CAPABILITIES: ferricml::api::Capabilities
 impl ferricml::api::HasCapabilities for ferricml::ensemble::RandomForestClassifier
@@ -288,6 +300,9 @@ pub fn ferricml::dummy::DummyClassifier::get_params(&self) -> &Self::Params
 impl ferricml::api::HasParams for ferricml::dummy::DummyRegressor
 pub type ferricml::dummy::DummyRegressor::Params = ferricml::dummy::DummyRegressorParams
 pub fn ferricml::dummy::DummyRegressor::get_params(&self) -> &Self::Params
+impl ferricml::api::HasParams for ferricml::ensemble::HistGradientBoostingClassifier
+pub type ferricml::ensemble::HistGradientBoostingClassifier::Params = ferricml::ensemble::HistGradientBoostingClassifierParams
+pub fn ferricml::ensemble::HistGradientBoostingClassifier::get_params(&self) -> &Self::Params
 impl ferricml::api::HasParams for ferricml::ensemble::HistGradientBoostingRegressor
 pub type ferricml::ensemble::HistGradientBoostingRegressor::Params = ferricml::ensemble::HistGradientBoostingRegressorParams
 pub fn ferricml::ensemble::HistGradientBoostingRegressor::get_params(&self) -> &Self::Params
@@ -621,6 +636,61 @@ pub enum ferricml::ensemble::NJobs
 pub ferricml::ensemble::NJobs::All
 pub ferricml::ensemble::NJobs::Count(usize)
 pub ferricml::ensemble::NJobs::Serial
+pub struct ferricml::ensemble::HistGradientBoostingClassifier
+impl ferricml::ensemble::HistGradientBoostingClassifier
+pub const fn ferricml::ensemble::HistGradientBoostingClassifier::baseline(&self) -> f32
+pub const fn ferricml::ensemble::HistGradientBoostingClassifier::classes(&self) -> &[u8]
+pub fn ferricml::ensemble::HistGradientBoostingClassifier::decision_function(&self, &ferricml::data::MatrixView<'_>) -> core::result::Result<alloc::vec::Vec<f32>, ferricml::api::ModelError>
+pub fn ferricml::ensemble::HistGradientBoostingClassifier::decision_function_into(&self, &ferricml::data::MatrixView<'_>, &mut [f32]) -> core::result::Result<(), ferricml::api::ModelError>
+pub fn ferricml::ensemble::HistGradientBoostingClassifier::decision_function_one(&self, &[f32]) -> core::result::Result<f32, ferricml::api::ModelError>
+pub fn ferricml::ensemble::HistGradientBoostingClassifier::fit(&ferricml::data::MatrixView<'_>, &ferricml::data::BinaryTargets, ferricml::ensemble::HistGradientBoostingClassifierParams) -> core::result::Result<Self, ferricml::api::ModelError>
+pub fn ferricml::ensemble::HistGradientBoostingClassifier::fit_weighted(&ferricml::data::MatrixView<'_>, &ferricml::data::BinaryTargets, &ferricml::data::SampleWeights, ferricml::ensemble::HistGradientBoostingClassifierParams) -> core::result::Result<Self, ferricml::api::ModelError>
+pub fn ferricml::ensemble::HistGradientBoostingClassifier::from_artifact(&[u8], [u8; 32]) -> core::result::Result<Self, ferricml::artifact::ArtifactError>
+pub const fn ferricml::ensemble::HistGradientBoostingClassifier::get_params(&self) -> &ferricml::ensemble::HistGradientBoostingClassifierParams
+pub const fn ferricml::ensemble::HistGradientBoostingClassifier::n_features_in(&self) -> usize
+pub fn ferricml::ensemble::HistGradientBoostingClassifier::n_iter(&self) -> usize
+pub fn ferricml::ensemble::HistGradientBoostingClassifier::predict(&self, &ferricml::data::MatrixView<'_>) -> core::result::Result<alloc::vec::Vec<u8>, ferricml::api::ModelError>
+pub fn ferricml::ensemble::HistGradientBoostingClassifier::predict_class_proba(&self, &ferricml::data::MatrixView<'_>, u8) -> core::result::Result<alloc::vec::Vec<f32>, ferricml::api::ModelError>
+pub fn ferricml::ensemble::HistGradientBoostingClassifier::predict_class_proba_into(&self, &ferricml::data::MatrixView<'_>, u8, &mut [f32]) -> core::result::Result<(), ferricml::api::ModelError>
+pub fn ferricml::ensemble::HistGradientBoostingClassifier::predict_into(&self, &ferricml::data::MatrixView<'_>, &mut [u8]) -> core::result::Result<(), ferricml::api::ModelError>
+pub fn ferricml::ensemble::HistGradientBoostingClassifier::predict_one(&self, &[f32]) -> core::result::Result<u8, ferricml::api::ModelError>
+pub fn ferricml::ensemble::HistGradientBoostingClassifier::predict_positive_proba(&self, &[f32]) -> core::result::Result<f32, ferricml::api::ModelError>
+pub fn ferricml::ensemble::HistGradientBoostingClassifier::predict_proba(&self, &ferricml::data::MatrixView<'_>) -> core::result::Result<alloc::vec::Vec<f32>, ferricml::api::ModelError>
+pub fn ferricml::ensemble::HistGradientBoostingClassifier::predict_proba_into(&self, &ferricml::data::MatrixView<'_>, &mut [f32]) -> core::result::Result<(), ferricml::api::ModelError>
+pub fn ferricml::ensemble::HistGradientBoostingClassifier::to_artifact(&self, [u8; 32]) -> core::result::Result<alloc::vec::Vec<u8>, ferricml::artifact::ArtifactError>
+impl ferricml::api::Classifier for ferricml::ensemble::HistGradientBoostingClassifier
+pub fn ferricml::ensemble::HistGradientBoostingClassifier::classes(&self) -> &[u8]
+pub fn ferricml::ensemble::HistGradientBoostingClassifier::predict(&self, &ferricml::data::MatrixView<'_>) -> core::result::Result<alloc::vec::Vec<u8>, ferricml::api::ModelError>
+pub fn ferricml::ensemble::HistGradientBoostingClassifier::predict_class_proba(&self, &ferricml::data::MatrixView<'_>, u8) -> core::result::Result<alloc::vec::Vec<f32>, ferricml::api::ModelError>
+pub fn ferricml::ensemble::HistGradientBoostingClassifier::predict_class_proba_into(&self, &ferricml::data::MatrixView<'_>, u8, &mut [f32]) -> core::result::Result<(), ferricml::api::ModelError>
+pub fn ferricml::ensemble::HistGradientBoostingClassifier::predict_into(&self, &ferricml::data::MatrixView<'_>, &mut [u8]) -> core::result::Result<(), ferricml::api::ModelError>
+pub fn ferricml::ensemble::HistGradientBoostingClassifier::predict_proba(&self, &ferricml::data::MatrixView<'_>) -> core::result::Result<alloc::vec::Vec<f32>, ferricml::api::ModelError>
+pub fn ferricml::ensemble::HistGradientBoostingClassifier::predict_proba_into(&self, &ferricml::data::MatrixView<'_>, &mut [f32]) -> core::result::Result<(), ferricml::api::ModelError>
+impl ferricml::api::Estimator for ferricml::ensemble::HistGradientBoostingClassifier
+pub fn ferricml::ensemble::HistGradientBoostingClassifier::n_features_in(&self) -> usize
+impl ferricml::api::HasCapabilities for ferricml::ensemble::HistGradientBoostingClassifier
+pub const ferricml::ensemble::HistGradientBoostingClassifier::CAPABILITIES: ferricml::api::Capabilities
+impl ferricml::api::HasParams for ferricml::ensemble::HistGradientBoostingClassifier
+pub type ferricml::ensemble::HistGradientBoostingClassifier::Params = ferricml::ensemble::HistGradientBoostingClassifierParams
+pub fn ferricml::ensemble::HistGradientBoostingClassifier::get_params(&self) -> &Self::Params
+pub struct ferricml::ensemble::HistGradientBoostingClassifierParams
+impl ferricml::ensemble::HistGradientBoostingClassifierParams
+pub const fn ferricml::ensemble::HistGradientBoostingClassifierParams::l2_regularization(&self) -> f32
+pub const fn ferricml::ensemble::HistGradientBoostingClassifierParams::learning_rate(&self) -> f32
+pub const fn ferricml::ensemble::HistGradientBoostingClassifierParams::max_bins(&self) -> usize
+pub const fn ferricml::ensemble::HistGradientBoostingClassifierParams::max_depth(&self) -> core::option::Option<usize>
+pub const fn ferricml::ensemble::HistGradientBoostingClassifierParams::max_iter(&self) -> usize
+pub const fn ferricml::ensemble::HistGradientBoostingClassifierParams::max_leaf_nodes(&self) -> usize
+pub const fn ferricml::ensemble::HistGradientBoostingClassifierParams::min_samples_leaf(&self) -> usize
+pub fn ferricml::ensemble::HistGradientBoostingClassifierParams::with_l2_regularization(self, f32) -> Self
+pub fn ferricml::ensemble::HistGradientBoostingClassifierParams::with_learning_rate(self, f32) -> Self
+pub fn ferricml::ensemble::HistGradientBoostingClassifierParams::with_max_bins(self, usize) -> Self
+pub fn ferricml::ensemble::HistGradientBoostingClassifierParams::with_max_depth(self, core::option::Option<usize>) -> Self
+pub fn ferricml::ensemble::HistGradientBoostingClassifierParams::with_max_iter(self, usize) -> Self
+pub fn ferricml::ensemble::HistGradientBoostingClassifierParams::with_max_leaf_nodes(self, usize) -> Self
+pub fn ferricml::ensemble::HistGradientBoostingClassifierParams::with_min_samples_leaf(self, usize) -> Self
+impl core::default::Default for ferricml::ensemble::HistGradientBoostingClassifierParams
+pub fn ferricml::ensemble::HistGradientBoostingClassifierParams::default() -> Self
 pub struct ferricml::ensemble::HistGradientBoostingRegressor
 impl ferricml::ensemble::HistGradientBoostingRegressor
 pub const fn ferricml::ensemble::HistGradientBoostingRegressor::baseline(&self) -> f32

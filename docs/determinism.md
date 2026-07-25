@@ -38,9 +38,15 @@ fitting evaluates a transcendental function:
 | `LogisticRegression`, multiclass | — | `exp`, through the row softmax |
 | `PairwiseLinearRanker` | 8 | `exp`, through the logistic model it fits |
 | `Pipeline<StandardScaler, LogisticRegression>` | 5 | as above |
+| `HistGradientBoostingClassifier` | 20 | `ln` for the baseline, `exp` once per row per iteration through the sigmoid |
 
-A multiclass logistic fit has no artifact kind yet, so it has no frozen
-fingerprint and therefore no cross-platform evidence — see the last section.
+The boosted classifier is tier 2 for the same reason logistic is, and for the
+same *kind* of reason it is unavoidable: its gradient is `y - sigmoid(raw)`, so a
+one-ulp libm difference at any iteration changes the next tree's leaf values and
+can change a split. Its squared-error sibling stays tier 1 — the two share a
+grower, and only the objective evaluates a transcendental. Its fitted bytes are
+frozen in `tests/artifact_fingerprints.rs`, so the same green-`main` argument
+covers it.
 
 **Tier 3 — per runner only.** Wall-clock timings, throughput, and every
 `dev-docs/bench/` number. These are a property of one registered machine and
@@ -122,10 +128,11 @@ in two places:
 
 A green `main` therefore *is* the cross-platform evidence, for every estimator
 that test covers: linear, ridge, standard scaler, all three scaler pipelines,
-the pairwise ranker, histogram boosting, the forest regressor, and the staged
-pipeline. Both tier 2 estimators are covered — the pairwise ranker and the
-logistic pipeline each contain a fitted logistic model, so libm differences
-would show up as a digest mismatch.
+the pairwise ranker, both histogram-boosted estimators, the forest regressor and
+classifier, and the staged pipeline. Every tier 2 estimator is covered — the
+pairwise ranker and the logistic pipeline each contain a fitted logistic model,
+and the boosted classifier is fingerprinted directly, so libm differences would
+show up as a digest mismatch.
 
 Two gaps are worth naming rather than glossing:
 

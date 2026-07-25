@@ -3,6 +3,7 @@ use ferricml::data::{
     BinaryTargets, ClassTargets, DenseMatrix, RegressionTargets, SampleWeights,
 };
 use ferricml::ensemble::{
+    HistGradientBoostingClassifier, HistGradientBoostingClassifierParams,
     HistGradientBoostingRegressor, HistGradientBoostingRegressorParams, RandomForestClassifier,
     RandomForestClassifierParams, RandomForestRegressor, RandomForestRegressorParams,
 };
@@ -271,6 +272,41 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         boosted.get_params(),
         AnyRegressorParams::HistGradientBoosting(_)
     ));
+
+    let boosted_classifier = HistGradientBoostingClassifier::fit(
+        &features.as_view(),
+        &BinaryTargets::new(vec![0, 0, 1, 1])?,
+        HistGradientBoostingClassifierParams::default()
+            .with_max_iter(4)
+            .with_max_leaf_nodes(3)
+            .with_min_samples_leaf(1),
+    )?;
+    let boosted_scores = boosted_classifier.decision_function(&features.as_view())?;
+    let boosted_proba = boosted_classifier.predict_proba(&features.as_view())?;
+    let boosted_labels = Classifier::predict(&boosted_classifier, &features.as_view())?;
+    assert_eq!(boosted_classifier.classes(), &[0, 1]);
+    assert_eq!(boosted_scores.len(), features.rows());
+    assert_eq!(boosted_proba.len(), 2 * features.rows());
+    assert!(boosted_proba.iter().all(|value| (0.0..=1.0).contains(value)));
+    let boosted_classifier_encoded = boosted_classifier.to_artifact(schema)?;
+    let boosted_classifier =
+        HistGradientBoostingClassifier::from_artifact(&boosted_classifier_encoded, schema)?;
+    assert_eq!(
+        boosted_classifier.to_artifact(schema)?,
+        boosted_classifier_encoded
+    );
+    assert_eq!(
+        Classifier::predict(&boosted_classifier, &features.as_view())?,
+        boosted_labels
+    );
+    assert_eq!(
+        boosted_classifier.predict_proba(&features.as_view())?,
+        boosted_proba
+    );
+    assert_eq!(
+        boosted_classifier.decision_function(&features.as_view())?,
+        boosted_scores
+    );
 
     let regressor = RandomForestRegressor::fit(
         &features.as_view(),

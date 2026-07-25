@@ -7,6 +7,7 @@
 //! derivative is written down.
 
 use super::binary_log_loss::BinaryLogLoss;
+use super::link::Link;
 use super::objective::Objective;
 use super::squared_error::SquaredError;
 use crate::numeric::sum_in_order;
@@ -52,6 +53,33 @@ pub(crate) trait BoostingObjective: Objective {
     /// constant, and a trait implementation is where that precondition can be
     /// stated once instead of asserted at every call.
     fn node_hessian_total(weight: f64, hessian_sum: f64) -> f64;
+
+    /// The two per-sample statistics one boosting iteration needs, together.
+    ///
+    /// The first element is [`Objective::negative_gradient`] — negated inside
+    /// the objective, so an exactly zero residual keeps a positively signed
+    /// zero and a leaf of `-0.0` never appears where `0.0` belongs. The second
+    /// is the curvature a solver may consume, which is the hessian floored at
+    /// [`Objective::CURVATURE_FLOOR`].
+    ///
+    /// The floor is load-bearing here rather than cosmetic. A boosted tree
+    /// divides by the *sum* of its node's curvatures, and a node whose rows the
+    /// model already separates confidently has a true curvature that underflows
+    /// to exactly zero; without the floor an unregularized leaf would be `0 / 0`
+    /// and the fit would fail on data it should handle. The floor is `1e-12` per
+    /// sample, which is far below the tolerance any comparison is made at, and
+    /// binds only where the exact value has already lost every significant bit.
+    ///
+    /// Pairing them is what lets an objective evaluate its inverse link once per
+    /// row instead of twice, the same reason [`Objective::gradient_and_curvature`]
+    /// exists; the default composes the two members for an objective with no
+    /// shared intermediate to save.
+    fn negative_gradient_and_curvature(raw: f64, target: f64) -> (f64, f64) {
+        (
+            Self::negative_gradient(raw, target),
+            Self::gradient_and_curvature(raw, target).1,
+        )
+    }
 }
 
 impl BoostingObjective for SquaredError {
@@ -67,6 +95,18 @@ impl BoostingObjective for BinaryLogLoss {
 
     fn node_hessian_total(_weight: f64, hessian_sum: f64) -> f64 {
         hessian_sum
+    }
+
+    /// One sigmoid per row, not two.
+    ///
+    /// A boosted classifier evaluates this once per row per iteration, and the
+    /// inverse link is the only transcendental on that path.
+    fn negative_gradient_and_curvature(raw: f64, target: f64) -> (f64, f64) {
+        let probability = <Self as Objective>::Link::inverse(raw);
+        (
+            target - probability,
+            (probability * (1.0 - probability)).max(Self::CURVATURE_FLOOR),
+        )
     }
 }
 
