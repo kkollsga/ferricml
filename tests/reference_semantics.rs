@@ -9,8 +9,8 @@ use ferricml::ensemble::{
     RandomForestRegressorParams,
 };
 use ferricml::linear_model::{
-    LinearRegression, LinearRegressionParams, LogisticRegression, LogisticRegressionParams, Ridge,
-    RidgeParams,
+    ElasticNet, ElasticNetParams, Lasso, LassoParams, LinearRegression, LinearRegressionParams,
+    LogisticRegression, LogisticRegressionParams, Ridge, RidgeParams,
 };
 use ferricml::metrics::{
     MetricError, accuracy_score, binary_confusion_matrix, brier_score, f1_score, log_loss,
@@ -804,6 +804,184 @@ fn ridge_matches_frozen_reference_outputs() {
     assert_close_with_tolerance(
         &[weighted.intercept()],
         reference::RIDGE_WEIGHTED_INTERCEPT,
+        LOGISTIC_TOLERANCE,
+    );
+}
+
+/// A tolerance and a sweep budget far past either implementation's default, so
+/// the comparison is against the *optimum* both minimize rather than against
+/// two different stopping rules.
+fn penalized_lasso(alpha: f32) -> LassoParams {
+    LassoParams::default()
+        .with_alpha(alpha)
+        .with_max_iter(1_000_000)
+        .with_tol(1.0e-9)
+}
+
+fn penalized_elastic(alpha: f32, l1_ratio: f32) -> ElasticNetParams {
+    ElasticNetParams::default()
+        .with_alpha(alpha)
+        .with_l1_ratio(l1_ratio)
+        .with_max_iter(1_000_000)
+        .with_tol(1.0e-9)
+}
+
+#[test]
+fn lasso_matches_frozen_reference_outputs() {
+    let train_x = matrix(reference::PENALIZED_TRAIN_X, 8, 4);
+    let train_y = RegressionTargets::new(reference::PENALIZED_Y.to_vec()).unwrap();
+    let test_x = matrix(reference::PENALIZED_TEST_X, 3, 4);
+
+    let sparse = Lasso::fit(&train_x.as_view(), &train_y, penalized_lasso(0.5)).unwrap();
+    assert_close_with_tolerance(
+        sparse.coefficients(),
+        reference::LASSO_SPARSE_COEFFICIENTS,
+        LOGISTIC_TOLERANCE,
+    );
+    assert_close_with_tolerance(
+        &[sparse.intercept()],
+        reference::LASSO_SPARSE_INTERCEPT,
+        LOGISTIC_TOLERANCE,
+    );
+    assert_close_with_tolerance(
+        &sparse.predict(&test_x.as_view()).unwrap(),
+        reference::LASSO_SPARSE_PREDICTIONS,
+        LOGISTIC_TOLERANCE,
+    );
+
+    // The zeros are exact on both sides, not merely small. That is the
+    // behaviour the penalty exists for, so it is asserted as an equality.
+    for (index, (&actual, &expected)) in sparse
+        .coefficients()
+        .iter()
+        .zip(reference::LASSO_SPARSE_COEFFICIENTS)
+        .enumerate()
+    {
+        assert_eq!(
+            actual == 0.0,
+            expected == 0.0,
+            "coefficient {index} disagrees on removal: {actual} vs {expected}"
+        );
+    }
+    assert_eq!(sparse.n_zero_coefficients(), 2);
+
+    let weak = Lasso::fit(&train_x.as_view(), &train_y, penalized_lasso(0.01)).unwrap();
+    assert_close_with_tolerance(
+        weak.coefficients(),
+        reference::LASSO_WEAK_COEFFICIENTS,
+        LOGISTIC_TOLERANCE,
+    );
+    assert!(weak.n_zero_coefficients() < sparse.n_zero_coefficients());
+
+    let no_intercept = Lasso::fit(
+        &train_x.as_view(),
+        &train_y,
+        penalized_lasso(0.5).with_fit_intercept(false),
+    )
+    .unwrap();
+    assert_close_with_tolerance(
+        no_intercept.coefficients(),
+        reference::LASSO_NO_INTERCEPT_COEFFICIENTS,
+        LOGISTIC_TOLERANCE,
+    );
+    assert_eq!(no_intercept.intercept().to_bits(), 0.0_f32.to_bits());
+
+    let weights = SampleWeights::new(reference::PENALIZED_WEIGHTS.to_vec()).unwrap();
+    let weighted =
+        Lasso::fit_weighted(&train_x.as_view(), &train_y, &weights, penalized_lasso(0.5)).unwrap();
+    assert_close_with_tolerance(
+        weighted.coefficients(),
+        reference::LASSO_WEIGHTED_COEFFICIENTS,
+        LOGISTIC_TOLERANCE,
+    );
+    assert_close_with_tolerance(
+        &[weighted.intercept()],
+        reference::LASSO_WEIGHTED_INTERCEPT,
+        LOGISTIC_TOLERANCE,
+    );
+}
+
+#[test]
+fn a_removed_coefficient_diverges_from_the_reference_only_in_the_sign_of_its_zero() {
+    // A recorded divergence, asserted in both directions so neither side can
+    // drift silently: the reference stores a negatively signed zero for a
+    // coefficient shrunk from below, and FerricML stores a positive one.
+    // Mathematically the same model; a different byte pattern in storage.
+    let train_x = matrix(reference::PENALIZED_TRAIN_X, 8, 4);
+    let train_y = RegressionTargets::new(reference::PENALIZED_Y.to_vec()).unwrap();
+    let sparse = Lasso::fit(&train_x.as_view(), &train_y, penalized_lasso(0.5)).unwrap();
+
+    let reference_negative_zeros = reference::LASSO_SPARSE_COEFFICIENTS
+        .iter()
+        .filter(|value| **value == 0.0 && value.is_sign_negative())
+        .count();
+    assert!(
+        reference_negative_zeros > 0,
+        "the divergence is real, not hypothetical"
+    );
+    for (index, &value) in sparse.coefficients().iter().enumerate() {
+        if value == 0.0 {
+            assert!(
+                value.is_sign_positive(),
+                "coefficient {index} is a negative zero"
+            );
+        }
+    }
+}
+
+#[test]
+fn elastic_net_matches_frozen_reference_outputs() {
+    let train_x = matrix(reference::PENALIZED_TRAIN_X, 8, 4);
+    let train_y = RegressionTargets::new(reference::PENALIZED_Y.to_vec()).unwrap();
+    let test_x = matrix(reference::PENALIZED_TEST_X, 3, 4);
+
+    let mixed = ElasticNet::fit(&train_x.as_view(), &train_y, penalized_elastic(0.5, 0.5)).unwrap();
+    assert_close_with_tolerance(
+        mixed.coefficients(),
+        reference::ELASTIC_NET_MIXED_COEFFICIENTS,
+        LOGISTIC_TOLERANCE,
+    );
+    assert_close_with_tolerance(
+        &[mixed.intercept()],
+        reference::ELASTIC_NET_MIXED_INTERCEPT,
+        LOGISTIC_TOLERANCE,
+    );
+    assert_close_with_tolerance(
+        &mixed.predict(&test_x.as_view()).unwrap(),
+        reference::ELASTIC_NET_MIXED_PREDICTIONS,
+        LOGISTIC_TOLERANCE,
+    );
+
+    // A pure L2 mixture shrinks every coefficient and removes none, including
+    // the one the sparse lane removes.
+    let pure_l2 =
+        ElasticNet::fit(&train_x.as_view(), &train_y, penalized_elastic(0.5, 0.0)).unwrap();
+    assert_close_with_tolerance(
+        pure_l2.coefficients(),
+        reference::ELASTIC_NET_PURE_L2_COEFFICIENTS,
+        LOGISTIC_TOLERANCE,
+    );
+
+    let weights = SampleWeights::new(reference::PENALIZED_WEIGHTS.to_vec()).unwrap();
+    let weighted = ElasticNet::fit_weighted(
+        &train_x.as_view(),
+        &train_y,
+        &weights,
+        penalized_elastic(0.5, 0.5),
+    )
+    .unwrap();
+    assert_close_with_tolerance(
+        weighted.coefficients(),
+        reference::ELASTIC_NET_WEIGHTED_COEFFICIENTS,
+        LOGISTIC_TOLERANCE,
+    );
+
+    // `l1_ratio = 1` is the lasso at the same alpha, on both sides.
+    let unit_ratio =
+        ElasticNet::fit(&train_x.as_view(), &train_y, penalized_elastic(0.5, 1.0)).unwrap();
+    assert_close_with_tolerance(
+        unit_ratio.coefficients(),
+        reference::LASSO_SPARSE_COEFFICIENTS,
         LOGISTIC_TOLERANCE,
     );
 }
