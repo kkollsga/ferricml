@@ -86,6 +86,35 @@ count — is documented and tested as a recipe on `SampleWeights` rather than
 hidden behind a parameter value, and a caller wanting a different rule writes a
 different closure instead of waiting for another accepted string.
 
+**One degeneracy rule for every scaler.** A column with a spread of exactly
+zero keeps a divisor of one, so a constant feature survives as a constant rather
+than producing a non-finite value. The test is exact equality with zero, and it
+is the same test for the standard, min-max, max-abs, and robust scalers. A
+column whose spread is merely *small* is real data: it is scaled normally, and
+if that overflows `f32` the batch is refused with the offending row and column
+before anything is written. FerricML deliberately does not use a magnitude
+threshold, which would silently decline to scale a legitimately tiny-scaled
+column, and would give the crate two degeneracy rules where one will do.
+
+**Robust scaling quantiles use linear interpolation between the two bracketing
+order statistics** — Hyndman–Fan type 7 — applied uniformly, including at the
+median. Small samples do not contain the value a percentile asks for, so the
+interpolation rule is a documented semantic choice rather than an
+implementation detail, and it is carried as a typed parameter at every internal
+call site so a second rule can be added without silently repointing the first
+consumer at it.
+
+**Parameters FerricML does not claim** are recorded as non-claims rather than
+left as gaps, because an unclaimed parameter and a divergent one are different
+things. `RobustScaler` does not offer scaling the quantile spread to the spread
+of a standard normal distribution: that needs an inverse-normal-CDF primitive
+with its own accuracy contract, and one optional flag does not justify it.
+`FunctionTransformer` applies an **elementwise** `fn(f32) -> f32` and does not
+accept a map that reads a whole row or column; the elementwise case covers the
+common transformations, and anything else is expressed by implementing
+`api::Transformer` directly, which is the honest way to say the transformation
+is the caller's rather than FerricML's.
+
 Third-party provenance and regeneration tools are local development materials
 under the gitignored `dev-docs/references/` workspace. They may inform fixture
 updates, but are not packaged, shipped, or required by CI. Any intentional

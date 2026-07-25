@@ -28,6 +28,10 @@ ESTIMATOR_MODULES = (
     "ranking",
 )
 
+# The observable signature of a quantile definition: the rule vocabulary and the
+# evaluator that consumes it. Both belong to the shared numeric kernels alone.
+QUANTILE_DEFINITION_MARKERS = ("enum QuantileRule", "fn quantile_sorted")
+
 
 def read_if_present(path: Path) -> str:
     return path.read_text() if path.is_file() else ""
@@ -35,6 +39,16 @@ def read_if_present(path: Path) -> str:
 
 def directory_text(directory: Path) -> str:
     return "\n".join(path.read_text() for path in sorted(directory.glob("*.rs")))
+
+
+def tree_text(directory: Path) -> str:
+    """Every source file under `directory`, including its child modules.
+
+    Facades that grew into directories of per-family child modules need the
+    recursive form: a rule reading only the facade would stop seeing the code
+    that actually holds the dependencies.
+    """
+    return "\n".join(path.read_text() for path in sorted(directory.rglob("*.rs")))
 
 
 def crate_root_is_lib_only(root: Path) -> list[str]:
@@ -71,6 +85,58 @@ def numeric_depends_on_no_estimator(root: Path) -> list[str]:
     return [
         f"numeric kernels depend on estimator module {module}"
         for module in ESTIMATOR_MODULES
+        if f"crate::{module}" in text
+    ]
+
+
+def quantile_definition_lives_only_in_numeric(root: Path) -> list[str]:
+    """One quantile definition, in the shared kernels, named at every call site.
+
+    A quantile is not one function: the defensible interpolation rules disagree
+    on small samples, so a second definition growing beside the first would let
+    two transformers silently freeze fitted values against different meanings of
+    the same word. The rule is a documented semantic choice carried as a typed
+    parameter, which only works while there is exactly one place that defines
+    it. The primitive has to exist for this rule to mean anything, so its
+    absence is itself a finding rather than a silently vacuous pass.
+    """
+    source = root / "src"
+    numeric = directory_text(source / "numeric")
+    if not any(marker in numeric for marker in QUANTILE_DEFINITION_MARKERS):
+        return ["quantile primitive is missing from the shared numeric kernels"]
+    findings = []
+    for path in sorted(source.rglob("*.rs")):
+        if "numeric" in path.relative_to(source).parts:
+            continue
+        text = path.read_text()
+        findings.extend(
+            f"quantile definition re-derived outside numeric: "
+            f"{path.relative_to(root)} defines {marker!r}"
+            for marker in QUANTILE_DEFINITION_MARKERS
+            if marker in text
+        )
+    return findings
+
+
+def preprocessing_sits_below_composition(root: Path) -> list[str]:
+    """Transformers are consumed by composition, never the other way round.
+
+    A fitted transformer is a self-contained map from one dense batch to
+    another. Pipelines, model selection, and the estimator families are its
+    *consumers*; naming one inside `preprocessing` would invert that dependency
+    and make a transformer's behaviour depend on what it happens to be composed
+    into. Keeping the arrow pointing one way is what lets the same scaler be
+    used standalone, as a pipeline stage, and inside a cross-validated search
+    without three variants of it existing. The module has to exist for the rule
+    to mean anything, so its absence is itself a finding rather than a silently
+    vacuous pass.
+    """
+    text = tree_text(root / "src" / "preprocessing")
+    if not text:
+        return ["preprocessing module is missing"]
+    return [
+        f"preprocessing depends on its own consumer {module}"
+        for module in ("pipeline", "model_selection", "ensemble", "linear_model")
         if f"crate::{module}" in text
     ]
 
@@ -281,6 +347,8 @@ RULES: tuple[tuple[str, Callable[[Path], list[str]]], ...] = (
     ("artifact-runtime-neutral", artifact_is_runtime_neutral),
     ("ensemble-families-private", ensemble_families_stay_private),
     ("numeric-below-estimators", numeric_depends_on_no_estimator),
+    ("quantile-single-source", quantile_definition_lives_only_in_numeric),
+    ("preprocessing-below-composition", preprocessing_sits_below_composition),
     ("inspection-public-surfaces-only", inspection_uses_only_public_surfaces),
     ("loss-below-estimators", loss_depends_on_no_estimator),
     ("optimize-below-estimators", optimize_depends_only_on_loss_and_numeric),
@@ -312,6 +380,10 @@ def write_clean_tree(root: Path) -> Path:
         "ensemble/random_forest/mod.rs": "//! forest\n",
         "numeric/mod.rs": "//! numeric\npub(crate) fn kernel() {}\n",
         "numeric/rng.rs": "//! rng\n",
+        "numeric/quantile.rs": (
+            "//! quantile\npub(crate) enum QuantileRule { Linear }\n"
+            "pub(crate) fn quantile_sorted() {}\n"
+        ),
         "loss/mod.rs": "//! loss\nmod objective;\n",
         "loss/objective.rs": "//! objective\nuse crate::numeric::kernel;\n",
         "optimize/mod.rs": "//! optimize\nmod lbfgs;\n",
@@ -374,6 +446,22 @@ SYNTHETIC_VIOLATIONS: tuple[tuple[str, Callable[[Path], None], str], ...] = (
             root / "src" / "numeric" / "rng.rs", "use crate::linear_model::Ridge;\n"
         ),
         "numeric kernels depend on estimator module linear_model",
+    ),
+    (
+        "quantile-single-source",
+        lambda root: append(
+            root / "src" / "preprocessing" / "standard_scaler" / "mod.rs",
+            "pub(crate) enum QuantileRule { Linear }\n",
+        ),
+        "quantile definition re-derived outside numeric",
+    ),
+    (
+        "preprocessing-below-composition",
+        lambda root: append(
+            root / "src" / "preprocessing" / "standard_scaler" / "mod.rs",
+            "use crate::pipeline::Pipeline;\n",
+        ),
+        "preprocessing depends on its own consumer pipeline",
     ),
     (
         "inspection-public-surfaces-only",

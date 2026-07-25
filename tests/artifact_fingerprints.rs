@@ -11,7 +11,8 @@ use ferricml::linear_model::{
 };
 use ferricml::pipeline::{Pipeline, StagedPipeline};
 use ferricml::preprocessing::{
-    MinMaxScaler, MinMaxScalerParams, StandardScaler, StandardScalerParams,
+    MinMaxScaler, MinMaxScalerParams, RobustScaler, RobustScalerParams, StandardScaler,
+    StandardScalerParams,
 };
 use ferricml::ranking::{
     PairIndex, PairOutcome, PairwiseLinearRanker, PairwiseLinearRankerParams, PairwiseObservation,
@@ -83,6 +84,22 @@ fn fitted_artifact_fingerprints_are_frozen() {
             63, 13, 17, 18, 180, 252, 187, 143, 124, 32, 238, 199,
         ],
     );
+    let robust = RobustScaler::fit(&data.as_view(), RobustScalerParams::default()).unwrap();
+    assert_fingerprint(
+        "robust-scaler",
+        robust
+            .to_artifact(input_schema, transformed_schema)
+            .unwrap(),
+        robust
+            .to_artifact(input_schema, transformed_schema)
+            .unwrap(),
+        200,
+        [
+            131, 38, 226, 223, 251, 78, 202, 173, 153, 102, 41, 221, 136, 202, 24, 140, 25, 136,
+            254, 88, 39, 143, 127, 10, 88, 211, 64, 191, 0, 68, 134, 7,
+        ],
+    );
+
     let transformed = scaler.transform(&data.as_view()).unwrap();
 
     let pipeline_linear = Pipeline::new(

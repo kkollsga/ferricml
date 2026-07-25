@@ -54,8 +54,10 @@
 //!    from [`OwnedRng`]; a module must not define its own generator, because a
 //!    seed has to mean the same thing in every estimator and in inspection.
 
+mod quantile;
 mod rng;
 
+pub(crate) use quantile::{QuantileRule, quantile_sorted, sort_for_quantiles};
 pub(crate) use rng::{OwnedRng, derive_tree_seed};
 
 /// Logistic sigmoid over `f64`.

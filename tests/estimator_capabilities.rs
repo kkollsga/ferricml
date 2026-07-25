@@ -33,7 +33,8 @@ use ferricml::linear_model::{
 };
 use ferricml::pipeline::{Pipeline, StagedPipeline};
 use ferricml::preprocessing::{
-    MaxAbsScaler, MinMaxScaler, MinMaxScalerParams, StandardScaler, StandardScalerParams,
+    Binarizer, FunctionTransformer, MaxAbsScaler, MinMaxScaler, MinMaxScalerParams, Normalizer,
+    RobustScaler, StandardScaler, StandardScalerParams,
 };
 use ferricml::ranking::PairwiseLinearRanker;
 
@@ -88,6 +89,38 @@ fn range_scalers_declare_persistence_but_not_weighted_fitting() {
     // move them and there is no weighted entry point to declare.
     assert_eq!(MinMaxScaler::CAPABILITIES, PERSISTED_ONLY);
     assert_eq!(MaxAbsScaler::CAPABILITIES, PERSISTED_ONLY);
+}
+
+#[test]
+fn the_robust_scaler_declares_persistence_but_not_weighted_fitting() {
+    // A median and a quantile spread are order statistics too, and the reason
+    // there is no weighted entry point is sharper here than for the range
+    // scalers: weighting a quantile requires a *different* interpolation rule,
+    // because the linear rule this scaler is frozen against has no weighted
+    // form at all. Declaring weights would mean quietly fitting under a second
+    // definition of the same statistic.
+    assert_eq!(RobustScaler::CAPABILITIES, PERSISTED_ONLY);
+}
+
+#[test]
+fn stateless_transformers_declare_nothing_at_all() {
+    // `Normalizer` and `Binarizer` estimate nothing from the data: a row's norm
+    // is a property of that row, and a threshold is a parameter the caller
+    // chose. There is therefore no fitted value to persist and none a weight
+    // could move, and declaring an artifact would promise a stable encoding of
+    // something that does not exist. This follows the baseline estimators'
+    // precedent, where declaring nothing is the accurate statement rather than
+    // an omission.
+    assert_eq!(Normalizer::CAPABILITIES, Capabilities::NONE);
+    assert_eq!(Binarizer::CAPABILITIES, Capabilities::NONE);
+
+    // `FunctionTransformer` declares nothing for an additional reason worth
+    // separating from the other two: its parameter is a function pointer, an
+    // address in the current process image. Encoding one would produce bytes
+    // that mean nothing in another build and could not be validated on the way
+    // back in, so the absence of an artifact here is a statement about what is
+    // representable, not merely about what was implemented.
+    assert_eq!(FunctionTransformer::CAPABILITIES, Capabilities::NONE);
 }
 
 #[test]

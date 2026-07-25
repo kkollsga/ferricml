@@ -112,6 +112,17 @@ pub enum ModelError {
         /// Number of values the fitted model produces for one row.
         columns: usize,
     },
+    /// A quantile range is not a pair of percentiles in `0.0..=100.0` with the
+    /// lower value first.
+    InvalidQuantileRange,
+    /// A min-max output range is not a finite interval with the lower bound
+    /// strictly below the upper one.
+    InvalidFeatureRange,
+    /// A decision threshold is not finite.
+    InvalidThreshold,
+    /// An inverse transformation was requested of a transformer that was not
+    /// given one.
+    NoInverseFunction,
     /// A multiclass linear fit would need a second-order system larger than the
     /// supported bound, which is `classes * (features + intercept)` parameters.
     MulticlassSystemTooLarge {
@@ -230,6 +241,16 @@ impl fmt::Display for ModelError {
                 f,
                 "operation returns one value per row, but this model produces {columns}"
             ),
+            Self::InvalidQuantileRange => {
+                f.write_str("quantile range must be two percentiles in 0..=100, lowest first")
+            }
+            Self::InvalidFeatureRange => {
+                f.write_str("feature range must be finite with its minimum below its maximum")
+            }
+            Self::InvalidThreshold => f.write_str("threshold must be finite"),
+            Self::NoInverseFunction => {
+                f.write_str("this transformer was not given an inverse function")
+            }
             Self::MulticlassSystemTooLarge {
                 classes,
                 features,

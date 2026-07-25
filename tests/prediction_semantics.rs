@@ -39,8 +39,9 @@ use ferricml::linear_model::{
     LogisticRegression, LogisticRegressionParams, Ridge, RidgeParams,
 };
 use ferricml::preprocessing::{
-    MaxAbsScaler, MaxAbsScalerParams, MinMaxScaler, MinMaxScalerParams, StandardScaler,
-    StandardScalerParams,
+    Binarizer, BinarizerParams, FunctionTransformer, FunctionTransformerParams, MaxAbsScaler,
+    MaxAbsScalerParams, MinMaxScaler, MinMaxScalerParams, Normalizer, NormalizerParams,
+    RobustScaler, RobustScalerParams, StandardScaler, StandardScalerParams,
 };
 use ferricml::ranking::{
     PairIndex, PairOutcome, PairwiseError, PairwiseLinearRanker, PairwiseLinearRankerParams,
@@ -48,7 +49,7 @@ use ferricml::ranking::{
 };
 
 use support::conformance::{
-    ClassifierCase, FixtureShape, OptionalFit, RegressorCase, RoundTrip, SCHEMA, Sample,
+    ClassifierCase, Fixture, FixtureShape, OptionalFit, RegressorCase, RoundTrip, SCHEMA, Sample,
     ScalarClassifierCase, ScalarRegressorCase, ScalarWorkspaceRegressorCase, TransformerCase,
     WorkspaceClassifierCase, WorkspaceRegressorCase, check_batch_only_classifier,
     check_batch_only_regressor, check_classifier, check_regressor,
@@ -741,6 +742,72 @@ impl TransformerCase for MaxAbsScalerCase {
 /// It is a real `Regressor` and could not be registered at all while the
 /// battery had one eight-by-two dataset: a univariate estimator is required to
 /// reject a wider matrix, so the only shape on offer was one it must refuse.
+struct RobustScalerCase;
+
+impl TransformerCase for RobustScalerCase {
+    type Model = RobustScaler;
+    const NAME: &'static str = "RobustScaler";
+
+    fn fit(train: &Sample, _holdout: &Sample) -> Result<Self::Model, ModelError> {
+        RobustScaler::fit(&train.view(), RobustScalerParams::default())
+    }
+
+    fn round_trip(model: &Self::Model) -> RoundTrip<Self::Model> {
+        round_trip(
+            || model.to_artifact(SCHEMA, TRANSFORMED_SCHEMA),
+            |bytes| RobustScaler::from_artifact(bytes, SCHEMA, TRANSFORMED_SCHEMA),
+        )
+    }
+}
+
+/// Stateless, so it supplies no round-trip hook and must declare none.
+struct NormalizerCase;
+
+impl TransformerCase for NormalizerCase {
+    type Model = Normalizer;
+    const NAME: &'static str = "Normalizer";
+
+    fn fit(train: &Sample, _holdout: &Sample) -> Result<Self::Model, ModelError> {
+        Normalizer::fit(&train.view(), NormalizerParams::default())
+    }
+}
+
+/// Stateless, so it supplies no round-trip hook and must declare none.
+struct BinarizerCase;
+
+impl TransformerCase for BinarizerCase {
+    type Model = Binarizer;
+    const NAME: &'static str = "Binarizer";
+
+    fn fit(train: &Sample, _holdout: &Sample) -> Result<Self::Model, ModelError> {
+        Binarizer::fit(
+            &train.view(),
+            BinarizerParams::default().with_threshold(3.5),
+        )
+    }
+}
+
+/// Registered at a named `fn`, so the case type is concrete and the
+/// declaration-versus-behaviour check runs exactly as it does for every other
+/// transformer. A closure could not be named here at all.
+struct FunctionTransformerCase;
+
+fn double(value: f32) -> f32 {
+    value * 2.0
+}
+
+impl TransformerCase for FunctionTransformerCase {
+    type Model = FunctionTransformer;
+    const NAME: &'static str = "FunctionTransformer";
+
+    fn fit(train: &Sample, _holdout: &Sample) -> Result<Self::Model, ModelError> {
+        FunctionTransformer::fit(
+            &train.view(),
+            FunctionTransformerParams::default().with_func(double),
+        )
+    }
+}
+
 struct IsotonicRegressionCase;
 
 impl RegressorCase for IsotonicRegressionCase {
@@ -949,6 +1016,64 @@ scaled_regression_pipeline_case!(
     LinearRegressionParams::default(),
     "Pipeline<StandardScaler, LinearRegression>"
 );
+
+/// A persisted stage built this sprint, composed beside one that predates it.
+///
+/// This is what stage tag `4` buys: a robust scaler is a first-class stage, so
+/// the whole composition still round-trips through one artifact.
+struct RobustStagedPipelineCase;
+
+impl WorkspaceRegressorCase for RobustStagedPipelineCase {
+    type Model = StagedPipeline<(RobustScaler, MaxAbsScaler), Ridge>;
+    const NAME: &'static str = "StagedPipeline<(RobustScaler, MaxAbsScaler), Ridge>";
+
+    fn fit(train: &Sample, _holdout: &Sample) -> Result<Self::Model, ModelError> {
+        StagedPipeline::fit(
+            &train.view(),
+            |batch| RobustScaler::fit(batch, RobustScalerParams::default()),
+            |batch| MaxAbsScaler::fit(batch, MaxAbsScalerParams),
+            |batch| Ridge::fit(batch, &train.values, RidgeParams::default()),
+        )
+    }
+
+    fn round_trip(model: &Self::Model) -> RoundTrip<Self::Model> {
+        round_trip(
+            || model.to_artifact(SCHEMA, TRANSFORMED_SCHEMA),
+            |bytes| {
+                StagedPipeline::<(RobustScaler, MaxAbsScaler), Ridge>::from_artifact(
+                    bytes,
+                    SCHEMA,
+                    TRANSFORMED_SCHEMA,
+                )
+            },
+        )
+    }
+
+    fn workspace_len(model: &Self::Model, rows: usize) -> Result<usize, ModelError> {
+        model.workspace_len(rows)
+    }
+
+    fn predict(
+        model: &Self::Model,
+        data: &MatrixView<'_>,
+        workspace: &mut [f32],
+    ) -> Result<Vec<f32>, ModelError> {
+        model.with_transformed(data, workspace, |estimator, transformed| {
+            estimator.predict(transformed)
+        })
+    }
+
+    fn predict_into(
+        model: &Self::Model,
+        data: &MatrixView<'_>,
+        workspace: &mut [f32],
+        output: &mut [f32],
+    ) -> Result<(), ModelError> {
+        model.with_transformed(data, workspace, |estimator, transformed| {
+            estimator.predict_into(transformed, output)
+        })
+    }
+}
 
 /// Two fitted transform stages and an estimator, predicted through one
 /// workspace split per stage.
@@ -1266,6 +1391,18 @@ fn max_abs_scaler_conforms() {
 }
 
 #[test]
+fn robust_scaler_conforms() {
+    check_transformer::<RobustScalerCase>();
+}
+
+#[test]
+fn stateless_transformers_conform() {
+    check_transformer::<NormalizerCase>();
+    check_transformer::<BinarizerCase>();
+    check_transformer::<FunctionTransformerCase>();
+}
+
+#[test]
 fn isotonic_regression_conforms() {
     check_regressor::<IsotonicRegressionCase>();
 }
@@ -1286,6 +1423,96 @@ fn pairwise_linear_ranker_conforms() {
 fn staged_pipelines_conform_at_both_arities() {
     check_workspace_regressor::<TwoStagePipelineCase>();
     check_workspace_regressor::<ThreeStagePipelineCase>();
+    check_workspace_regressor::<RobustStagedPipelineCase>();
+}
+
+/// A composition holding a stateless stage transforms and predicts, but cannot
+/// be persisted — and cannot be registered in the battery either.
+///
+/// The reason is worth recording precisely, because it is stronger than "no
+/// artifact". `HasCapabilities for StagedPipeline` is itself bounded on the
+/// stage-persistence trait, so a stack containing a stage that declares no
+/// artifact cannot declare *anything*, and the battery requires a declaring
+/// model. The composition is perfectly usable; it simply has no capability
+/// vocabulary to be checked against, so its obligations are asserted here
+/// directly rather than generically.
+#[test]
+fn a_stateless_stage_composes_and_predicts_without_being_persistable() {
+    let fixture = Fixture::default();
+    let train = &fixture.train;
+    let first = Normalizer::fit(&train.view(), NormalizerParams::default()).unwrap();
+    let after_first = first.transform(&train.view()).unwrap();
+    let second = Binarizer::fit(
+        &after_first.as_view(),
+        BinarizerParams::default().with_threshold(0.5),
+    )
+    .unwrap();
+    let after_second = second.transform(&after_first.as_view()).unwrap();
+    let third = FunctionTransformer::fit(
+        &after_second.as_view(),
+        FunctionTransformerParams::default().with_func(double),
+    )
+    .unwrap();
+    let after_third = third.transform(&after_second.as_view()).unwrap();
+    let pipeline: StagedPipeline<(Normalizer, Binarizer, FunctionTransformer), Ridge> =
+        StagedPipeline::new(
+            (first, second, third),
+            Ridge::fit(
+                &after_third.as_view(),
+                &train.values,
+                RidgeParams::default(),
+            )
+            .unwrap(),
+        )
+        .expect("a stateless composition composes");
+
+    let view = train.view();
+    let workspace_len = pipeline.workspace_len(view.rows()).unwrap();
+    let mut workspace = vec![0.0; workspace_len];
+    let predictions = pipeline
+        .with_transformed(&view, &mut workspace, |estimator, transformed| {
+            estimator.predict(transformed)
+        })
+        .unwrap();
+    assert_eq!(predictions.len(), view.rows());
+    assert!(predictions.iter().all(|value| value.is_finite()));
+
+    // The two composition hazards the battery would otherwise have covered: a
+    // workspace whose length is never checked, and one whose contents leak from
+    // one batch into the next.
+    let mut short = vec![0.0; workspace_len - 1];
+    assert_eq!(
+        pipeline
+            .with_transformed(&view, &mut short, |estimator, transformed| {
+                estimator.predict(transformed)
+            })
+            .unwrap_err(),
+        ModelError::OutputLength {
+            expected: workspace_len,
+            actual: workspace_len - 1
+        }
+    );
+
+    let holdout = fixture.holdout.view();
+    let mut fresh = vec![0.0; workspace_len];
+    let alone = pipeline
+        .with_transformed(&holdout, &mut fresh, |estimator, transformed| {
+            estimator.predict(transformed)
+        })
+        .unwrap();
+    let mut reused = vec![0.0; workspace_len];
+    let _ = pipeline.with_transformed(&view, &mut reused, |estimator, transformed| {
+        estimator.predict(transformed)
+    });
+    let after = pipeline
+        .with_transformed(&holdout, &mut reused, |estimator, transformed| {
+            estimator.predict(transformed)
+        })
+        .unwrap();
+    assert_eq!(
+        alone, after,
+        "a reused workspace must carry nothing forward"
+    );
 }
 
 // Deliberately unregistered, with the reason stated rather than left as a gap:
