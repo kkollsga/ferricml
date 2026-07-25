@@ -219,9 +219,16 @@ pub(super) struct ScalerParameters<'a> {
     /// A scaler that can be configured in a way older versions could not
     /// represent writes a higher version *only when it is so configured*, so a
     /// default-configured model keeps writing the bytes it always wrote and no
-    /// already-frozen artifact moves. Each fitted model still has exactly one
-    /// valid encoding, because the version is a function of the parameters
-    /// rather than a choice.
+    /// already-frozen artifact moves.
+    ///
+    /// **Do not simplify this into an unconditional bump.** The conditional is
+    /// what keeps canonicity: the version is a *function of the parameters*
+    /// rather than a choice, so each fitted model has exactly one valid
+    /// encoding, and a default configuration written at the higher version is a
+    /// byte string no writer produces — decoders reject it, and a frozen
+    /// adversarial fixture pins that. Bumping unconditionally would instead
+    /// rewrite every artifact ever produced, for callers who never touch the
+    /// parameter that caused it.
     pub version: u16,
     /// Boolean toggles, one `u32` each.
     pub flags: &'a [u32],

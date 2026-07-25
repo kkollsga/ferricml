@@ -23,7 +23,10 @@ use ferricml::model_selection::{
     cross_validate_classifier, cross_validate_regressor, score_classifier, score_regressor,
     stratified_train_test_split, train_test_split,
 };
-use ferricml::preprocessing::{StandardScaler, StandardScalerParams};
+use ferricml::preprocessing::{
+    Binarizer, BinarizerParams, MinMaxScaler, MinMaxScalerParams, Norm, Normalizer,
+    NormalizerParams, RobustScaler, RobustScalerParams, StandardScaler, StandardScalerParams,
+};
 
 #[allow(dead_code, clippy::excessive_precision)]
 mod reference {
@@ -1028,6 +1031,155 @@ fn standard_scaler_matches_frozen_reference_outputs() {
     assert_close(
         weighted.transform(&data.as_view()).unwrap().as_slice(),
         reference::SCALER_WEIGHTED_TRANSFORMED,
+    );
+}
+
+/// Robust scaling against the reference, including the degenerate shapes.
+///
+/// The quantile definition is the whole point of this fixture: on samples this
+/// small the defensible interpolation rules disagree, so agreeing here is what
+/// establishes that FerricML implements the same one. `center_` is compared at
+/// the same `1e-12` tolerance as every other fitted `f64`, which is what
+/// absorbs the one-ulp difference between evaluating the median through the
+/// general interpolation expression and averaging the two middle order
+/// statistics — FerricML does the former uniformly and deliberately carries the
+/// difference here rather than in a special case in the code.
+#[test]
+fn robust_scaler_matches_frozen_reference_outputs() {
+    let data = matrix(reference::ROBUST_TRAIN_X, 4, 3);
+    let default = RobustScaler::fit(&data.as_view(), RobustScalerParams::default()).unwrap();
+    assert_close_f64(default.centers(), reference::ROBUST_DEFAULT_CENTER);
+    assert_close_f64(default.scales(), reference::ROBUST_DEFAULT_SCALE);
+    assert_close(
+        default.transform(&data.as_view()).unwrap().as_slice(),
+        reference::ROBUST_DEFAULT_TRANSFORMED,
+    );
+
+    // A non-default percentile pair moves the spread but never the centre.
+    let wide = RobustScaler::fit(
+        &data.as_view(),
+        RobustScalerParams::default().with_quantile_range(10.0, 90.0),
+    )
+    .unwrap();
+    assert_close_f64(wide.centers(), reference::ROBUST_WIDE_CENTER);
+    assert_close_f64(wide.scales(), reference::ROBUST_WIDE_SCALE);
+    assert_close(
+        wide.transform(&data.as_view()).unwrap().as_slice(),
+        reference::ROBUST_WIDE_TRANSFORMED,
+    );
+
+    let no_centering = RobustScaler::fit(
+        &data.as_view(),
+        RobustScalerParams::default().with_centering(false),
+    )
+    .unwrap();
+    assert_close(
+        no_centering.transform(&data.as_view()).unwrap().as_slice(),
+        reference::ROBUST_NO_CENTERING_TRANSFORMED,
+    );
+
+    let no_scaling = RobustScaler::fit(
+        &data.as_view(),
+        RobustScalerParams::default().with_scaling(false),
+    )
+    .unwrap();
+    assert_close(
+        no_scaling.transform(&data.as_view()).unwrap().as_slice(),
+        reference::ROBUST_NO_SCALING_TRANSFORMED,
+    );
+
+    // The third training column is constant, so its divisor is the substituted
+    // one and it transforms to zero under both implementations.
+    assert_eq!(default.scales()[2], 1.0);
+}
+
+/// The zero-spread-but-not-constant column, where the two implementations agree
+/// and the divergence FerricML declares does not bind.
+///
+/// FerricML substitutes a divisor of one at an *exactly* zero spread; the
+/// reference substitutes below an absolute threshold. This column's spread is
+/// exactly zero, so both substitute and the outputs match — including the tails
+/// passing through as raw deviations from the median, which is the surprising
+/// part worth freezing. The declared divergence lives at a merely *small*
+/// spread, which no fixture pins because the two implementations genuinely
+/// differ there by design.
+#[test]
+fn robust_scaler_degenerate_column_matches_the_reference() {
+    let data = matrix(reference::ROBUST_DEGENERATE_X, 9, 1);
+    let scaler = RobustScaler::fit(&data.as_view(), RobustScalerParams::default()).unwrap();
+    assert_close_f64(scaler.centers(), reference::ROBUST_DEGENERATE_CENTER);
+    assert_close_f64(scaler.scales(), reference::ROBUST_DEGENERATE_SCALE);
+    assert_eq!(scaler.spreads(), &[0.0], "the raw spread really is zero");
+    assert_close(
+        scaler.transform(&data.as_view()).unwrap().as_slice(),
+        reference::ROBUST_DEGENERATE_TRANSFORMED,
+    );
+}
+
+/// Row normalization at each supported norm, including a zero row.
+#[test]
+fn normalizer_matches_frozen_reference_outputs() {
+    let data = matrix(reference::NORMALIZER_X, 4, 3);
+    for (norm, expected) in [
+        (Norm::L1, reference::NORMALIZER_L1),
+        (Norm::L2, reference::NORMALIZER_L2),
+        (Norm::Max, reference::NORMALIZER_MAX),
+    ] {
+        let normalizer =
+            Normalizer::fit(&data.as_view(), NormalizerParams::default().with_norm(norm)).unwrap();
+        assert_close(
+            normalizer.transform(&data.as_view()).unwrap().as_slice(),
+            expected,
+        );
+    }
+}
+
+/// Thresholding, including the boundary value itself.
+///
+/// The fixture deliberately contains a value exactly at each threshold, because
+/// that is where a strict and a non-strict comparison disagree and everywhere
+/// else they do not.
+#[test]
+fn binarizer_matches_frozen_reference_outputs() {
+    let data = matrix(reference::BINARIZER_X, 3, 3);
+    for (threshold, expected) in [
+        (0.0, reference::BINARIZER_DEFAULT),
+        (2.0, reference::BINARIZER_AT_TWO),
+    ] {
+        let binarizer = Binarizer::fit(
+            &data.as_view(),
+            BinarizerParams::default().with_threshold(threshold),
+        )
+        .unwrap();
+        assert_close(
+            binarizer.transform(&data.as_view()).unwrap().as_slice(),
+            expected,
+        );
+    }
+}
+
+/// Min-max scaling onto a non-default output range.
+///
+/// The constant third column is the case worth pinning: its divisor is the
+/// substituted one, so it lands on the range's lower bound rather than on zero.
+#[test]
+fn min_max_scaler_feature_range_matches_frozen_reference_outputs() {
+    let data = matrix(reference::MIN_MAX_RANGE_X, 4, 3);
+    let scaler = MinMaxScaler::fit(
+        &data.as_view(),
+        MinMaxScalerParams::default().with_feature_range(-1.0, 1.0),
+    )
+    .unwrap();
+    assert_close_f64(scaler.scales(), reference::MIN_MAX_RANGE_SCALE);
+    assert_close_f64(scaler.offsets(), reference::MIN_MAX_RANGE_MIN);
+    assert_close(
+        scaler.transform(&data.as_view()).unwrap().as_slice(),
+        reference::MIN_MAX_RANGE_TRANSFORMED,
+    );
+    assert_eq!(
+        scaler.transform(&data.as_view()).unwrap().get(0, 2),
+        Some(-1.0),
+        "a constant column lands on the lower bound, not on zero"
     );
 }
 
