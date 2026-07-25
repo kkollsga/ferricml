@@ -190,6 +190,13 @@ impl ClassifierCase for AnyForestClassifierCase {
     fn fit(data: &MatrixView<'_>, labels: &BinaryTargets) -> Self::Model {
         RandomForestClassifierCase::fit(data, labels).into()
     }
+
+    fn round_trip(model: &Self::Model) -> RoundTrip<Self::Model> {
+        round_trip(
+            || model.to_artifact(SCHEMA),
+            |bytes| AnyClassifier::from_artifact(bytes, SCHEMA),
+        )
+    }
 }
 
 struct AnyLogisticClassifierCase;
@@ -200,6 +207,13 @@ impl ClassifierCase for AnyLogisticClassifierCase {
 
     fn fit(data: &MatrixView<'_>, labels: &BinaryTargets) -> Self::Model {
         LogisticRegressionCase::fit(data, labels).into()
+    }
+
+    fn round_trip(model: &Self::Model) -> RoundTrip<Self::Model> {
+        round_trip(
+            || model.to_artifact(SCHEMA),
+            |bytes| AnyClassifier::from_artifact(bytes, SCHEMA),
+        )
     }
 }
 

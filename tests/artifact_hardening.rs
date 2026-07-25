@@ -27,7 +27,7 @@
 //! No fuzzing dependency is involved: the generator is the crate's own
 //! SplitMix64 stream, restated here because `src/numeric/rng.rs` is private.
 
-use ferricml::api::AnyRegressor;
+use ferricml::api::{AnyClassifier, AnyRegressor};
 use ferricml::artifact::ArtifactError;
 use ferricml::data::{BinaryTargets, ClassTargets, DenseMatrix, RegressionTargets};
 use ferricml::ensemble::{
@@ -445,6 +445,11 @@ fn decoders() -> Vec<Decoder> {
                 m.to_artifact(INPUT_SCHEMA)
             })
         }),
+        ("any-classifier", |bytes| {
+            accepted(AnyClassifier::from_artifact(bytes, INPUT_SCHEMA), |m| {
+                m.to_artifact(INPUT_SCHEMA)
+            })
+        }),
         ("staged-two", |bytes| {
             accepted(
                 StagedTwo::from_artifact(bytes, INPUT_SCHEMA, TRANSFORMED_SCHEMA),
@@ -693,6 +698,18 @@ fn seed_corpus() -> Vec<(&'static str, Vec<u8>)> {
         (
             "any-ridge",
             AnyRegressor::from(ridge).to_artifact(INPUT_SCHEMA).unwrap(),
+        ),
+        (
+            "any-forest-classifier",
+            AnyClassifier::from(forest_classifier)
+                .to_artifact(INPUT_SCHEMA)
+                .unwrap(),
+        ),
+        (
+            "any-multiclass-logistic",
+            AnyClassifier::from(multiclass_logistic)
+                .to_artifact(INPUT_SCHEMA)
+                .unwrap(),
         ),
         (
             "any-boosting",
@@ -1496,6 +1513,10 @@ fn corpus() -> Vec<Case> {
     let (multiclass_forest_payload, _) =
         payload_span(&multiclass_forest).expect("multiclass forest payload");
     let multiclass_metadata = multiclass_forest_payload + COMPONENT_HEADER_BYTES;
+    let any_classifier = seed("any-forest-classifier");
+    let (any_classifier_payload, _) =
+        payload_span(&any_classifier).expect("classifier dispatch payload");
+    let any_classifier_dispatch = any_classifier_payload + COMPONENT_HEADER_BYTES;
     let multiclass_leaf_block = {
         let metadata_len = u32_at(&multiclass_forest, multiclass_forest_payload + 4) as usize;
         let first_tree = multiclass_forest_payload + COMPONENT_HEADER_BYTES + metadata_len;
@@ -2160,6 +2181,42 @@ fn corpus() -> Vec<Case> {
                 &multiclass_forest,
                 multiclass_leaf_block + 8,
                 &2.0_f32.to_bits().to_le_bytes(),
+            ),
+        },
+        // The classifier dispatch envelope owes what the regressor one does:
+        // an unknown variant is refused, and a variant tag disagreeing with the
+        // nested payload is caught by that estimator's own kind check.
+        Case {
+            name: "any-classifier-unknown-variant",
+            provenance: "a dispatch tag naming a runtime variant this reader does not have",
+            decoder: "any-classifier",
+            expected: ArtifactError::InvalidPayload,
+            bytes: overwrite(
+                &any_classifier,
+                any_classifier_dispatch + 4,
+                &7_u32.to_le_bytes(),
+            ),
+        },
+        Case {
+            name: "any-classifier-mislabelled-variant",
+            provenance: "a forest payload tagged as the logistic variant",
+            decoder: "any-classifier",
+            expected: ArtifactError::UnsupportedModelKind { found: 11 },
+            bytes: overwrite(
+                &any_classifier,
+                any_classifier_dispatch + 4,
+                &2_u32.to_le_bytes(),
+            ),
+        },
+        Case {
+            name: "any-classifier-unknown-dispatch-version",
+            provenance: "a dispatch envelope at a version this reader does not implement",
+            decoder: "any-classifier",
+            expected: ArtifactError::InvalidPayload,
+            bytes: overwrite(
+                &any_classifier,
+                any_classifier_dispatch,
+                &9_u32.to_le_bytes(),
             ),
         },
         Case {

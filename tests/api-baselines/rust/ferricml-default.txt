@@ -6,6 +6,7 @@ pub ferricml::api::AnyClassifier::RandomForest(ferricml::ensemble::RandomForestC
 impl ferricml::api::AnyClassifier
 pub fn ferricml::api::AnyClassifier::capabilities(&self) -> ferricml::api::Capabilities
 pub fn ferricml::api::AnyClassifier::classes(&self) -> &[u8]
+pub fn ferricml::api::AnyClassifier::from_artifact(&[u8], [u8; 32]) -> core::result::Result<Self, ferricml::artifact::ArtifactError>
 pub fn ferricml::api::AnyClassifier::get_params(&self) -> ferricml::api::AnyClassifierParams<'_>
 pub fn ferricml::api::AnyClassifier::n_features_in(&self) -> usize
 pub fn ferricml::api::AnyClassifier::predict(&self, &ferricml::data::MatrixView<'_>) -> core::result::Result<alloc::vec::Vec<u8>, ferricml::api::ModelError>
@@ -14,6 +15,7 @@ pub fn ferricml::api::AnyClassifier::predict_class_proba_into(&self, &ferricml::
 pub fn ferricml::api::AnyClassifier::predict_into(&self, &ferricml::data::MatrixView<'_>, &mut [u8]) -> core::result::Result<(), ferricml::api::ModelError>
 pub fn ferricml::api::AnyClassifier::predict_proba(&self, &ferricml::data::MatrixView<'_>) -> core::result::Result<alloc::vec::Vec<f32>, ferricml::api::ModelError>
 pub fn ferricml::api::AnyClassifier::predict_proba_into(&self, &ferricml::data::MatrixView<'_>, &mut [f32]) -> core::result::Result<(), ferricml::api::ModelError>
+pub fn ferricml::api::AnyClassifier::to_artifact(&self, [u8; 32]) -> core::result::Result<alloc::vec::Vec<u8>, ferricml::artifact::ArtifactError>
 impl core::convert::From<ferricml::ensemble::RandomForestClassifier> for ferricml::api::AnyClassifier
 pub fn ferricml::api::AnyClassifier::from(ferricml::ensemble::RandomForestClassifier) -> Self
 impl core::convert::From<ferricml::linear_model::LogisticRegression> for ferricml::api::AnyClassifier

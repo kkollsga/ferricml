@@ -148,7 +148,9 @@ frozen part of the contract rather than a tolerance to tighten later.
 
 `AnyClassifier` and `AnyRegressor` remain the owned runtime-swap layer. They
 match once per batch; the regressor variants cover forests, linear regression,
-ridge, and histogram gradient boosting. Generic estimators and pipelines
+ridge, and histogram gradient boosting. Both persist through a dispatch envelope
+that nests the selected estimator's own artifact whole, so restoring one
+restores the runtime variant and the payload schema that variant chose. Generic estimators and pipelines
 remain the primary zero-overhead layer.
 
 Meta-layers compose capabilities rather than restating them. A dispatch enum

@@ -242,6 +242,12 @@ and releases use [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   the same topology with a reserved zero in the scalar slot plus one per-tree
   leaf-distribution block ordered by pre-order leaf rank, so the encoding stays
   a unique name for the model. The classifier now declares `artifact`.
+- `AnyClassifier` dispatch artifacts that record the fitted runtime variant and
+  nest the estimator's own complete, independently validated artifact, mirroring
+  `AnyRegressor`. A variant that carries more than one payload schema of its own
+  keeps choosing between them itself, so restoring a dispatch artifact restores
+  the variant *and* the fit it held. `AnyClassifier` now declares `artifact` by
+  composition rather than declaring it away.
 
 ### Changed
 

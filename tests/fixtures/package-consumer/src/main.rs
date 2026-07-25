@@ -1,5 +1,7 @@
-use ferricml::api::{AnyRegressor, AnyRegressorParams, Classifier, Regressor};
-use ferricml::data::{BinaryTargets, DenseMatrix, RegressionTargets, SampleWeights};
+use ferricml::api::{AnyClassifier, AnyRegressor, AnyRegressorParams, Classifier, Regressor};
+use ferricml::data::{
+    BinaryTargets, ClassTargets, DenseMatrix, RegressionTargets, SampleWeights,
+};
 use ferricml::ensemble::{
     HistGradientBoostingRegressor, HistGradientBoostingRegressorParams, RandomForestClassifier,
     RandomForestClassifierParams, RandomForestRegressor, RandomForestRegressorParams,
@@ -40,6 +42,50 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     assert_eq!(probabilities.len(), features.rows() * 2);
     assert_eq!(accuracy_score(&[0, 0, 1, 1], &labels)?, 1.0);
 
+    // Classifier persistence, from outside the crate, for both fitted leaf
+    // representations and through the runtime dispatch enum.
+    let schema = [7; 32];
+    let encoded = classifier.to_artifact(schema)?;
+    assert_eq!(encoded, classifier.to_artifact(schema)?);
+    let decoded = RandomForestClassifier::from_artifact(&encoded, schema)?;
+    assert_eq!(decoded.n_features_in(), classifier.n_features_in());
+    assert_eq!(decoded.get_params(), classifier.get_params());
+    assert_eq!(decoded.classes(), classifier.classes());
+    assert_eq!(Classifier::predict(&decoded, &features.as_view())?, labels);
+    assert_eq!(
+        Classifier::predict_proba(&decoded, &features.as_view())?,
+        probabilities
+    );
+    assert!(RandomForestClassifier::from_artifact(&encoded, [8; 32]).is_err());
+
+    let multiclass = RandomForestClassifier::fit_multiclass(
+        &features.as_view(),
+        &ClassTargets::new(vec![3, 7, 10, 7])?,
+        RandomForestClassifierParams::default()
+            .with_n_estimators(3)
+            .with_bootstrap(false)
+            .with_random_state(7),
+    )?;
+    let multiclass_encoded = multiclass.to_artifact(schema)?;
+    let multiclass_decoded = RandomForestClassifier::from_artifact(&multiclass_encoded, schema)?;
+    assert_eq!(multiclass_decoded.classes(), &[3, 7, 10]);
+    assert_eq!(
+        Classifier::predict_proba(&multiclass_decoded, &features.as_view())?,
+        Classifier::predict_proba(&multiclass, &features.as_view())?
+    );
+    assert_eq!(multiclass_decoded.to_artifact(schema)?, multiclass_encoded);
+
+    let erased: AnyClassifier = multiclass.into();
+    let dispatch_encoded = erased.to_artifact(schema)?;
+    let dispatch_decoded = AnyClassifier::from_artifact(&dispatch_encoded, schema)?;
+    assert_eq!(dispatch_decoded.classes(), &[3, 7, 10]);
+    assert_eq!(
+        dispatch_decoded.predict_proba(&features.as_view())?,
+        erased.predict_proba(&features.as_view())?
+    );
+    // A bare classifier artifact is not a dispatch artifact.
+    assert!(AnyClassifier::from_artifact(&multiclass_encoded, schema).is_err());
+
     let holdout = train_test_split(
         features.rows(),
         HoldoutParams::default()
@@ -58,13 +104,28 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut decisions = vec![0.0; features.rows()];
     logistic.decision_function_into(&features.as_view(), &mut decisions)?;
     assert!(decisions.iter().all(|value| value.is_finite()));
-    let schema = [7; 32];
     let encoded = logistic.to_artifact(schema)?;
     let decoded = LogisticRegression::from_artifact(&encoded, schema)?;
     assert_eq!(
         decoded.predict_proba(&features.as_view())?,
         logistic.predict_proba(&features.as_view())?
     );
+
+    // The joint multinomial fit persists under its own payload schema.
+    let multinomial = LogisticRegression::fit_multiclass(
+        &features.as_view(),
+        &ClassTargets::new(vec![3, 7, 10, 7])?,
+        LogisticRegressionParams::default(),
+    )?;
+    let multinomial_encoded = multinomial.to_artifact(schema)?;
+    let multinomial_decoded = LogisticRegression::from_artifact(&multinomial_encoded, schema)?;
+    assert_eq!(multinomial_decoded.classes(), &[3, 7, 10]);
+    assert_eq!(multinomial_decoded.n_decision_columns(), 3);
+    assert_eq!(
+        multinomial_decoded.predict_proba(&features.as_view())?,
+        multinomial.predict_proba(&features.as_view())?
+    );
+    assert_eq!(multinomial_decoded.to_artifact(schema)?, multinomial_encoded);
 
     let linear = LinearRegression::fit_weighted(
         &features.as_view(),

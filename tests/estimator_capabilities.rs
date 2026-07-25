@@ -143,12 +143,12 @@ fn the_monotone_calibrator_declares_nothing() {
 
 #[test]
 fn runtime_dispatch_declares_only_what_every_variant_offers() {
-    // The forest classifier does not persist, so neither can the enum that may
-    // be holding one. Multiclass *fitting* is declared away structurally rather
-    // than intersected: both variants offer it, but the enum owns fitted models
-    // and no fitting entry point, so an intersection would have promised an
-    // entry point that does not exist.
-    assert_eq!(AnyClassifier::CAPABILITIES, Capabilities::NONE);
+    // Both classifier variants persist every fit they offer, so the enum does
+    // too. Multiclass *fitting* is declared away structurally rather than
+    // intersected: both variants offer it, but the enum owns fitted models and
+    // no fitting entry point, so an intersection would have promised an entry
+    // point that does not exist.
+    assert_eq!(AnyClassifier::CAPABILITIES, PERSISTED_ONLY);
     assert!(LogisticRegression::CAPABILITIES.multiclass());
     assert!(RandomForestClassifier::CAPABILITIES.multiclass());
     assert!(!AnyClassifier::CAPABILITIES.multiclass());
@@ -235,9 +235,14 @@ fn declared_persistence_matches_the_artifact_entry_points_that_exist() {
     assert_eq!(decoded, multiclass);
     assert_eq!(decoded.classes(), [3, 7, 10]);
 
-    // `AnyClassifier` has no artifact entry point at all, which is what its
-    // declaration says. Requesting one is a compile error, not a wrong answer.
-    assert!(!AnyClassifier::CAPABILITIES.artifact());
+    // The classifier dispatch enum persists too, and restores the runtime
+    // variant along with the payload schema that variant chose for itself.
+    assert!(AnyClassifier::CAPABILITIES.artifact());
+    let erased: AnyClassifier = multiclass.into();
+    let bytes = erased.to_artifact([5; 32]).unwrap();
+    let decoded = AnyClassifier::from_artifact(&bytes, [5; 32]).unwrap();
+    assert_eq!(decoded, erased);
+    assert_eq!(decoded.classes(), [3, 7, 10]);
 }
 
 #[test]

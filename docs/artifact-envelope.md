@@ -1,8 +1,8 @@
 # Model artifact envelope
 
 FerricML writes artifact envelope version 2 for fitted logistic, linear, ridge,
-histogram-gradient-boosting, random-forest regression, standard-scaler, and
-supported typed pipeline models. It continues to read the legacy version-1
+histogram-gradient-boosting, random-forest regression and classification,
+standard-scaler, and supported typed pipeline models. It continues to read the legacy version-1
 logistic format. The private packed forest representation remains outside the
 persistence contract: forests persist as backend-neutral logical trees, and no
 byte sequence produced from packed forest nodes is a compatibility promise.
@@ -105,13 +105,16 @@ present before anything is reserved, every distribution entry must be a finite
 `0..=1`, and each decoded tree re-enters the same topology and class-topology
 validators fitting uses.
 
-`AnyRegressor` artifacts are dispatch envelopes rather than model formats. They
+`AnyRegressor` and `AnyClassifier` artifacts are dispatch envelopes rather than
+model formats. They
 carry a dispatch version and a variant tag, then the selected estimator's own
 complete artifact nested whole and length-delimited. Decoding hands the nested
 bytes back to that estimator, so it is checksummed, schema-bound, and validated
 exactly as it would be standalone; a variant tag that disagrees with the nested
 payload fails the nested kind check instead of being reinterpreted. Adding a
-runtime variant therefore never perturbs an existing estimator's payload.
+runtime variant therefore never perturbs an existing estimator's payload, and a
+variant that carries more than one payload schema of its own keeps choosing
+between them itself — the dispatch layer never learns what those schemas are.
 
 Additional estimator payloads must carry:
 
