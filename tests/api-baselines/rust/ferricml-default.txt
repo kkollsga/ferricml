@@ -129,6 +129,8 @@ pub ferricml::api::ModelError::RequiresTwoClasses
 pub ferricml::api::ModelError::SampleWeightLength
 pub ferricml::api::ModelError::SampleWeightLength::rows: usize
 pub ferricml::api::ModelError::SampleWeightLength::weights: usize
+pub ferricml::api::ModelError::SolverDidNotConverge
+pub ferricml::api::ModelError::SolverDidNotConverge::iterations: usize
 pub ferricml::api::ModelError::TargetLength
 pub ferricml::api::ModelError::TargetLength::rows: usize
 pub ferricml::api::ModelError::TargetLength::targets: usize
@@ -881,6 +883,9 @@ pub fn ferricml::inspection::permutation_importance_classifier_into<S: ferricml:
 pub fn ferricml::inspection::permutation_importance_regressor<S: ferricml::model_selection::RegressionScore>(&dyn ferricml::api::Regressor, &ferricml::data::MatrixView<'_>, &ferricml::data::RegressionTargets, S, ferricml::inspection::PermutationImportanceParams) -> core::result::Result<ferricml::inspection::PermutationImportance, ferricml::inspection::InspectionError>
 pub fn ferricml::inspection::permutation_importance_regressor_into<S: ferricml::model_selection::RegressionScore>(&dyn ferricml::api::Regressor, &ferricml::data::MatrixView<'_>, &ferricml::data::RegressionTargets, S, ferricml::inspection::PermutationImportanceParams, &mut [f64], &mut [f64]) -> core::result::Result<(), ferricml::inspection::InspectionError>
 pub mod ferricml::linear_model
+#[non_exhaustive] pub enum ferricml::linear_model::LogisticSolver
+pub ferricml::linear_model::LogisticSolver::Lbfgs
+pub ferricml::linear_model::LogisticSolver::Newton
 pub struct ferricml::linear_model::LinearRegression
 impl ferricml::linear_model::LinearRegression
 pub fn ferricml::linear_model::LinearRegression::coefficients(&self) -> &[f32]
@@ -971,10 +976,12 @@ impl ferricml::linear_model::LogisticRegressionParams
 pub const fn ferricml::linear_model::LogisticRegressionParams::c(&self) -> f32
 pub const fn ferricml::linear_model::LogisticRegressionParams::fit_intercept(&self) -> bool
 pub const fn ferricml::linear_model::LogisticRegressionParams::max_iter(&self) -> usize
+pub const fn ferricml::linear_model::LogisticRegressionParams::solver(&self) -> ferricml::linear_model::LogisticSolver
 pub const fn ferricml::linear_model::LogisticRegressionParams::tol(&self) -> f32
 pub fn ferricml::linear_model::LogisticRegressionParams::with_c(self, f32) -> Self
 pub fn ferricml::linear_model::LogisticRegressionParams::with_fit_intercept(self, bool) -> Self
 pub fn ferricml::linear_model::LogisticRegressionParams::with_max_iter(self, usize) -> Self
+pub const fn ferricml::linear_model::LogisticRegressionParams::with_solver(self, ferricml::linear_model::LogisticSolver) -> Self
 pub fn ferricml::linear_model::LogisticRegressionParams::with_tol(self, f32) -> Self
 impl core::default::Default for ferricml::linear_model::LogisticRegressionParams
 pub fn ferricml::linear_model::LogisticRegressionParams::default() -> Self

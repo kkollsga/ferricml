@@ -39,15 +39,9 @@
 //! bisection's next trial depends only on the current bracket, so the iterate
 //! sequence is a function of the inputs alone.
 
-// The seam lands before its first estimator consumer, so that the solver and
-// the decision to route a model through it are separately bisectable. Until
-// that consumer exists the entry points are reachable only from this module's
-// own proofs, exactly as `Objective::value` was when the loss contract landed.
-#![allow(dead_code, unused_imports)]
-
 mod lbfgs;
 mod line_search;
 
 pub(crate) use lbfgs::{
-    LbfgsOptions, LbfgsReport, LbfgsWorkspace, OptimizeError, Problem, minimize,
+    DEFAULT_MEMORY, LbfgsOptions, LbfgsWorkspace, OptimizeError, Problem, minimize,
 };

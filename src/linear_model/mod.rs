@@ -6,5 +6,5 @@ mod logistic;
 mod ridge;
 
 pub use linear_regression::{LinearRegression, LinearRegressionParams};
-pub use logistic::{LogisticRegression, LogisticRegressionParams};
+pub use logistic::{LogisticRegression, LogisticRegressionParams, LogisticSolver};
 pub use ridge::{Ridge, RidgeParams};

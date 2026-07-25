@@ -69,11 +69,10 @@ pub(crate) trait Objective {
     ///
     /// This is the defining quantity of the objective: `gradient` and `hessian`
     /// are its derivatives and are verified against it by finite differences.
-    /// No solver evaluates it, because neither the Newton coefficient solver
-    /// nor the histogram grower uses a loss-value convergence test today, so it
-    /// stays contract surface exercised by the proof rather than something to
-    /// re-derive when the first such consumer arrives.
-    #[allow(dead_code)]
+    /// It carried no solver consumer while the only update rules were Newton's
+    /// and the histogram grower's, neither of which tests a loss value; the
+    /// line search inside [`crate::optimize`] is that consumer, because
+    /// deciding how far to step means comparing the objective at two points.
     fn value(raw: f64, target: f64) -> f64;
 
     /// First derivative of [`Objective::value`] with respect to `raw`.

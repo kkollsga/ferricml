@@ -83,8 +83,17 @@ pub enum ModelError {
     NumericalOverflow,
     /// A fitted prediction accumulated to NaN or infinity.
     NonFinitePrediction { row: usize },
-    /// The linear solver encountered a non-positive-definite system.
+    /// The linear solver encountered a non-positive-definite system, or an
+    /// iterative solver could not make progress from its current iterate.
     LinearSolveFailed,
+    /// An iterative solver exhausted `max_iter` without meeting its tolerance.
+    ///
+    /// Reported instead of returning the last iterate, because an unconverged
+    /// model is indistinguishable from a converged one once it is fitted.
+    SolverDidNotConverge {
+        /// Iterations performed before the budget ran out.
+        iterations: usize,
+    },
     /// A scalar-valued operation was asked of a model that produces a vector.
     ///
     /// A multiclass fit has one raw score per class, so a method returning one
@@ -200,6 +209,10 @@ impl fmt::Display for ModelError {
                 write!(f, "prediction for row {row} is not finite")
             }
             Self::LinearSolveFailed => f.write_str("linear solve failed during optimization"),
+            Self::SolverDidNotConverge { iterations } => write!(
+                f,
+                "solver reached max_iter after {iterations} iterations without converging"
+            ),
             Self::MulticlassOutput { columns } => write!(
                 f,
                 "operation returns one value per row, but this model produces {columns}"

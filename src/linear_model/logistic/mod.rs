@@ -1,5 +1,6 @@
 //! Logistic regression: an asymmetric binary fit and a joint multinomial fit.
 
+mod lbfgs;
 mod multinomial;
 
 use crate::api::{
@@ -13,7 +14,7 @@ use crate::artifact::{
 };
 use crate::data::{BinaryTargets, ClassTargets, MatrixView, SampleWeights};
 use crate::loss::{BinaryLogLoss, accumulate_newton_row, raw_score};
-use crate::numeric::{sigmoid_f32, softmax_in_place_f32};
+use crate::numeric::{sigmoid_f32, softmax_in_place_f32, sum_in_order};
 
 const BINARY_CLASSES: [u8; 2] = [0, 1];
 /// Every class label is a `u8`, so no fit can observe more classes than this.
@@ -35,6 +36,40 @@ const LOGISTIC_MULTICLASS_STATE_COMPONENT_VERSION: u16 = 2;
 /// `class_count`, and `coefficient_count`.
 const LOGISTIC_MULTICLASS_FIXED_PAYLOAD_BYTES: usize = 8 * 4;
 
+/// The update rule a logistic fit uses to reach its coefficients.
+///
+/// Both solvers minimize the same L2-penalized objective and agree on its
+/// minimizer; they differ in cost, in storage, and in what
+/// [`with_tol`](LogisticRegressionParams::with_tol) measures.
+///
+/// # Choosing
+///
+/// [`Newton`](Self::Newton) is the default and stays the default. It takes the
+/// exact second-order step, which converges in single-digit iterations, and it
+/// is what every fitted artifact FerricML has ever written was produced by.
+/// Its cost is one `parameters x parameters` factorization per iteration, so a
+/// joint multinomial fit — whose system is `classes * parameters` square —
+/// refuses rather than allocate one it cannot hold.
+///
+/// [`Lbfgs`](Self::Lbfgs) never forms that system. Its storage is linear in the
+/// parameter count, which is what makes a wide multiclass fit possible at all,
+/// and it is the path to select when the exact one reports
+/// [`ModelError::MulticlassSystemTooLarge`]. It needs more iterations to reach
+/// the same answer, and it reports
+/// [`ModelError::SolverDidNotConverge`] rather than returning an
+/// unconverged model — both when `max_iter` runs out and when the requested
+/// `tol` is below what the objective's own numerical resolution can certify,
+/// which is around `1e-9` for a log-loss of order one.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+#[non_exhaustive]
+pub enum LogisticSolver {
+    /// Exact Newton steps over the full second-order system. The default.
+    #[default]
+    Newton,
+    /// Matrix-free limited-memory BFGS with a strong-Wolfe line search.
+    Lbfgs,
+}
+
 /// Parameters for [`LogisticRegression`].
 #[derive(Clone, Debug, PartialEq)]
 pub struct LogisticRegressionParams {
@@ -42,6 +77,7 @@ pub struct LogisticRegressionParams {
     fit_intercept: bool,
     max_iter: usize,
     tol: f32,
+    solver: LogisticSolver,
 }
 
 impl Default for LogisticRegressionParams {
@@ -51,6 +87,7 @@ impl Default for LogisticRegressionParams {
             fit_intercept: true,
             max_iter: 100,
             tol: 1.0e-4,
+            solver: LogisticSolver::Newton,
         }
     }
 }
@@ -77,10 +114,29 @@ impl LogisticRegressionParams {
         self
     }
 
-    /// Sets the maximum absolute coefficient update used for convergence.
+    /// Sets the convergence tolerance.
+    ///
+    /// What it measures depends on the selected [`LogisticSolver`], because the
+    /// two solvers have genuinely different convergence tests and pretending
+    /// otherwise would make one of them wrong. Under
+    /// [`LogisticSolver::Newton`] it is the largest absolute coefficient
+    /// update; under [`LogisticSolver::Lbfgs`] it is the infinity norm of the
+    /// gradient of the mean penalized objective.
     #[must_use]
     pub fn with_tol(mut self, tol: f32) -> Self {
         self.tol = tol;
+        self
+    }
+
+    /// Selects the update rule used to reach the coefficients.
+    ///
+    /// The default is [`LogisticSolver::Newton`] and changing it changes the
+    /// fitted coefficients in their last digits, so a model fitted under a
+    /// non-default solver has no artifact representation — see
+    /// [`LogisticRegression::to_artifact`].
+    #[must_use]
+    pub const fn with_solver(mut self, solver: LogisticSolver) -> Self {
+        self.solver = solver;
         self
     }
 
@@ -102,6 +158,11 @@ impl LogisticRegressionParams {
     /// Returns the convergence tolerance.
     pub const fn tol(&self) -> f32 {
         self.tol
+    }
+
+    /// Returns the selected update rule.
+    pub const fn solver(&self) -> LogisticSolver {
+        self.solver
     }
 }
 
@@ -209,6 +270,32 @@ impl LogisticRegression {
         let parameter_count = columns + usize::from(params.fit_intercept);
         let intercept_index = params.fit_intercept.then_some(columns);
         let design = build_design(data, &means, &scales, parameter_count, intercept_index);
+        if params.solver == LogisticSolver::Lbfgs {
+            let penalties = lbfgs::scaled_penalties(&scales, params.c);
+            let (theta, iterations) = lbfgs::fit_binary(
+                lbfgs::DesignView {
+                    design: &design,
+                    sample_weights,
+                    penalties: &penalties,
+                    columns,
+                    parameter_count,
+                    intercept_index,
+                    inverse_total_weight: 1.0 / total_weight,
+                },
+                targets.as_slice(),
+                &params,
+            )?;
+            return Self::from_standardized(
+                &theta,
+                &means,
+                &scales,
+                columns,
+                intercept_index,
+                BINARY_CLASSES.to_vec(),
+                params,
+                iterations,
+            );
+        }
         let mut theta = vec![0.0_f64; parameter_count];
         let mut gradient = vec![0.0_f64; parameter_count];
         let mut hessian = vec![0.0_f64; parameter_count * parameter_count];
@@ -262,22 +349,72 @@ impl LogisticRegression {
             }
         }
 
-        let coefficients = (0..columns)
-            .map(|column| (theta[column] / scales[column]) as f32)
-            .collect::<Vec<_>>();
-        let intercept = intercept_index.map_or(0.0, |index| theta[index])
-            - (0..columns)
-                .map(|column| theta[column] * means[column] / scales[column])
-                .sum::<f64>();
-        if coefficients.iter().any(|value| !value.is_finite()) || !intercept.is_finite() {
+        Self::from_standardized(
+            &theta,
+            &means,
+            &scales,
+            columns,
+            intercept_index,
+            BINARY_CLASSES.to_vec(),
+            params,
+            iterations,
+        )
+    }
+
+    /// Builds a fitted model from coefficients in standardized design space.
+    ///
+    /// Fitting standardizes the design for conditioning; the model does not,
+    /// because prediction has to be one dot product against the caller's own
+    /// features. Undoing the transformation is therefore part of every fit, and
+    /// stating it once means the binary and multinomial paths — and the two
+    /// solvers — cannot drift into two different definitions of the same model.
+    ///
+    /// `theta` is one standardized coefficient row per score row, stacked in
+    /// class order. The reduction that folds the centering into the intercept
+    /// runs in ascending column order per the accumulation policy, and is what
+    /// a fitted intercept's exact bits depend on.
+    #[allow(clippy::too_many_arguments)]
+    fn from_standardized(
+        theta: &[f64],
+        means: &[f64],
+        scales: &[f64],
+        columns: usize,
+        intercept_index: Option<usize>,
+        classes: Vec<u8>,
+        params: LogisticRegressionParams,
+        iterations: usize,
+    ) -> Result<Self, ModelError> {
+        let parameter_count = columns + usize::from(intercept_index.is_some());
+        debug_assert!(parameter_count > 0 && theta.len().is_multiple_of(parameter_count));
+        let score_rows = theta.len() / parameter_count;
+        let mut coefficients = Vec::with_capacity(score_rows * columns);
+        let mut intercepts = Vec::with_capacity(score_rows);
+        for row in theta.chunks_exact(parameter_count) {
+            for column in 0..columns {
+                coefficients.push((row[column] / scales[column]) as f32);
+            }
+            let intercept = intercept_index.map_or(0.0, |index| row[index])
+                - sum_in_order(
+                    (0..columns).map(|column| row[column] * means[column] / scales[column]),
+                );
+            intercepts.push(intercept as f32);
+        }
+        // Checked after narrowing, so a coefficient that is finite at `f64` but
+        // overflows the storage type is a failed fit rather than a stored
+        // infinity that only shows up as a non-finite prediction later.
+        if coefficients
+            .iter()
+            .chain(&intercepts)
+            .any(|value| !value.is_finite())
+        {
             return Err(ModelError::LinearSolveFailed);
         }
         Ok(Self {
             n_features_in: columns,
             params,
-            classes: BINARY_CLASSES.to_vec(),
+            classes,
             coefficients,
-            intercepts: vec![intercept as f32],
+            intercepts,
             iterations,
         })
     }
@@ -499,7 +636,20 @@ impl LogisticRegression {
     /// the observed class list, one intercept per class, and one coefficient
     /// row per class. Decoding selects the reader from the recorded version, so
     /// neither can decode as the other.
+    ///
+    /// # Solver provenance
+    ///
+    /// Both payload schemas predate [`LogisticSolver`] and store no solver
+    /// field, so widening either to carry one would change the bytes of every
+    /// artifact ever written. A model fitted under a non-default solver
+    /// therefore reports [`ArtifactError::UnsupportedModelState`] instead:
+    /// writing it would produce bytes that decode as a model claiming Newton
+    /// provenance it does not have, and a decoded model that compares unequal
+    /// to the one encoded is worse than a refusal.
     pub fn to_artifact(&self, feature_schema_sha256: [u8; 32]) -> Result<Vec<u8>, ArtifactError> {
+        if self.params.solver != LogisticSolver::Newton {
+            return Err(ArtifactError::UnsupportedModelState);
+        }
         if self.is_binary() {
             self.to_binary_artifact(feature_schema_sha256)
         } else {
@@ -740,6 +890,11 @@ impl LogisticRegression {
                 fit_intercept,
                 max_iter,
                 tol,
+                // No payload schema carries a solver, and `to_artifact`
+                // refuses to write a model fitted under a non-default one, so
+                // every decodable artifact has Newton provenance by
+                // construction rather than by assumption.
+                solver: LogisticSolver::Newton,
             },
             classes,
             coefficients,
@@ -795,6 +950,11 @@ impl LogisticRegression {
                 fit_intercept,
                 max_iter,
                 tol,
+                // No payload schema carries a solver, and `to_artifact`
+                // refuses to write a model fitted under a non-default one, so
+                // every decodable artifact has Newton provenance by
+                // construction rather than by assumption.
+                solver: LogisticSolver::Newton,
             },
             classes: BINARY_CLASSES.to_vec(),
             coefficients,
@@ -1218,6 +1378,7 @@ mod tests {
                 fit_intercept: true,
                 max_iter: 100,
                 tol: f32::from_bits(0x3586_37bd),
+                solver: LogisticSolver::Newton,
             },
             classes: BINARY_CLASSES.to_vec(),
             coefficients: vec![f32::from_bits(0x3fb0_56aa), f32::from_bits(0x3eab_d102)],

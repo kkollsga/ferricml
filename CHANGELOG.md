@@ -264,6 +264,21 @@ and releases use [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   keeps choosing between them itself, so restoring a dispatch artifact restores
   the variant *and* the fit it held. `AnyClassifier` now declares `artifact` by
   composition rather than declaring it away.
+- `linear_model::LogisticSolver` and `LogisticRegressionParams::with_solver`,
+  selecting the update rule a logistic fit uses. The default is and stays
+  `Newton`, the exact second-order path every existing fitted model was
+  produced by; `Lbfgs` is a matrix-free limited-memory quasi-Newton path whose
+  storage is linear rather than quadratic in the parameter count. Both minimize
+  the same penalized objective, so they agree on its minimizer, but `tol` means
+  the largest coefficient update under `Newton` and the mean objective's
+  gradient norm under `Lbfgs`. Neither payload schema records a solver, so a
+  model fitted under a non-default one reports
+  `ArtifactError::UnsupportedModelState` rather than writing bytes that would
+  decode as a model claiming `Newton` provenance.
+- `ModelError::SolverDidNotConverge`, reported when an iterative solver
+  exhausts `max_iter` — or is asked for a tolerance below what the objective's
+  own numerical resolution can certify — instead of returning the last iterate
+  as though it were a fitted model.
 
 ### Changed
 

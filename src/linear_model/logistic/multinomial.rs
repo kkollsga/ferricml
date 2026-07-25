@@ -40,13 +40,13 @@
 //! untouched and the update simply cannot drift out of the centred subspace.
 
 use super::{
-    LogisticRegression, LogisticRegressionParams, Standardization, build_design, sample_weight,
-    solve_positive_definite, standardize, validate_common_fit,
+    LogisticRegression, LogisticRegressionParams, LogisticSolver, Standardization, build_design,
+    sample_weight, solve_positive_definite, standardize, validate_common_fit,
 };
 use crate::api::ModelError;
 use crate::data::{ClassTargets, MatrixView, SampleWeights};
 use crate::loss::raw_score;
-use crate::numeric::{softmax_in_place, sum_in_order};
+use crate::numeric::softmax_in_place;
 
 /// Largest stacked Newton system the multinomial fit will build.
 ///
@@ -86,10 +86,33 @@ pub(super) fn fit(
         );
     }
 
-    let lambda = 1.0 / f64::from(params.c);
-    let penalties = (0..columns)
-        .map(|column| lambda / (scales[column] * scales[column]))
-        .collect::<Vec<_>>();
+    let penalties = super::lbfgs::scaled_penalties(&scales, params.c);
+    if params.solver == LogisticSolver::Lbfgs {
+        let (theta, iterations) = super::lbfgs::fit_multinomial(
+            super::lbfgs::DesignView {
+                design: &design,
+                sample_weights,
+                penalties: &penalties,
+                columns,
+                parameter_count,
+                intercept_index,
+                inverse_total_weight: 1.0 / total_weight,
+            },
+            &class_of_row,
+            classes,
+            &params,
+        )?;
+        return LogisticRegression::from_standardized(
+            &theta,
+            &means,
+            &scales,
+            columns,
+            intercept_index,
+            targets.classes().to_vec(),
+            params,
+            iterations,
+        );
+    }
     // Curvature for the one direction the loss and the penalty both ignore:
     // shifting every class's intercept by the same amount. Scaled like the
     // intercept curvature it replaces, so it neither dominates the system nor
@@ -157,33 +180,16 @@ pub(super) fn fit(
         }
     }
 
-    let mut coefficients = Vec::with_capacity(classes * columns);
-    let mut intercepts = Vec::with_capacity(classes);
-    for class in 0..classes {
-        let row = &theta[class * parameter_count..(class + 1) * parameter_count];
-        for column in 0..columns {
-            coefficients.push((row[column] / scales[column]) as f32);
-        }
-        let intercept = intercept_index.map_or(0.0, |index| row[index])
-            - sum_in_order((0..columns).map(|column| row[column] * means[column] / scales[column]));
-        intercepts.push(intercept as f32);
-    }
-    if coefficients
-        .iter()
-        .chain(&intercepts)
-        .any(|value| !value.is_finite())
-    {
-        return Err(ModelError::LinearSolveFailed);
-    }
-
-    Ok(LogisticRegression {
-        n_features_in: columns,
+    LogisticRegression::from_standardized(
+        &theta,
+        &means,
+        &scales,
+        columns,
+        intercept_index,
+        targets.classes().to_vec(),
         params,
-        classes: targets.classes().to_vec(),
-        coefficients,
-        intercepts,
         iterations,
-    })
+    )
 }
 
 /// Adds one weighted row to the stacked multinomial Newton system.
