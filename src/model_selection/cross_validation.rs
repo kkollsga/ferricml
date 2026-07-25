@@ -1,13 +1,13 @@
 use std::error::Error;
 use std::fmt;
 
-use crate::api::{ModelError, ProbabilisticClassifier, Regressor};
+use crate::api::{Classifier, ModelError, ProbabilisticClassifier, Regressor};
 use crate::data::{BinaryTargets, MatrixView, RegressionTargets};
 use crate::metrics::MetricError;
 
 use super::{
-    ClassificationScore, ClassifierOutputKind, RegressionScore, ScoringError, ScoringWorkspace,
-    Split, score_classifier_with, score_regressor_with,
+    ClassificationScore, ClassifierOutputKind, RegressionScore, ScorableClassifier, ScoringError,
+    ScoringWorkspace, Split, score_classifier_with, score_regressor_with,
 };
 
 /// Errors produced while running serial cross-validation.
@@ -169,13 +169,57 @@ pub fn cross_validate_classifier<M, I, F, S>(
     targets: &BinaryTargets,
     splits: I,
     scorer: S,
-    mut fit: F,
+    fit: F,
 ) -> Result<CrossValidationResult, CrossValidationError>
 where
     M: ProbabilisticClassifier,
     I: IntoIterator<Item = Split>,
     F: FnMut(&MatrixView<'_>, &BinaryTargets) -> Result<M, ModelError>,
     S: ClassificationScore,
+{
+    cross_validate_folds(data, targets, splits, scorer, fit, |model| {
+        ScorableClassifier::probabilistic(model)
+    })
+}
+
+/// Fits and scores one label-producing classifier per supplied split.
+///
+/// This is [`cross_validate_classifier`] for a classifier that produces no
+/// probabilities. Only label metrics apply: a probability metric returns
+/// [`ScoringError::UnsupportedOutput`] through
+/// [`CrossValidationError::Scoring`] rather than a substituted value.
+pub fn cross_validate_classifier_labels<M, I, F, S>(
+    data: &MatrixView<'_>,
+    targets: &BinaryTargets,
+    splits: I,
+    scorer: S,
+    fit: F,
+) -> Result<CrossValidationResult, CrossValidationError>
+where
+    M: Classifier,
+    I: IntoIterator<Item = Split>,
+    F: FnMut(&MatrixView<'_>, &BinaryTargets) -> Result<M, ModelError>,
+    S: ClassificationScore,
+{
+    cross_validate_folds(data, targets, splits, scorer, fit, |model| {
+        ScorableClassifier::labels_only(model)
+    })
+}
+
+/// The one cross-validation loop, over whichever view the caller's model has.
+fn cross_validate_folds<M, I, F, S, V>(
+    data: &MatrixView<'_>,
+    targets: &BinaryTargets,
+    splits: I,
+    scorer: S,
+    mut fit: F,
+    view: V,
+) -> Result<CrossValidationResult, CrossValidationError>
+where
+    I: IntoIterator<Item = Split>,
+    F: FnMut(&MatrixView<'_>, &BinaryTargets) -> Result<M, ModelError>,
+    S: ClassificationScore,
+    V: for<'m> Fn(&'m M) -> ScorableClassifier<'m>,
 {
     validate_target_length(data.rows(), targets.len())?;
     let mut feature_buffer = Vec::new();
@@ -195,8 +239,9 @@ where
         let test_targets = targets
             .select(split.test_indices())
             .expect("validated split contains non-empty in-bounds indices");
-        let score = score_classifier_with(&model, &test, &test_targets, &scorer, &mut workspace)
-            .map_err(|error| map_scoring_error(fold, error))?;
+        let score =
+            score_classifier_with(view(&model), &test, &test_targets, &scorer, &mut workspace)
+                .map_err(|error| map_scoring_error(fold, error))?;
         scores.push(score);
     }
     finish(scores)

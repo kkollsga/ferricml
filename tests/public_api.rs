@@ -19,9 +19,9 @@ use ferricml::metrics::{
 };
 use ferricml::model_selection::{
     ClassificationScorer, CrossValidationError, HoldoutParams, KFold, RegressionScorer,
-    ScoringError, Split, SplitError, StratifiedKFold, TestSize, cross_validate_classifier,
-    cross_validate_regressor, score_classifier, score_regressor, stratified_train_test_split,
-    train_test_split,
+    ScorableClassifier, ScoringError, Split, SplitError, StratifiedKFold, TestSize,
+    cross_validate_classifier, cross_validate_regressor, score_classifier, score_regressor,
+    stratified_train_test_split, train_test_split,
 };
 use ferricml::pipeline::Pipeline;
 use ferricml::preprocessing::{StandardScaler, StandardScalerParams};
@@ -222,7 +222,15 @@ fn fitted_estimator_scoring_paths_are_stable() {
         ClassificationScorer::LogLoss,
         ClassificationScorer::RocAuc,
     ] {
-        assert!(score_classifier(&classifier, &matrix.as_view(), &binary, scorer).is_ok());
+        assert!(
+            score_classifier(
+                ScorableClassifier::probabilistic(&classifier),
+                &matrix.as_view(),
+                &binary,
+                scorer
+            )
+            .is_ok()
+        );
     }
 
     let regression = RegressionTargets::new(vec![0.0, 1.0, 4.0, 9.0]).unwrap();
@@ -237,7 +245,7 @@ fn fitted_estimator_scoring_paths_are_stable() {
     }
     assert!(matches!(
         score_classifier(
-            &classifier,
+            ScorableClassifier::probabilistic(&classifier),
             &matrix.as_view(),
             &BinaryTargets::new(vec![0, 1]).unwrap(),
             ClassificationScorer::Accuracy,

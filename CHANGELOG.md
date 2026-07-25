@@ -34,7 +34,10 @@ and releases use [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   `permutation_importance_classifier_into`, and the classifier
   cross-validation and search entry points now take a probability-producing
   classifier, and `CalibratedClassifier` requires one — a calibrator maps a
-  probability, so there is nothing to calibrate without one.
+  probability, so there is nothing to calibrate without one. The classifier
+  scoring and permutation-importance entry points take a
+  `ScorableClassifier` view rather than a bare reference, so a label-only
+  classifier remains scorable on a label metric.
 
 - **Breaking.** `AnyClassifier` no longer exposes `predict_proba`,
   `predict_proba_into`, `predict_class_proba`, or `predict_class_proba_into`
@@ -49,6 +52,19 @@ and releases use [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- `model_selection::ScorableClassifier`, the view the scoring layer takes of a
+  fitted classifier: `probabilistic` for one that produces probabilities,
+  `labels_only` for one that does not. A label metric works for either; a
+  probability metric applied to a labels-only view is
+  `ScoringError::UnsupportedOutput` naming what was required and what was
+  supplied, never a substituted value. One type rather than a parallel family
+  of entry points, and it makes "the labels and the probabilities come from the
+  same model" true by construction.
+- `model_selection::cross_validate_classifier_labels` and
+  `model_selection::grid_search_classifier_labels`, for cross-validating and
+  searching a classifier that produces labels but no probabilities. These build
+  the model themselves, so the requirement is expressed in the bound rather
+  than in an argument.
 - `api::Capabilities::probability`, declaring whether a fitted classifier
   produces a probability per class. It is queryable on a runtime dispatch value
   through `capabilities()`, which is where a compile-time bound is unavailable.

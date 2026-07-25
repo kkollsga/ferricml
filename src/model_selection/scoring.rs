@@ -1,7 +1,7 @@
 use std::error::Error;
 use std::fmt;
 
-use crate::api::{ModelError, ProbabilisticClassifier, Regressor};
+use crate::api::{Classifier, ModelError, ProbabilisticClassifier, Regressor};
 use crate::data::{BinaryTargets, ClassTargets, MatrixView, RegressionTargets};
 use crate::metrics::{
     MetricError, accuracy_score, brier_score, f1_score, log_loss, mean_absolute_error,
@@ -349,15 +349,93 @@ impl Error for ScoringError {
     }
 }
 
+/// A fitted classifier as the scoring layer sees it.
+///
+/// Every classifier predicts labels; only some produce probabilities. A score
+/// declares which it reads through
+/// [`ClassificationScore::output_kind`], so the requirement is a property of
+/// the *metric*, not of the entry point — accuracy and log loss reach the same
+/// function. This type carries exactly what the held classifier can do, so a
+/// label-only estimator is scorable on a label metric and is refused, with
+/// [`ScoringError::UnsupportedOutput`], on a probability metric.
+///
+/// One type rather than a parallel family of `*_labels` functions: it keeps
+/// one way to score, and it makes "the labels and the probabilities come from
+/// the same model" true by construction rather than by convention.
+///
+/// ```
+/// use ferricml::api::Classifier;
+/// use ferricml::data::{BinaryTargets, DenseMatrix};
+/// use ferricml::dummy::{DummyClassifier, DummyClassifierParams};
+/// use ferricml::model_selection::{
+///     ClassificationScorer, ScorableClassifier, score_classifier,
+/// };
+///
+/// let data = DenseMatrix::new(vec![0.0, 1.0, 2.0, 3.0], 4, 1)?;
+/// let targets = BinaryTargets::new(vec![0, 0, 1, 1])?;
+/// let model = DummyClassifier::fit(&data.as_view(), &targets, DummyClassifierParams)?;
+///
+/// // This model does produce probabilities, so either view scores on accuracy.
+/// let view = ScorableClassifier::probabilistic(&model);
+/// let accuracy = score_classifier(view, &data.as_view(), &targets, ClassificationScorer::Accuracy)?;
+/// assert!((0.0..=1.0).contains(&accuracy));
+///
+/// // Viewed as labels only, a probability metric is refused rather than guessed.
+/// let labels_only = ScorableClassifier::labels_only(&model as &dyn Classifier);
+/// assert!(
+///     score_classifier(labels_only, &data.as_view(), &targets, ClassificationScorer::LogLoss)
+///         .is_err()
+/// );
+/// # Ok::<(), Box<dyn std::error::Error>>(())
+/// ```
+#[derive(Clone, Copy)]
+pub struct ScorableClassifier<'a> {
+    labels: &'a dyn Classifier,
+    probabilities: Option<&'a dyn ProbabilisticClassifier>,
+}
+
+impl<'a> ScorableClassifier<'a> {
+    /// Views a classifier that produces probabilities, so every score applies.
+    #[must_use]
+    pub fn probabilistic(model: &'a dyn ProbabilisticClassifier) -> Self {
+        Self {
+            labels: model,
+            probabilities: Some(model),
+        }
+    }
+
+    /// Views a classifier by its labels alone.
+    ///
+    /// A probability metric applied to this is
+    /// [`ScoringError::UnsupportedOutput`] — never a substituted value, and
+    /// never a compile error the caller cannot work around.
+    #[must_use]
+    pub const fn labels_only(model: &'a dyn Classifier) -> Self {
+        Self {
+            labels: model,
+            probabilities: None,
+        }
+    }
+
+    /// The probabilities this view offers, or the error naming what is missing.
+    fn probabilities(
+        self,
+        required: ClassifierOutputKind,
+    ) -> Result<&'a dyn ProbabilisticClassifier, ScoringError> {
+        self.probabilities.ok_or(ScoringError::UnsupportedOutput {
+            required,
+            supplied: ClassifierOutputKind::Labels,
+        })
+    }
+}
+
 /// Scores one fitted classifier through a single batch prediction call.
 ///
-/// The classifier must produce probabilities, because a score is free to ask
-/// for them: `output_kind` is a property of the metric, so accuracy and log
-/// loss reach the same entry point. A label-only path for a classifier that
-/// has no probabilities is an additive function when the first such estimator
-/// exists; it is not expressible by weakening this one.
+/// The score decides what it reads: a label metric works for any classifier, a
+/// probability metric needs a [`ScorableClassifier::probabilistic`] view and is
+/// otherwise refused with [`ScoringError::UnsupportedOutput`].
 pub fn score_classifier<S: ClassificationScore>(
-    classifier: &dyn ProbabilisticClassifier,
+    classifier: ScorableClassifier<'_>,
     data: &MatrixView<'_>,
     targets: &BinaryTargets,
     scorer: S,
@@ -376,8 +454,11 @@ pub fn score_classifier<S: ClassificationScore>(
 /// This is the allocation-free form: reusing one workspace across calls of the
 /// same shape allocates on the first call only. The class layouts `[0]`, `[1]`,
 /// and `[0, 1]` are handled here, once, so no consumer re-derives them.
+///
+/// A label-only classifier reaches this through
+/// [`ScorableClassifier::labels_only`] and is scored on any label metric.
 pub fn score_classifier_with<S: ClassificationScore>(
-    classifier: &dyn ProbabilisticClassifier,
+    classifier: ScorableClassifier<'_>,
     data: &MatrixView<'_>,
     targets: &BinaryTargets,
     scorer: S,
@@ -394,7 +475,7 @@ pub fn score_classifier_with<S: ClassificationScore>(
 /// [`ClassifierOutputKind::ProbabilityMatrix`] work here for any number of
 /// classes, while the binary positive-probability layouts remain what they were.
 pub fn score_multiclass_classifier<S: ClassificationScore>(
-    classifier: &dyn ProbabilisticClassifier,
+    classifier: ScorableClassifier<'_>,
     data: &MatrixView<'_>,
     targets: &ClassTargets,
     scorer: S,
@@ -412,7 +493,7 @@ pub fn score_multiclass_classifier<S: ClassificationScore>(
 ///
 /// The allocation-free form of [`score_multiclass_classifier`].
 pub fn score_multiclass_classifier_with<S: ClassificationScore>(
-    classifier: &dyn ProbabilisticClassifier,
+    classifier: ScorableClassifier<'_>,
     data: &MatrixView<'_>,
     targets: &ClassTargets,
     scorer: S,
@@ -427,7 +508,7 @@ pub fn score_multiclass_classifier_with<S: ClassificationScore>(
 /// prediction call, the class-layout handling, and the workspace reuse exist
 /// exactly once.
 fn score_labelled<S: ClassificationScore>(
-    classifier: &dyn ProbabilisticClassifier,
+    classifier: ScorableClassifier<'_>,
     data: &MatrixView<'_>,
     targets: &[u8],
     scorer: S,
@@ -438,16 +519,18 @@ fn score_labelled<S: ClassificationScore>(
         ClassifierOutputKind::Labels => {
             let labels = workspace.labels(data.rows());
             classifier
+                .labels
                 .predict_into(data, labels)
                 .map_err(ScoringError::Prediction)?;
             ClassifierOutput::Labels(labels)
         }
         ClassifierOutputKind::PositiveProbabilities => {
+            let model = classifier.probabilities(ClassifierOutputKind::PositiveProbabilities)?;
             let probabilities = workspace.values(data.rows());
-            match classifier.classes() {
+            match model.classes() {
                 [0] => probabilities.fill(0.0),
                 [1] => probabilities.fill(1.0),
-                [0, 1] => classifier
+                [0, 1] => model
                     .predict_class_proba_into(data, 1, probabilities)
                     .map_err(ScoringError::Prediction)?,
                 _ => return Err(ScoringError::UnsupportedClasses),
@@ -455,9 +538,10 @@ fn score_labelled<S: ClassificationScore>(
             ClassifierOutput::PositiveProbabilities(probabilities)
         }
         ClassifierOutputKind::ProbabilityMatrix => {
-            let classes = classifier.classes();
+            let model = classifier.probabilities(ClassifierOutputKind::ProbabilityMatrix)?;
+            let classes = model.classes();
             let probabilities = workspace.matrix(data.rows(), classes.len())?;
-            classifier
+            model
                 .predict_proba_into(data, probabilities)
                 .map_err(ScoringError::Prediction)?;
             ClassifierOutput::ProbabilityMatrix {
@@ -576,7 +660,7 @@ mod tests {
         let probabilities = concrete.predict_class_proba(&data.as_view(), 1).unwrap();
         assert_eq!(
             score_classifier(
-                &concrete,
+                ScorableClassifier::probabilistic(&concrete),
                 &data.as_view(),
                 &targets,
                 ClassificationScorer::Accuracy
@@ -585,7 +669,7 @@ mod tests {
         );
         assert_eq!(
             score_classifier(
-                &concrete,
+                ScorableClassifier::probabilistic(&concrete),
                 &data.as_view(),
                 &targets,
                 ClassificationScorer::Brier
@@ -605,9 +689,11 @@ mod tests {
         ] {
             assert!(
                 score_classifier(
-                    erased
-                        .as_probabilistic()
-                        .expect("every shipped variant produces probabilities"),
+                    ScorableClassifier::probabilistic(
+                        erased
+                            .as_probabilistic()
+                            .expect("every shipped variant produces probabilities")
+                    ),
                     &data.as_view(),
                     &targets,
                     scorer
@@ -625,7 +711,7 @@ mod tests {
             let model = classifier(&targets);
             assert_eq!(
                 score_classifier(
-                    &model,
+                    ScorableClassifier::probabilistic(&model),
                     &data.as_view(),
                     &targets,
                     ClassificationScorer::Brier
@@ -634,7 +720,7 @@ mod tests {
             );
             assert_eq!(
                 score_classifier(
-                    &model,
+                    ScorableClassifier::probabilistic(&model),
                     &data.as_view(),
                     &targets,
                     ClassificationScorer::RocAuc
@@ -675,7 +761,7 @@ mod tests {
         let model = classifier(&fitted_targets);
         assert_eq!(
             score_classifier(
-                &model,
+                ScorableClassifier::probabilistic(&model),
                 &data.as_view(),
                 &targets,
                 ClassificationScorer::Accuracy
@@ -689,7 +775,7 @@ mod tests {
         let all_negative = BinaryTargets::new(vec![0; 4]).unwrap();
         assert_eq!(
             score_classifier(
-                &model,
+                ScorableClassifier::probabilistic(&model),
                 &data.as_view(),
                 &all_negative,
                 ClassificationScorer::Recall
@@ -710,14 +796,30 @@ mod tests {
             ClassificationScorer::Brier,
             ClassificationScorer::RocAuc,
         ] {
-            let allocating = score_classifier(&model, &data.as_view(), &binary, scorer);
-            let reused =
-                score_classifier_with(&model, &data.as_view(), &binary, scorer, &mut workspace);
+            let allocating = score_classifier(
+                ScorableClassifier::probabilistic(&model),
+                &data.as_view(),
+                &binary,
+                scorer,
+            );
+            let reused = score_classifier_with(
+                ScorableClassifier::probabilistic(&model),
+                &data.as_view(),
+                &binary,
+                scorer,
+                &mut workspace,
+            );
             assert_eq!(allocating, reused, "{scorer:?}");
             // A second pass through the same workspace repeats exactly.
             assert_eq!(
                 reused,
-                score_classifier_with(&model, &data.as_view(), &binary, scorer, &mut workspace)
+                score_classifier_with(
+                    ScorableClassifier::probabilistic(&model),
+                    &data.as_view(),
+                    &binary,
+                    scorer,
+                    &mut workspace
+                )
             );
         }
 
@@ -756,14 +858,19 @@ mod tests {
             .unwrap();
 
         assert_eq!(
-            score_classifier(&model, &data.as_view(), &binary, MacroF1),
+            score_classifier(
+                ScorableClassifier::probabilistic(&model),
+                &data.as_view(),
+                &binary,
+                MacroF1
+            ),
             Ok(expected)
         );
         // A reference to a score is a score, so it need not be moved.
         let scorer = MacroF1;
         assert_eq!(
             score_classifier_with(
-                &model,
+                ScorableClassifier::probabilistic(&model),
                 &data.as_view(),
                 &binary,
                 &scorer,
@@ -878,7 +985,12 @@ mod tests {
             ),
         ] {
             assert_eq!(
-                score_multiclass_classifier(&model, &data.as_view(), &targets, scorer),
+                score_multiclass_classifier(
+                    ScorableClassifier::probabilistic(&model),
+                    &data.as_view(),
+                    &targets,
+                    scorer
+                ),
                 expected.map_err(ScoringError::Metric),
                 "{scorer:?}"
             );
@@ -888,7 +1000,7 @@ mod tests {
         // rather than reinterpreting one of its columns.
         assert_eq!(
             score_multiclass_classifier(
-                &model,
+                ScorableClassifier::probabilistic(&model),
                 &data.as_view(),
                 &targets,
                 ClassificationScorer::Brier
@@ -908,14 +1020,14 @@ mod tests {
         // Cross-entropy reads only the true class's column, so the multiclass
         // and binary log losses agree on two classes.
         let multiclass = score_classifier(
-            &model,
+            ScorableClassifier::probabilistic(&model),
             &data.as_view(),
             &binary,
             ClassificationScorer::MulticlassLogLoss,
         )
         .unwrap();
         let binary_log_loss = score_classifier(
-            &model,
+            ScorableClassifier::probabilistic(&model),
             &data.as_view(),
             &binary,
             ClassificationScorer::LogLoss,
@@ -929,7 +1041,7 @@ mod tests {
 
         // The Brier scores deliberately differ by exactly a factor of two.
         let multiclass_brier = score_classifier(
-            &model,
+            ScorableClassifier::probabilistic(&model),
             &data.as_view(),
             &binary,
             ClassificationScorer::MulticlassBrier,
@@ -949,9 +1061,14 @@ mod tests {
             ClassificationScorer::MulticlassLogLoss,
             ClassificationScorer::MulticlassBrier,
         ] {
-            let allocating = score_multiclass_classifier(&model, &data.as_view(), &targets, scorer);
+            let allocating = score_multiclass_classifier(
+                ScorableClassifier::probabilistic(&model),
+                &data.as_view(),
+                &targets,
+                scorer,
+            );
             let reused = score_multiclass_classifier_with(
-                &model,
+                ScorableClassifier::probabilistic(&model),
                 &data.as_view(),
                 &targets,
                 scorer,
@@ -962,7 +1079,7 @@ mod tests {
             assert_eq!(
                 reused,
                 score_multiclass_classifier_with(
-                    &model,
+                    ScorableClassifier::probabilistic(&model),
                     &data.as_view(),
                     &targets,
                     scorer,
@@ -972,14 +1089,14 @@ mod tests {
         }
         assert_eq!(
             score_multiclass_classifier_with(
-                &model,
+                ScorableClassifier::probabilistic(&model),
                 &data.as_view(),
                 &targets,
                 ClassificationScorer::Accuracy,
                 &mut workspace
             ),
             score_multiclass_classifier(
-                &model,
+                ScorableClassifier::probabilistic(&model),
                 &data.as_view(),
                 &targets,
                 ClassificationScorer::Accuracy
@@ -995,7 +1112,7 @@ mod tests {
         let short = ClassTargets::new(vec![3, 7]).unwrap();
         assert_eq!(
             score_multiclass_classifier(
-                &model,
+                ScorableClassifier::probabilistic(&model),
                 &data.as_view(),
                 &short,
                 ClassificationScorer::MulticlassLogLoss
@@ -1010,7 +1127,7 @@ mod tests {
         let unknown = ClassTargets::new(vec![3, 3, 7, 11]).unwrap();
         assert_eq!(
             score_multiclass_classifier(
-                &model,
+                ScorableClassifier::probabilistic(&model),
                 &data.as_view(),
                 &unknown,
                 ClassificationScorer::MulticlassLogLoss

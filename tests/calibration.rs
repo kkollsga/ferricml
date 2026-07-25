@@ -151,8 +151,8 @@ use ferricml::calibration::{CalibratedClassifier, IsotonicRegression};
 use ferricml::ensemble::{MaxFeatures, RandomForestClassifier, RandomForestClassifierParams};
 use ferricml::metrics::{brier_score, log_loss, roc_auc_score};
 use ferricml::model_selection::{
-    ClassificationScorer, HoldoutParams, KFold, Split, TestSize, cross_validate_classifier,
-    score_classifier, stratified_train_test_split,
+    ClassificationScorer, HoldoutParams, KFold, ScorableClassifier, Split, TestSize,
+    cross_validate_classifier, score_classifier, stratified_train_test_split,
 };
 
 /// A noisy two-feature problem no model can fit perfectly.
@@ -367,7 +367,7 @@ fn a_calibrated_model_scores_and_cross_validates_through_the_existing_paths() {
     let probabilities = calibrated.predict_class_proba(&data.as_view(), 1).unwrap();
     assert_eq!(
         score_classifier(
-            &calibrated,
+            ScorableClassifier::probabilistic(&calibrated),
             &data.as_view(),
             &labels,
             ClassificationScorer::Brier
@@ -397,7 +397,7 @@ fn a_calibrated_model_scores_and_cross_validates_through_the_existing_paths() {
         let test_labels = labels.select(split.test_indices()).unwrap();
         assert_eq!(
             score_classifier(
-                &model,
+                ScorableClassifier::probabilistic(&model),
                 &test.as_view(),
                 &test_labels,
                 ClassificationScorer::LogLoss
