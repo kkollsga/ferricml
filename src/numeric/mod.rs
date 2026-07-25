@@ -54,8 +54,28 @@
 //!    from [`OwnedRng`]; a module must not define its own generator, because a
 //!    seed has to mean the same thing in every estimator and in inspection.
 
+// The quantile primitive lands one commit ahead of its first consumer, so the
+// shared-surface change stays reviewable on its own. Both attributes are
+// `expect` rather than `allow`, and both are scoped to the configuration that
+// actually lacks a consumer: the tests below exercise the primitive, so only a
+// non-test build sees it as dead. Once robust scaling arrives the expectations
+// go unfulfilled and the compiler demands these lines back, which is what keeps
+// a temporary suppression from becoming a permanent one.
+#[cfg_attr(
+    not(test),
+    expect(
+        dead_code,
+        reason = "robust scaling is the first consumer and lands in the next commit"
+    )
+)]
+mod quantile;
 mod rng;
 
+#[expect(
+    unused_imports,
+    reason = "robust scaling is the first consumer and lands in the next commit"
+)]
+pub(crate) use quantile::{QuantileRule, quantile_sorted, sort_for_quantiles};
 pub(crate) use rng::{OwnedRng, derive_tree_seed};
 
 /// Logistic sigmoid over `f64`.
