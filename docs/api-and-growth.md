@@ -67,7 +67,10 @@ estimator meaning follow the reference contract.
   artifact kind.
 - `inspection` owns model-agnostic attribution. Permutation importance works
   through the public batch prediction and scoring contracts only, so it needs
-  no estimator cooperation and exposes no model internals. Its per-feature
+  no estimator cooperation and exposes no model internals. It holds no scoring
+  logic of its own: it calls the same caller-owned-buffer scoring entry point
+  cross-validation does, and takes the orientation of the result from the
+  score's own declaration. Its per-feature
   values are quality losses, oriented so a larger number always means a more
   important feature whichever direction the underlying metric improves in.
 

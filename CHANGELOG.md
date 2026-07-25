@@ -92,6 +92,11 @@ and releases use [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Changed
 
+- Permutation importance takes any score implementing the new scorer traits and
+  runs through the shared allocation-free scoring path, so it no longer carries
+  its own copy of the scorer dispatch, the singleton-class probability
+  handling, or the per-metric orientation table. Its proven allocation bound is
+  unchanged.
 - `score_classifier`, `score_regressor`, `cross_validate_classifier`, and
   `cross_validate_regressor` are generic over the new scorer traits instead of
   taking the built-in enums. Calls that pass a built-in scorer are unaffected;

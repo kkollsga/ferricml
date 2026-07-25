@@ -11,7 +11,10 @@ use ferricml::inspection::{
     permutation_importance_regressor_into,
 };
 use ferricml::linear_model::{LinearRegression, LinearRegressionParams, Ridge, RidgeParams};
-use ferricml::model_selection::{ClassificationScorer, RegressionScorer, ScoringError};
+use ferricml::metrics::mean_squared_error;
+use ferricml::model_selection::{
+    ClassificationScorer, RegressionScore, RegressionScorer, ScoringError,
+};
 
 /// Four columns: a dominant signal, a weak signal, a constant, and a copy of
 /// the constant. Only the first two can carry information.
@@ -374,4 +377,50 @@ fn shape_and_parameter_problems_are_rejected_before_any_prediction() {
             targets: 2,
         }))
     );
+}
+
+/// A score FerricML does not enumerate, so importance cannot be reading a
+/// private table of built-in scorers.
+struct NegatedMeanSquaredError;
+
+impl RegressionScore for NegatedMeanSquaredError {
+    fn greater_is_better(&self) -> bool {
+        true
+    }
+
+    fn score(&self, expected: &[f32], predicted: &[f32]) -> Result<f64, ScoringError> {
+        mean_squared_error(expected, predicted)
+            .map(|value| -value)
+            .map_err(ScoringError::Metric)
+    }
+}
+
+#[test]
+fn a_caller_defined_score_is_inspected_through_the_same_contract() {
+    let (data, targets) = regression_fixture();
+    let model = forest_regressor(&data, &targets);
+    let custom = permutation_importance_regressor(
+        &model,
+        &data.as_view(),
+        &targets,
+        NegatedMeanSquaredError,
+        params(4, 3),
+    )
+    .unwrap();
+    let built_in = permutation_importance_regressor(
+        &model,
+        &data.as_view(),
+        &targets,
+        RegressionScorer::MeanSquaredError,
+        params(4, 3),
+    )
+    .unwrap();
+
+    // Negating a minimized metric turns it into a maximized one; permutation
+    // importance reports the same quality loss either way, because the score
+    // declares its own orientation.
+    assert_eq!(custom.means(), built_in.means());
+    assert_eq!(custom.ranked(), built_in.ranked());
+    assert!(custom.means()[0] > 0.0);
+    assert_eq!(custom.means()[2], 0.0);
 }

@@ -3,11 +3,10 @@ use std::fmt;
 
 use crate::api::{Classifier, Regressor};
 use crate::data::{BinaryTargets, MatrixView, RegressionTargets};
-use crate::metrics::{
-    accuracy_score, brier_score, f1_score, log_loss, mean_absolute_error, mean_squared_error,
-    precision_score, r2_score, recall_score, roc_auc_score, root_mean_squared_error,
+use crate::model_selection::{
+    ClassificationScore, RegressionScore, ScoringError, ScoringWorkspace, score_classifier_with,
+    score_regressor_with,
 };
-use crate::model_selection::{ClassificationScorer, RegressionScorer, ScoringError};
 use crate::numeric::OwnedRng;
 
 /// Parameters for a permutation-importance run.
@@ -135,11 +134,11 @@ impl Error for InspectionError {
 }
 
 /// Measures permutation importance for a fitted classifier.
-pub fn permutation_importance_classifier(
+pub fn permutation_importance_classifier<S: ClassificationScore>(
     classifier: &dyn Classifier,
     data: &MatrixView<'_>,
     targets: &BinaryTargets,
-    scorer: ClassificationScorer,
+    scorer: S,
     params: PermutationImportanceParams,
 ) -> Result<PermutationImportance, InspectionError> {
     let mut means = vec![0.0; data.columns()];
@@ -162,44 +161,30 @@ pub fn permutation_importance_classifier(
 /// Both output slices must have one entry per input feature. Prediction and
 /// permutation workspace is allocated once, so the cost of extra repeats is
 /// scoring alone.
-pub fn permutation_importance_classifier_into(
+pub fn permutation_importance_classifier_into<S: ClassificationScore>(
     classifier: &dyn Classifier,
     data: &MatrixView<'_>,
     targets: &BinaryTargets,
-    scorer: ClassificationScorer,
+    scorer: S,
     params: PermutationImportanceParams,
     means: &mut [f64],
     std_devs: &mut [f64],
 ) -> Result<(), InspectionError> {
     validate(data, targets.len(), params, means, std_devs)?;
-    let mut labels = vec![0_u8; if uses_labels(scorer) { data.rows() } else { 0 }];
-    let mut probabilities = vec![0.0_f32; if uses_labels(scorer) { 0 } else { data.rows() }];
+    let greater_is_better = scorer.greater_is_better();
+    let mut workspace = ScoringWorkspace::new();
     let mut score = |view: &MatrixView<'_>| {
-        classification_score(
-            classifier,
-            view,
-            targets.as_slice(),
-            scorer,
-            &mut labels,
-            &mut probabilities,
-        )
+        score_classifier_with(classifier, view, targets, &scorer, &mut workspace)
     };
-    run_permutations(
-        data,
-        params,
-        classification_greater_is_better(scorer),
-        means,
-        std_devs,
-        &mut score,
-    )
+    run_permutations(data, params, greater_is_better, means, std_devs, &mut score)
 }
 
 /// Measures permutation importance for a fitted regressor.
-pub fn permutation_importance_regressor(
+pub fn permutation_importance_regressor<S: RegressionScore>(
     regressor: &dyn Regressor,
     data: &MatrixView<'_>,
     targets: &RegressionTargets,
-    scorer: RegressionScorer,
+    scorer: S,
     params: PermutationImportanceParams,
 ) -> Result<PermutationImportance, InspectionError> {
     let mut means = vec![0.0; data.columns()];
@@ -222,34 +207,22 @@ pub fn permutation_importance_regressor(
 /// Both output slices must have one entry per input feature. Prediction and
 /// permutation workspace is allocated once, so the cost of extra repeats is
 /// scoring alone.
-pub fn permutation_importance_regressor_into(
+pub fn permutation_importance_regressor_into<S: RegressionScore>(
     regressor: &dyn Regressor,
     data: &MatrixView<'_>,
     targets: &RegressionTargets,
-    scorer: RegressionScorer,
+    scorer: S,
     params: PermutationImportanceParams,
     means: &mut [f64],
     std_devs: &mut [f64],
 ) -> Result<(), InspectionError> {
     validate(data, targets.len(), params, means, std_devs)?;
-    let mut predictions = vec![0.0_f32; data.rows()];
+    let greater_is_better = scorer.greater_is_better();
+    let mut workspace = ScoringWorkspace::new();
     let mut score = |view: &MatrixView<'_>| {
-        regression_score(
-            regressor,
-            view,
-            targets.as_slice(),
-            scorer,
-            &mut predictions,
-        )
+        score_regressor_with(regressor, view, targets, &scorer, &mut workspace)
     };
-    run_permutations(
-        data,
-        params,
-        regression_greater_is_better(scorer),
-        means,
-        std_devs,
-        &mut score,
-    )
+    run_permutations(data, params, greater_is_better, means, std_devs, &mut score)
 }
 
 /// Rejects shape and parameter problems before any prediction work happens.
@@ -341,85 +314,4 @@ fn shuffle(order: &mut [usize], rng: &mut OwnedRng) {
     for index in (1..order.len()).rev() {
         order.swap(index, rng.index(index + 1));
     }
-}
-
-const fn uses_labels(scorer: ClassificationScorer) -> bool {
-    matches!(
-        scorer,
-        ClassificationScorer::Accuracy
-            | ClassificationScorer::Precision
-            | ClassificationScorer::Recall
-            | ClassificationScorer::F1
-    )
-}
-
-const fn classification_greater_is_better(scorer: ClassificationScorer) -> bool {
-    !matches!(
-        scorer,
-        ClassificationScorer::Brier | ClassificationScorer::LogLoss
-    )
-}
-
-const fn regression_greater_is_better(scorer: RegressionScorer) -> bool {
-    matches!(scorer, RegressionScorer::R2)
-}
-
-/// Scores a classifier through the allocation-free batch contract.
-fn classification_score(
-    classifier: &dyn Classifier,
-    data: &MatrixView<'_>,
-    targets: &[u8],
-    scorer: ClassificationScorer,
-    labels: &mut [u8],
-    probabilities: &mut [f32],
-) -> Result<f64, ScoringError> {
-    if uses_labels(scorer) {
-        classifier
-            .predict_into(data, labels)
-            .map_err(ScoringError::Prediction)?;
-        let labels = &*labels;
-        return match scorer {
-            ClassificationScorer::Accuracy => accuracy_score(targets, labels),
-            ClassificationScorer::Precision => precision_score(targets, labels),
-            ClassificationScorer::Recall => recall_score(targets, labels),
-            _ => f1_score(targets, labels),
-        }
-        .map_err(ScoringError::Metric);
-    }
-    match classifier.classes() {
-        [0] => probabilities.fill(0.0),
-        [1] => probabilities.fill(1.0),
-        [0, 1] => classifier
-            .predict_class_proba_into(data, 1, probabilities)
-            .map_err(ScoringError::Prediction)?,
-        _ => return Err(ScoringError::UnsupportedClasses),
-    }
-    let probabilities = &*probabilities;
-    match scorer {
-        ClassificationScorer::Brier => brier_score(targets, probabilities),
-        ClassificationScorer::LogLoss => log_loss(targets, probabilities),
-        _ => roc_auc_score(targets, probabilities),
-    }
-    .map_err(ScoringError::Metric)
-}
-
-/// Scores a regressor through the allocation-free batch contract.
-fn regression_score(
-    regressor: &dyn Regressor,
-    data: &MatrixView<'_>,
-    targets: &[f32],
-    scorer: RegressionScorer,
-    predictions: &mut [f32],
-) -> Result<f64, ScoringError> {
-    regressor
-        .predict_into(data, predictions)
-        .map_err(ScoringError::Prediction)?;
-    let predictions = &*predictions;
-    match scorer {
-        RegressionScorer::MeanAbsoluteError => mean_absolute_error(targets, predictions),
-        RegressionScorer::MeanSquaredError => mean_squared_error(targets, predictions),
-        RegressionScorer::RootMeanSquaredError => root_mean_squared_error(targets, predictions),
-        _ => r2_score(targets, predictions),
-    }
-    .map_err(ScoringError::Metric)
 }
