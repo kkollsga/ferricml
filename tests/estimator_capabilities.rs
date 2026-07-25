@@ -220,6 +220,22 @@ fn declared_persistence_matches_the_artifact_entry_points_that_exist() {
         regressor
     );
 
+    // The declaration is a property of the type, so it covers every fit the
+    // type offers. Logistic regression declares both persistence and
+    // multiclass fitting, and the joint fit persists under its own payload
+    // schema rather than being refused.
+    let classes = ferricml::data::ClassTargets::new(vec![3, 7, 10, 7]).unwrap();
+    let multiclass = LogisticRegression::fit_multiclass(
+        &data.as_view(),
+        &classes,
+        LogisticRegressionParams::default(),
+    )
+    .unwrap();
+    let bytes = multiclass.to_artifact([5; 32]).unwrap();
+    let decoded = LogisticRegression::from_artifact(&bytes, [5; 32]).unwrap();
+    assert_eq!(decoded, multiclass);
+    assert_eq!(decoded.classes(), [3, 7, 10]);
+
     // `AnyClassifier` has no artifact entry point at all, which is what its
     // declaration says. Requesting one is a compile error, not a wrong answer.
     assert!(!AnyClassifier::CAPABILITIES.artifact());

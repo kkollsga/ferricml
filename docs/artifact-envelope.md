@@ -23,6 +23,20 @@ logistic-state component. Unknown required flags, payload versions, schema
 roles, nonzero reserved fields, and component versions are rejected rather
 than guessed. The hard encoded-size limit is 32 MiB.
 
+A joint multinomial fit is a different model from a binary one, so it is a
+second payload schema under the same estimator kind rather than a widening of
+the first. Payload version `1` stores one coefficient row and one intercept;
+payload version `2` stores the observed class list, one intercept per class, and
+one coefficient row per class, and requires at least two classes. Every binary
+artifact therefore keeps its exact bytes and its exact reader. Decoding reads
+the recorded payload version from the header to select which reader runs — a
+two-byte selection made before anything is hashed, so a hostile buffer is never
+hashed twice — and the selected reader then re-validates that same field along
+with the size limit, checksum, magic, kind, and schema identity. Class labels
+are stored as fixed-width words in sorted, deduplicated order, which is the only
+order decode accepts, so a model has exactly one encoding and its probability
+columns cannot be permuted by a rewrite.
+
 `LogisticRegression::from_artifact` checks the size and checksum before parsing
 counts or model state, requires the expected input-schema identity, validates
 all declared lengths before borrowing component payloads, bounds feature

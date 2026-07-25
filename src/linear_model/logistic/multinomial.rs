@@ -667,12 +667,81 @@ mod tests {
             model.predict_positive_proba(&[0.2, 0.3]).unwrap_err(),
             expected
         );
-        // The v1 logistic schema stores one coefficient row; refusing is the
-        // handoff to a schema that stores several.
+    }
+
+    /// A multiclass fit persists under its own payload version, and the two
+    /// schemas never decode as each other.
+    #[test]
+    fn a_multiclass_fit_round_trips_and_cannot_be_read_as_a_binary_one() {
+        let (data, targets) = three_class_problem();
+        let model = LogisticRegression::fit_multiclass(
+            &data.as_view(),
+            &targets,
+            LogisticRegressionParams::default(),
+        )
+        .unwrap();
+        let schema = [7; 32];
+        let bytes = model.to_artifact(schema).unwrap();
         assert_eq!(
-            model.to_artifact([7; 32]).unwrap_err(),
-            ArtifactError::UnsupportedModelState
+            bytes,
+            model.to_artifact(schema).unwrap(),
+            "encoding is stable"
         );
+
+        let decoded = LogisticRegression::from_artifact(&bytes, schema).unwrap();
+        assert_eq!(decoded, model);
+        assert_eq!(decoded.classes(), targets.classes());
+        assert_eq!(decoded.n_decision_columns(), 3);
+        assert_eq!(
+            decoded.predict_proba(&data.as_view()).unwrap(),
+            model.predict_proba(&data.as_view()).unwrap()
+        );
+        assert_eq!(
+            decoded.to_artifact(schema).unwrap(),
+            bytes,
+            "re-encoding a decoded model reproduces its bytes exactly"
+        );
+
+        // Schema binding and payload-schema isolation.
+        assert_eq!(
+            LogisticRegression::from_artifact(&bytes, [8; 32]).unwrap_err(),
+            ArtifactError::FeatureSchemaMismatch
+        );
+        let binary = LogisticRegression::fit(
+            &data.as_view(),
+            &crate::data::BinaryTargets::new(vec![0, 1, 0, 1, 0, 1, 0, 1, 0]).unwrap(),
+            LogisticRegressionParams::default(),
+        );
+        if let Ok(binary) = binary {
+            let binary_bytes = binary.to_artifact(schema).unwrap();
+            assert_ne!(binary_bytes, bytes);
+            assert!(LogisticRegression::from_artifact(&binary_bytes, schema).is_ok());
+        }
+    }
+
+    /// Non-contiguous labels survive the round trip, because the class list is
+    /// stored rather than reconstructed from the row count.
+    #[test]
+    fn artifact_classes_are_stored_not_guessed() {
+        let (data, targets) = three_class_problem();
+        let relabelled = ClassTargets::new(
+            targets
+                .as_slice()
+                .iter()
+                .map(|&label| [5_u8, 9, 20][usize::from(label)])
+                .collect(),
+        )
+        .unwrap();
+        let model = LogisticRegression::fit_multiclass(
+            &data.as_view(),
+            &relabelled,
+            LogisticRegressionParams::default(),
+        )
+        .unwrap();
+        let bytes = model.to_artifact([7; 32]).unwrap();
+        let decoded = LogisticRegression::from_artifact(&bytes, [7; 32]).unwrap();
+        assert_eq!(decoded.classes(), [5, 9, 20]);
+        assert_eq!(decoded, model);
     }
 
     #[test]

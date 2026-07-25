@@ -8,8 +8,8 @@ use crate::api::{
 };
 use crate::artifact::{
     ArtifactError, ArtifactPayloadWriter, LOGISTIC_ARTIFACT_KIND, MODEL_ARTIFACT_VERSION,
-    SchemaRole, artifact_version, decode_component, decode_legacy_envelope, decode_v2_envelope,
-    encode_component, encode_v2_envelope,
+    SchemaRole, artifact_payload_version, artifact_version, decode_component,
+    decode_legacy_envelope, decode_v2_envelope, encode_component, encode_v2_envelope,
 };
 use crate::data::{BinaryTargets, ClassTargets, MatrixView, SampleWeights};
 use crate::loss::{BinaryLogLoss, accumulate_newton_row, raw_score};
@@ -23,8 +23,17 @@ const MAX_CLASSES: usize = 256;
 const MAX_ARTIFACT_FEATURES: usize = 1_000_000;
 const LOGISTIC_FIXED_PAYLOAD_BYTES: usize = 8 * 4;
 const LOGISTIC_PAYLOAD_VERSION: u16 = 1;
+/// Payload schema for a joint multinomial fit: one class list, `K` intercepts,
+/// and `K` coefficient rows. It is a second schema under the same estimator
+/// kind rather than a widening of version 1, so every binary artifact ever
+/// written keeps its exact bytes and its exact reader.
+const LOGISTIC_MULTICLASS_PAYLOAD_VERSION: u16 = 2;
 const LOGISTIC_STATE_COMPONENT_KIND: u16 = 1;
 const LOGISTIC_STATE_COMPONENT_VERSION: u16 = 1;
+const LOGISTIC_MULTICLASS_STATE_COMPONENT_VERSION: u16 = 2;
+/// `n_features`, `fit_intercept`, `C`, `max_iter`, `tol`, `iterations`,
+/// `class_count`, and `coefficient_count`.
+const LOGISTIC_MULTICLASS_FIXED_PAYLOAD_BYTES: usize = 8 * 4;
 
 /// Parameters for [`LogisticRegression`].
 #[derive(Clone, Debug, PartialEq)]
@@ -483,14 +492,25 @@ impl LogisticRegression {
 
     /// Encodes this model in FerricML's stable checksummed artifact format.
     ///
-    /// The v1 logistic schema stores one coefficient row, so only a binary fit
-    /// can be encoded. A multiclass fit reports
-    /// [`ArtifactError::UnsupportedModelState`] rather than writing bytes that
-    /// would decode as a different model.
+    /// Both fits persist. The two parametrizations are different models, so
+    /// they are different payload schemas under one estimator kind: a binary
+    /// fit writes payload version 1, which stores one coefficient row and one
+    /// intercept, and a multiclass fit writes payload version 2, which stores
+    /// the observed class list, one intercept per class, and one coefficient
+    /// row per class. Decoding selects the reader from the recorded version, so
+    /// neither can decode as the other.
     pub fn to_artifact(&self, feature_schema_sha256: [u8; 32]) -> Result<Vec<u8>, ArtifactError> {
-        if !self.is_binary() {
-            return Err(ArtifactError::UnsupportedModelState);
+        if self.is_binary() {
+            self.to_binary_artifact(feature_schema_sha256)
+        } else {
+            self.to_multiclass_artifact(feature_schema_sha256)
         }
+    }
+
+    fn to_binary_artifact(
+        &self,
+        feature_schema_sha256: [u8; 32],
+    ) -> Result<Vec<u8>, ArtifactError> {
         if self.n_features_in > MAX_ARTIFACT_FEATURES {
             return Err(ArtifactError::InvalidPayload);
         }
@@ -527,11 +547,86 @@ impl LogisticRegression {
         )
     }
 
+    /// Encodes a joint multinomial fit under payload version 2.
+    ///
+    /// The class list is stored explicitly: probability columns follow it, and
+    /// a decoded model that guessed its labels would silently relabel every
+    /// prediction. Labels are written as fixed-width words in the sorted order
+    /// the fit observed, which is also the only order decode accepts, so one
+    /// model has exactly one encoding.
+    fn to_multiclass_artifact(
+        &self,
+        feature_schema_sha256: [u8; 32],
+    ) -> Result<Vec<u8>, ArtifactError> {
+        if self.n_features_in > MAX_ARTIFACT_FEATURES || self.classes.len() > MAX_CLASSES {
+            return Err(ArtifactError::InvalidPayload);
+        }
+        debug_assert_eq!(self.classes.len(), self.intercepts.len());
+        let n_features =
+            u32::try_from(self.n_features_in).map_err(|_| ArtifactError::InvalidPayload)?;
+        let max_iter =
+            u32::try_from(self.params.max_iter).map_err(|_| ArtifactError::InvalidPayload)?;
+        let iterations =
+            u32::try_from(self.iterations).map_err(|_| ArtifactError::InvalidPayload)?;
+        let class_count =
+            u32::try_from(self.classes.len()).map_err(|_| ArtifactError::InvalidPayload)?;
+        let coefficient_count =
+            u32::try_from(self.coefficients.len()).map_err(|_| ArtifactError::InvalidPayload)?;
+        if self.intercepts.len() != self.classes.len()
+            || self.coefficients.len() != self.classes.len() * self.n_features_in
+        {
+            return Err(ArtifactError::UnsupportedModelState);
+        }
+        let mut state = ArtifactPayloadWriter::with_capacity(
+            LOGISTIC_MULTICLASS_FIXED_PAYLOAD_BYTES
+                + self.classes.len() * 8
+                + self.coefficients.len() * 4,
+        );
+        state.u32(n_features);
+        state.u32(u32::from(self.params.fit_intercept));
+        state.f32(self.params.c);
+        state.u32(max_iter);
+        state.f32(self.params.tol);
+        state.u32(iterations);
+        state.u32(class_count);
+        state.u32(coefficient_count);
+        for &class in &self.classes {
+            state.u32(u32::from(class));
+        }
+        for &intercept in &self.intercepts {
+            state.f32(intercept);
+        }
+        for &coefficient in &self.coefficients {
+            state.f32(coefficient);
+        }
+        let component = encode_component(
+            LOGISTIC_STATE_COMPONENT_KIND,
+            LOGISTIC_MULTICLASS_STATE_COMPONENT_VERSION,
+            &state.finish(),
+        )?;
+        encode_v2_envelope(
+            LOGISTIC_ARTIFACT_KIND,
+            LOGISTIC_MULTICLASS_PAYLOAD_VERSION,
+            &[(SchemaRole::Input, feature_schema_sha256)],
+            &component,
+        )
+    }
+
     /// Decodes a logistic model after checking integrity and feature identity.
+    ///
+    /// The recorded payload version selects the reader before anything is
+    /// hashed or parsed, so a binary artifact and a multiclass artifact never
+    /// reach each other's parser. Every field that selection depends on is
+    /// re-read and re-validated by the reader it selected.
     pub fn from_artifact(
         bytes: &[u8],
         expected_feature_schema_sha256: [u8; 32],
     ) -> Result<Self, ArtifactError> {
+        if artifact_version(bytes)? == MODEL_ARTIFACT_VERSION
+            && artifact_payload_version(bytes)? == LOGISTIC_MULTICLASS_PAYLOAD_VERSION
+        {
+            return Self::from_multiclass_artifact(bytes, expected_feature_schema_sha256);
+        }
         let cursor = if artifact_version(bytes)? == MODEL_ARTIFACT_VERSION {
             let mut envelope = decode_v2_envelope(
                 bytes,
@@ -557,6 +652,100 @@ impl LogisticRegression {
             )?
         };
         Self::decode_payload(cursor)
+    }
+
+    fn from_multiclass_artifact(
+        bytes: &[u8],
+        expected_feature_schema_sha256: [u8; 32],
+    ) -> Result<Self, ArtifactError> {
+        let mut envelope = decode_v2_envelope(
+            bytes,
+            LOGISTIC_ARTIFACT_KIND,
+            LOGISTIC_MULTICLASS_PAYLOAD_VERSION,
+            &[(SchemaRole::Input, expected_feature_schema_sha256)],
+        )?;
+        let mut cursor = decode_component(
+            &mut envelope,
+            LOGISTIC_STATE_COMPONENT_KIND,
+            LOGISTIC_MULTICLASS_STATE_COMPONENT_VERSION,
+        )?;
+        if !envelope.is_empty() {
+            return Err(ArtifactError::TrailingBytes);
+        }
+
+        let n_features_in = cursor.u32()? as usize;
+        let fit_intercept = match cursor.u32()? {
+            0 => false,
+            1 => true,
+            _ => return Err(ArtifactError::InvalidPayload),
+        };
+        let c = cursor.f32()?;
+        let max_iter = cursor.u32()? as usize;
+        let tol = cursor.f32()?;
+        let iterations = cursor.u32()? as usize;
+        let class_count = cursor.u32()? as usize;
+        let coefficient_count = cursor.u32()? as usize;
+        let expected_coefficients = class_count.checked_mul(n_features_in);
+        if n_features_in == 0
+            || n_features_in > MAX_ARTIFACT_FEATURES
+            // A multinomial fit needs two observed classes, so a one-row model
+            // is a binary artifact wearing the wrong schema.
+            || !(2..=MAX_CLASSES).contains(&class_count)
+            || expected_coefficients != Some(coefficient_count)
+            || !c.is_finite()
+            || c <= 0.0
+            || max_iter == 0
+            || !tol.is_finite()
+            || tol <= 0.0
+            || iterations == 0
+            || iterations > max_iter
+        {
+            return Err(ArtifactError::InvalidPayload);
+        }
+
+        let mut classes: Vec<u8> = Vec::with_capacity(cursor.bounded_capacity(class_count, 4));
+        for _ in 0..class_count {
+            let label = u8::try_from(cursor.u32()?).map_err(|_| ArtifactError::InvalidPayload)?;
+            // Sorted and deduplicated is the only accepted order, so a model
+            // has exactly one encoding and its probability columns cannot be
+            // permuted by a rewrite.
+            if classes.last().is_some_and(|&previous| previous >= label) {
+                return Err(ArtifactError::InvalidPayload);
+            }
+            classes.push(label);
+        }
+        let mut intercepts = Vec::with_capacity(cursor.bounded_capacity(class_count, 4));
+        for _ in 0..class_count {
+            let value = cursor.f32()?;
+            if !value.is_finite() {
+                return Err(ArtifactError::InvalidPayload);
+            }
+            intercepts.push(value);
+        }
+        let mut coefficients = Vec::with_capacity(cursor.bounded_capacity(coefficient_count, 4));
+        for _ in 0..coefficient_count {
+            let value = cursor.f32()?;
+            if !value.is_finite() {
+                return Err(ArtifactError::InvalidPayload);
+            }
+            coefficients.push(value);
+        }
+        if !cursor.is_empty() {
+            return Err(ArtifactError::TrailingBytes);
+        }
+        Ok(Self {
+            n_features_in,
+            params: LogisticRegressionParams {
+                c,
+                fit_intercept,
+                max_iter,
+                tol,
+            },
+            classes,
+            coefficients,
+            intercepts,
+            iterations,
+        })
     }
 
     fn decode_payload(
@@ -1481,11 +1670,23 @@ mod tests {
         );
 
         let mut payload_version = bytes.clone();
-        payload_version[12..14].copy_from_slice(&2_u16.to_le_bytes());
+        payload_version[12..14].copy_from_slice(&9_u16.to_le_bytes());
         resign_legacy_artifact(&mut payload_version);
         assert_eq!(
             LogisticRegression::from_artifact(&payload_version, schema).unwrap_err(),
-            ArtifactError::UnsupportedPayloadVersion { found: 2 }
+            ArtifactError::UnsupportedPayloadVersion { found: 9 }
+        );
+
+        // Payload version 2 is the multiclass schema. Relabelling a binary
+        // artifact into it selects that reader, which rejects the version-1
+        // state component it finds — the two schemas cannot be crossed by
+        // rewriting one header field.
+        let mut multiclass_version = bytes.clone();
+        multiclass_version[12..14].copy_from_slice(&2_u16.to_le_bytes());
+        resign_legacy_artifact(&mut multiclass_version);
+        assert_eq!(
+            LogisticRegression::from_artifact(&multiclass_version, schema).unwrap_err(),
+            ArtifactError::UnsupportedPayloadVersion { found: 1 }
         );
 
         let mut schema_role = bytes.clone();

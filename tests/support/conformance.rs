@@ -621,8 +621,61 @@ pub fn batch_classifier_report<C: ClassifierCase>() -> Report {
             ),
         }),
     );
+    check_multiclass_artifact_declaration::<C>(&mut report, &fixture);
 
     report
+}
+
+/// A declared capability holds for every fit the type offers.
+///
+/// `artifact` is a property of the estimator *type*, not of one fitted value,
+/// so a classifier declaring both persistence and multiclass fitting owes a
+/// working round trip for a multiclass fit too. Without this the flag could
+/// quietly mean "some fits persist", and a caller reading it before choosing an
+/// estimator would be told something untrue of the model it is about to train.
+fn check_multiclass_artifact_declaration<C: ClassifierCase>(
+    report: &mut Report,
+    fixture: &Fixture,
+) {
+    let capabilities = C::Model::CAPABILITIES;
+    if !(capabilities.artifact() && capabilities.multiclass()) {
+        return;
+    }
+    let view = fixture.data.as_view();
+    let Some(model) = C::fit_multiclass(&view, &fixture.class_labels) else {
+        return;
+    };
+    let (Ok(labels), Ok(probabilities)) = (model.predict(&view), model.predict_proba(&view)) else {
+        return;
+    };
+    let detail = match (C::round_trip(&model), C::round_trip(&model)) {
+        (Some(Ok((bytes, decoded))), Some(Ok((again, _)))) => {
+            if bytes != again {
+                Some("the multiclass artifact did not re-encode to the same bytes".to_owned())
+            } else if decoded.classes() != model.classes() {
+                Some(format!(
+                    "the decoded multiclass model reports classes {:?} instead of {:?}",
+                    decoded.classes(),
+                    model.classes()
+                ))
+            } else if decoded.predict(&view).as_ref() != Ok(&labels)
+                || decoded.predict_proba(&view).as_ref() != Ok(&probabilities)
+            {
+                Some("the decoded multiclass model predicts differently".to_owned())
+            } else {
+                None
+            }
+        }
+        (Some(Err(error)), _) => Some(format!(
+            "artifact is declared but a multiclass fit does not persist: {error:?}"
+        )),
+        _ => Some("the multiclass artifact round trip did not repeat successfully".to_owned()),
+    };
+    report.require(
+        "artifact_declaration_matches_behavior",
+        detail.is_none(),
+        || detail.unwrap_or_default(),
+    );
 }
 
 fn scalar_classifier_obligations<C: ScalarClassifierCase>(

@@ -13,8 +13,9 @@ pub(crate) use envelope::{
     PAIRWISE_LINEAR_RANKER_ARTIFACT_KIND, RANDOM_FOREST_REGRESSOR_ARTIFACT_KIND,
     RIDGE_ARTIFACT_KIND, STAGED_PIPELINE_ARTIFACT_KIND, STANDARD_SCALER_ARTIFACT_KIND,
     STANDARD_SCALER_LINEAR_PIPELINE_ARTIFACT_KIND, STANDARD_SCALER_LOGISTIC_PIPELINE_ARTIFACT_KIND,
-    STANDARD_SCALER_RIDGE_PIPELINE_ARTIFACT_KIND, SchemaRole, artifact_version, decode_component,
-    decode_legacy_envelope, decode_v2_envelope, encode_component, encode_v2_envelope,
+    STANDARD_SCALER_RIDGE_PIPELINE_ARTIFACT_KIND, SchemaRole, artifact_payload_version,
+    artifact_version, decode_component, decode_legacy_envelope, decode_v2_envelope,
+    encode_component, encode_v2_envelope,
 };
 pub use error::ArtifactError;
 pub(crate) use logical_tree::{

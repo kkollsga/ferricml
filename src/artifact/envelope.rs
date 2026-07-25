@@ -83,6 +83,24 @@ pub(crate) fn artifact_version(bytes: &[u8]) -> Result<u16, ArtifactError> {
     ))
 }
 
+/// Reads the estimator payload version out of a version-2 envelope header.
+///
+/// This is a *selector*, not a check: an estimator whose kind carries more than
+/// one payload schema uses it to choose which decoder to run, and that decoder
+/// then re-reads and re-validates the same field along with the size limit, the
+/// checksum, the magic, the kind, and the schema identities. Reading two bytes
+/// before the checksum costs nothing an attacker can exploit, whereas running
+/// both decoders in turn would hash an attacker-supplied buffer twice.
+pub(crate) fn artifact_payload_version(bytes: &[u8]) -> Result<u16, ArtifactError> {
+    const OFFSET: usize = ARTIFACT_MAGIC.len() + 2 + 2;
+    if bytes.len() < OFFSET + 2 {
+        return Err(ArtifactError::Truncated);
+    }
+    Ok(u16::from_le_bytes(
+        bytes[OFFSET..OFFSET + 2].try_into().expect("exact length"),
+    ))
+}
+
 pub(crate) fn encode_component(
     kind: u16,
     version: u16,

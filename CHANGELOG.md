@@ -225,6 +225,16 @@ and releases use [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   integer weight is the same fit as repeating the row. The bin grid stays
   unweighted: it is fitted from the distinct observed feature values, which
   neither a weight nor a repeated row changes.
+- Artifact persistence for a joint multinomial `LogisticRegression` fit, under
+  a second payload schema of the existing estimator kind. It stores the
+  observed class list, one intercept per class, and one coefficient row per
+  class; decoding selects the reader from the recorded payload version, so a
+  binary and a multiclass artifact never decode as each other. Binary artifacts
+  keep their exact bytes. `LogisticRegression` now persists every fit it
+  offers, so its declared `artifact` capability no longer depends on which
+  entry point was used, and the conformance battery asserts that a classifier
+  declaring both persistence and multiclass fitting round trips a multiclass
+  fit as well.
 
 ### Changed
 

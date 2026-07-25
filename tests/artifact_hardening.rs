@@ -29,7 +29,7 @@
 
 use ferricml::api::AnyRegressor;
 use ferricml::artifact::ArtifactError;
-use ferricml::data::{BinaryTargets, DenseMatrix, RegressionTargets};
+use ferricml::data::{BinaryTargets, ClassTargets, DenseMatrix, RegressionTargets};
 use ferricml::ensemble::{
     HistGradientBoostingRegressor, HistGradientBoostingRegressorParams, MaxFeatures,
     RandomForestRegressor, RandomForestRegressorParams,
@@ -503,6 +503,14 @@ fn seed_corpus() -> Vec<(&'static str, Vec<u8>)> {
         LogisticRegressionParams::default(),
     )
     .unwrap();
+    // Deliberately non-contiguous labels: the multiclass payload stores its
+    // class list, so a reader that reconstructed one would be caught here.
+    let multiclass_logistic = LogisticRegression::fit_multiclass(
+        &data.as_view(),
+        &ClassTargets::new(vec![3, 7, 10, 7]).unwrap(),
+        LogisticRegressionParams::default(),
+    )
+    .unwrap();
     let linear = LinearRegression::fit(
         &data.as_view(),
         &regression,
@@ -602,6 +610,10 @@ fn seed_corpus() -> Vec<(&'static str, Vec<u8>)> {
 
     vec![
         ("logistic", logistic.to_artifact(INPUT_SCHEMA).unwrap()),
+        (
+            "multiclass-logistic",
+            multiclass_logistic.to_artifact(INPUT_SCHEMA).unwrap(),
+        ),
         ("linear", linear.to_artifact(INPUT_SCHEMA).unwrap()),
         ("ridge", ridge.to_artifact(INPUT_SCHEMA).unwrap()),
         (
@@ -1428,6 +1440,7 @@ fn corpus() -> Vec<Case> {
             .clone()
     };
     let logistic = seed("logistic");
+    let multiclass = seed("multiclass-logistic");
     let scaler = seed("standard-scaler");
     let forest = seed("forest");
     let staged = seed("staged-two");
@@ -1438,6 +1451,11 @@ fn corpus() -> Vec<Case> {
     let (any_payload, _) = payload_span(&any_ridge).expect("dispatch payload");
     let (staged_payload, _) = payload_span(&staged).expect("staged payload");
     let (ranker_payload, _) = payload_span(&ranker).expect("ranker payload");
+    // The multiclass state component sits one component header past the
+    // payload; its fixed fields are eight words, then the class list.
+    let (multiclass_payload, _) = payload_span(&multiclass).expect("multiclass payload");
+    let multiclass_state = multiclass_payload + COMPONENT_HEADER_BYTES;
+    let multiclass_features = u32_at(&multiclass, multiclass_state);
 
     // A declared element count far past the bytes present. Before the
     // reservation was clamped, each of these turned roughly 150 bytes into
@@ -1938,6 +1956,81 @@ fn corpus() -> Vec<Case> {
             decoder: "pairwise-ranker",
             expected: ArtifactError::InvalidPayload,
             bytes: overwrite(&ranker, ranker_payload + 8, &9_u32.to_le_bytes()),
+        },
+        // The multiclass logistic payload is a second schema under the same
+        // estimator kind, so it owes the same guarantees: a declared count
+        // never sizes an allocation, a class list has exactly one accepted
+        // order, and the two schemas cannot be crossed by a header rewrite.
+        Case {
+            name: "multiclass-logistic-inflated-width",
+            provenance: "1e6 declared features and a coefficient count that agrees, no bytes",
+            decoder: "logistic",
+            expected: ArtifactError::Truncated,
+            bytes: {
+                let classes = u32_at(&multiclass, multiclass_state + 24);
+                let bytes = overwrite(&multiclass, multiclass_state, &inflated.to_le_bytes());
+                overwrite(
+                    &bytes,
+                    multiclass_state + 28,
+                    &(inflated * classes).to_le_bytes(),
+                )
+            },
+        },
+        Case {
+            name: "multiclass-logistic-inflated-class-count",
+            provenance: "1e6 declared classes, refused by the class ceiling before any read",
+            decoder: "logistic",
+            expected: ArtifactError::InvalidPayload,
+            bytes: {
+                let bytes = overwrite(&multiclass, multiclass_state + 24, &inflated.to_le_bytes());
+                overwrite(
+                    &bytes,
+                    multiclass_state + 28,
+                    &(inflated * multiclass_features).to_le_bytes(),
+                )
+            },
+        },
+        Case {
+            name: "multiclass-logistic-unsorted-classes",
+            provenance: "class labels rewritten out of order, a second name for one model",
+            decoder: "logistic",
+            expected: ArtifactError::InvalidPayload,
+            bytes: overwrite(&multiclass, multiclass_state + 32, &20_u32.to_le_bytes()),
+        },
+        Case {
+            name: "multiclass-logistic-repeated-class",
+            provenance: "a class list repeating a label, so a probability column has two names",
+            decoder: "logistic",
+            expected: ArtifactError::InvalidPayload,
+            bytes: overwrite(&multiclass, multiclass_state + 36, &3_u32.to_le_bytes()),
+        },
+        Case {
+            name: "multiclass-logistic-label-beyond-u8",
+            provenance: "a class label stored past the u8 range every FerricML label lives in",
+            decoder: "logistic",
+            expected: ArtifactError::InvalidPayload,
+            bytes: overwrite(&multiclass, multiclass_state + 40, &300_u32.to_le_bytes()),
+        },
+        Case {
+            name: "multiclass-logistic-single-class",
+            provenance: "one score row claimed under the joint schema, which needs two",
+            decoder: "logistic",
+            expected: ArtifactError::InvalidPayload,
+            bytes: overwrite(&multiclass, multiclass_state + 24, &1_u32.to_le_bytes()),
+        },
+        Case {
+            name: "multiclass-logistic-coefficient-count-mismatch",
+            provenance: "a coefficient count that is not classes times features",
+            decoder: "logistic",
+            expected: ArtifactError::InvalidPayload,
+            bytes: overwrite(&multiclass, multiclass_state + 28, &5_u32.to_le_bytes()),
+        },
+        Case {
+            name: "binary-logistic-relabelled-as-multiclass",
+            provenance: "a binary artifact whose envelope claims the joint payload schema",
+            decoder: "logistic",
+            expected: ArtifactError::UnsupportedPayloadVersion { found: 1 },
+            bytes: overwrite(&logistic, 12, &2_u16.to_le_bytes()),
         },
     ]);
 
