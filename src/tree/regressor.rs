@@ -1,6 +1,6 @@
 use super::grower::{GrowerConfig, Regression, grow_tree, unbootstrapped_sample};
 use super::packed::PackedTree;
-use super::parameters::{DecisionTreeRegressorParams, encode_max_features};
+use super::parameters::{DecisionTreeRegressorParams, encode_max_features, encode_splitter};
 use super::validation::{
     MAX_ARTIFACT_FEATURES, MAX_ARTIFACT_TOTAL_NODES, check_prediction_data, check_row,
     read_common_metadata, tree_seed, validate_fit, write_common_metadata,
@@ -21,7 +21,7 @@ const OBJECTIVE_VERSION: u32 = 1;
 const METADATA_COMPONENT_KIND: u16 = 1;
 const TREE_COMPONENT_KIND: u16 = 2;
 const COMPONENT_VERSION: u16 = 1;
-const METADATA_BYTES: usize = 8 * 4 + 8;
+const METADATA_BYTES: usize = 9 * 4 + 8;
 
 /// A single regression tree. Predictions are leaf means.
 ///
@@ -166,6 +166,7 @@ impl DecisionTreeRegressor {
             self.params.min_samples_split(),
             self.params.min_samples_leaf(),
             encode_max_features(self.params.max_features())?,
+            encode_splitter(self.params.splitter()),
             self.params.random_state(),
             node_count,
         )?;
@@ -227,6 +228,7 @@ impl DecisionTreeRegressor {
                 .with_min_samples_split(common.min_samples_split)
                 .with_min_samples_leaf(common.min_samples_leaf)
                 .with_max_features(common.max_features)
+                .with_splitter(common.splitter)
                 .with_random_state(common.random_state),
             tree,
         })
@@ -239,6 +241,7 @@ fn grower_config(params: &DecisionTreeRegressorParams) -> GrowerConfig {
         min_samples_split: params.min_samples_split(),
         min_samples_leaf: params.min_samples_leaf(),
         max_features: params.max_features(),
+        splitter: params.splitter(),
     }
 }
 

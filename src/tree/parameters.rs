@@ -17,7 +17,53 @@ pub enum MaxFeatures {
     Count(usize),
 }
 
+/// How a node chooses the split it takes among its candidate columns.
+///
+/// This is a parameter rather than two estimator types because the reference
+/// treats it as one too: its singular randomized tree classes are its standard
+/// tree classes with this setting changed, bit-identically so in every matched
+/// pair the specification room compared. FerricML claims the same relation, and
+/// spends one typed parameter on it rather than two more public types and two
+/// more permanent artifact names.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum Splitter {
+    /// Evaluate every boundary between adjacent distinct values in each
+    /// candidate column and keep the best-scoring split.
+    #[default]
+    Best,
+    /// Draw one threshold uniformly inside each candidate column's own range
+    /// within the node, and keep the best-scoring of those draws.
+    ///
+    /// This is what makes an *extremely randomized* tree: the column set is
+    /// still sampled, but the threshold is no longer optimized within a column,
+    /// so individual trees decorrelate and fit far faster.
+    Random,
+}
+
 use crate::artifact::ArtifactError;
+
+const SPLITTER_BEST: u32 = 1;
+const SPLITTER_RANDOM: u32 = 2;
+
+/// The on-disk tag for a split-selection policy.
+///
+/// Beside the type for the same reason the feature policy's tag is: one
+/// spelling per policy, so a model cannot acquire a second valid encoding by
+/// being written through a different estimator.
+pub(crate) const fn encode_splitter(value: Splitter) -> u32 {
+    match value {
+        Splitter::Best => SPLITTER_BEST,
+        Splitter::Random => SPLITTER_RANDOM,
+    }
+}
+
+pub(crate) const fn decode_splitter(tag: u32) -> Option<Splitter> {
+    match tag {
+        SPLITTER_BEST => Some(Splitter::Best),
+        SPLITTER_RANDOM => Some(Splitter::Random),
+        _ => None,
+    }
+}
 
 const MAX_FEATURES_ALL: u32 = 1;
 const MAX_FEATURES_SQRT: u32 = 2;
@@ -63,6 +109,7 @@ macro_rules! tree_params {
             min_samples_split: usize,
             min_samples_leaf: usize,
             max_features: MaxFeatures,
+            splitter: Splitter,
             random_state: u64,
         }
 
@@ -73,6 +120,7 @@ macro_rules! tree_params {
                     min_samples_split: 2,
                     min_samples_leaf: 1,
                     max_features: MaxFeatures::All,
+                    splitter: Splitter::Best,
                     random_state: 0,
                 }
             }
@@ -107,6 +155,19 @@ macro_rules! tree_params {
                 self
             }
 
+            /// Sets how a node picks its threshold among the candidate
+            /// columns.
+            ///
+            /// [`Splitter::Random`] draws one threshold per candidate column
+            /// instead of optimizing within it, which is what makes the tree
+            /// *extremely randomized*. The candidate columns themselves are
+            /// drawn the same way under both settings.
+            #[must_use]
+            pub fn with_splitter(mut self, splitter: Splitter) -> Self {
+                self.splitter = splitter;
+                self
+            }
+
             /// Sets the deterministic training seed.
             ///
             /// A tree still draws its candidate columns from this seed even at
@@ -136,6 +197,11 @@ macro_rules! tree_params {
             /// Returns the feature-selection policy.
             pub const fn max_features(&self) -> MaxFeatures {
                 self.max_features
+            }
+
+            /// Returns the split-selection policy.
+            pub const fn splitter(&self) -> Splitter {
+                self.splitter
             }
 
             /// Returns the deterministic training seed.

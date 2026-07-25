@@ -2,7 +2,7 @@ use super::grower::{
     Classification, GrowerConfig, grow_class_tree, grow_tree, unbootstrapped_sample,
 };
 use super::packed::{ClassTree, PackedTree};
-use super::parameters::{DecisionTreeClassifierParams, encode_max_features};
+use super::parameters::{DecisionTreeClassifierParams, encode_max_features, encode_splitter};
 use super::validation::{
     MAX_ARTIFACT_FEATURES, MAX_ARTIFACT_TOTAL_NODES, check_output_len, check_prediction_data,
     check_row, read_common_metadata, tree_seed, validate_fit, write_common_metadata,
@@ -27,7 +27,7 @@ const TREE_COMPONENT_KIND: u16 = 2;
 /// multiclass flavour, immediately after its topology component.
 const LEAF_PROBABILITY_COMPONENT_KIND: u16 = 3;
 const COMPONENT_VERSION: u16 = 1;
-const METADATA_BYTES: usize = 10 * 4 + 8;
+const METADATA_BYTES: usize = 11 * 4 + 8;
 
 /// Which leaf arithmetic the encoded tree uses. The two are different models,
 /// so the tag is read before the tree is, and neither flavour's records are
@@ -457,6 +457,7 @@ impl DecisionTreeClassifier {
             self.params.min_samples_split(),
             self.params.min_samples_leaf(),
             encode_max_features(self.params.max_features())?,
+            encode_splitter(self.params.splitter()),
             self.params.random_state(),
             node_count,
         )?;
@@ -597,6 +598,7 @@ impl DecisionTreeClassifier {
                 .with_min_samples_split(common.min_samples_split)
                 .with_min_samples_leaf(common.min_samples_leaf)
                 .with_max_features(common.max_features)
+                .with_splitter(common.splitter)
                 .with_random_state(common.random_state),
             classes,
             tree,
@@ -665,6 +667,7 @@ fn grower_config(params: &DecisionTreeClassifierParams) -> GrowerConfig {
         min_samples_split: params.min_samples_split(),
         min_samples_leaf: params.min_samples_leaf(),
         max_features: params.max_features(),
+        splitter: params.splitter(),
     }
 }
 

@@ -1576,9 +1576,10 @@ fn canonical_probability_tree() -> [[u32; 5]; 5] {
 }
 
 /// Standalone-tree metadata whose every field is the value a fitted model
-/// would write: the shared nine-word block both tree kinds open with.
+/// would write: the shared block both tree kinds open with. The eighth word is
+/// the split-selection tag, `1` for the exhaustive search.
 fn valid_tree_metadata(n_features: u32, nodes: u32) -> Vec<u8> {
-    let mut bytes = words(&[1, n_features, 4, 2, 1, 1, 0]);
+    let mut bytes = words(&[1, n_features, 4, 2, 1, 1, 0, 1]);
     bytes.extend_from_slice(&11_u64.to_le_bytes());
     bytes.extend_from_slice(&words(&[nodes]));
     bytes
@@ -1683,9 +1684,11 @@ fn corpus() -> Vec<Case> {
         payload_span(&multiclass_forest).expect("multiclass forest payload");
     let multiclass_metadata = multiclass_forest_payload + COMPONENT_HEADER_BYTES;
     // Standalone-tree metadata sits one component header past the payload; its
-    // leaf-arithmetic tag is word 10 and its class list starts at word 12. The
+    // leaf-arithmetic tag is word 11 and its class list starts at word 13. The
     // multiclass flavour's leaf probability block follows its tree component.
     let decision_tree = seed("decision-tree");
+    let (decision_tree_payload, _) = payload_span(&decision_tree).expect("tree payload");
+    let decision_tree_metadata = decision_tree_payload + COMPONENT_HEADER_BYTES;
     let decision_tree_classifier = seed("decision-tree-classifier");
     let multiclass_decision_tree = seed("multiclass-decision-tree");
     let (tree_classifier_payload, _) =
@@ -2514,6 +2517,17 @@ fn corpus() -> Vec<Case> {
             ),
         },
         Case {
+            name: "decision-tree-unknown-splitter",
+            provenance: "a split-selection tag naming neither policy that exists",
+            decoder: "decision-tree",
+            expected: ArtifactError::InvalidPayload,
+            bytes: overwrite(
+                &decision_tree,
+                decision_tree_metadata + 28,
+                &9_u32.to_le_bytes(),
+            ),
+        },
+        Case {
             name: "decision-tree-non-canonical-preorder",
             provenance: "a valid tree whose right children are laid out in the wrong record order",
             decoder: "decision-tree",
@@ -2541,7 +2555,7 @@ fn corpus() -> Vec<Case> {
             expected: ArtifactError::InvalidPayload,
             bytes: overwrite(
                 &decision_tree_classifier,
-                tree_classifier_metadata + 40,
+                tree_classifier_metadata + 44,
                 &7_u32.to_le_bytes(),
             ),
         },
@@ -2552,7 +2566,7 @@ fn corpus() -> Vec<Case> {
             expected: ArtifactError::InvalidPayload,
             bytes: overwrite(
                 &decision_tree_classifier,
-                tree_classifier_metadata + 52,
+                tree_classifier_metadata + 56,
                 &5_u32.to_le_bytes(),
             ),
         },
@@ -2563,7 +2577,7 @@ fn corpus() -> Vec<Case> {
             expected: ArtifactError::Truncated,
             bytes: overwrite(
                 &decision_tree_classifier,
-                tree_classifier_metadata + 40,
+                tree_classifier_metadata + 44,
                 &2_u32.to_le_bytes(),
             ),
         },
@@ -2574,7 +2588,7 @@ fn corpus() -> Vec<Case> {
             expected: ArtifactError::InvalidPayload,
             bytes: overwrite(
                 &multiclass_decision_tree,
-                multiclass_tree_metadata + 40,
+                multiclass_tree_metadata + 44,
                 &1_u32.to_le_bytes(),
             ),
         },
@@ -2585,7 +2599,7 @@ fn corpus() -> Vec<Case> {
             expected: ArtifactError::InvalidPayload,
             bytes: overwrite(
                 &multiclass_decision_tree,
-                multiclass_tree_metadata + 56,
+                multiclass_tree_metadata + 60,
                 &3_u32.to_le_bytes(),
             ),
         },

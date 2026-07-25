@@ -8,7 +8,7 @@
 
 use super::grower::GrowerConfig;
 use super::packed::FEATURE_MASK;
-use super::parameters::{MaxFeatures, decode_max_features};
+use super::parameters::{MaxFeatures, Splitter, decode_max_features, decode_splitter};
 use crate::api::ModelError;
 use crate::artifact::{ArtifactCursor, ArtifactError, ArtifactPayloadWriter};
 use crate::data::MatrixView;
@@ -142,6 +142,7 @@ pub(super) struct CommonMetadata {
     pub(super) min_samples_split: usize,
     pub(super) min_samples_leaf: usize,
     pub(super) max_features: MaxFeatures,
+    pub(super) splitter: Splitter,
     pub(super) random_state: u64,
     pub(super) node_count: usize,
 }
@@ -155,6 +156,7 @@ pub(super) fn write_common_metadata(
     min_samples_split: usize,
     min_samples_leaf: usize,
     max_features: (u32, u32),
+    splitter: u32,
     random_state: u64,
     node_count: usize,
 ) -> Result<(), ArtifactError> {
@@ -168,6 +170,7 @@ pub(super) fn write_common_metadata(
     metadata.u32(narrow(min_samples_leaf)?);
     metadata.u32(max_features.0);
     metadata.u32(max_features.1);
+    metadata.u32(splitter);
     metadata.u64(random_state);
     metadata.u32(narrow(node_count)?);
     Ok(())
@@ -184,6 +187,7 @@ pub(super) fn read_common_metadata(
     let min_samples_leaf = metadata.u32()? as usize;
     let max_features_tag = metadata.u32()?;
     let max_features_count = metadata.u32()?;
+    let splitter_tag = metadata.u32()?;
     let random_state = metadata.u64()?;
     let node_count = metadata.u32()? as usize;
     if objective_version != expected_objective_version
@@ -197,9 +201,10 @@ pub(super) fn read_common_metadata(
     {
         return Err(ArtifactError::InvalidPayload);
     }
-    let Some(max_features) =
-        decode_max_features(max_features_tag, max_features_count, n_features_in)
-    else {
+    let (Some(max_features), Some(splitter)) = (
+        decode_max_features(max_features_tag, max_features_count, n_features_in),
+        decode_splitter(splitter_tag),
+    ) else {
         return Err(ArtifactError::InvalidPayload);
     };
     Ok(CommonMetadata {
@@ -208,6 +213,7 @@ pub(super) fn read_common_metadata(
         min_samples_split,
         min_samples_leaf,
         max_features,
+        splitter,
         random_state,
         node_count,
     })

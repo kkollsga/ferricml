@@ -1,5 +1,5 @@
 use super::packed::{BuildNode, ClassTree, NO_CHILD, PackedTree};
-use super::parameters::MaxFeatures;
+use super::parameters::{MaxFeatures, Splitter};
 use crate::api::ModelError;
 use crate::data::MatrixView;
 use crate::numeric::OwnedRng;
@@ -18,6 +18,7 @@ pub(crate) struct GrowerConfig {
     pub(crate) min_samples_split: usize,
     pub(crate) min_samples_leaf: usize,
     pub(crate) max_features: MaxFeatures,
+    pub(crate) splitter: Splitter,
 }
 
 /// One node's statistics are weighted totals rather than row counts.
@@ -318,6 +319,11 @@ impl<Y, O: Objective<Y>> TreeBuilder<'_, '_, Y, O> {
         (sum, sum_sq, weight)
     }
 
+    /// The split this node takes, or `None` when no candidate admits one.
+    ///
+    /// Candidates are drawn first and identically for both splitters, so how a
+    /// tree samples columns does not depend on how it then picks thresholds.
+    /// The search over those candidates is the only thing that differs.
     fn best_split(
         &mut self,
         rows: &[usize],
@@ -326,11 +332,31 @@ impl<Y, O: Objective<Y>> TreeBuilder<'_, '_, Y, O> {
         total_weight: f64,
     ) -> Option<Split> {
         let feature_count = resolved_feature_count(self.config.max_features, self.data.columns());
-        let features = sample_features(self.rng, self.data.columns(), feature_count);
+        let drawn = sample_features(self.rng, self.data.columns(), feature_count);
+        let features = &drawn[..feature_count];
+        match self.config.splitter {
+            Splitter::Best => {
+                self.best_exhaustive_split(features, rows, total_sum, total_sum_sq, total_weight)
+            }
+            Splitter::Random => {
+                self.best_random_split(features, rows, total_sum, total_sum_sq, total_weight)
+            }
+        }
+    }
 
+    /// Evaluates every boundary between adjacent distinct values, in every
+    /// candidate column.
+    fn best_exhaustive_split(
+        &self,
+        features: &[usize],
+        rows: &[usize],
+        total_sum: f64,
+        total_sum_sq: f64,
+        total_weight: f64,
+    ) -> Option<Split> {
         let mut ordered = Vec::with_capacity(rows.len());
         let mut best: Option<Split> = None;
-        for &feature in &features[..feature_count] {
+        for &feature in features {
             ordered.clear();
             ordered.extend_from_slice(rows);
             ordered.sort_unstable_by(|&left, &right| {
@@ -386,6 +412,67 @@ impl<Y, O: Objective<Y>> TreeBuilder<'_, '_, Y, O> {
                         score,
                     });
                 }
+            }
+        }
+        best
+    }
+
+    /// Scores one uniform draw per candidate column and keeps the best.
+    ///
+    /// No sort is needed: a single threshold is known before the rows are
+    /// visited, so one pass accumulates the left side directly. Rows are
+    /// visited in `rows` order, which is fixed, so the accumulation is
+    /// reproducible.
+    fn best_random_split(
+        &mut self,
+        features: &[usize],
+        rows: &[usize],
+        total_sum: f64,
+        total_sum_sq: f64,
+        total_weight: f64,
+    ) -> Option<Split> {
+        let mut best: Option<Split> = None;
+        for &feature in features {
+            let (min, max) = column_range(self.data, rows, feature);
+            let Some(threshold) = random_threshold(self.rng, min, max) else {
+                continue;
+            };
+            let mut left_sum = 0.0;
+            let mut left_sum_sq = 0.0;
+            let mut left_weight = 0.0;
+            for &row in rows {
+                if self.data.row(row).expect("known row")[feature] <= threshold {
+                    let row_weight = self.row_weights[row];
+                    let value = self.objective.value(&self.targets[row]);
+                    left_sum += value * row_weight;
+                    left_sum_sq += value * value * row_weight;
+                    left_weight += row_weight;
+                }
+            }
+            let right_weight = total_weight - left_weight;
+            // An inadmissible draw is discarded, never redrawn: redrawing until
+            // a leaf-bound-satisfying threshold appeared would silently turn a
+            // uniform draw into a conditional one, and would make a node whose
+            // admissible region is tiny cost unbounded work.
+            if left_weight < self.config.min_samples_leaf as f64
+                || right_weight < self.config.min_samples_leaf as f64
+            {
+                continue;
+            }
+            let right_sum = total_sum - left_sum;
+            let right_sum_sq = total_sum_sq - left_sum_sq;
+            let score = (left_weight * self.objective.impurity(left_sum, left_sum_sq, left_weight)
+                + right_weight
+                    * self
+                        .objective
+                        .impurity(right_sum, right_sum_sq, right_weight))
+                / total_weight;
+            if best.as_ref().is_none_or(|current| score < current.score) {
+                best = Some(Split {
+                    feature,
+                    threshold,
+                    score,
+                });
             }
         }
         best
@@ -531,11 +618,30 @@ impl ClassTreeBuilder<'_, '_> {
         right: &mut [f64],
     ) -> Option<Split> {
         let feature_count = resolved_feature_count(self.config.max_features, self.data.columns());
-        let features = sample_features(self.rng, self.data.columns(), feature_count);
+        let drawn = sample_features(self.rng, self.data.columns(), feature_count);
+        let features = &drawn[..feature_count];
+        match self.config.splitter {
+            Splitter::Best => {
+                self.best_exhaustive_split(features, rows, totals, total_weight, left, right)
+            }
+            Splitter::Random => {
+                self.best_random_split(features, rows, totals, total_weight, left, right)
+            }
+        }
+    }
 
+    fn best_exhaustive_split(
+        &self,
+        features: &[usize],
+        rows: &[usize],
+        totals: &[f64],
+        total_weight: f64,
+        left: &mut [f64],
+        right: &mut [f64],
+    ) -> Option<Split> {
         let mut ordered = Vec::with_capacity(rows.len());
         let mut best: Option<Split> = None;
-        for &feature in &features[..feature_count] {
+        for &feature in features {
             ordered.clear();
             ordered.extend_from_slice(rows);
             ordered.sort_unstable_by(|&left, &right| {
@@ -581,6 +687,95 @@ impl ClassTreeBuilder<'_, '_> {
         }
         best
     }
+
+    /// One uniform draw per candidate column, scored on multiclass Gini.
+    fn best_random_split(
+        &mut self,
+        features: &[usize],
+        rows: &[usize],
+        totals: &[f64],
+        total_weight: f64,
+        left: &mut [f64],
+        right: &mut [f64],
+    ) -> Option<Split> {
+        let mut best: Option<Split> = None;
+        for &feature in features {
+            let (min, max) = column_range(self.data, rows, feature);
+            let Some(threshold) = random_threshold(self.rng, min, max) else {
+                continue;
+            };
+            left.fill(0.0);
+            let mut left_weight = 0.0;
+            for &row in rows {
+                if self.data.row(row).expect("known row")[feature] <= threshold {
+                    let row_weight = self.row_weights[row];
+                    left[self.class_of_row[row]] += row_weight;
+                    left_weight += row_weight;
+                }
+            }
+            let right_weight = total_weight - left_weight;
+            // Discarded rather than redrawn, exactly as in the scalar builder.
+            if left_weight < self.config.min_samples_leaf as f64
+                || right_weight < self.config.min_samples_leaf as f64
+            {
+                continue;
+            }
+            for (slot, (&total, &left)) in right.iter_mut().zip(totals.iter().zip(left.iter())) {
+                *slot = total - left;
+            }
+            let score = (left_weight * gini(left, left_weight)
+                + right_weight * gini(right, right_weight))
+                / total_weight;
+            if best.as_ref().is_none_or(|current| score < current.score) {
+                best = Some(Split {
+                    feature,
+                    threshold,
+                    score,
+                });
+            }
+        }
+        best
+    }
+}
+
+/// The range one column spans across the rows reaching a node.
+///
+/// The bound is the *node's* range, not the column's range over the whole
+/// training set: a deep node sees a narrow slice, and drawing from the global
+/// range there would put almost every draw outside the rows present.
+fn column_range(data: &MatrixView<'_>, rows: &[usize], feature: usize) -> (f32, f32) {
+    let mut min = f32::INFINITY;
+    let mut max = f32::NEG_INFINITY;
+    for &row in rows {
+        let value = data.row(row).expect("known row")[feature];
+        min = min.min(value);
+        max = max.max(value);
+    }
+    (min, max)
+}
+
+/// One uniform threshold inside `[min, max)`, or `None` when the column cannot
+/// yield a partition.
+///
+/// A column that is constant within the node has nothing to draw from and
+/// consumes no random value — the interval is empty, not merely unlucky. That
+/// keeps the generator's stream independent of which columns happen to be
+/// constant in a node. Every other column consumes exactly one draw, whether
+/// or not the result survives the leaf bound the caller applies next.
+///
+/// Returning inside `[min, max)` is what makes the partition genuine: at least
+/// one row holds `min` and goes left, and at least one holds `max` and goes
+/// right, so neither side is empty. The guard is re-checked after narrowing to
+/// `f32`, because the draw is computed in `f64` and the packed layout stores an
+/// `f32` threshold — rounding could otherwise land it on the upper endpoint and
+/// produce an empty partition.
+fn random_threshold(rng: &mut OwnedRng, min: f32, max: f32) -> Option<f32> {
+    if min >= max {
+        return None;
+    }
+    let span = f64::from(max) - f64::from(min);
+    let threshold = (f64::from(min) + rng.unit_f64() * span) as f32;
+    (threshold >= min && threshold < max).then_some(threshold)
 }
 
 /// Gini impurity of one node's weighted class counts.
@@ -625,4 +820,98 @@ fn integer_sqrt(value: usize) -> usize {
         root -= 1;
     }
     root
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The draw's own contract, stated where the draw is: strictly inside
+    /// `[min, max)`, so at least one row goes each way and the partition is
+    /// genuine.
+    #[test]
+    fn a_drawn_threshold_lands_strictly_inside_the_node_range() {
+        let mut rng = OwnedRng::new(4);
+        for (min, max) in [
+            (0.0_f32, 1000.0_f32),
+            (-3.5, 2.25),
+            (1e-6, 1.05e-6),
+            (-1e30, 1e30),
+        ] {
+            for _ in 0..5_000 {
+                let threshold = random_threshold(&mut rng, min, max).expect("a spanned column");
+                assert!(
+                    threshold >= min && threshold < max,
+                    "draw {threshold} escaped [{min}, {max})"
+                );
+            }
+        }
+    }
+
+    /// A column that is constant inside the node consumes **no** draw.
+    ///
+    /// This is what keeps the generator's stream independent of which columns
+    /// happen to be constant in a node: were the empty interval to burn a
+    /// value, a tree's shape would depend on the data through the RNG as well
+    /// as through the impurity, and two nodes with the same candidate set would
+    /// diverge for a reason nothing records.
+    #[test]
+    fn a_constant_column_consumes_no_draw() {
+        let mut rng = OwnedRng::new(21);
+        assert_eq!(random_threshold(&mut rng, 2.5, 2.5), None);
+        assert_eq!(random_threshold(&mut rng, 2.5, 1.0), None);
+        let mut untouched = OwnedRng::new(21);
+        assert_eq!(rng.next_u64(), untouched.next_u64());
+
+        // A column that does span consumes exactly one, which is the other half
+        // of the same contract.
+        let mut spent = OwnedRng::new(21);
+        let _ = random_threshold(&mut spent, 0.0, 1.0);
+        let mut stepped = OwnedRng::new(21);
+        let _ = stepped.next_u64();
+        assert_eq!(spent.next_u64(), stepped.next_u64());
+    }
+
+    /// The `f32`-narrowing re-check, which is what makes the split genuine.
+    ///
+    /// The draw is uniform in `f64` and cannot reach its upper endpoint, but
+    /// the packed layout stores an `f32` threshold. Between two adjacent `f32`
+    /// values roughly half of every admissible `f64` rounds *onto* the upper
+    /// endpoint, where `value <= threshold` would send every row left and leave
+    /// the right child empty. Those draws are rejected rather than nudged.
+    #[test]
+    fn a_draw_that_narrows_onto_the_upper_endpoint_is_rejected_rather_than_nudged() {
+        let min = 1.0_f32;
+        let max = f32::from_bits(min.to_bits() + 1);
+        let mut rng = OwnedRng::new(5);
+        let mut kept = 0;
+        let mut rejected = 0;
+        for _ in 0..10_000 {
+            match random_threshold(&mut rng, min, max) {
+                Some(threshold) => {
+                    assert_eq!(
+                        threshold, min,
+                        "the only representable interior value is min"
+                    );
+                    kept += 1;
+                }
+                None => rejected += 1,
+            }
+        }
+        assert!(
+            kept > 1_000 && rejected > 1_000,
+            "the narrowing guard did not fire on both sides: {kept} kept, {rejected} rejected"
+        );
+    }
+
+    /// The node's own range, not the column's range over the whole matrix.
+    #[test]
+    fn the_drawn_range_is_the_one_the_nodes_rows_span() {
+        let data = crate::data::DenseMatrix::new(vec![0.0, 5.0, 1.0, 6.0, 2.0, 7.0], 3, 2).unwrap();
+        let view = data.as_view();
+        assert_eq!(column_range(&view, &[0, 1, 2], 0), (0.0, 2.0));
+        assert_eq!(column_range(&view, &[1, 2], 0), (1.0, 2.0));
+        assert_eq!(column_range(&view, &[0, 2], 1), (5.0, 7.0));
+        assert_eq!(column_range(&view, &[1], 1), (6.0, 6.0));
+    }
 }

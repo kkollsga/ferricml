@@ -30,7 +30,9 @@ pub(crate) use packed::{ClassTree, FEATURE_MASK, PackedTree};
 pub(crate) use packed::{LEFT_IS_LEAF, PackedNode, RIGHT_IS_LEAF};
 
 pub use classifier::DecisionTreeClassifier;
-pub use parameters::{DecisionTreeClassifierParams, DecisionTreeRegressorParams, MaxFeatures};
+pub use parameters::{
+    DecisionTreeClassifierParams, DecisionTreeRegressorParams, MaxFeatures, Splitter,
+};
 pub(crate) use parameters::{decode_max_features, encode_max_features};
 pub use regressor::DecisionTreeRegressor;
 

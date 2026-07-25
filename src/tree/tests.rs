@@ -205,6 +205,120 @@ fn a_zero_weight_row_is_absent_rather_than_present_with_no_influence() {
     );
 }
 
+/// The randomized splitter still fits a usable tree, and it is a different
+/// tree from the exhaustive one.
+///
+/// Both halves matter: a `Splitter` that silently fell back to the exhaustive
+/// search would pass every other test in this file.
+#[test]
+fn the_randomized_splitter_fits_a_different_tree_that_still_separates() {
+    let (x, y, labels) = separable();
+    let view = x.as_view();
+    let random = classifier_params().with_splitter(Splitter::Random);
+    assert_eq!(random.splitter(), Splitter::Random);
+    assert_eq!(classifier_params().splitter(), Splitter::Best);
+
+    let targets = BinaryTargets::new(labels.clone()).unwrap();
+    let randomized = DecisionTreeClassifier::fit(&view, &targets, random.clone()).unwrap();
+    let exhaustive = DecisionTreeClassifier::fit(&view, &targets, classifier_params()).unwrap();
+    assert_eq!(randomized.predict(&view).unwrap(), labels);
+    assert_ne!(randomized, exhaustive);
+
+    let values = RegressionTargets::new(y).unwrap();
+    let randomized = DecisionTreeRegressor::fit(
+        &view,
+        &values,
+        regressor_params().with_splitter(Splitter::Random),
+    )
+    .unwrap();
+    let exhaustive = DecisionTreeRegressor::fit(&view, &values, regressor_params()).unwrap();
+    assert_ne!(randomized, exhaustive);
+    assert!(
+        randomized
+            .predict(&view)
+            .unwrap()
+            .iter()
+            .all(|value| value.is_finite())
+    );
+
+    // The multiclass builder takes the same two arms, so it owes the same
+    // proof: the flavour must not quietly keep optimizing within a column.
+    let classes = ClassTargets::new(vec![3, 3, 7, 7, 10, 10]).unwrap();
+    assert_ne!(
+        DecisionTreeClassifier::fit_multiclass(&view, &classes, random).unwrap(),
+        DecisionTreeClassifier::fit_multiclass(&view, &classes, classifier_params()).unwrap()
+    );
+}
+
+/// A randomized fit is as reproducible as an exhaustive one, and the artifact
+/// carries the setting that produced it.
+#[test]
+fn a_randomized_fit_is_reproducible_and_its_splitter_survives_a_round_trip() {
+    let (x, y, _) = separable();
+    let view = x.as_view();
+    let params = regressor_params().with_splitter(Splitter::Random);
+    let targets = RegressionTargets::new(y).unwrap();
+    let first = DecisionTreeRegressor::fit(&view, &targets, params.clone()).unwrap();
+    let second = DecisionTreeRegressor::fit(&view, &targets, params).unwrap();
+    assert_eq!(first, second);
+
+    let bytes = first.to_artifact(SCHEMA).unwrap();
+    let restored = DecisionTreeRegressor::from_artifact(&bytes, SCHEMA).unwrap();
+    assert_eq!(restored.get_params().splitter(), Splitter::Random);
+    assert_eq!(restored, first);
+    assert_eq!(restored.to_artifact(SCHEMA).unwrap(), bytes);
+
+    // The two settings are different models under one artifact kind, so the
+    // stored tag has to be what tells them apart rather than the topology.
+    let exhaustive = DecisionTreeRegressor::fit(&view, &targets, regressor_params()).unwrap();
+    assert_ne!(exhaustive.to_artifact(SCHEMA).unwrap(), bytes);
+}
+
+/// An inadmissible draw is discarded, never redrawn.
+///
+/// One column holding `0..19` at `min_samples_leaf = 8` admits a partition only
+/// for thresholds in `[7, 12)` — five of the nineteen gaps, about 26% of the
+/// draw range. Redrawing until an admissible threshold appeared would make
+/// *every* seed split; discarding makes the split rate track the admissible
+/// share, and bounds the work a node with a tiny admissible region can cost.
+#[test]
+fn an_inadmissible_random_draw_is_discarded_rather_than_redrawn() {
+    let data = DenseMatrix::new((0..20).map(|value| value as f32).collect(), 20, 1).unwrap();
+    let view = data.as_view();
+    let targets = RegressionTargets::new((0..20).map(|value| value as f32).collect()).unwrap();
+
+    let mut split = 0;
+    let seeds = 400;
+    for seed in 0..seeds {
+        let model = DecisionTreeRegressor::fit(
+            &view,
+            &targets,
+            DecisionTreeRegressorParams::default()
+                .with_splitter(Splitter::Random)
+                .with_max_depth(Some(1))
+                .with_min_samples_leaf(8)
+                .with_random_state(seed),
+        )
+        .unwrap();
+        let predictions = model.predict(&view).unwrap();
+        let left = predictions.iter().filter(|&&v| v == predictions[0]).count();
+        if left == predictions.len() {
+            continue;
+        }
+        split += 1;
+        // Both children respect the leaf bound, so an accepted draw really was
+        // admissible rather than nudged into admissibility.
+        assert!(
+            (8..=12).contains(&left),
+            "seed {seed} produced a left child of {left} rows"
+        );
+    }
+    assert!(
+        (seeds / 8..seeds / 2).contains(&split),
+        "{split} of {seeds} seeds split; redrawing would make it {seeds}"
+    );
+}
+
 #[test]
 fn artifacts_round_trip_through_every_fitted_shape() {
     let (x, y, labels) = separable();

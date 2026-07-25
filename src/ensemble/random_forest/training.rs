@@ -3,7 +3,7 @@ use crate::api::ModelError;
 use crate::data::MatrixView;
 use crate::numeric::{OwnedRng, derive_tree_seed};
 use crate::tree::{
-    ClassTree, GrowerConfig, Objective, PackedTree, grow_class_tree, grow_tree,
+    ClassTree, GrowerConfig, Objective, PackedTree, Splitter, grow_class_tree, grow_tree,
     unbootstrapped_sample,
 };
 use std::thread;
@@ -34,6 +34,9 @@ impl From<&RandomForestClassifierParams> for ForestConfig {
                 min_samples_split: params.min_samples_split(),
                 min_samples_leaf: params.min_samples_leaf(),
                 max_features: params.max_features(),
+                // A random forest optimizes within each candidate column; the
+                // randomized search belongs to the estimators that name it.
+                splitter: Splitter::Best,
             },
         }
     }
@@ -51,6 +54,9 @@ impl From<&RandomForestRegressorParams> for ForestConfig {
                 min_samples_split: params.min_samples_split(),
                 min_samples_leaf: params.min_samples_leaf(),
                 max_features: params.max_features(),
+                // A random forest optimizes within each candidate column; the
+                // randomized search belongs to the estimators that name it.
+                splitter: Splitter::Best,
             },
         }
     }

@@ -1907,6 +1907,9 @@ pub enum ferricml::tree::MaxFeatures
 pub ferricml::tree::MaxFeatures::All
 pub ferricml::tree::MaxFeatures::Count(usize)
 pub ferricml::tree::MaxFeatures::Sqrt
+pub enum ferricml::tree::Splitter
+pub ferricml::tree::Splitter::Best
+pub ferricml::tree::Splitter::Random
 pub struct ferricml::tree::DecisionTreeClassifier
 impl ferricml::tree::DecisionTreeClassifier
 pub fn ferricml::tree::DecisionTreeClassifier::classes(&self) -> &[u8]
@@ -1953,11 +1956,13 @@ pub const fn ferricml::tree::DecisionTreeClassifierParams::max_features(&self) -
 pub const fn ferricml::tree::DecisionTreeClassifierParams::min_samples_leaf(&self) -> usize
 pub const fn ferricml::tree::DecisionTreeClassifierParams::min_samples_split(&self) -> usize
 pub const fn ferricml::tree::DecisionTreeClassifierParams::random_state(&self) -> u64
+pub const fn ferricml::tree::DecisionTreeClassifierParams::splitter(&self) -> ferricml::tree::Splitter
 pub fn ferricml::tree::DecisionTreeClassifierParams::with_max_depth(self, core::option::Option<usize>) -> Self
 pub fn ferricml::tree::DecisionTreeClassifierParams::with_max_features(self, ferricml::ensemble::MaxFeatures) -> Self
 pub fn ferricml::tree::DecisionTreeClassifierParams::with_min_samples_leaf(self, usize) -> Self
 pub fn ferricml::tree::DecisionTreeClassifierParams::with_min_samples_split(self, usize) -> Self
 pub fn ferricml::tree::DecisionTreeClassifierParams::with_random_state(self, u64) -> Self
+pub fn ferricml::tree::DecisionTreeClassifierParams::with_splitter(self, ferricml::tree::Splitter) -> Self
 impl core::default::Default for ferricml::tree::DecisionTreeClassifierParams
 pub fn ferricml::tree::DecisionTreeClassifierParams::default() -> Self
 pub struct ferricml::tree::DecisionTreeRegressor
@@ -1988,10 +1993,12 @@ pub const fn ferricml::tree::DecisionTreeRegressorParams::max_features(&self) ->
 pub const fn ferricml::tree::DecisionTreeRegressorParams::min_samples_leaf(&self) -> usize
 pub const fn ferricml::tree::DecisionTreeRegressorParams::min_samples_split(&self) -> usize
 pub const fn ferricml::tree::DecisionTreeRegressorParams::random_state(&self) -> u64
+pub const fn ferricml::tree::DecisionTreeRegressorParams::splitter(&self) -> ferricml::tree::Splitter
 pub fn ferricml::tree::DecisionTreeRegressorParams::with_max_depth(self, core::option::Option<usize>) -> Self
 pub fn ferricml::tree::DecisionTreeRegressorParams::with_max_features(self, ferricml::ensemble::MaxFeatures) -> Self
 pub fn ferricml::tree::DecisionTreeRegressorParams::with_min_samples_leaf(self, usize) -> Self
 pub fn ferricml::tree::DecisionTreeRegressorParams::with_min_samples_split(self, usize) -> Self
 pub fn ferricml::tree::DecisionTreeRegressorParams::with_random_state(self, u64) -> Self
+pub fn ferricml::tree::DecisionTreeRegressorParams::with_splitter(self, ferricml::tree::Splitter) -> Self
 impl core::default::Default for ferricml::tree::DecisionTreeRegressorParams
 pub fn ferricml::tree::DecisionTreeRegressorParams::default() -> Self

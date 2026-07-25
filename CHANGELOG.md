@@ -16,6 +16,17 @@ and releases use [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   because a leaf *is* a distribution over the training rows that reached it.
   `MaxFeatures` is now also reachable as `tree::MaxFeatures`; the existing
   `ensemble::MaxFeatures` path is unchanged and names the same type.
+- `tree::Splitter`, set through `with_splitter` on either standalone tree's
+  parameters. `Splitter::Best` (the default) evaluates every boundary between
+  adjacent distinct values in each candidate column; `Splitter::Random` draws
+  one threshold uniformly inside each candidate column's own range within the
+  node and keeps the best-scoring draw, which is what makes an *extremely
+  randomized* tree. The candidate columns are drawn identically either way, an
+  inadmissible draw is discarded rather than redrawn, and a column that is
+  constant within the node consumes no draw at all — so the generator's stream
+  does not depend on which columns happen to be constant. Random forests are
+  unaffected: they keep the exhaustive search and their artifact bytes are
+  unchanged.
 
 ### Changed
 

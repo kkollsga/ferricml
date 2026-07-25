@@ -18,7 +18,7 @@ use ferricml::ranking::{
 };
 use ferricml::tree::{
     DecisionTreeClassifier, DecisionTreeClassifierParams, DecisionTreeRegressor,
-    DecisionTreeRegressorParams,
+    DecisionTreeRegressorParams, Splitter,
 };
 use sha2::{Digest, Sha256};
 
@@ -302,15 +302,36 @@ fn fitted_artifact_fingerprints_are_frozen() {
         .with_max_features(MaxFeatures::All)
         .with_random_state(11);
     let tree_regressor =
-        DecisionTreeRegressor::fit(&data.as_view(), &regression, tree_regressor_params).unwrap();
+        DecisionTreeRegressor::fit(&data.as_view(), &regression, tree_regressor_params.clone())
+            .unwrap();
     assert_fingerprint(
         "decision-tree-regressor",
         tree_regressor.to_artifact([5; 32]).unwrap(),
         tree_regressor.to_artifact([5; 32]).unwrap(),
-        300,
+        304,
         [
-            130, 251, 25, 192, 108, 233, 218, 147, 110, 249, 222, 132, 191, 12, 84, 33, 154, 51,
-            23, 213, 121, 1, 206, 134, 118, 40, 205, 9, 192, 204, 200, 10,
+            60, 194, 231, 4, 136, 244, 119, 9, 190, 8, 107, 167, 182, 81, 76, 163, 44, 174, 27, 46,
+            242, 151, 228, 185, 108, 10, 15, 8, 56, 4, 99, 192,
+        ],
+    );
+
+    // The randomized splitter is a second user-facing fit under the same kind,
+    // and its thresholds come straight out of the crate's own generator, so it
+    // owes its own frozen bytes rather than inheriting the exhaustive tree's.
+    let randomized_tree = DecisionTreeRegressor::fit(
+        &data.as_view(),
+        &regression,
+        tree_regressor_params.with_splitter(Splitter::Random),
+    )
+    .unwrap();
+    assert_fingerprint(
+        "decision-tree-regressor-randomized",
+        randomized_tree.to_artifact([5; 32]).unwrap(),
+        randomized_tree.to_artifact([5; 32]).unwrap(),
+        304,
+        [
+            150, 148, 138, 103, 114, 169, 150, 4, 135, 77, 246, 31, 167, 76, 38, 112, 65, 119, 153,
+            52, 38, 75, 238, 24, 51, 154, 152, 247, 209, 131, 251, 159,
         ],
     );
 
@@ -325,10 +346,10 @@ fn fitted_artifact_fingerprints_are_frozen() {
         "decision-tree-classifier",
         tree_classifier.to_artifact([5; 32]).unwrap(),
         tree_classifier.to_artifact([5; 32]).unwrap(),
-        236,
+        240,
         [
-            163, 183, 214, 232, 52, 157, 94, 153, 154, 252, 106, 70, 209, 122, 25, 1, 175, 88, 169,
-            119, 185, 72, 15, 107, 131, 125, 107, 18, 14, 84, 40, 243,
+            206, 147, 223, 133, 169, 132, 241, 118, 90, 158, 130, 183, 229, 66, 6, 118, 130, 178,
+            41, 178, 65, 244, 107, 237, 50, 23, 116, 55, 130, 52, 66, 92,
         ],
     );
     let multiclass_tree = DecisionTreeClassifier::fit_multiclass(
@@ -341,10 +362,10 @@ fn fitted_artifact_fingerprints_are_frozen() {
         "decision-tree-classifier-multiclass",
         multiclass_tree.to_artifact([5; 32]).unwrap(),
         multiclass_tree.to_artifact([5; 32]).unwrap(),
-        384,
+        388,
         [
-            49, 151, 82, 102, 61, 188, 208, 129, 69, 139, 161, 140, 124, 47, 152, 204, 86, 17, 8,
-            68, 40, 155, 10, 45, 164, 129, 206, 80, 214, 62, 169, 144,
+            254, 162, 143, 250, 96, 41, 137, 179, 7, 23, 76, 73, 248, 154, 54, 163, 98, 72, 75, 90,
+            138, 105, 45, 204, 1, 75, 29, 245, 129, 125, 143, 35,
         ],
     );
 
