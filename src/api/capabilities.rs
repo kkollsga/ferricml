@@ -8,10 +8,12 @@ use super::Estimator;
 /// meta-layers ask what an estimator supports instead of matching on its
 /// concrete type. It is deliberately small, and stays small by one rule: a
 /// capability belongs here only when it varies between estimator types *and* is
-/// not already guaranteed by the type system. Producing probabilities, for
-/// example, is required of every [`Classifier`](super::Classifier), and
-/// non-finite inputs are already impossible inside a
-/// [`MatrixView`](crate::data::MatrixView); neither is a field here.
+/// not already guaranteed by the type system. Non-finite inputs, for example,
+/// are already impossible inside a
+/// [`MatrixView`](crate::data::MatrixView), so tolerating them is not a field
+/// here. Producing probabilities *was* in that category until margin-based
+/// classifiers arrived: it is now [`probability`](Self::probability), because
+/// [`Classifier`](super::Classifier) no longer requires it.
 ///
 /// Fields are private and read through `const` accessors so that declaring a
 /// further capability later stays a compatible change. Construction starts from
@@ -113,8 +115,8 @@ impl Capabilities {
     /// A type declaring this offers a multiclass fitting entry point over
     /// [`ClassTargets`](crate::data::ClassTargets) whose fitted result has one
     /// probability column per observed label, in sorted label order, for any
-    /// number of classes. Producing probabilities at all is required of every
-    /// [`Classifier`](super::Classifier) and is not what this records.
+    /// number of classes. Whether the classifier produces probabilities *at
+    /// all* is [`probability`](Self::probability) and is not what this records.
     #[must_use]
     pub const fn multiclass(self) -> bool {
         self.multiclass
@@ -124,8 +126,9 @@ impl Capabilities {
     ///
     /// A type declaring this offers a `decision_function` entry point producing
     /// one real-valued score per row, monotone in the model's confidence, whose
-    /// squashing is the probability. Producing *probabilities* is required of
-    /// every [`Classifier`](super::Classifier) and is not what this records.
+    /// squashing is the probability. Whether the classifier produces
+    /// *probabilities* is [`probability`](Self::probability) and is not what
+    /// this records; a margin-based classifier may declare this and not that.
     ///
     /// This exists because Rust has no runtime attribute lookup: a
     /// meta-estimator generic over a classifier cannot discover whether the

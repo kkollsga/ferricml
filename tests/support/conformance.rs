@@ -52,15 +52,19 @@
 //! `check_declaration` states that pattern once, so a capability added later
 //! is one call rather than a new bespoke check.
 //!
-//! # A note for whoever answers D11
+//! # How D11 was answered
 //!
-//! Probability production is currently *mandatory*: `predict_proba_into` is a
-//! required method of [`Classifier`] with no default body, so every classifier
-//! has one and no declaration could vary. Everything that follows from it is
-//! deliberately grouped in `probability_obligations`, and reaches the model
-//! only through the driver's four probability methods. If probabilities ever
-//! stop being mandatory, those four become the group a declaration selects and
-//! that one function gains the gate. Nothing else in this file moves.
+//! Probability production *was* mandatory: `predict_proba_into` was a required
+//! method of [`Classifier`] with no default body, so every classifier had one
+//! and no declaration could vary. Decision D11 (user, 2026-07-25) moved it to
+//! the `ProbabilisticClassifier` sub-trait, because margin-based classifiers
+//! have a score rather than a distribution and must not fabricate one.
+//!
+//! The grouping anticipated it and held: everything following from
+//! probabilities lives in `probability_obligations`, reaching the model only
+//! through the driver's four probability methods, so that group became what a
+//! declaration selects and that one function gained the gate. Nothing else in
+//! this file moved.
 
 use std::fmt::Write as _;
 use std::marker::PhantomData;
@@ -1596,7 +1600,9 @@ fn classifier_obligations<C: ClassifierUnderTest>() -> Report {
 /// Everything that follows from a classifier producing probabilities.
 ///
 /// Grouped deliberately; see the module note on D11. Probability production is
-/// mandatory on `Classifier` today, so this runs unconditionally.
+/// a declared capability, so this group is selected by the declaration — and
+/// `probability_declaration_matches_behavior` checks both directions, so a
+/// type cannot escape the group by under-declaring.
 fn probability_obligations<C: ClassifierUnderTest>(
     report: &mut Report,
     model: &C::Model,
