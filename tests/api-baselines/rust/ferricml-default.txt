@@ -166,6 +166,10 @@ impl ferricml::api::Classifier for ferricml::dummy::DummyClassifier
 pub fn ferricml::dummy::DummyClassifier::classes(&self) -> &[u8]
 pub fn ferricml::dummy::DummyClassifier::predict(&self, &ferricml::data::MatrixView<'_>) -> core::result::Result<alloc::vec::Vec<u8>, ferricml::api::ModelError>
 pub fn ferricml::dummy::DummyClassifier::predict_into(&self, &ferricml::data::MatrixView<'_>, &mut [u8]) -> core::result::Result<(), ferricml::api::ModelError>
+impl ferricml::api::Classifier for ferricml::ensemble::ExtraTreesClassifier
+pub fn ferricml::ensemble::ExtraTreesClassifier::classes(&self) -> &[u8]
+pub fn ferricml::ensemble::ExtraTreesClassifier::predict(&self, &ferricml::data::MatrixView<'_>) -> core::result::Result<alloc::vec::Vec<u8>, ferricml::api::ModelError>
+pub fn ferricml::ensemble::ExtraTreesClassifier::predict_into(&self, &ferricml::data::MatrixView<'_>, &mut [u8]) -> core::result::Result<(), ferricml::api::ModelError>
 impl ferricml::api::Classifier for ferricml::ensemble::HistGradientBoostingClassifier
 pub fn ferricml::ensemble::HistGradientBoostingClassifier::classes(&self) -> &[u8]
 pub fn ferricml::ensemble::HistGradientBoostingClassifier::predict(&self, &ferricml::data::MatrixView<'_>) -> core::result::Result<alloc::vec::Vec<u8>, ferricml::api::ModelError>
@@ -198,6 +202,10 @@ impl ferricml::api::Estimator for ferricml::dummy::DummyClassifier
 pub fn ferricml::dummy::DummyClassifier::n_features_in(&self) -> usize
 impl ferricml::api::Estimator for ferricml::dummy::DummyRegressor
 pub fn ferricml::dummy::DummyRegressor::n_features_in(&self) -> usize
+impl ferricml::api::Estimator for ferricml::ensemble::ExtraTreesClassifier
+pub fn ferricml::ensemble::ExtraTreesClassifier::n_features_in(&self) -> usize
+impl ferricml::api::Estimator for ferricml::ensemble::ExtraTreesRegressor
+pub fn ferricml::ensemble::ExtraTreesRegressor::n_features_in(&self) -> usize
 impl ferricml::api::Estimator for ferricml::ensemble::HistGradientBoostingClassifier
 pub fn ferricml::ensemble::HistGradientBoostingClassifier::n_features_in(&self) -> usize
 impl ferricml::api::Estimator for ferricml::ensemble::HistGradientBoostingRegressor
@@ -246,6 +254,10 @@ impl ferricml::api::HasCapabilities for ferricml::dummy::DummyClassifier
 pub const ferricml::dummy::DummyClassifier::CAPABILITIES: ferricml::api::Capabilities
 impl ferricml::api::HasCapabilities for ferricml::dummy::DummyRegressor
 pub const ferricml::dummy::DummyRegressor::CAPABILITIES: ferricml::api::Capabilities
+impl ferricml::api::HasCapabilities for ferricml::ensemble::ExtraTreesClassifier
+pub const ferricml::ensemble::ExtraTreesClassifier::CAPABILITIES: ferricml::api::Capabilities
+impl ferricml::api::HasCapabilities for ferricml::ensemble::ExtraTreesRegressor
+pub const ferricml::ensemble::ExtraTreesRegressor::CAPABILITIES: ferricml::api::Capabilities
 impl ferricml::api::HasCapabilities for ferricml::ensemble::HistGradientBoostingClassifier
 pub const ferricml::ensemble::HistGradientBoostingClassifier::CAPABILITIES: ferricml::api::Capabilities
 impl ferricml::api::HasCapabilities for ferricml::ensemble::HistGradientBoostingRegressor
@@ -297,6 +309,12 @@ pub fn ferricml::dummy::DummyClassifier::get_params(&self) -> &Self::Params
 impl ferricml::api::HasParams for ferricml::dummy::DummyRegressor
 pub type ferricml::dummy::DummyRegressor::Params = ferricml::dummy::DummyRegressorParams
 pub fn ferricml::dummy::DummyRegressor::get_params(&self) -> &Self::Params
+impl ferricml::api::HasParams for ferricml::ensemble::ExtraTreesClassifier
+pub type ferricml::ensemble::ExtraTreesClassifier::Params = ferricml::ensemble::ExtraTreesClassifierParams
+pub fn ferricml::ensemble::ExtraTreesClassifier::get_params(&self) -> &Self::Params
+impl ferricml::api::HasParams for ferricml::ensemble::ExtraTreesRegressor
+pub type ferricml::ensemble::ExtraTreesRegressor::Params = ferricml::ensemble::ExtraTreesRegressorParams
+pub fn ferricml::ensemble::ExtraTreesRegressor::get_params(&self) -> &Self::Params
 impl ferricml::api::HasParams for ferricml::ensemble::HistGradientBoostingClassifier
 pub type ferricml::ensemble::HistGradientBoostingClassifier::Params = ferricml::ensemble::HistGradientBoostingClassifierParams
 pub fn ferricml::ensemble::HistGradientBoostingClassifier::get_params(&self) -> &Self::Params
@@ -352,6 +370,11 @@ pub fn ferricml::dummy::DummyClassifier::predict_class_proba(&self, &ferricml::d
 pub fn ferricml::dummy::DummyClassifier::predict_class_proba_into(&self, &ferricml::data::MatrixView<'_>, u8, &mut [f32]) -> core::result::Result<(), ferricml::api::ModelError>
 pub fn ferricml::dummy::DummyClassifier::predict_proba(&self, &ferricml::data::MatrixView<'_>) -> core::result::Result<alloc::vec::Vec<f32>, ferricml::api::ModelError>
 pub fn ferricml::dummy::DummyClassifier::predict_proba_into(&self, &ferricml::data::MatrixView<'_>, &mut [f32]) -> core::result::Result<(), ferricml::api::ModelError>
+impl ferricml::api::ProbabilisticClassifier for ferricml::ensemble::ExtraTreesClassifier
+pub fn ferricml::ensemble::ExtraTreesClassifier::predict_class_proba(&self, &ferricml::data::MatrixView<'_>, u8) -> core::result::Result<alloc::vec::Vec<f32>, ferricml::api::ModelError>
+pub fn ferricml::ensemble::ExtraTreesClassifier::predict_class_proba_into(&self, &ferricml::data::MatrixView<'_>, u8, &mut [f32]) -> core::result::Result<(), ferricml::api::ModelError>
+pub fn ferricml::ensemble::ExtraTreesClassifier::predict_proba(&self, &ferricml::data::MatrixView<'_>) -> core::result::Result<alloc::vec::Vec<f32>, ferricml::api::ModelError>
+pub fn ferricml::ensemble::ExtraTreesClassifier::predict_proba_into(&self, &ferricml::data::MatrixView<'_>, &mut [f32]) -> core::result::Result<(), ferricml::api::ModelError>
 impl ferricml::api::ProbabilisticClassifier for ferricml::ensemble::HistGradientBoostingClassifier
 pub fn ferricml::ensemble::HistGradientBoostingClassifier::predict_class_proba(&self, &ferricml::data::MatrixView<'_>, u8) -> core::result::Result<alloc::vec::Vec<f32>, ferricml::api::ModelError>
 pub fn ferricml::ensemble::HistGradientBoostingClassifier::predict_class_proba_into(&self, &ferricml::data::MatrixView<'_>, u8, &mut [f32]) -> core::result::Result<(), ferricml::api::ModelError>
@@ -389,6 +412,9 @@ pub fn ferricml::calibration::IsotonicRegression::predict_into(&self, &ferricml:
 impl ferricml::api::Regressor for ferricml::dummy::DummyRegressor
 pub fn ferricml::dummy::DummyRegressor::predict(&self, &ferricml::data::MatrixView<'_>) -> core::result::Result<alloc::vec::Vec<f32>, ferricml::api::ModelError>
 pub fn ferricml::dummy::DummyRegressor::predict_into(&self, &ferricml::data::MatrixView<'_>, &mut [f32]) -> core::result::Result<(), ferricml::api::ModelError>
+impl ferricml::api::Regressor for ferricml::ensemble::ExtraTreesRegressor
+pub fn ferricml::ensemble::ExtraTreesRegressor::predict(&self, &ferricml::data::MatrixView<'_>) -> core::result::Result<alloc::vec::Vec<f32>, ferricml::api::ModelError>
+pub fn ferricml::ensemble::ExtraTreesRegressor::predict_into(&self, &ferricml::data::MatrixView<'_>, &mut [f32]) -> core::result::Result<(), ferricml::api::ModelError>
 impl ferricml::api::Regressor for ferricml::ensemble::HistGradientBoostingRegressor
 pub fn ferricml::ensemble::HistGradientBoostingRegressor::predict(&self, &ferricml::data::MatrixView<'_>) -> core::result::Result<alloc::vec::Vec<f32>, ferricml::api::ModelError>
 pub fn ferricml::ensemble::HistGradientBoostingRegressor::predict_into(&self, &ferricml::data::MatrixView<'_>, &mut [f32]) -> core::result::Result<(), ferricml::api::ModelError>
@@ -691,6 +717,106 @@ pub enum ferricml::ensemble::NJobs
 pub ferricml::ensemble::NJobs::All
 pub ferricml::ensemble::NJobs::Count(usize)
 pub ferricml::ensemble::NJobs::Serial
+pub struct ferricml::ensemble::ExtraTreesClassifier
+impl ferricml::ensemble::ExtraTreesClassifier
+pub fn ferricml::ensemble::ExtraTreesClassifier::classes(&self) -> &[u8]
+pub fn ferricml::ensemble::ExtraTreesClassifier::fit(&ferricml::data::MatrixView<'_>, &ferricml::data::BinaryTargets, ferricml::ensemble::ExtraTreesClassifierParams) -> core::result::Result<Self, ferricml::api::ModelError>
+pub fn ferricml::ensemble::ExtraTreesClassifier::fit_multiclass(&ferricml::data::MatrixView<'_>, &ferricml::data::ClassTargets, ferricml::ensemble::ExtraTreesClassifierParams) -> core::result::Result<Self, ferricml::api::ModelError>
+pub fn ferricml::ensemble::ExtraTreesClassifier::fit_multiclass_weighted(&ferricml::data::MatrixView<'_>, &ferricml::data::ClassTargets, &ferricml::data::SampleWeights, ferricml::ensemble::ExtraTreesClassifierParams) -> core::result::Result<Self, ferricml::api::ModelError>
+pub fn ferricml::ensemble::ExtraTreesClassifier::fit_weighted(&ferricml::data::MatrixView<'_>, &ferricml::data::BinaryTargets, &ferricml::data::SampleWeights, ferricml::ensemble::ExtraTreesClassifierParams) -> core::result::Result<Self, ferricml::api::ModelError>
+pub fn ferricml::ensemble::ExtraTreesClassifier::from_artifact(&[u8], [u8; 32]) -> core::result::Result<Self, ferricml::artifact::ArtifactError>
+pub fn ferricml::ensemble::ExtraTreesClassifier::get_params(&self) -> &ferricml::ensemble::ExtraTreesClassifierParams
+pub fn ferricml::ensemble::ExtraTreesClassifier::n_features_in(&self) -> usize
+pub fn ferricml::ensemble::ExtraTreesClassifier::predict(&self, &ferricml::data::MatrixView<'_>) -> core::result::Result<alloc::vec::Vec<u8>, ferricml::api::ModelError>
+pub fn ferricml::ensemble::ExtraTreesClassifier::predict_class_proba(&self, &ferricml::data::MatrixView<'_>, u8) -> core::result::Result<alloc::vec::Vec<f32>, ferricml::api::ModelError>
+pub fn ferricml::ensemble::ExtraTreesClassifier::predict_class_proba_into(&self, &ferricml::data::MatrixView<'_>, u8, &mut [f32]) -> core::result::Result<(), ferricml::api::ModelError>
+pub fn ferricml::ensemble::ExtraTreesClassifier::predict_class_proba_one(&self, &[f32], u8) -> core::result::Result<f32, ferricml::api::ModelError>
+pub fn ferricml::ensemble::ExtraTreesClassifier::predict_into(&self, &ferricml::data::MatrixView<'_>, &mut [u8]) -> core::result::Result<(), ferricml::api::ModelError>
+pub fn ferricml::ensemble::ExtraTreesClassifier::predict_one(&self, &[f32]) -> core::result::Result<u8, ferricml::api::ModelError>
+pub fn ferricml::ensemble::ExtraTreesClassifier::predict_positive_proba(&self, &[f32]) -> core::result::Result<f32, ferricml::api::ModelError>
+pub fn ferricml::ensemble::ExtraTreesClassifier::predict_positive_proba_into(&self, &ferricml::data::MatrixView<'_>, &mut [f32]) -> core::result::Result<(), ferricml::api::ModelError>
+pub fn ferricml::ensemble::ExtraTreesClassifier::predict_proba(&self, &ferricml::data::MatrixView<'_>) -> core::result::Result<alloc::vec::Vec<f32>, ferricml::api::ModelError>
+pub fn ferricml::ensemble::ExtraTreesClassifier::predict_proba_into(&self, &ferricml::data::MatrixView<'_>, &mut [f32]) -> core::result::Result<(), ferricml::api::ModelError>
+pub fn ferricml::ensemble::ExtraTreesClassifier::predict_proba_one(&self, &[f32]) -> core::result::Result<alloc::vec::Vec<f32>, ferricml::api::ModelError>
+pub fn ferricml::ensemble::ExtraTreesClassifier::predict_proba_one_into(&self, &[f32], &mut [f32]) -> core::result::Result<(), ferricml::api::ModelError>
+pub fn ferricml::ensemble::ExtraTreesClassifier::to_artifact(&self, [u8; 32]) -> core::result::Result<alloc::vec::Vec<u8>, ferricml::artifact::ArtifactError>
+impl ferricml::api::Classifier for ferricml::ensemble::ExtraTreesClassifier
+pub fn ferricml::ensemble::ExtraTreesClassifier::classes(&self) -> &[u8]
+pub fn ferricml::ensemble::ExtraTreesClassifier::predict(&self, &ferricml::data::MatrixView<'_>) -> core::result::Result<alloc::vec::Vec<u8>, ferricml::api::ModelError>
+pub fn ferricml::ensemble::ExtraTreesClassifier::predict_into(&self, &ferricml::data::MatrixView<'_>, &mut [u8]) -> core::result::Result<(), ferricml::api::ModelError>
+impl ferricml::api::Estimator for ferricml::ensemble::ExtraTreesClassifier
+pub fn ferricml::ensemble::ExtraTreesClassifier::n_features_in(&self) -> usize
+impl ferricml::api::HasCapabilities for ferricml::ensemble::ExtraTreesClassifier
+pub const ferricml::ensemble::ExtraTreesClassifier::CAPABILITIES: ferricml::api::Capabilities
+impl ferricml::api::HasParams for ferricml::ensemble::ExtraTreesClassifier
+pub type ferricml::ensemble::ExtraTreesClassifier::Params = ferricml::ensemble::ExtraTreesClassifierParams
+pub fn ferricml::ensemble::ExtraTreesClassifier::get_params(&self) -> &Self::Params
+impl ferricml::api::ProbabilisticClassifier for ferricml::ensemble::ExtraTreesClassifier
+pub fn ferricml::ensemble::ExtraTreesClassifier::predict_class_proba(&self, &ferricml::data::MatrixView<'_>, u8) -> core::result::Result<alloc::vec::Vec<f32>, ferricml::api::ModelError>
+pub fn ferricml::ensemble::ExtraTreesClassifier::predict_class_proba_into(&self, &ferricml::data::MatrixView<'_>, u8, &mut [f32]) -> core::result::Result<(), ferricml::api::ModelError>
+pub fn ferricml::ensemble::ExtraTreesClassifier::predict_proba(&self, &ferricml::data::MatrixView<'_>) -> core::result::Result<alloc::vec::Vec<f32>, ferricml::api::ModelError>
+pub fn ferricml::ensemble::ExtraTreesClassifier::predict_proba_into(&self, &ferricml::data::MatrixView<'_>, &mut [f32]) -> core::result::Result<(), ferricml::api::ModelError>
+pub struct ferricml::ensemble::ExtraTreesClassifierParams
+impl ferricml::ensemble::ExtraTreesClassifierParams
+pub const fn ferricml::ensemble::ExtraTreesClassifierParams::bootstrap(&self) -> bool
+pub const fn ferricml::ensemble::ExtraTreesClassifierParams::max_depth(&self) -> core::option::Option<usize>
+pub const fn ferricml::ensemble::ExtraTreesClassifierParams::max_features(&self) -> ferricml::ensemble::MaxFeatures
+pub const fn ferricml::ensemble::ExtraTreesClassifierParams::min_samples_leaf(&self) -> usize
+pub const fn ferricml::ensemble::ExtraTreesClassifierParams::min_samples_split(&self) -> usize
+pub const fn ferricml::ensemble::ExtraTreesClassifierParams::n_estimators(&self) -> usize
+pub const fn ferricml::ensemble::ExtraTreesClassifierParams::n_jobs(&self) -> ferricml::ensemble::NJobs
+pub const fn ferricml::ensemble::ExtraTreesClassifierParams::random_state(&self) -> u64
+pub fn ferricml::ensemble::ExtraTreesClassifierParams::with_bootstrap(self, bool) -> Self
+pub fn ferricml::ensemble::ExtraTreesClassifierParams::with_max_depth(self, core::option::Option<usize>) -> Self
+pub fn ferricml::ensemble::ExtraTreesClassifierParams::with_max_features(self, ferricml::ensemble::MaxFeatures) -> Self
+pub fn ferricml::ensemble::ExtraTreesClassifierParams::with_min_samples_leaf(self, usize) -> Self
+pub fn ferricml::ensemble::ExtraTreesClassifierParams::with_min_samples_split(self, usize) -> Self
+pub fn ferricml::ensemble::ExtraTreesClassifierParams::with_n_estimators(self, usize) -> Self
+pub fn ferricml::ensemble::ExtraTreesClassifierParams::with_n_jobs(self, ferricml::ensemble::NJobs) -> Self
+pub fn ferricml::ensemble::ExtraTreesClassifierParams::with_random_state(self, u64) -> Self
+impl core::default::Default for ferricml::ensemble::ExtraTreesClassifierParams
+pub fn ferricml::ensemble::ExtraTreesClassifierParams::default() -> Self
+pub struct ferricml::ensemble::ExtraTreesRegressor
+impl ferricml::ensemble::ExtraTreesRegressor
+pub fn ferricml::ensemble::ExtraTreesRegressor::fit(&ferricml::data::MatrixView<'_>, &ferricml::data::RegressionTargets, ferricml::ensemble::ExtraTreesRegressorParams) -> core::result::Result<Self, ferricml::api::ModelError>
+pub fn ferricml::ensemble::ExtraTreesRegressor::fit_weighted(&ferricml::data::MatrixView<'_>, &ferricml::data::RegressionTargets, &ferricml::data::SampleWeights, ferricml::ensemble::ExtraTreesRegressorParams) -> core::result::Result<Self, ferricml::api::ModelError>
+pub fn ferricml::ensemble::ExtraTreesRegressor::from_artifact(&[u8], [u8; 32]) -> core::result::Result<Self, ferricml::artifact::ArtifactError>
+pub fn ferricml::ensemble::ExtraTreesRegressor::get_params(&self) -> &ferricml::ensemble::ExtraTreesRegressorParams
+pub fn ferricml::ensemble::ExtraTreesRegressor::n_features_in(&self) -> usize
+pub fn ferricml::ensemble::ExtraTreesRegressor::predict(&self, &ferricml::data::MatrixView<'_>) -> core::result::Result<alloc::vec::Vec<f32>, ferricml::api::ModelError>
+pub fn ferricml::ensemble::ExtraTreesRegressor::predict_into(&self, &ferricml::data::MatrixView<'_>, &mut [f32]) -> core::result::Result<(), ferricml::api::ModelError>
+pub fn ferricml::ensemble::ExtraTreesRegressor::predict_one(&self, &[f32]) -> core::result::Result<f32, ferricml::api::ModelError>
+pub fn ferricml::ensemble::ExtraTreesRegressor::to_artifact(&self, [u8; 32]) -> core::result::Result<alloc::vec::Vec<u8>, ferricml::artifact::ArtifactError>
+impl ferricml::api::Estimator for ferricml::ensemble::ExtraTreesRegressor
+pub fn ferricml::ensemble::ExtraTreesRegressor::n_features_in(&self) -> usize
+impl ferricml::api::HasCapabilities for ferricml::ensemble::ExtraTreesRegressor
+pub const ferricml::ensemble::ExtraTreesRegressor::CAPABILITIES: ferricml::api::Capabilities
+impl ferricml::api::HasParams for ferricml::ensemble::ExtraTreesRegressor
+pub type ferricml::ensemble::ExtraTreesRegressor::Params = ferricml::ensemble::ExtraTreesRegressorParams
+pub fn ferricml::ensemble::ExtraTreesRegressor::get_params(&self) -> &Self::Params
+impl ferricml::api::Regressor for ferricml::ensemble::ExtraTreesRegressor
+pub fn ferricml::ensemble::ExtraTreesRegressor::predict(&self, &ferricml::data::MatrixView<'_>) -> core::result::Result<alloc::vec::Vec<f32>, ferricml::api::ModelError>
+pub fn ferricml::ensemble::ExtraTreesRegressor::predict_into(&self, &ferricml::data::MatrixView<'_>, &mut [f32]) -> core::result::Result<(), ferricml::api::ModelError>
+pub struct ferricml::ensemble::ExtraTreesRegressorParams
+impl ferricml::ensemble::ExtraTreesRegressorParams
+pub const fn ferricml::ensemble::ExtraTreesRegressorParams::bootstrap(&self) -> bool
+pub const fn ferricml::ensemble::ExtraTreesRegressorParams::max_depth(&self) -> core::option::Option<usize>
+pub const fn ferricml::ensemble::ExtraTreesRegressorParams::max_features(&self) -> ferricml::ensemble::MaxFeatures
+pub const fn ferricml::ensemble::ExtraTreesRegressorParams::min_samples_leaf(&self) -> usize
+pub const fn ferricml::ensemble::ExtraTreesRegressorParams::min_samples_split(&self) -> usize
+pub const fn ferricml::ensemble::ExtraTreesRegressorParams::n_estimators(&self) -> usize
+pub const fn ferricml::ensemble::ExtraTreesRegressorParams::n_jobs(&self) -> ferricml::ensemble::NJobs
+pub const fn ferricml::ensemble::ExtraTreesRegressorParams::random_state(&self) -> u64
+pub fn ferricml::ensemble::ExtraTreesRegressorParams::with_bootstrap(self, bool) -> Self
+pub fn ferricml::ensemble::ExtraTreesRegressorParams::with_max_depth(self, core::option::Option<usize>) -> Self
+pub fn ferricml::ensemble::ExtraTreesRegressorParams::with_max_features(self, ferricml::ensemble::MaxFeatures) -> Self
+pub fn ferricml::ensemble::ExtraTreesRegressorParams::with_min_samples_leaf(self, usize) -> Self
+pub fn ferricml::ensemble::ExtraTreesRegressorParams::with_min_samples_split(self, usize) -> Self
+pub fn ferricml::ensemble::ExtraTreesRegressorParams::with_n_estimators(self, usize) -> Self
+pub fn ferricml::ensemble::ExtraTreesRegressorParams::with_n_jobs(self, ferricml::ensemble::NJobs) -> Self
+pub fn ferricml::ensemble::ExtraTreesRegressorParams::with_random_state(self, u64) -> Self
+impl core::default::Default for ferricml::ensemble::ExtraTreesRegressorParams
+pub fn ferricml::ensemble::ExtraTreesRegressorParams::default() -> Self
 pub struct ferricml::ensemble::HistGradientBoostingClassifier
 impl ferricml::ensemble::HistGradientBoostingClassifier
 pub const fn ferricml::ensemble::HistGradientBoostingClassifier::baseline(&self) -> f32

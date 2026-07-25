@@ -3,10 +3,11 @@ use ferricml::data::{
     BinaryTargets, DenseMatrix, MatrixView, RegressionTargets, SampleWeights, SelectionError,
 };
 use ferricml::ensemble::{
-    HistGradientBoostingClassifier, HistGradientBoostingClassifierParams,
-    HistGradientBoostingRegressor, HistGradientBoostingRegressorParams, MaxFeatures, NJobs,
-    RandomForestClassifier, RandomForestClassifierParams, RandomForestRegressor,
-    RandomForestRegressorParams,
+    ExtraTreesClassifier, ExtraTreesClassifierParams, ExtraTreesRegressor,
+    ExtraTreesRegressorParams, HistGradientBoostingClassifier,
+    HistGradientBoostingClassifierParams, HistGradientBoostingRegressor,
+    HistGradientBoostingRegressorParams, MaxFeatures, NJobs, RandomForestClassifier,
+    RandomForestClassifierParams, RandomForestRegressor, RandomForestRegressorParams,
 };
 use ferricml::linear_model::{
     LinearRegression, LinearRegressionParams, LogisticRegression, LogisticRegressionParams, Ridge,
@@ -354,6 +355,68 @@ fn classifier_paths_builders_traits_and_retained_params_are_stable() {
     assert_eq!(model.classes(), &[0, 1]);
     assert_eq!(model.predict(&matrix.as_view()).unwrap().len(), 4);
     assert_eq!(model.predict_proba(&matrix.as_view()).unwrap().len(), 8);
+}
+
+#[test]
+fn extra_trees_paths_builders_traits_and_retained_params_are_stable() {
+    let matrix = training_matrix();
+    let labels = BinaryTargets::new(vec![0, 0, 1, 1]).unwrap();
+    let targets = RegressionTargets::new(vec![0.0, 1.0, 4.0, 9.0]).unwrap();
+    let params = ExtraTreesClassifierParams::default()
+        .with_n_estimators(3)
+        .with_max_depth(Some(4))
+        .with_min_samples_split(2)
+        .with_min_samples_leaf(1)
+        .with_max_features(MaxFeatures::Count(1))
+        .with_bootstrap(false)
+        .with_random_state(17)
+        .with_n_jobs(NJobs::Serial);
+
+    let model = ExtraTreesClassifier::fit(&matrix.as_view(), &labels, params.clone()).unwrap();
+
+    assert_eq!(estimator_width(&model), 2);
+    assert_eq!(classifier_width(&model), 2);
+    assert_eq!(model.get_params(), &params);
+    assert_eq!(
+        retained_params::<_, ExtraTreesClassifierParams>(&model),
+        &params
+    );
+    // The parameter vocabulary is the random forest's, and `splitter` is
+    // deliberately **not** on it: it is what the type means, so a caller cannot
+    // set it back and get a random forest under a second name.
+    assert_eq!(params.n_estimators(), 3);
+    assert_eq!(params.max_depth(), Some(4));
+    assert_eq!(params.min_samples_split(), 2);
+    assert_eq!(params.min_samples_leaf(), 1);
+    assert_eq!(params.max_features(), MaxFeatures::Count(1));
+    assert!(!params.bootstrap());
+    assert_eq!(params.random_state(), 17);
+    assert_eq!(params.n_jobs(), NJobs::Serial);
+
+    assert_eq!(model.classes(), &[0, 1]);
+    assert_eq!(model.predict(&matrix.as_view()).unwrap().len(), 4);
+    assert_eq!(model.predict_proba(&matrix.as_view()).unwrap().len(), 8);
+    let mut positive = [0.0; 4];
+    model
+        .predict_positive_proba_into(&matrix.as_view(), &mut positive)
+        .unwrap();
+    assert!(positive.iter().all(|value| (0.0..=1.0).contains(value)));
+
+    let regressor_params = ExtraTreesRegressorParams::default()
+        .with_n_estimators(2)
+        .with_max_depth(Some(3))
+        .with_max_features(MaxFeatures::All)
+        .with_random_state(23);
+    let regressor =
+        ExtraTreesRegressor::fit(&matrix.as_view(), &targets, regressor_params.clone()).unwrap();
+    assert_eq!(regressor_width(&regressor), 2);
+    assert_eq!(regressor.get_params(), &regressor_params);
+    let mut predictions = [0.0; 4];
+    regressor
+        .predict_into(&matrix.as_view(), &mut predictions)
+        .unwrap();
+    assert!(predictions.iter().all(|prediction| prediction.is_finite()));
+    assert_eq!(regressor.predict(&matrix.as_view()).unwrap(), predictions);
 }
 
 #[test]

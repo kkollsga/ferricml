@@ -29,8 +29,8 @@ macro_rules! forest_classifier {
         /// kind that records which leaf arithmetic it holds.
         #[derive(Clone, Debug, PartialEq)]
         pub struct $name {
-            pub(super) params: $params,
-            pub(super) core: $crate::ensemble::forest::model::ClassifierCore,
+            pub(crate) params: $params,
+            pub(crate) core: $crate::ensemble::forest::model::ClassifierCore,
         }
 
         impl $name {
@@ -358,7 +358,7 @@ macro_rules! forest_classifier {
 
             /// The scalar trees of a binary fit, for in-crate structural tests.
             #[cfg(test)]
-            pub(super) fn binary_trees(&self) -> &[$crate::tree::PackedTree] {
+            pub(crate) fn binary_trees(&self) -> &[$crate::tree::PackedTree] {
                 self.core.forest.binary_trees()
             }
         }
@@ -430,8 +430,8 @@ macro_rules! forest_regressor {
         $(#[doc = $doc])+
         #[derive(Clone, Debug, PartialEq)]
         pub struct $name {
-            pub(super) params: $params,
-            pub(super) core: $crate::ensemble::forest::model::RegressorCore,
+            pub(crate) params: $params,
+            pub(crate) core: $crate::ensemble::forest::model::RegressorCore,
         }
 
         impl $name {

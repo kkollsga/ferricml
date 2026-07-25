@@ -27,6 +27,17 @@ and releases use [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   does not depend on which columns happen to be constant. Random forests are
   unaffected: they keep the exhaustive search and their artifact bytes are
   unchanged.
+- `ensemble::ExtraTreesClassifier` and `ensemble::ExtraTreesRegressor`,
+  extremely randomized tree ensembles over the same core a random forest uses.
+  Each member draws one uniform threshold per candidate column instead of
+  optimizing within it; the candidate columns themselves are drawn exactly as a
+  random forest draws them. `bootstrap` therefore defaults to `false` here and
+  stays `true` on a random forest — trees decorrelate through their thresholds,
+  so resampling on top of that would only remove training rows. Both persist
+  under new artifact kinds, fit with or without sample weights, and the
+  classifier fits binary or natively multiclass targets. An ensemble of one
+  member is bit-identical to the corresponding standalone tree at the same
+  seed, which is asserted rather than assumed.
 
 ### Changed
 

@@ -115,6 +115,17 @@ impl DecisionTreeRegressor {
         })
     }
 
+    /// The packed tree, for the in-crate grower-equivalence proof.
+    ///
+    /// Never public: the whole point of keeping the layout private is that a
+    /// caller cannot come to depend on it. The equivalence test is in-crate
+    /// precisely so the claim can be bit-exact without exporting the bytes it
+    /// compares.
+    #[cfg(test)]
+    pub(crate) fn packed(&self) -> &PackedTree {
+        &self.tree
+    }
+
     /// Predicts one regression value for one sample.
     pub fn predict_one(&self, row: &[f32]) -> Result<f32, ModelError> {
         check_row(row, self.n_features_in)?;

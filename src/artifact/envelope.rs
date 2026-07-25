@@ -32,6 +32,8 @@ pub(crate) const STAGED_PIPELINE_ARTIFACT_KIND: u16 = 16;
 pub(crate) const HIST_GRADIENT_BOOSTING_CLASSIFIER_ARTIFACT_KIND: u16 = 20;
 pub(crate) const DECISION_TREE_REGRESSOR_ARTIFACT_KIND: u16 = 21;
 pub(crate) const DECISION_TREE_CLASSIFIER_ARTIFACT_KIND: u16 = 22;
+pub(crate) const EXTRA_TREES_REGRESSOR_ARTIFACT_KIND: u16 = 23;
+pub(crate) const EXTRA_TREES_CLASSIFIER_ARTIFACT_KIND: u16 = 24;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum SchemaRole {

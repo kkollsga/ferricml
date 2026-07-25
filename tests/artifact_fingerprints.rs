@@ -1,9 +1,10 @@
 use ferricml::data::{BinaryTargets, ClassTargets, DenseMatrix, RegressionTargets};
 use ferricml::ensemble::{
-    HistGradientBoostingClassifier, HistGradientBoostingClassifierParams,
-    HistGradientBoostingRegressor, HistGradientBoostingRegressorParams, MaxFeatures,
-    RandomForestClassifier, RandomForestClassifierParams, RandomForestRegressor,
-    RandomForestRegressorParams,
+    ExtraTreesClassifier, ExtraTreesClassifierParams, ExtraTreesRegressor,
+    ExtraTreesRegressorParams, HistGradientBoostingClassifier,
+    HistGradientBoostingClassifierParams, HistGradientBoostingRegressor,
+    HistGradientBoostingRegressorParams, MaxFeatures, RandomForestClassifier,
+    RandomForestClassifierParams, RandomForestRegressor, RandomForestRegressorParams,
 };
 use ferricml::linear_model::{
     LinearRegression, LinearRegressionParams, LogisticRegression, LogisticRegressionParams, Ridge,
@@ -291,6 +292,67 @@ fn fitted_artifact_fingerprints_are_frozen() {
         [
             89, 182, 208, 111, 239, 82, 138, 10, 170, 201, 231, 232, 108, 177, 151, 116, 130, 156,
             121, 230, 156, 233, 230, 25, 201, 87, 142, 118, 141, 43, 145, 2,
+        ],
+    );
+
+    // The randomized ensembles. Their thresholds come out of the crate's own
+    // generator rather than out of the data, so freezing them is what turns
+    // "the randomized search is deterministic" into a checked claim.
+    let extra_trees_regressor = ExtraTreesRegressor::fit(
+        &data.as_view(),
+        &regression,
+        ExtraTreesRegressorParams::default()
+            .with_n_estimators(3)
+            .with_max_depth(Some(4))
+            .with_max_features(MaxFeatures::All)
+            .with_random_state(11),
+    )
+    .unwrap();
+    assert_fingerprint(
+        "extra-trees-regressor",
+        extra_trees_regressor.to_artifact([5; 32]).unwrap(),
+        extra_trees_regressor.to_artifact([5; 32]).unwrap(),
+        640,
+        [
+            107, 92, 114, 97, 34, 105, 208, 9, 197, 111, 89, 241, 209, 249, 73, 132, 31, 239, 139,
+            23, 222, 43, 251, 149, 139, 173, 126, 63, 172, 40, 63, 147,
+        ],
+    );
+    let extra_trees_classifier_params = ExtraTreesClassifierParams::default()
+        .with_n_estimators(3)
+        .with_max_depth(Some(4))
+        .with_max_features(MaxFeatures::All)
+        .with_random_state(11);
+    let extra_trees_classifier = ExtraTreesClassifier::fit(
+        &data.as_view(),
+        &binary,
+        extra_trees_classifier_params.clone(),
+    )
+    .unwrap();
+    assert_fingerprint(
+        "extra-trees-classifier",
+        extra_trees_classifier.to_artifact([5; 32]).unwrap(),
+        extra_trees_classifier.to_artifact([5; 32]).unwrap(),
+        536,
+        [
+            209, 117, 217, 225, 131, 62, 7, 182, 91, 127, 75, 76, 0, 91, 34, 141, 28, 192, 246,
+            109, 19, 239, 112, 27, 105, 190, 130, 197, 234, 214, 236, 139,
+        ],
+    );
+    let multiclass_extra_trees = ExtraTreesClassifier::fit_multiclass(
+        &data.as_view(),
+        &ClassTargets::new(vec![3, 7, 10, 7]).unwrap(),
+        extra_trees_classifier_params,
+    )
+    .unwrap();
+    assert_fingerprint(
+        "extra-trees-classifier-multiclass",
+        multiclass_extra_trees.to_artifact([5; 32]).unwrap(),
+        multiclass_extra_trees.to_artifact([5; 32]).unwrap(),
+        852,
+        [
+            215, 167, 160, 133, 178, 124, 16, 108, 146, 32, 218, 122, 116, 245, 190, 157, 153, 56,
+            166, 48, 102, 212, 11, 94, 35, 29, 203, 134, 119, 166, 220, 215,
         ],
     );
 

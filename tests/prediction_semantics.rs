@@ -27,10 +27,11 @@ use ferricml::dummy::{
     DummyClassifier, DummyClassifierParams, DummyRegressor, DummyRegressorParams,
 };
 use ferricml::ensemble::{
-    HistGradientBoostingClassifier, HistGradientBoostingClassifierParams,
-    HistGradientBoostingRegressor, HistGradientBoostingRegressorParams, MaxFeatures, NJobs,
-    RandomForestClassifier, RandomForestClassifierParams, RandomForestRegressor,
-    RandomForestRegressorParams,
+    ExtraTreesClassifier, ExtraTreesClassifierParams, ExtraTreesRegressor,
+    ExtraTreesRegressorParams, HistGradientBoostingClassifier,
+    HistGradientBoostingClassifierParams, HistGradientBoostingRegressor,
+    HistGradientBoostingRegressorParams, MaxFeatures, NJobs, RandomForestClassifier,
+    RandomForestClassifierParams, RandomForestRegressor, RandomForestRegressorParams,
 };
 use ferricml::pipeline::{Pipeline, StagedPipeline};
 use ferricml::tree::{
@@ -107,6 +108,23 @@ fn tree_regressor_params() -> DecisionTreeRegressorParams {
         .with_random_state(7)
 }
 
+/// The randomized ensemble under the same shape the forest cases use, so a
+/// difference between the two registrations is a difference in the estimator
+/// rather than in its workload.
+fn extra_trees_classifier_params() -> ExtraTreesClassifierParams {
+    ExtraTreesClassifierParams::default()
+        .with_n_estimators(5)
+        .with_max_features(MaxFeatures::All)
+        .with_random_state(7)
+}
+
+fn extra_trees_regressor_params() -> ExtraTreesRegressorParams {
+    ExtraTreesRegressorParams::default()
+        .with_n_estimators(5)
+        .with_max_features(MaxFeatures::All)
+        .with_random_state(7)
+}
+
 fn boosting_params() -> HistGradientBoostingRegressorParams {
     HistGradientBoostingRegressorParams::default()
         .with_max_iter(3)
@@ -162,6 +180,86 @@ impl ClassifierCase for RandomForestClassifierCase {
 
 impl ScalarClassifierCase for RandomForestClassifierCase {
     fn predict_one(model: &Self::Model, row: &[f32]) -> Result<u8, ModelError> {
+        model.predict_one(row)
+    }
+}
+
+struct ExtraTreesClassifierCase;
+
+impl ClassifierCase for ExtraTreesClassifierCase {
+    probabilistic_hooks!();
+
+    type Model = ExtraTreesClassifier;
+    const NAME: &'static str = "ExtraTreesClassifier";
+
+    fn fit(train: &Sample, _holdout: &Sample) -> Result<Self::Model, ModelError> {
+        ExtraTreesClassifier::fit(
+            &train.view(),
+            &train.labels,
+            extra_trees_classifier_params(),
+        )
+    }
+
+    fn fit_multiclass(train: &Sample, _holdout: &Sample) -> OptionalFit<Self::Model> {
+        Some(ExtraTreesClassifier::fit_multiclass(
+            &train.view(),
+            &train.class_labels,
+            extra_trees_classifier_params(),
+        ))
+    }
+
+    fn fit_weighted(train: &Sample, _holdout: &Sample) -> OptionalFit<Self::Model> {
+        Some(ExtraTreesClassifier::fit_weighted(
+            &train.view(),
+            &train.labels,
+            &train.unit_weights(),
+            extra_trees_classifier_params(),
+        ))
+    }
+
+    fn round_trip(model: &Self::Model) -> RoundTrip<Self::Model> {
+        round_trip(
+            || model.to_artifact(SCHEMA),
+            |bytes| ExtraTreesClassifier::from_artifact(bytes, SCHEMA),
+        )
+    }
+}
+
+impl ScalarClassifierCase for ExtraTreesClassifierCase {
+    fn predict_one(model: &Self::Model, row: &[f32]) -> Result<u8, ModelError> {
+        model.predict_one(row)
+    }
+}
+
+struct ExtraTreesRegressorCase;
+
+impl RegressorCase for ExtraTreesRegressorCase {
+    type Model = ExtraTreesRegressor;
+    const NAME: &'static str = "ExtraTreesRegressor";
+
+    fn fit(train: &Sample, _holdout: &Sample) -> Result<Self::Model, ModelError> {
+        ExtraTreesRegressor::fit(&train.view(), &train.values, extra_trees_regressor_params())
+    }
+
+    fn fit_weighted(train: &Sample, _holdout: &Sample) -> OptionalFit<Self::Model> {
+        Some(ExtraTreesRegressor::fit_weighted(
+            &train.view(),
+            &train.values,
+            &train.unit_weights(),
+            extra_trees_regressor_params(),
+        ))
+    }
+
+    fn round_trip(model: &Self::Model) -> RoundTrip<Self::Model> {
+        round_trip(
+            || model.to_artifact(SCHEMA),
+            |bytes| ExtraTreesRegressor::from_artifact(bytes, SCHEMA),
+        )
+    }
+}
+
+impl ScalarRegressorCase for ExtraTreesRegressorCase {
+    fn predict_one(model: &Self::Model, row: &[f32]) -> Result<f32, ModelError> {
         model.predict_one(row)
     }
 }
@@ -1276,6 +1374,16 @@ fn random_forest_classifier_conforms() {
 }
 
 #[test]
+fn extra_trees_classifier_conforms() {
+    check_classifier::<ExtraTreesClassifierCase>();
+}
+
+#[test]
+fn extra_trees_regressor_conforms() {
+    check_regressor::<ExtraTreesRegressorCase>();
+}
+
+#[test]
 fn decision_tree_classifier_conforms() {
     check_classifier::<DecisionTreeClassifierCase>();
 }
@@ -1400,7 +1508,8 @@ fn staged_pipelines_conform_at_both_arities() {
 //   one score, with no fitted input width, no batch surface, and no capability
 //   declaration to check against behavior. Its obligations are in
 //   `tests/calibration.rs`.
-// - The standalone tree estimators are **not** `AnyClassifier` / `AnyRegressor`
+// - The standalone trees and the randomized ensembles are **not** `AnyClassifier` /
+//   `AnyRegressor`
 //   variants. Adding a variant is a public-enum change to a shared file with no
 //   consumer in this sprint, and the nested-payload dispatch design means it can
 //   be added later without touching any existing estimator's bytes. The

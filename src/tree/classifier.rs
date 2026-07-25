@@ -226,6 +226,25 @@ impl DecisionTreeClassifier {
         })
     }
 
+    /// The packed binary tree, for the in-crate grower-equivalence proof.
+    #[cfg(test)]
+    pub(crate) fn packed_binary(&self) -> &PackedTree {
+        match &self.tree {
+            Tree::Binary(tree) => tree,
+            Tree::Multiclass(_) => unreachable!("binary fixture"),
+        }
+    }
+
+    /// The packed multiclass tree, for the same proof through the other
+    /// fitting entry point.
+    #[cfg(test)]
+    pub(crate) fn packed_multiclass(&self) -> &ClassTree {
+        match &self.tree {
+            Tree::Multiclass(tree) => tree,
+            Tree::Binary(_) => unreachable!("multiclass fixture"),
+        }
+    }
+
     /// Predicts the class label for one sample.
     pub fn predict_one(&self, row: &[f32]) -> Result<u8, ModelError> {
         check_row(row, self.n_features_in)?;

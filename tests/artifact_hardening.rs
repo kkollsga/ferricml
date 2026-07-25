@@ -31,10 +31,11 @@ use ferricml::api::{AnyClassifier, AnyRegressor};
 use ferricml::artifact::ArtifactError;
 use ferricml::data::{BinaryTargets, ClassTargets, DenseMatrix, RegressionTargets};
 use ferricml::ensemble::{
-    HistGradientBoostingClassifier, HistGradientBoostingClassifierParams,
-    HistGradientBoostingRegressor, HistGradientBoostingRegressorParams, MaxFeatures,
-    RandomForestClassifier, RandomForestClassifierParams, RandomForestRegressor,
-    RandomForestRegressorParams,
+    ExtraTreesClassifier, ExtraTreesClassifierParams, ExtraTreesRegressor,
+    ExtraTreesRegressorParams, HistGradientBoostingClassifier,
+    HistGradientBoostingClassifierParams, HistGradientBoostingRegressor,
+    HistGradientBoostingRegressorParams, MaxFeatures, RandomForestClassifier,
+    RandomForestClassifierParams, RandomForestRegressor, RandomForestRegressorParams,
 };
 use ferricml::linear_model::{
     LinearRegression, LinearRegressionParams, LogisticRegression, LogisticRegressionParams, Ridge,
@@ -246,8 +247,8 @@ const TRANSFORMED_SCHEMA: [u8; 32] = [4; 32];
 /// `17`-`19` are reserved and unimplemented, and `0` is unassigned; keeping them
 /// in the sweep is what proves a decoder refuses a kind rather than merely
 /// missing one.
-const ARTIFACT_KINDS: [u16; 23] = [
-    0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22,
+const ARTIFACT_KINDS: [u16; 25] = [
+    0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24,
 ];
 
 fn u16_at(bytes: &[u8], offset: usize) -> u16 {
@@ -457,6 +458,18 @@ fn decoders() -> Vec<Decoder> {
                 |m| m.to_artifact(INPUT_SCHEMA),
             )
         }),
+        ("extra-trees", |bytes| {
+            accepted(
+                ExtraTreesRegressor::from_artifact(bytes, INPUT_SCHEMA),
+                |m| m.to_artifact(INPUT_SCHEMA),
+            )
+        }),
+        ("extra-trees-classifier", |bytes| {
+            accepted(
+                ExtraTreesClassifier::from_artifact(bytes, INPUT_SCHEMA),
+                |m| m.to_artifact(INPUT_SCHEMA),
+            )
+        }),
         ("decision-tree", |bytes| {
             accepted(
                 DecisionTreeRegressor::from_artifact(bytes, INPUT_SCHEMA),
@@ -654,6 +667,37 @@ fn seed_corpus() -> Vec<(&'static str, Vec<u8>)> {
     )
     .unwrap();
 
+    // The randomized ensembles, in all three fitted shapes. They share the
+    // forest codec, so their seeds are what prove the kind — not the layout —
+    // is what keeps one family's reader off the other's bytes.
+    let extra_trees_classifier_params = ExtraTreesClassifierParams::default()
+        .with_n_estimators(3)
+        .with_max_depth(Some(4))
+        .with_max_features(MaxFeatures::All)
+        .with_random_state(11);
+    let extra_trees_classifier = ExtraTreesClassifier::fit(
+        &data.as_view(),
+        &binary,
+        extra_trees_classifier_params.clone(),
+    )
+    .unwrap();
+    let multiclass_extra_trees = ExtraTreesClassifier::fit_multiclass(
+        &data.as_view(),
+        &ClassTargets::new(vec![3, 7, 10, 7]).unwrap(),
+        extra_trees_classifier_params,
+    )
+    .unwrap();
+    let extra_trees = ExtraTreesRegressor::fit(
+        &data.as_view(),
+        &regression,
+        ExtraTreesRegressorParams::default()
+            .with_n_estimators(3)
+            .with_max_depth(Some(4))
+            .with_max_features(MaxFeatures::All)
+            .with_random_state(11),
+    )
+    .unwrap();
+
     // The standalone trees, in all three fitted shapes the two kinds cover.
     // Same limits as the forest seeds above, so a reader that confused a tree
     // payload for a one-tree forest payload has to be caught by the kind and
@@ -761,6 +805,18 @@ fn seed_corpus() -> Vec<(&'static str, Vec<u8>)> {
         (
             "multiclass-forest",
             multiclass_forest.to_artifact(INPUT_SCHEMA).unwrap(),
+        ),
+        (
+            "extra-trees",
+            extra_trees.to_artifact(INPUT_SCHEMA).unwrap(),
+        ),
+        (
+            "extra-trees-classifier",
+            extra_trees_classifier.to_artifact(INPUT_SCHEMA).unwrap(),
+        ),
+        (
+            "multiclass-extra-trees",
+            multiclass_extra_trees.to_artifact(INPUT_SCHEMA).unwrap(),
         ),
         (
             "decision-tree",
@@ -1619,6 +1675,12 @@ fn forest_with(records: &[[u32; 5]], leaves: u32, depth: u32) -> Vec<u8> {
     let mut payload = component(1, 1, &valid_forest_metadata(1, 1, records.len() as u32));
     payload.extend_from_slice(&tree_component(records, leaves, depth));
     envelope(10, 1, &MODEL_ROLES, &payload)
+}
+
+fn extra_trees_with(records: &[[u32; 5]], leaves: u32, depth: u32) -> Vec<u8> {
+    let mut payload = component(1, 1, &valid_forest_metadata(1, 1, records.len() as u32));
+    payload.extend_from_slice(&tree_component(records, leaves, depth));
+    envelope(23, 1, &MODEL_ROLES, &payload)
 }
 
 fn boosting_with(records: &[[u32; 5]], leaves: u32, depth: u32) -> Vec<u8> {
@@ -2495,6 +2557,89 @@ fn corpus() -> Vec<Case> {
         },
     ]);
 
+    // The randomized ensembles. They share the forest's payload shape exactly,
+    // which is the point: what separates them is the kind, so every case here
+    // is aimed at bytes a forest reader would otherwise happily accept.
+    let extra_trees_classifier = seed("extra-trees-classifier");
+    let multiclass_extra_trees = seed("multiclass-extra-trees");
+    let (extra_trees_classifier_payload, _) =
+        payload_span(&extra_trees_classifier).expect("extra-trees classifier payload");
+    let extra_trees_classifier_metadata = extra_trees_classifier_payload + COMPONENT_HEADER_BYTES;
+    let (multiclass_extra_trees_payload, _) =
+        payload_span(&multiclass_extra_trees).expect("multiclass extra-trees payload");
+    let multiclass_extra_trees_leaf_block = {
+        let metadata_len =
+            u32_at(&multiclass_extra_trees, multiclass_extra_trees_payload + 4) as usize;
+        let first_tree = multiclass_extra_trees_payload + COMPONENT_HEADER_BYTES + metadata_len;
+        let tree_len = u32_at(&multiclass_extra_trees, first_tree + 4) as usize;
+        first_tree + COMPONENT_HEADER_BYTES + tree_len + COMPONENT_HEADER_BYTES
+    };
+    cases.extend([
+        Case {
+            name: "extra-trees-inflated-tree-count",
+            provenance: "4096 declared trees with no tree component encoded",
+            decoder: "extra-trees",
+            expected: ArtifactError::Truncated,
+            bytes: envelope(
+                23,
+                1,
+                &MODEL_ROLES,
+                &component(1, 1, &valid_forest_metadata(1, 4_096, 4_096)),
+            ),
+        },
+        Case {
+            name: "extra-trees-non-canonical-preorder",
+            provenance: "the forest topology case against the randomized ensemble's kind",
+            decoder: "extra-trees",
+            expected: ArtifactError::InvalidPayload,
+            bytes: extra_trees_with(&shuffled, 3, 2),
+        },
+        Case {
+            name: "extra-trees-classifier-unknown-flavour",
+            provenance: "a leaf-arithmetic tag naming neither of the two flavours that exist",
+            decoder: "extra-trees-classifier",
+            expected: ArtifactError::InvalidPayload,
+            bytes: overwrite(
+                &extra_trees_classifier,
+                extra_trees_classifier_metadata + 4,
+                &7_u32.to_le_bytes(),
+            ),
+        },
+        Case {
+            name: "extra-trees-classifier-binary-label-out-of-range",
+            provenance: "a binary flavour whose class list names a label its leaf cannot mean",
+            decoder: "extra-trees-classifier",
+            expected: ArtifactError::InvalidPayload,
+            bytes: overwrite(
+                &extra_trees_classifier,
+                extra_trees_classifier_metadata + 68,
+                &5_u32.to_le_bytes(),
+            ),
+        },
+        Case {
+            name: "multiclass-extra-trees-probability-out-of-range",
+            provenance: "a leaf distribution entry outside the 0..=1 a fitted leaf holds",
+            decoder: "extra-trees-classifier",
+            expected: ArtifactError::InvalidPayload,
+            bytes: overwrite(
+                &multiclass_extra_trees,
+                multiclass_extra_trees_leaf_block + 8,
+                &2.0_f32.to_bits().to_le_bytes(),
+            ),
+        },
+        Case {
+            name: "multiclass-extra-trees-inflated-leaf-block",
+            provenance: "1e6 declared leaf rows in a probability block with none present",
+            decoder: "extra-trees-classifier",
+            expected: ArtifactError::Truncated,
+            bytes: overwrite(
+                &multiclass_extra_trees,
+                multiclass_extra_trees_leaf_block,
+                &inflated.to_le_bytes(),
+            ),
+        },
+    ]);
+
     // The standalone trees. Their payload shape is not the forest's — one tree
     // rather than a declared count of them, and a leaf-arithmetic tag the
     // forest metadata has no room for — so every claim the forest cases make
@@ -2652,6 +2797,27 @@ fn corpus() -> Vec<Case> {
             bytes: forest,
         },
         Case {
+            name: "control-fitted-extra-trees",
+            provenance: "an unmodified fitted randomized regression ensemble, which must decode",
+            decoder: "extra-trees",
+            expected: ArtifactError::InvalidPayload,
+            bytes: seed("extra-trees"),
+        },
+        Case {
+            name: "control-fitted-extra-trees-classifier",
+            provenance: "an unmodified randomized classification ensemble, which must decode",
+            decoder: "extra-trees-classifier",
+            expected: ArtifactError::InvalidPayload,
+            bytes: extra_trees_classifier,
+        },
+        Case {
+            name: "control-fitted-multiclass-extra-trees",
+            provenance: "an unmodified distribution-leaf randomized ensemble, which must decode",
+            decoder: "extra-trees-classifier",
+            expected: ArtifactError::InvalidPayload,
+            bytes: multiclass_extra_trees,
+        },
+        Case {
             name: "control-fitted-decision-tree",
             provenance: "an unmodified fitted regression tree, which must still decode",
             decoder: "decision-tree",
@@ -2689,6 +2855,9 @@ impl LeBits for f64 {
 /// The entries that must decode rather than be rejected.
 const CONTROL_CASES: &[&str] = &[
     "control-fitted-forest",
+    "control-fitted-extra-trees",
+    "control-fitted-extra-trees-classifier",
+    "control-fitted-multiclass-extra-trees",
     "control-fitted-decision-tree",
     "control-fitted-decision-tree-classifier",
     "control-fitted-multiclass-decision-tree",
