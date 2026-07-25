@@ -1,8 +1,8 @@
 //! Training-only histogram split search and mutable tree growth.
 
 use super::binning::{BinnedMatrix, Binner};
+use super::error::{BoostingError, MAX_BINS, MAX_TREE_LEAVES, MAX_TREE_NODES};
 use super::predictor::{CompactNode, CompactTree};
-use super::{BoostingError, MAX_BINS, MAX_TREE_LEAVES, MAX_TREE_NODES};
 use crate::loss::{
     BoostingObjective, hessian_sum, negative_gradient_sum, newton_leaf_value, newton_split_score,
 };

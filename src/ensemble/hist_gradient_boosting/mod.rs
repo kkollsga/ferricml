@@ -1,12 +1,12 @@
 //! Deterministic dense histogram gradient-boosted regression.
 
 use self::binning::Binner;
-use self::error::{
-    BoostingError, MAX_BINS, MAX_TOTAL_NODES, MAX_TREE_DEPTH, MAX_TREE_LEAVES, MAX_TREE_NODES,
-    MAX_TREES,
+use self::controls::{
+    BoostingControls, map_boosting_error, validate_control_bounds, validate_controls,
 };
-use self::grower::{GrowConfig, SampleStatistics, grow_tree};
-use self::predictor::CompactTree;
+use self::error::{MAX_TOTAL_NODES, MAX_TREES};
+use self::grower::{SampleStatistics, grow_tree};
+use self::predictor::{CompactTree, prediction_bound_is_finite};
 use crate::api::{
     Capabilities, Estimator, HasCapabilities, HasParams, ModelError, Regressor,
     validate_prediction, validate_scalar_row,
@@ -35,6 +35,7 @@ const COMPONENT_VERSION: u16 = 1;
 const OBJECTIVE_VERSION: u32 = <SquaredError as BoostingObjective>::ARTIFACT_OBJECTIVE_TAG;
 
 mod binning;
+mod controls;
 mod error;
 mod grower;
 mod predictor;
@@ -149,6 +150,19 @@ impl HistGradientBoostingRegressorParams {
     pub const fn max_bins(&self) -> usize {
         self.max_bins
     }
+
+    /// These parameters as the growth controls shared with the classifier.
+    const fn controls(&self) -> BoostingControls {
+        BoostingControls {
+            learning_rate: self.learning_rate,
+            max_iter: self.max_iter,
+            max_leaf_nodes: self.max_leaf_nodes,
+            max_depth: self.max_depth,
+            min_samples_leaf: self.min_samples_leaf,
+            l2_regularization: self.l2_regularization,
+            max_bins: self.max_bins,
+        }
+    }
 }
 
 /// Serial squared-error histogram gradient-boosted regressor.
@@ -222,12 +236,7 @@ impl HistGradientBoostingRegressor {
         let mut predictions = vec![baseline; data.rows()];
         let mut residuals = compute_residuals(targets.as_slice(), &predictions)?;
         let mut trees = Vec::with_capacity(params.max_iter);
-        let config = GrowConfig {
-            max_leaf_nodes: params.max_leaf_nodes,
-            max_depth: params.max_depth,
-            min_samples_leaf: params.min_samples_leaf,
-            l2_regularization: params.l2_regularization,
-        };
+        let config = params.controls().grow_config();
         for _ in 0..params.max_iter {
             let tree = grow_tree::<SquaredError>(
                 &binned,
@@ -406,8 +415,8 @@ impl HistGradientBoostingRegressor {
             || tree_count != max_iter
             || declared_total_nodes == 0
             || declared_total_nodes > MAX_TOTAL_NODES
-            || validate_params(&params).is_err()
-            || validate_model_bounds(&params).is_err()
+            || validate_controls(params.controls()).is_err()
+            || validate_control_bounds(params.controls()).is_err()
         {
             return Err(ArtifactError::InvalidPayload);
         }
@@ -526,83 +535,14 @@ fn validate_fit(
             weights: sample_weights.len(),
         });
     }
-    validate_params(params)?;
-    validate_model_bounds(params)?;
+    validate_controls(params.controls())?;
+    validate_control_bounds(params.controls())?;
     Ok(())
-}
-
-fn validate_model_bounds(params: &HistGradientBoostingRegressorParams) -> Result<(), ModelError> {
-    let maximum_nodes = params
-        .max_leaf_nodes
-        .checked_mul(2)
-        .and_then(|nodes| nodes.checked_sub(1))
-        .and_then(|nodes| nodes.checked_mul(params.max_iter))
-        .ok_or(ModelError::BoostingModelTooLarge)?;
-    if maximum_nodes > MAX_TOTAL_NODES {
-        return Err(ModelError::BoostingModelTooLarge);
-    }
-    Ok(())
-}
-
-fn prediction_bound_is_finite(baseline: f32, learning_rate: f32, trees: &[CompactTree]) -> bool {
-    let mut bound = f64::from(baseline.abs());
-    for tree in trees {
-        bound += f64::from(learning_rate.abs()) * f64::from(tree.max_abs_leaf());
-        if !bound.is_finite() || bound > f64::from(f32::MAX) {
-            return false;
-        }
-    }
-    true
-}
-
-fn validate_params(params: &HistGradientBoostingRegressorParams) -> Result<(), ModelError> {
-    if !params.learning_rate.is_finite() || params.learning_rate <= 0.0 {
-        return Err(ModelError::InvalidLearningRate);
-    }
-    if !(1..=MAX_TREES).contains(&params.max_iter) {
-        return Err(ModelError::InvalidBoostingIterationCount);
-    }
-    if !(2..=MAX_TREE_LEAVES).contains(&params.max_leaf_nodes) {
-        return Err(ModelError::InvalidMaxLeafNodes);
-    }
-    if params
-        .max_depth
-        .is_some_and(|max_depth| !(1..=MAX_TREE_DEPTH).contains(&max_depth))
-    {
-        return Err(ModelError::InvalidBoostingMaxDepth);
-    }
-    if params.min_samples_leaf == 0 {
-        return Err(ModelError::InvalidMinSamplesLeaf);
-    }
-    if !params.l2_regularization.is_finite() || params.l2_regularization < 0.0 {
-        return Err(ModelError::InvalidL2Regularization);
-    }
-    if !(2..=MAX_BINS).contains(&params.max_bins) {
-        return Err(ModelError::InvalidMaxBins);
-    }
-    Ok(())
-}
-
-fn map_boosting_error(error: BoostingError) -> ModelError {
-    match error {
-        BoostingError::InvalidMaxBins => ModelError::InvalidMaxBins,
-        BoostingError::InvalidMaxLeafNodes => ModelError::InvalidMaxLeafNodes,
-        BoostingError::InvalidMaxDepth => ModelError::InvalidBoostingMaxDepth,
-        BoostingError::InvalidMinSamplesLeaf => ModelError::InvalidMinSamplesLeaf,
-        BoostingError::InvalidL2Regularization => ModelError::InvalidL2Regularization,
-        BoostingError::FeatureDimension { expected, actual } => {
-            ModelError::FeatureDimension { expected, actual }
-        }
-        BoostingError::TooManyFeatures => ModelError::TooManyFeatures,
-        BoostingError::TreeTooLarge | BoostingError::InvalidTree => ModelError::TreeTooLarge,
-        BoostingError::ResidualLength { .. } | BoostingError::NonFiniteResidual { .. } => {
-            ModelError::NumericalOverflow
-        }
-    }
 }
 
 #[cfg(test)]
 mod tests {
+    use super::error::MAX_TREE_LEAVES;
     use super::*;
     use crate::data::DenseMatrix;
     use crate::linear_model::Ridge;

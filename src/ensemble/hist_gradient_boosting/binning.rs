@@ -2,7 +2,7 @@
 
 use crate::data::MatrixView;
 
-use super::{BoostingError, MAX_BINS};
+use super::error::{BoostingError, MAX_BINS};
 
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) struct Binner {

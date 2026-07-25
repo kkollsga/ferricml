@@ -3,7 +3,7 @@
 use crate::artifact::{ArtifactError, LogicalTreeNode};
 use crate::data::MatrixView;
 
-use super::{BoostingError, MAX_TREE_DEPTH, MAX_TREE_NODES};
+use super::error::{BoostingError, MAX_TREE_DEPTH, MAX_TREE_NODES};
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub(crate) enum CompactNode {
@@ -157,6 +157,28 @@ impl CompactTree {
             })
             .fold(0.0, f32::max)
     }
+}
+
+/// Whether every prediction this ensemble can produce stays inside `f32`.
+///
+/// The bound is the baseline plus the shrunk worst-case leaf of every tree, so
+/// it is an upper bound on `|prediction|` rather than a sample of it, and it is
+/// checked once after fitting and again after decoding. A model that cannot
+/// answer finitely for *some* input is refused rather than left to report an
+/// infinity at prediction time.
+pub(crate) fn prediction_bound_is_finite(
+    baseline: f32,
+    learning_rate: f32,
+    trees: &[CompactTree],
+) -> bool {
+    let mut bound = f64::from(baseline.abs());
+    for tree in trees {
+        bound += f64::from(learning_rate.abs()) * f64::from(tree.max_abs_leaf());
+        if !bound.is_finite() || bound > f64::from(f32::MAX) {
+            return false;
+        }
+    }
+    true
 }
 
 #[cfg(test)]
