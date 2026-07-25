@@ -60,6 +60,11 @@ const FIT_FAILS: u8 = 22;
 const WORKSPACE_LENGTH_UNCHECKED: u8 = 23;
 const WORKSPACE_LEAKS: u8 = 24;
 
+// Faults of the one declared capability that shipped with no behavioral check.
+const DECISION_FUNCTION_DECLARED_WITHOUT_HOOK: u8 = 25;
+const DECISION_FUNCTION_HOOK_WITHOUT_DECLARATION: u8 = 26;
+const DECISION_FUNCTION_CONTRADICTS_PROBABILITY: u8 = 27;
+
 const BASE_THRESHOLD: f32 = 3.5;
 const BASE_OFFSET: f32 = 0.0;
 const BASE_SCALE: f32 = 2.0;
@@ -74,6 +79,7 @@ const fn probe_capabilities(fault: u8) -> Capabilities {
         .with_multiclass(
             fault == MULTICLASS_DECLARED_WITHOUT_HOOK || fault == MULTICLASS_COLLAPSES_CLASSES,
         )
+        .with_decision_function(fault != DECISION_FUNCTION_HOOK_WITHOUT_DECLARATION)
 }
 
 thread_local! {
@@ -196,6 +202,20 @@ impl<const FAULT: u8> ClassifierProbe<FAULT> {
             self.classes[(honest + 1) % self.classes.len()]
         } else {
             self.classes[honest]
+        }
+    }
+
+    /// A raw score whose ordering agrees with the positive-class probability.
+    ///
+    /// The probability is a step at `threshold`, so any function increasing in
+    /// `row[0]` is rank-consistent with it. The contradicting fault reverses
+    /// the sign, which passes every shape check and fails only the ordering.
+    fn score(&self, row: &[f32]) -> f32 {
+        let honest = row[0] - self.threshold;
+        if FAULT == DECISION_FUNCTION_CONTRADICTS_PROBABILITY {
+            -honest
+        } else {
+            honest
         }
     }
 
@@ -358,6 +378,36 @@ impl<const FAULT: u8> ClassifierCase for ClassifierProbeCase<FAULT> {
             ))),
             _ => Some(Ok((FABRICATED_ARTIFACT.to_vec(), model.clone()))),
         }
+    }
+
+    fn decision_function(
+        model: &Self::Model,
+        data: &MatrixView<'_>,
+    ) -> Option<Result<Vec<f32>, ModelError>> {
+        if FAULT == DECISION_FUNCTION_DECLARED_WITHOUT_HOOK {
+            return None;
+        }
+        Some(Ok(data.iter_rows().map(|row| model.score(row)).collect()))
+    }
+
+    fn decision_function_into(
+        model: &Self::Model,
+        data: &MatrixView<'_>,
+        output: &mut [f32],
+    ) -> Option<Result<(), ModelError>> {
+        if FAULT == DECISION_FUNCTION_DECLARED_WITHOUT_HOOK {
+            return None;
+        }
+        if output.len() != data.rows() {
+            return Some(Err(ModelError::OutputLength {
+                expected: data.rows(),
+                actual: output.len(),
+            }));
+        }
+        for (slot, row) in output.iter_mut().zip(data.iter_rows()) {
+            *slot = model.score(row);
+        }
+        Some(Ok(()))
     }
 }
 
@@ -909,6 +959,21 @@ violates!(
     ["multiclass_declaration_matches_behavior"]
 );
 violates!(
+    classifier_decision_function_declared_without_hook,
+    classifier_report::<ClassifierProbeCase<DECISION_FUNCTION_DECLARED_WITHOUT_HOOK>>(),
+    ["decision_function_declaration_matches_behavior"]
+);
+violates!(
+    classifier_decision_function_hook_without_declaration,
+    classifier_report::<ClassifierProbeCase<DECISION_FUNCTION_HOOK_WITHOUT_DECLARATION>>(),
+    ["decision_function_declaration_matches_behavior"]
+);
+violates!(
+    classifier_decision_function_contradicts_probability,
+    classifier_report::<ClassifierProbeCase<DECISION_FUNCTION_CONTRADICTS_PROBABILITY>>(),
+    ["decision_function_declaration_matches_behavior"]
+);
+violates!(
     classifier_scalar_disagrees,
     classifier_report::<ClassifierProbeCase<SCALAR_DISAGREES>>(),
     ["scalar_matches_batch"]
@@ -1128,6 +1193,9 @@ fn every_declared_obligation_has_a_probe_that_trips_it() {
         >()),
         sorted(&classifier_report::<
             ClassifierProbeCase<MULTICLASS_DECLARED_WITHOUT_HOOK>,
+        >()),
+        sorted(&classifier_report::<
+            ClassifierProbeCase<DECISION_FUNCTION_DECLARED_WITHOUT_HOOK>,
         >()),
         sorted(&classifier_report::<ClassifierProbeCase<SCALAR_DISAGREES>>()),
         sorted(&classifier_report::<ClassifierProbeCase<NON_FINITE_ACCEPTED>>()),

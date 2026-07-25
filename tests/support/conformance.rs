@@ -91,6 +91,7 @@ pub const CLASSIFIER_OBLIGATIONS: &[&str] = &[
     "sample_weight_declaration_matches_behavior",
     "artifact_declaration_matches_behavior",
     "multiclass_declaration_matches_behavior",
+    "decision_function_declaration_matches_behavior",
 ];
 
 /// Additional obligations owed by a classifier with a scalar prediction path.
@@ -416,6 +417,29 @@ pub trait ClassifierCase {
     fn round_trip(_model: &Self::Model) -> RoundTrip<Self::Model> {
         None
     }
+
+    /// Returns one raw decision score per row, allocating the output.
+    ///
+    /// Required exactly when the model declares
+    /// [`Capabilities::decision_function`]; supplying it otherwise is a
+    /// violation.
+    fn decision_function(
+        _model: &Self::Model,
+        _data: &MatrixView<'_>,
+    ) -> Option<Result<Vec<f32>, ModelError>> {
+        None
+    }
+
+    /// Writes one raw decision score per row into caller-owned storage.
+    ///
+    /// Supplied together with [`ClassifierCase::decision_function`].
+    fn decision_function_into(
+        _model: &Self::Model,
+        _data: &MatrixView<'_>,
+        _output: &mut [f32],
+    ) -> Option<Result<(), ModelError>> {
+        None
+    }
 }
 
 /// A registered classifier that also offers a scalar prediction path.
@@ -525,6 +549,25 @@ pub trait WorkspaceClassifierCase {
 
     /// Encodes and decodes the composition. Required exactly when declared.
     fn round_trip(_model: &Self::Model) -> RoundTrip<Self::Model> {
+        None
+    }
+
+    /// Returns one raw decision score per row. Required exactly when declared.
+    fn decision_function(
+        _model: &Self::Model,
+        _data: &MatrixView<'_>,
+        _workspace: &mut [f32],
+    ) -> Option<Result<Vec<f32>, ModelError>> {
+        None
+    }
+
+    /// Writes one raw decision score per row into caller-owned storage.
+    fn decision_function_into(
+        _model: &Self::Model,
+        _data: &MatrixView<'_>,
+        _workspace: &mut [f32],
+        _output: &mut [f32],
+    ) -> Option<Result<(), ModelError>> {
         None
     }
 
@@ -694,6 +737,18 @@ trait ClassifierUnderTest {
         class: u8,
         output: &mut [f32],
     ) -> Result<(), ModelError>;
+
+    fn decision_function(
+        model: &Self::Model,
+        data: &MatrixView<'_>,
+        workspace: &mut [f32],
+    ) -> Option<Result<Vec<f32>, ModelError>>;
+    fn decision_function_into(
+        model: &Self::Model,
+        data: &MatrixView<'_>,
+        workspace: &mut [f32],
+        output: &mut [f32],
+    ) -> Option<Result<(), ModelError>>;
 }
 
 trait ScalarClassifierUnderTest: ClassifierUnderTest {
@@ -803,6 +858,21 @@ impl<C: ClassifierCase> ClassifierUnderTest for TraitShaped<C> {
     ) -> Result<(), ModelError> {
         model.predict_class_proba_into(data, class, output)
     }
+    fn decision_function(
+        model: &Self::Model,
+        data: &MatrixView<'_>,
+        _workspace: &mut [f32],
+    ) -> Option<Result<Vec<f32>, ModelError>> {
+        C::decision_function(model, data)
+    }
+    fn decision_function_into(
+        model: &Self::Model,
+        data: &MatrixView<'_>,
+        _workspace: &mut [f32],
+        output: &mut [f32],
+    ) -> Option<Result<(), ModelError>> {
+        C::decision_function_into(model, data, output)
+    }
 }
 
 impl<C: ScalarClassifierCase> ScalarClassifierUnderTest for TraitShaped<C> {
@@ -880,6 +950,21 @@ impl<C: WorkspaceClassifierCase> ClassifierUnderTest for WorkspaceShaped<C> {
         output: &mut [f32],
     ) -> Result<(), ModelError> {
         C::predict_class_proba_into(model, data, workspace, class, output)
+    }
+    fn decision_function(
+        model: &Self::Model,
+        data: &MatrixView<'_>,
+        workspace: &mut [f32],
+    ) -> Option<Result<Vec<f32>, ModelError>> {
+        C::decision_function(model, data, workspace)
+    }
+    fn decision_function_into(
+        model: &Self::Model,
+        data: &MatrixView<'_>,
+        workspace: &mut [f32],
+        output: &mut [f32],
+    ) -> Option<Result<(), ModelError>> {
+        C::decision_function_into(model, data, workspace, output)
     }
 }
 
@@ -1322,6 +1407,7 @@ fn classifier_obligations<C: ClassifierUnderTest>() -> Report {
     );
 
     check_multiclass_declaration::<C>(&mut report, &fixture);
+    check_decision_function_declaration::<C>(&mut report, &model, &view, &mut workspace, &classes);
 
     let round_tripped = C::round_trip(&model);
     check_declaration(
@@ -1480,6 +1566,126 @@ fn check_multiclass_artifact_declaration<C: ClassifierUnderTest>(
         detail.is_none(),
         || detail.unwrap_or_default(),
     );
+}
+
+/// A declared decision function must exist and must be a real score.
+///
+/// This closes the one declared capability that shipped with no behavioral
+/// check at all: `decision_function` was added in S10 and, until this
+/// obligation, nothing anywhere asserted that a type declaring it had one, or
+/// that a type not declaring it was not quietly offering one.
+///
+/// The substantive part is the last check. A decision function is documented
+/// as a real-valued score, monotone in the model's confidence, whose squashing
+/// is the probability — so a higher score may never accompany a *lower*
+/// positive-class probability. A type returning an unrelated number would pass
+/// every shape check and fail that one.
+///
+/// The rank check runs on a two-class fit. A multiclass decision function is a
+/// matrix rather than a column, so its shape obligations are a different
+/// question from the one this records.
+fn check_decision_function_declaration<C: ClassifierUnderTest>(
+    report: &mut Report,
+    model: &C::Model,
+    view: &MatrixView<'_>,
+    workspace: &mut [f32],
+    classes: &[u8],
+) {
+    const OBLIGATION: &str = "decision_function_declaration_matches_behavior";
+    let declared = C::Model::CAPABILITIES.decision_function();
+    let allocating = C::decision_function(model, view, workspace);
+    check_declaration(
+        report,
+        OBLIGATION,
+        "decision_function",
+        declared,
+        allocating.is_some(),
+        None,
+    );
+    if !declared {
+        return;
+    }
+    let Some(allocating) = allocating else {
+        return;
+    };
+    let scores = match allocating {
+        Ok(scores) => scores,
+        Err(error) => {
+            report.record(
+                OBLIGATION,
+                format!("the declared decision function failed: {error:?}"),
+            );
+            return;
+        }
+    };
+    if scores.len() != view.rows() {
+        report.record(
+            OBLIGATION,
+            format!(
+                "the decision function returned {} scores for {} rows",
+                scores.len(),
+                view.rows()
+            ),
+        );
+        return;
+    }
+
+    let mut into = vec![f32::MAX; view.rows()];
+    let written = C::decision_function_into(model, view, workspace, &mut into);
+    report.require(
+        OBLIGATION,
+        written == Some(Ok(())) && into == scores,
+        || {
+            format!(
+                "decision_function_into returned {written:?} and disagreed with the allocating form"
+            )
+        },
+    );
+
+    let mut untouched = vec![7.0_f32; view.rows()];
+    let short =
+        C::decision_function_into(model, view, workspace, &mut untouched[..view.rows() - 1]);
+    report.require(
+        OBLIGATION,
+        short
+            == Some(Err(ModelError::OutputLength {
+                expected: view.rows(),
+                actual: view.rows() - 1,
+            }))
+            && untouched == vec![7.0_f32; view.rows()],
+        || format!("a short decision-function output returned {short:?} and left {untouched:?}"),
+    );
+
+    if classes.len() != 2 {
+        return;
+    }
+    // Read the positive column out of the probability *matrix* rather than
+    // through `predict_class_proba`. The matrix is the canonical output — that
+    // the single-column accessor agrees with it is a separate obligation — so
+    // this measures the decision function against probabilities rather than
+    // against a second accessor that has its own way of being wrong.
+    let Ok(probabilities) = C::predict_proba(model, view, workspace) else {
+        return;
+    };
+    let positive: Vec<f32> = probabilities
+        .chunks_exact(classes.len())
+        .map(|row| row[1])
+        .collect();
+    for left in 0..scores.len() {
+        for right in 0..scores.len() {
+            report.require(
+                OBLIGATION,
+                !(scores[left] > scores[right] && positive[left] < positive[right]),
+                || {
+                    format!(
+                        "row {left} scores {} against row {right}'s {}, but its positive-class \
+                         probability {} is lower than {}",
+                        scores[left], scores[right], positive[left], positive[right]
+                    )
+                },
+            );
+        }
+    }
 }
 
 /// A declared multiclass fit must exist and must be genuinely multiclass.

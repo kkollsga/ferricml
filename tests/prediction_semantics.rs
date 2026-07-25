@@ -181,6 +181,21 @@ impl ClassifierCase for LogisticRegressionCase {
             |bytes| LogisticRegression::from_artifact(bytes, SCHEMA),
         )
     }
+
+    fn decision_function(
+        model: &Self::Model,
+        data: &MatrixView<'_>,
+    ) -> Option<Result<Vec<f32>, ModelError>> {
+        Some(model.decision_function(data))
+    }
+
+    fn decision_function_into(
+        model: &Self::Model,
+        data: &MatrixView<'_>,
+        output: &mut [f32],
+    ) -> Option<Result<(), ModelError>> {
+        Some(model.decision_function_into(data, output))
+    }
 }
 
 impl ScalarClassifierCase for LogisticRegressionCase {
@@ -262,6 +277,21 @@ impl ClassifierCase for PlattCalibratedForestCase {
             &holdout.labels,
             PlattParams::default(),
         )
+    }
+
+    fn decision_function(
+        model: &Self::Model,
+        data: &MatrixView<'_>,
+    ) -> Option<Result<Vec<f32>, ModelError>> {
+        Some(model.decision_function(data))
+    }
+
+    fn decision_function_into(
+        model: &Self::Model,
+        data: &MatrixView<'_>,
+        output: &mut [f32],
+    ) -> Option<Result<(), ModelError>> {
+        Some(model.decision_function_into(data, output))
     }
 }
 
@@ -495,6 +525,21 @@ impl ClassifierCase for HistGradientBoostingClassifierCase {
             || model.to_artifact(SCHEMA),
             |bytes| HistGradientBoostingClassifier::from_artifact(bytes, SCHEMA),
         )
+    }
+
+    fn decision_function(
+        model: &Self::Model,
+        data: &MatrixView<'_>,
+    ) -> Option<Result<Vec<f32>, ModelError>> {
+        Some(model.decision_function(data))
+    }
+
+    fn decision_function_into(
+        model: &Self::Model,
+        data: &MatrixView<'_>,
+        output: &mut [f32],
+    ) -> Option<Result<(), ModelError>> {
+        Some(model.decision_function_into(data, output))
     }
 }
 
@@ -758,6 +803,27 @@ impl WorkspaceClassifierCase for ScaledLogisticPipelineCase {
         output: &mut [f32],
     ) -> Result<(), ModelError> {
         model.predict_class_proba_into(data, class, workspace, output)
+    }
+
+    fn decision_function(
+        model: &Self::Model,
+        data: &MatrixView<'_>,
+        workspace: &mut [f32],
+    ) -> Option<Result<Vec<f32>, ModelError>> {
+        Some(
+            model.with_transformed(data, workspace, |estimator, transformed| {
+                estimator.decision_function(transformed)
+            }),
+        )
+    }
+
+    fn decision_function_into(
+        model: &Self::Model,
+        data: &MatrixView<'_>,
+        workspace: &mut [f32],
+        output: &mut [f32],
+    ) -> Option<Result<(), ModelError>> {
+        Some(model.decision_function_into(data, workspace, output))
     }
 }
 

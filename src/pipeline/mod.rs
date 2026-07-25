@@ -193,10 +193,19 @@ fn decode_pipeline_components(
 /// part, not of the composition. Only compositions with a concrete artifact
 /// declare capabilities at all; asking an arbitrary `Pipeline<T, E>` is a
 /// compile error rather than a wrong answer.
+///
+/// A decision function is **not** an intersection. Persisting is a property
+/// every part must have, but a raw decision score is a property of the *final
+/// estimator* alone — a transformer never has one, so intersecting would make
+/// the field structurally unable to be true for any pipeline, while this
+/// composition really does expose
+/// [`decision_function_into`](Pipeline::decision_function_into). It is
+/// therefore taken from the estimator, exactly where the method comes from.
 impl HasCapabilities for Pipeline<StandardScaler, LogisticRegression> {
     const CAPABILITIES: Capabilities = StandardScaler::CAPABILITIES
         .intersection(LogisticRegression::CAPABILITIES)
-        .with_sample_weights(false);
+        .with_sample_weights(false)
+        .with_decision_function(LogisticRegression::CAPABILITIES.decision_function());
 }
 
 impl Pipeline<StandardScaler, LogisticRegression> {

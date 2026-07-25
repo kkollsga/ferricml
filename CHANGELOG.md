@@ -323,6 +323,15 @@ and releases use [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- `Pipeline<StandardScaler, LogisticRegression>` now declares the
+  `decision_function` capability it has. It exposes `decision_function_into`,
+  but computed its declaration by intersecting both parts — and a transformer
+  never has a decision function, so the intersection made that field
+  structurally unable to be true for any pipeline. A raw decision score is a
+  property of the final estimator alone, so it is now taken from there, as
+  weighted fitting and multiclass fitting already were. A caller querying the
+  capability to decide whether to threshold on raw scores was previously told
+  no for a composition that could.
 - Report `ModelError::NonFinitePrediction` from `RandomForestRegressor` instead
   of returning a non-finite averaged prediction, matching every other
   regressor.

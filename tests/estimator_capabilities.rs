@@ -176,6 +176,17 @@ fn a_decision_function_is_declared_by_nothing_that_only_produces_probabilities()
     assert!(!AnyClassifier::CAPABILITIES.decision_function());
     assert!(!AnyRegressor::CAPABILITIES.decision_function());
     assert!(!IsotonicRegression::CAPABILITIES.decision_function());
+    // A composition takes this one from its *estimator*, not from an
+    // intersection: a transformer never has a decision function, so
+    // intersecting would make the field structurally unable to be true for any
+    // pipeline while the composition really does expose the method.
+    assert!(
+        <Pipeline<StandardScaler, LogisticRegression> as HasCapabilities>::CAPABILITIES
+            .decision_function()
+    );
+    assert!(
+        !<Pipeline<StandardScaler, Ridge> as HasCapabilities>::CAPABILITIES.decision_function()
+    );
 }
 
 #[test]
@@ -325,7 +336,7 @@ fn a_fitted_composition_persists_when_both_parts_do() {
 
     assert_eq!(
         <Pipeline<StandardScaler, LogisticRegression> as HasCapabilities>::CAPABILITIES,
-        PERSISTED_ONLY
+        PERSISTED_ONLY.with_decision_function(true)
     );
     assert_eq!(
         <Pipeline<StandardScaler, Ridge> as HasCapabilities>::CAPABILITIES,
