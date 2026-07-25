@@ -26,6 +26,22 @@ impl OwnedRng {
         mix64(self.state)
     }
 
+    /// A uniform draw in `[0, 1)`, one `next_u64` per call.
+    ///
+    /// The top 53 bits are used because that is exactly an `f64`'s significand:
+    /// every representable multiple of `2^-53` in `[0, 1)` is drawn with the
+    /// same probability, and none is drawn twice as often as its neighbour —
+    /// which the low bits of a shorter draw scaled up would not give. `1.0` is
+    /// unreachable, so a caller mapping onto `[min, max)` cannot land on its
+    /// upper endpoint by arithmetic alone.
+    ///
+    /// Consuming exactly one `next_u64` is part of the contract, not an
+    /// implementation detail: a fitted tree's reproducibility depends on how
+    /// many values each decision takes out of the stream.
+    pub(crate) fn unit_f64(&mut self) -> f64 {
+        (self.next_u64() >> 11) as f64 * (1.0 / (1_u64 << 53) as f64)
+    }
+
     pub(crate) fn index(&mut self, upper: usize) -> usize {
         debug_assert!(upper > 0);
         let bound = upper as u64;
@@ -164,6 +180,55 @@ mod tests {
                 16161299606447644327,
             ]
         );
+    }
+
+    /// The unit draw is part of the same frozen determinism contract the
+    /// integer stream is: a fitted randomized tree's thresholds come straight
+    /// out of these values, so changing the construction would change models.
+    #[test]
+    fn unit_draws_are_frozen_and_stay_in_the_half_open_unit_interval() {
+        let expected: [(u64, [f64; 4]); 2] = [
+            (
+                0,
+                [
+                    0.8833108082136426,
+                    0.43152799704850997,
+                    0.026433771592597743,
+                    0.9708819781538285,
+                ],
+            ),
+            (
+                7,
+                [
+                    0.3898297483912715,
+                    0.01678829452815611,
+                    0.9007606806068834,
+                    0.5829302930280781,
+                ],
+            ),
+        ];
+        for (seed, stream) in expected {
+            let mut rng = OwnedRng::new(seed);
+            let actual: Vec<f64> = (0..stream.len()).map(|_| rng.unit_f64()).collect();
+            assert_eq!(actual, stream, "unit stream changed for seed {seed}");
+        }
+
+        // One `next_u64` per call, stated as a test rather than as a comment:
+        // a tree's reproducibility depends on how many values each decision
+        // takes out of the stream, so a second draw here would move models.
+        let mut counted = OwnedRng::new(99);
+        let _ = counted.unit_f64();
+        let mut stepped = OwnedRng::new(99);
+        let _ = stepped.next_u64();
+        assert_eq!(counted.next_u64(), stepped.next_u64());
+
+        // `1.0` is unreachable and `0.0` is not, which is what makes a draw
+        // mapped onto `[min, max)` unable to reach its upper endpoint.
+        let mut rng = OwnedRng::new(u64::MAX);
+        for _ in 0..20_000 {
+            let value = rng.unit_f64();
+            assert!((0.0..1.0).contains(&value), "unit draw escaped: {value}");
+        }
     }
 
     #[test]

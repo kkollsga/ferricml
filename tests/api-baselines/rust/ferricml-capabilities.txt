@@ -9,6 +9,8 @@ ferricml::calibration::CalibratedClassifier<ferricml::ensemble::RandomForestClas
 ferricml::calibration::IsotonicRegression = -
 ferricml::dummy::DummyClassifier = probability
 ferricml::dummy::DummyRegressor = -
+ferricml::ensemble::ExtraTreesClassifier = sample_weights, artifact, multiclass, probability
+ferricml::ensemble::ExtraTreesRegressor = sample_weights, artifact
 ferricml::ensemble::HistGradientBoostingClassifier = sample_weights, artifact, decision_function, probability
 ferricml::ensemble::HistGradientBoostingRegressor = sample_weights, artifact
 ferricml::ensemble::RandomForestClassifier = sample_weights, artifact, multiclass, probability
@@ -30,3 +32,5 @@ ferricml::preprocessing::Normalizer = -
 ferricml::preprocessing::RobustScaler = artifact
 ferricml::preprocessing::StandardScaler = sample_weights, artifact
 ferricml::ranking::PairwiseLinearRanker = artifact
+ferricml::tree::DecisionTreeClassifier = sample_weights, artifact, multiclass, probability
+ferricml::tree::DecisionTreeRegressor = sample_weights, artifact

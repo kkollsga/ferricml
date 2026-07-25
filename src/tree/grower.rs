@@ -1,50 +1,24 @@
-use super::parameters::{MaxFeatures, RandomForestClassifierParams, RandomForestRegressorParams};
-use super::tree::{BuildNode, ClassTree, NO_CHILD, PackedTree};
+use super::packed::{BuildNode, ClassTree, NO_CHILD, PackedTree};
+use super::parameters::{MaxFeatures, Splitter};
 use crate::api::ModelError;
 use crate::data::MatrixView;
-use crate::numeric::{OwnedRng, derive_tree_seed};
-use std::thread;
+use crate::numeric::OwnedRng;
 
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub(super) struct ForestConfig {
-    pub(super) n_estimators: usize,
-    pub(super) max_depth: Option<usize>,
-    pub(super) min_samples_split: usize,
-    pub(super) min_samples_leaf: usize,
-    pub(super) max_features: MaxFeatures,
-    pub(super) bootstrap: bool,
-    pub(super) random_state: u64,
-    pub(super) n_jobs: usize,
-}
-
-impl From<&RandomForestClassifierParams> for ForestConfig {
-    fn from(params: &RandomForestClassifierParams) -> Self {
-        Self {
-            n_estimators: params.n_estimators(),
-            max_depth: params.max_depth(),
-            min_samples_split: params.min_samples_split(),
-            min_samples_leaf: params.min_samples_leaf(),
-            max_features: params.max_features(),
-            bootstrap: params.bootstrap(),
-            random_state: params.random_state(),
-            n_jobs: params.n_jobs().resolved(),
-        }
-    }
-}
-
-impl From<&RandomForestRegressorParams> for ForestConfig {
-    fn from(params: &RandomForestRegressorParams) -> Self {
-        Self {
-            n_estimators: params.n_estimators(),
-            max_depth: params.max_depth(),
-            min_samples_split: params.min_samples_split(),
-            min_samples_leaf: params.min_samples_leaf(),
-            max_features: params.max_features(),
-            bootstrap: params.bootstrap(),
-            random_state: params.random_state(),
-            n_jobs: params.n_jobs().resolved(),
-        }
-    }
+/// The limits one tree is grown under.
+///
+/// This is the whole of what growing a tree needs. It deliberately excludes
+/// everything an *ensemble* adds around a tree — the member count, bootstrap
+/// resampling, the seed derivation, the thread count — so the grower cannot
+/// reach back into a consumer, and so a standalone tree and one forest member
+/// are grown by the same code under the same values rather than by two
+/// implementations that agree today.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct GrowerConfig {
+    pub(crate) max_depth: Option<usize>,
+    pub(crate) min_samples_split: usize,
+    pub(crate) min_samples_leaf: usize,
+    pub(crate) max_features: MaxFeatures,
+    pub(crate) splitter: Splitter,
 }
 
 /// One node's statistics are weighted totals rather than row counts.
@@ -54,7 +28,7 @@ impl From<&RandomForestRegressorParams> for ForestConfig {
 /// every term is an integer, and an integer sum accumulated in `f64` is exact
 /// below `2^53`, so the unweighted arithmetic is bit-for-bit what the earlier
 /// `u64` counter produced.
-pub(super) trait Objective<Y>: Copy + Send + Sync {
+pub(crate) trait Objective<Y>: Copy + Send + Sync {
     fn value(self, y: &Y) -> f64;
     fn impurity(self, sum: f64, sum_sq: f64, weight: f64) -> f64;
     fn leaf_value(self, sum: f64, weight: f64) -> f32 {
@@ -64,7 +38,7 @@ pub(super) trait Objective<Y>: Copy + Send + Sync {
 }
 
 #[derive(Clone, Copy)]
-pub(super) struct Classification;
+pub(crate) struct Classification;
 
 impl Objective<u8> for Classification {
     fn value(self, y: &u8) -> f64 {
@@ -82,7 +56,7 @@ impl Objective<u8> for Classification {
 }
 
 #[derive(Clone, Copy)]
-pub(super) struct Regression;
+pub(crate) struct Regression;
 
 impl Objective<f32> for Regression {
     fn value(self, y: &f32) -> f64 {
@@ -100,169 +74,109 @@ impl Objective<f32> for Regression {
     }
 }
 
-/// Runs `build` once per tree, in a fixed index order whatever the thread count.
+/// The per-row training weights and retained rows of an unresampled fit.
 ///
-/// Every tree's randomness comes from a seed derived from its index alone, and
-/// finished trees are sorted back into index order, so a serial fit and a
-/// parallel fit produce the same forest.
-fn train_trees<T, F>(config: &ForestConfig, build: F) -> Result<Vec<T>, ModelError>
-where
-    T: Send,
-    F: Fn(usize) -> Result<T, ModelError> + Sync,
-{
-    let worker_count = config.n_jobs.min(config.n_estimators);
-    if worker_count == 1 {
-        return (0..config.n_estimators).map(build).collect();
-    }
-
-    let build = &build;
-    let mut indexed = thread::scope(|scope| {
-        let mut handles = Vec::with_capacity(worker_count);
-        for worker in 0..worker_count {
-            handles.push(scope.spawn(move || {
-                let mut trees = Vec::new();
-                for index in (worker..config.n_estimators).step_by(worker_count) {
-                    trees.push((index, build(index)));
-                }
-                trees
-            }));
-        }
-        let mut results = Vec::with_capacity(config.n_estimators);
-        for handle in handles {
-            results.extend(handle.join().map_err(|_| ModelError::WorkerPanicked)?);
-        }
-        Ok::<_, ModelError>(results)
-    })?;
-
-    indexed.sort_unstable_by_key(|(index, _)| *index);
-    indexed.into_iter().map(|(_, tree)| tree).collect()
-}
-
-/// One tree's per-row training weights and the rows it retains.
+/// A row of zero weight is not in the training sample at all, so it is left out
+/// of the row list entirely rather than carried as a zero — which is what keeps
+/// a node from ever dividing by a zero total weight.
 ///
-/// A row's weight is how many times the resample drew it multiplied by its
-/// sample weight; without bootstrapping the replication count is one. A row of
-/// weight zero contributes to nothing and is left out of the row list entirely.
-///
-/// The unweighted arm is deliberately separate rather than a special case of
-/// the weighted one. It draws exactly the indices it always drew and stores
-/// exact integers, so every unweighted fit is bit-for-bit unchanged.
-///
-/// The weighted arm resamples the **positively weighted rows only**, and draws
-/// as many times as there are of them. A zero weight means the row is not in
-/// the training sample at all, so it no more consumes a bootstrap draw than a
-/// deleted row would — and the drawn sample can therefore never come back
-/// empty, which a division by a zero total weight would otherwise produce.
-fn tree_sample(
+/// This consumes no randomness. That is the property a one-tree, no-bootstrap
+/// forest member and a standalone tree at the same derived seed depend on: both
+/// enter the grower with the generator in the same state.
+pub(crate) fn unbootstrapped_sample(
     rows: usize,
-    bootstrap: bool,
     sample_weights: Option<&[f32]>,
-    rng: &mut OwnedRng,
 ) -> (Vec<f64>, Vec<usize>) {
     let Some(sample_weights) = sample_weights else {
-        let mut weights = vec![0.0_f64; rows];
-        if bootstrap {
-            for _ in 0..rows {
-                weights[rng.index(rows)] += 1.0;
-            }
-        } else {
-            weights.fill(1.0);
-        }
-        let retained = weights
-            .iter()
-            .enumerate()
-            .filter_map(|(row, &weight)| (weight != 0.0).then_some(row))
-            .collect();
-        return (weights, retained);
+        return (vec![1.0_f64; rows], (0..rows).collect());
     };
-
-    let eligible: Vec<usize> = (0..rows).filter(|&row| sample_weights[row] > 0.0).collect();
     let mut weights = vec![0.0_f64; rows];
-    if bootstrap {
-        for _ in 0..eligible.len() {
-            weights[eligible[rng.index(eligible.len())]] += 1.0;
-        }
-    } else {
-        for &row in &eligible {
-            weights[row] = 1.0;
-        }
-    }
-    let mut retained = Vec::with_capacity(eligible.len());
-    for &row in &eligible {
-        if weights[row] != 0.0 {
-            weights[row] *= f64::from(sample_weights[row]);
+    let mut retained = Vec::with_capacity(rows);
+    for row in 0..rows {
+        if sample_weights[row] > 0.0 {
+            weights[row] = f64::from(sample_weights[row]);
             retained.push(row);
         }
     }
     (weights, retained)
 }
 
-pub(super) fn train_forest<Y, O>(
+/// Grows one scalar-leaf tree over the rows the caller retained.
+///
+/// `row_weights[row]` is that row's total training weight, and `rows` lists
+/// exactly the rows of positive weight. A forest passes a resampled weight
+/// vector; a standalone tree passes ones. The generator is borrowed rather than
+/// seeded here, because who owns the seed — and how a member's seed is derived
+/// from an ensemble's — is the caller's contract, not the grower's.
+pub(crate) fn grow_tree<Y, O>(
     data: &MatrixView<'_>,
     targets: &[Y],
-    sample_weights: Option<&[f32]>,
-    config: &ForestConfig,
+    row_weights: &[f64],
+    rows: Vec<usize>,
+    config: &GrowerConfig,
     objective: O,
-) -> Result<Vec<PackedTree>, ModelError>
+    rng: &mut OwnedRng,
+) -> Result<PackedTree, ModelError>
 where
-    Y: Sync,
     O: Objective<Y>,
 {
-    train_trees(config, |index| {
-        let mut rng = OwnedRng::new(derive_tree_seed(config.random_state, index as u64));
-        let (weights, rows) = tree_sample(data.rows(), config.bootstrap, sample_weights, &mut rng);
-        let builder = TreeBuilder {
-            data,
-            targets,
-            row_weights: &weights,
-            config,
-            objective,
-            rng: &mut rng,
-            nodes: Vec::new(),
-        };
-        builder.build_tree(rows)
-    })
+    TreeBuilder {
+        data,
+        targets,
+        row_weights,
+        config,
+        objective,
+        rng,
+        nodes: Vec::new(),
+    }
+    .build_tree(rows)
 }
 
-/// Fits one forest of natively multiclass trees.
+/// Grows one natively multiclass tree.
 ///
 /// `class_of_row` holds each row's column in the sorted class list, so the
 /// builder never touches a label value.
-pub(super) fn train_class_forest(
+pub(crate) fn grow_class_tree(
     data: &MatrixView<'_>,
     class_of_row: &[usize],
     classes: usize,
-    sample_weights: Option<&[f32]>,
-    config: &ForestConfig,
-) -> Result<Vec<ClassTree>, ModelError> {
-    train_trees(config, |index| {
-        let mut rng = OwnedRng::new(derive_tree_seed(config.random_state, index as u64));
-        let (weights, rows) = tree_sample(data.rows(), config.bootstrap, sample_weights, &mut rng);
-        let builder = ClassTreeBuilder {
-            data,
-            class_of_row,
-            classes,
-            row_weights: &weights,
-            config,
-            rng: &mut rng,
-            nodes: Vec::new(),
-            class_weights: Vec::new(),
-            weights: Vec::new(),
-        };
-        builder.build_tree(rows)
-    })
+    row_weights: &[f64],
+    rows: Vec<usize>,
+    config: &GrowerConfig,
+    rng: &mut OwnedRng,
+) -> Result<ClassTree, ModelError> {
+    ClassTreeBuilder {
+        data,
+        class_of_row,
+        classes,
+        row_weights,
+        config,
+        rng,
+        nodes: Vec::new(),
+        class_weights: Vec::new(),
+        weights: Vec::new(),
+    }
+    .build_tree(rows)
 }
 
 /// Partially shuffles `0..columns` so its first `count` entries are the drawn
 /// features, in the generator's order.
 ///
 /// Shared by both builders because the sampling — not the sweep that follows
-/// it — is what a fitted forest's reproducibility depends on. It runs once per
+/// it — is what a fitted tree's reproducibility depends on. It runs once per
 /// *node*, which is the crate's hottest fitting path outside the sweep itself,
 /// so it is `#[inline]`: written inline this was part of its caller's body, and
 /// sharing it must not quietly add a call boundary there. It returns the full
 /// permutation rather than truncating, so the caller keeps the drawn count in a
 /// register the way it did before.
+///
+/// The resulting order is also FerricML's cross-column tie-break: candidates
+/// are swept in exactly this order and a later candidate must be *strictly*
+/// better to displace an earlier one, so among exactly-tied splits the first
+/// drawn wins. That is reproducible from data, parameters, and seed alone,
+/// which is the property the reference cannot offer — its visit permutation is
+/// randomized even when every column is considered, and is not observable
+/// through its public API.
 #[inline]
 fn sample_features(rng: &mut OwnedRng, columns: usize, count: usize) -> Vec<usize> {
     let mut features: Vec<usize> = (0..columns).collect();
@@ -288,7 +202,7 @@ struct TreeBuilder<'a, 'm, Y, O> {
     targets: &'a [Y],
     /// Total training weight of each row in this tree's sample.
     row_weights: &'a [f64],
-    config: &'a ForestConfig,
+    config: &'a GrowerConfig,
     objective: O,
     rng: &'a mut OwnedRng,
     nodes: Vec<BuildNode>,
@@ -405,6 +319,11 @@ impl<Y, O: Objective<Y>> TreeBuilder<'_, '_, Y, O> {
         (sum, sum_sq, weight)
     }
 
+    /// The split this node takes, or `None` when no candidate admits one.
+    ///
+    /// Candidates are drawn first and identically for both splitters, so how a
+    /// tree samples columns does not depend on how it then picks thresholds.
+    /// The search over those candidates is the only thing that differs.
     fn best_split(
         &mut self,
         rows: &[usize],
@@ -413,11 +332,31 @@ impl<Y, O: Objective<Y>> TreeBuilder<'_, '_, Y, O> {
         total_weight: f64,
     ) -> Option<Split> {
         let feature_count = resolved_feature_count(self.config.max_features, self.data.columns());
-        let features = sample_features(self.rng, self.data.columns(), feature_count);
+        let drawn = sample_features(self.rng, self.data.columns(), feature_count);
+        let features = &drawn[..feature_count];
+        match self.config.splitter {
+            Splitter::Best => {
+                self.best_exhaustive_split(features, rows, total_sum, total_sum_sq, total_weight)
+            }
+            Splitter::Random => {
+                self.best_random_split(features, rows, total_sum, total_sum_sq, total_weight)
+            }
+        }
+    }
 
+    /// Evaluates every boundary between adjacent distinct values, in every
+    /// candidate column.
+    fn best_exhaustive_split(
+        &self,
+        features: &[usize],
+        rows: &[usize],
+        total_sum: f64,
+        total_sum_sq: f64,
+        total_weight: f64,
+    ) -> Option<Split> {
         let mut ordered = Vec::with_capacity(rows.len());
         let mut best: Option<Split> = None;
-        for &feature in &features[..feature_count] {
+        for &feature in features {
             ordered.clear();
             ordered.extend_from_slice(rows);
             ordered.sort_unstable_by(|&left, &right| {
@@ -477,6 +416,67 @@ impl<Y, O: Objective<Y>> TreeBuilder<'_, '_, Y, O> {
         }
         best
     }
+
+    /// Scores one uniform draw per candidate column and keeps the best.
+    ///
+    /// No sort is needed: a single threshold is known before the rows are
+    /// visited, so one pass accumulates the left side directly. Rows are
+    /// visited in `rows` order, which is fixed, so the accumulation is
+    /// reproducible.
+    fn best_random_split(
+        &mut self,
+        features: &[usize],
+        rows: &[usize],
+        total_sum: f64,
+        total_sum_sq: f64,
+        total_weight: f64,
+    ) -> Option<Split> {
+        let mut best: Option<Split> = None;
+        for &feature in features {
+            let (min, max) = column_range(self.data, rows, feature);
+            let Some(threshold) = random_threshold(self.rng, min, max) else {
+                continue;
+            };
+            let mut left_sum = 0.0;
+            let mut left_sum_sq = 0.0;
+            let mut left_weight = 0.0;
+            for &row in rows {
+                if self.data.row(row).expect("known row")[feature] <= threshold {
+                    let row_weight = self.row_weights[row];
+                    let value = self.objective.value(&self.targets[row]);
+                    left_sum += value * row_weight;
+                    left_sum_sq += value * value * row_weight;
+                    left_weight += row_weight;
+                }
+            }
+            let right_weight = total_weight - left_weight;
+            // An inadmissible draw is discarded, never redrawn: redrawing until
+            // a leaf-bound-satisfying threshold appeared would silently turn a
+            // uniform draw into a conditional one, and would make a node whose
+            // admissible region is tiny cost unbounded work.
+            if left_weight < self.config.min_samples_leaf as f64
+                || right_weight < self.config.min_samples_leaf as f64
+            {
+                continue;
+            }
+            let right_sum = total_sum - left_sum;
+            let right_sum_sq = total_sum_sq - left_sum_sq;
+            let score = (left_weight * self.objective.impurity(left_sum, left_sum_sq, left_weight)
+                + right_weight
+                    * self
+                        .objective
+                        .impurity(right_sum, right_sum_sq, right_weight))
+                / total_weight;
+            if best.as_ref().is_none_or(|current| score < current.score) {
+                best = Some(Split {
+                    feature,
+                    threshold,
+                    score,
+                });
+            }
+        }
+        best
+    }
 }
 
 /// Builds one natively multiclass tree.
@@ -495,7 +495,7 @@ struct ClassTreeBuilder<'a, 'm> {
     classes: usize,
     /// Total training weight of each row in this tree's sample.
     row_weights: &'a [f64],
-    config: &'a ForestConfig,
+    config: &'a GrowerConfig,
     rng: &'a mut OwnedRng,
     nodes: Vec<BuildNode>,
     /// `classes` weighted counts per build node, parallel to `nodes`.
@@ -618,11 +618,30 @@ impl ClassTreeBuilder<'_, '_> {
         right: &mut [f64],
     ) -> Option<Split> {
         let feature_count = resolved_feature_count(self.config.max_features, self.data.columns());
-        let features = sample_features(self.rng, self.data.columns(), feature_count);
+        let drawn = sample_features(self.rng, self.data.columns(), feature_count);
+        let features = &drawn[..feature_count];
+        match self.config.splitter {
+            Splitter::Best => {
+                self.best_exhaustive_split(features, rows, totals, total_weight, left, right)
+            }
+            Splitter::Random => {
+                self.best_random_split(features, rows, totals, total_weight, left, right)
+            }
+        }
+    }
 
+    fn best_exhaustive_split(
+        &self,
+        features: &[usize],
+        rows: &[usize],
+        totals: &[f64],
+        total_weight: f64,
+        left: &mut [f64],
+        right: &mut [f64],
+    ) -> Option<Split> {
         let mut ordered = Vec::with_capacity(rows.len());
         let mut best: Option<Split> = None;
-        for &feature in &features[..feature_count] {
+        for &feature in features {
             ordered.clear();
             ordered.extend_from_slice(rows);
             ordered.sort_unstable_by(|&left, &right| {
@@ -668,6 +687,95 @@ impl ClassTreeBuilder<'_, '_> {
         }
         best
     }
+
+    /// One uniform draw per candidate column, scored on multiclass Gini.
+    fn best_random_split(
+        &mut self,
+        features: &[usize],
+        rows: &[usize],
+        totals: &[f64],
+        total_weight: f64,
+        left: &mut [f64],
+        right: &mut [f64],
+    ) -> Option<Split> {
+        let mut best: Option<Split> = None;
+        for &feature in features {
+            let (min, max) = column_range(self.data, rows, feature);
+            let Some(threshold) = random_threshold(self.rng, min, max) else {
+                continue;
+            };
+            left.fill(0.0);
+            let mut left_weight = 0.0;
+            for &row in rows {
+                if self.data.row(row).expect("known row")[feature] <= threshold {
+                    let row_weight = self.row_weights[row];
+                    left[self.class_of_row[row]] += row_weight;
+                    left_weight += row_weight;
+                }
+            }
+            let right_weight = total_weight - left_weight;
+            // Discarded rather than redrawn, exactly as in the scalar builder.
+            if left_weight < self.config.min_samples_leaf as f64
+                || right_weight < self.config.min_samples_leaf as f64
+            {
+                continue;
+            }
+            for (slot, (&total, &left)) in right.iter_mut().zip(totals.iter().zip(left.iter())) {
+                *slot = total - left;
+            }
+            let score = (left_weight * gini(left, left_weight)
+                + right_weight * gini(right, right_weight))
+                / total_weight;
+            if best.as_ref().is_none_or(|current| score < current.score) {
+                best = Some(Split {
+                    feature,
+                    threshold,
+                    score,
+                });
+            }
+        }
+        best
+    }
+}
+
+/// The range one column spans across the rows reaching a node.
+///
+/// The bound is the *node's* range, not the column's range over the whole
+/// training set: a deep node sees a narrow slice, and drawing from the global
+/// range there would put almost every draw outside the rows present.
+fn column_range(data: &MatrixView<'_>, rows: &[usize], feature: usize) -> (f32, f32) {
+    let mut min = f32::INFINITY;
+    let mut max = f32::NEG_INFINITY;
+    for &row in rows {
+        let value = data.row(row).expect("known row")[feature];
+        min = min.min(value);
+        max = max.max(value);
+    }
+    (min, max)
+}
+
+/// One uniform threshold inside `[min, max)`, or `None` when the column cannot
+/// yield a partition.
+///
+/// A column that is constant within the node has nothing to draw from and
+/// consumes no random value — the interval is empty, not merely unlucky. That
+/// keeps the generator's stream independent of which columns happen to be
+/// constant in a node. Every other column consumes exactly one draw, whether
+/// or not the result survives the leaf bound the caller applies next.
+///
+/// Returning inside `[min, max)` is what makes the partition genuine: at least
+/// one row holds `min` and goes left, and at least one holds `max` and goes
+/// right, so neither side is empty. The guard is re-checked after narrowing to
+/// `f32`, because the draw is computed in `f64` and the packed layout stores an
+/// `f32` threshold — rounding could otherwise land it on the upper endpoint and
+/// produce an empty partition.
+fn random_threshold(rng: &mut OwnedRng, min: f32, max: f32) -> Option<f32> {
+    if min >= max {
+        return None;
+    }
+    let span = f64::from(max) - f64::from(min);
+    let threshold = (f64::from(min) + rng.unit_f64() * span) as f32;
+    (threshold >= min && threshold < max).then_some(threshold)
 }
 
 /// Gini impurity of one node's weighted class counts.
@@ -684,6 +792,12 @@ fn gini(class_weights: &[f64], weight: f64) -> f64 {
     1.0 - squares
 }
 
+/// The threshold separating two adjacent distinct values.
+///
+/// Within a column, candidate boundaries are swept in ascending order and a
+/// later one must be strictly better to displace an earlier one, so exactly
+/// tied thresholds resolve to the lowest — which is what the reference does
+/// too.
 fn split_threshold(a: f32, b: f32) -> f32 {
     let midpoint = a + (b - a) * 0.5;
     if midpoint.is_finite() && midpoint >= a && midpoint < b {
@@ -706,4 +820,98 @@ fn integer_sqrt(value: usize) -> usize {
         root -= 1;
     }
     root
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The draw's own contract, stated where the draw is: strictly inside
+    /// `[min, max)`, so at least one row goes each way and the partition is
+    /// genuine.
+    #[test]
+    fn a_drawn_threshold_lands_strictly_inside_the_node_range() {
+        let mut rng = OwnedRng::new(4);
+        for (min, max) in [
+            (0.0_f32, 1000.0_f32),
+            (-3.5, 2.25),
+            (1e-6, 1.05e-6),
+            (-1e30, 1e30),
+        ] {
+            for _ in 0..5_000 {
+                let threshold = random_threshold(&mut rng, min, max).expect("a spanned column");
+                assert!(
+                    threshold >= min && threshold < max,
+                    "draw {threshold} escaped [{min}, {max})"
+                );
+            }
+        }
+    }
+
+    /// A column that is constant inside the node consumes **no** draw.
+    ///
+    /// This is what keeps the generator's stream independent of which columns
+    /// happen to be constant in a node: were the empty interval to burn a
+    /// value, a tree's shape would depend on the data through the RNG as well
+    /// as through the impurity, and two nodes with the same candidate set would
+    /// diverge for a reason nothing records.
+    #[test]
+    fn a_constant_column_consumes_no_draw() {
+        let mut rng = OwnedRng::new(21);
+        assert_eq!(random_threshold(&mut rng, 2.5, 2.5), None);
+        assert_eq!(random_threshold(&mut rng, 2.5, 1.0), None);
+        let mut untouched = OwnedRng::new(21);
+        assert_eq!(rng.next_u64(), untouched.next_u64());
+
+        // A column that does span consumes exactly one, which is the other half
+        // of the same contract.
+        let mut spent = OwnedRng::new(21);
+        let _ = random_threshold(&mut spent, 0.0, 1.0);
+        let mut stepped = OwnedRng::new(21);
+        let _ = stepped.next_u64();
+        assert_eq!(spent.next_u64(), stepped.next_u64());
+    }
+
+    /// The `f32`-narrowing re-check, which is what makes the split genuine.
+    ///
+    /// The draw is uniform in `f64` and cannot reach its upper endpoint, but
+    /// the packed layout stores an `f32` threshold. Between two adjacent `f32`
+    /// values roughly half of every admissible `f64` rounds *onto* the upper
+    /// endpoint, where `value <= threshold` would send every row left and leave
+    /// the right child empty. Those draws are rejected rather than nudged.
+    #[test]
+    fn a_draw_that_narrows_onto_the_upper_endpoint_is_rejected_rather_than_nudged() {
+        let min = 1.0_f32;
+        let max = f32::from_bits(min.to_bits() + 1);
+        let mut rng = OwnedRng::new(5);
+        let mut kept = 0;
+        let mut rejected = 0;
+        for _ in 0..10_000 {
+            match random_threshold(&mut rng, min, max) {
+                Some(threshold) => {
+                    assert_eq!(
+                        threshold, min,
+                        "the only representable interior value is min"
+                    );
+                    kept += 1;
+                }
+                None => rejected += 1,
+            }
+        }
+        assert!(
+            kept > 1_000 && rejected > 1_000,
+            "the narrowing guard did not fire on both sides: {kept} kept, {rejected} rejected"
+        );
+    }
+
+    /// The node's own range, not the column's range over the whole matrix.
+    #[test]
+    fn the_drawn_range_is_the_one_the_nodes_rows_span() {
+        let data = crate::data::DenseMatrix::new(vec![0.0, 5.0, 1.0, 6.0, 2.0, 7.0], 3, 2).unwrap();
+        let view = data.as_view();
+        assert_eq!(column_range(&view, &[0, 1, 2], 0), (0.0, 2.0));
+        assert_eq!(column_range(&view, &[1, 2], 0), (1.0, 2.0));
+        assert_eq!(column_range(&view, &[0, 2], 1), (5.0, 7.0));
+        assert_eq!(column_range(&view, &[1], 1), (6.0, 6.0));
+    }
 }

@@ -1,8 +1,13 @@
 use criterion::{BatchSize, BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
 use ferricml::data::{BinaryTargets, ClassTargets, DenseMatrix, RegressionTargets, SampleWeights};
 use ferricml::ensemble::{
-    MaxFeatures, RandomForestClassifier, RandomForestClassifierParams, RandomForestRegressor,
-    RandomForestRegressorParams,
+    ExtraTreesClassifier, ExtraTreesClassifierParams, ExtraTreesRegressor,
+    ExtraTreesRegressorParams, MaxFeatures, RandomForestClassifier, RandomForestClassifierParams,
+    RandomForestRegressor, RandomForestRegressorParams,
+};
+use ferricml::tree::{
+    DecisionTreeClassifier, DecisionTreeClassifierParams, DecisionTreeRegressor,
+    DecisionTreeRegressorParams,
 };
 use std::hint::black_box;
 
@@ -346,6 +351,117 @@ fn regressor_inference(c: &mut Criterion) {
     }
 }
 
+/// Fitting one standalone tree, beside the randomized ensemble of the same
+/// shape.
+///
+/// The two arms share a grower, so they belong in one group: a change that
+/// slowed the exhaustive sweep would move the tree arm, and a change that
+/// slowed the draw would move the randomized one. Splitting them across groups
+/// would make that attribution a manual step.
+fn tree_training(c: &mut Criterion) {
+    let (rows, columns) = (2048, 64);
+    let (data, targets) = fixture(rows, columns);
+    let regression = regression_targets(&targets);
+    let tree_classifier = DecisionTreeClassifierParams::default()
+        .with_max_depth(Some(12))
+        .with_max_features(MaxFeatures::Sqrt)
+        .with_random_state(42);
+    let tree_regressor = DecisionTreeRegressorParams::default()
+        .with_max_depth(Some(12))
+        .with_max_features(MaxFeatures::Sqrt)
+        .with_random_state(42);
+    let extra_classifier = ExtraTreesClassifierParams::default()
+        .with_n_estimators(20)
+        .with_max_depth(Some(12))
+        .with_max_features(MaxFeatures::Sqrt)
+        .with_random_state(42);
+
+    let mut group = c.benchmark_group("ferricml_tree_v1_fit_2048x64");
+    group.throughput(Throughput::Elements(rows as u64));
+    group.bench_function(BenchmarkId::from_parameter("classifier"), |bencher| {
+        bencher.iter_batched(
+            || tree_classifier.clone(),
+            |params| {
+                black_box(DecisionTreeClassifier::fit(&data.as_view(), &targets, params).unwrap());
+            },
+            BatchSize::SmallInput,
+        );
+    });
+    group.bench_function(BenchmarkId::from_parameter("regressor"), |bencher| {
+        bencher.iter_batched(
+            || tree_regressor.clone(),
+            |params| {
+                black_box(
+                    DecisionTreeRegressor::fit(&data.as_view(), &regression, params).unwrap(),
+                );
+            },
+            BatchSize::SmallInput,
+        );
+    });
+    group.finish();
+
+    let mut group = c.benchmark_group("ferricml_extra_trees_v1_fit_2048x64_20t");
+    group.throughput(Throughput::Elements((rows * 20) as u64));
+    group.bench_function(BenchmarkId::from_parameter("classifier"), |bencher| {
+        bencher.iter_batched(
+            || extra_classifier.clone(),
+            |params| {
+                black_box(ExtraTreesClassifier::fit(&data.as_view(), &targets, params).unwrap());
+            },
+            BatchSize::SmallInput,
+        );
+    });
+    group.finish();
+}
+
+/// Per-row inference for a standalone tree and for the randomized ensemble.
+///
+/// `predict_one` rather than a batch call: a single tree's traversal is short
+/// enough that the per-call validation and the row bounds check are a
+/// measurable share of it, which a batched lane would average away.
+fn tree_inference(c: &mut Criterion) {
+    let (rows, columns) = (2048, 64);
+    let (data, targets) = fixture(rows, columns);
+    let regression = regression_targets(&targets);
+    let tree = DecisionTreeClassifier::fit(
+        &data.as_view(),
+        &targets,
+        DecisionTreeClassifierParams::default()
+            .with_max_depth(Some(12))
+            .with_max_features(MaxFeatures::Sqrt)
+            .with_random_state(42),
+    )
+    .unwrap();
+    let extra_trees = ExtraTreesRegressor::fit(
+        &data.as_view(),
+        &regression,
+        ExtraTreesRegressorParams::default()
+            .with_n_estimators(100)
+            .with_max_depth(Some(12))
+            .with_max_features(MaxFeatures::All)
+            .with_random_state(42),
+    )
+    .unwrap();
+    let row = data.row(0).unwrap().to_vec();
+
+    let mut group = c.benchmark_group("ferricml_tree_v1_predict_one_2048x64");
+    group.throughput(Throughput::Elements(1));
+    group.bench_function(BenchmarkId::from_parameter("tree_label"), |bencher| {
+        bencher.iter(|| {
+            black_box(tree.predict_one(black_box(&row)).unwrap());
+        });
+    });
+    group.bench_function(
+        BenchmarkId::from_parameter("extra_trees_100t_value"),
+        |bencher| {
+            bencher.iter(|| {
+                black_box(extra_trees.predict_one(black_box(&row)).unwrap());
+            });
+        },
+    );
+    group.finish();
+}
+
 criterion_group!(
     benches,
     inference,
@@ -353,6 +469,8 @@ criterion_group!(
     artifact,
     classifier_artifact,
     weighted_training,
-    regressor_inference
+    regressor_inference,
+    tree_training,
+    tree_inference
 );
 criterion_main!(benches);

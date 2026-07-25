@@ -45,8 +45,8 @@ use ferricml::api::{AnyClassifier, AnyRegressor, Capabilities, HasCapabilities};
 use ferricml::calibration::{CalibratedClassifier, IsotonicRegression, PlattCalibrator};
 use ferricml::dummy::{DummyClassifier, DummyRegressor};
 use ferricml::ensemble::{
-    HistGradientBoostingClassifier, HistGradientBoostingRegressor, RandomForestClassifier,
-    RandomForestRegressor,
+    ExtraTreesClassifier, ExtraTreesRegressor, HistGradientBoostingClassifier,
+    HistGradientBoostingRegressor, RandomForestClassifier, RandomForestRegressor,
 };
 use ferricml::linear_model::{ElasticNet, Lasso, LinearRegression, LogisticRegression, Ridge};
 use ferricml::pipeline::{Pipeline, StagedPipeline};
@@ -55,6 +55,7 @@ use ferricml::preprocessing::{
     StandardScaler,
 };
 use ferricml::ranking::PairwiseLinearRanker;
+use ferricml::tree::{DecisionTreeClassifier, DecisionTreeRegressor};
 
 /// The environment variable that rewrites the snapshot instead of checking it.
 const REFRESH: &str = "FERRICML_REFRESH_CAPABILITY_SNAPSHOT";
@@ -123,6 +124,22 @@ fn declarations() -> Vec<(&'static str, Capabilities)> {
         (
             "ferricml::ensemble::RandomForestClassifier",
             RandomForestClassifier::CAPABILITIES,
+        ),
+        (
+            "ferricml::ensemble::ExtraTreesClassifier",
+            ExtraTreesClassifier::CAPABILITIES,
+        ),
+        (
+            "ferricml::ensemble::ExtraTreesRegressor",
+            ExtraTreesRegressor::CAPABILITIES,
+        ),
+        (
+            "ferricml::tree::DecisionTreeClassifier",
+            DecisionTreeClassifier::CAPABILITIES,
+        ),
+        (
+            "ferricml::tree::DecisionTreeRegressor",
+            DecisionTreeRegressor::CAPABILITIES,
         ),
         (
             "ferricml::ensemble::RandomForestRegressor",

@@ -1,17 +1,16 @@
-//! Random-forest estimators and their private implementation family.
+//! Random-forest estimators and their public parameter types.
+//!
+//! Everything below the facade — the member seeding, the bootstrap sample, the
+//! averaging arithmetic, the artifact codec — lives in the private
+//! `super::forest` core and is shared with every other bagged tree ensemble.
+//! What is random-forest-specific is exactly what appears here: two artifact
+//! kinds, two parameter defaults, and the exhaustive split search.
 
 mod model;
 mod parameters;
-mod training;
-mod tree;
 
 pub use model::{RandomForestClassifier, RandomForestRegressor};
-pub use parameters::{
-    MaxFeatures, NJobs, RandomForestClassifierParams, RandomForestRegressorParams,
-};
-
-#[cfg(test)]
-use tree::{FEATURE_MASK, LEFT_IS_LEAF, PackedNode, RIGHT_IS_LEAF};
+pub use parameters::{RandomForestClassifierParams, RandomForestRegressorParams};
 
 #[cfg(test)]
 mod tests;

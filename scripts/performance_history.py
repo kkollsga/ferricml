@@ -95,6 +95,9 @@ MODEL_FIT = (
     "ferricml_boosting_v2_weighted_fit_2048x48_64t7l/unweighted",
     "ferricml_boosting_v2_weighted_fit_2048x48_64t7l/weighted",
     "ferricml_boosting_v3_classifier_fit_2048x48_64t7l/ferricml",
+    "ferricml_tree_v1_fit_2048x64/classifier",
+    "ferricml_tree_v1_fit_2048x64/regressor",
+    "ferricml_extra_trees_v1_fit_2048x64_20t/classifier",
 )
 MODEL_INFERENCE = (
     "ferricml_models_v1_into_1024x48/linear",
@@ -126,6 +129,8 @@ MODEL_INFERENCE = (
     "ferricml_artifact_v1_forest_classifier_512x16_32t/multiclass_decode",
     "ferricml_inspection_v1_permutation_256x8_3r/forest_mse",
     "ferricml_inspection_v1_permutation_256x8_3r/ridge_r2",
+    "ferricml_tree_v1_predict_one_2048x64/tree_label",
+    "ferricml_tree_v1_predict_one_2048x64/extra_trees_100t_value",
 )
 # Diagnostic lanes are captured, recorded, and reported exactly like gated
 # lanes — so the workload stays registered and visible to `bench-history` — but
@@ -973,6 +978,8 @@ PREVIOUSLY_DISCARDED_LANES = (
     "ferricml_forest_v1_regressor_into_1024x64_100t/predict",
     "ferricml_inspection_v1_permutation_256x8_3r/forest_mse",
     "ferricml_inspection_v1_permutation_256x8_3r/ridge_r2",
+    "ferricml_tree_v1_predict_one_2048x64/tree_label",
+    "ferricml_tree_v1_predict_one_2048x64/extra_trees_100t_value",
 )
 
 

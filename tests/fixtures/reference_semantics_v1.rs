@@ -12,6 +12,13 @@ pub const FOREST_WEIGHTS: &[f32] = &[1.0, 2.0, 1.0, 3.0, 1.0, 2.0, 1.0, 2.0];
 pub const FOREST_WEIGHTED_LABELS: &[u8] = &[0, 0, 1, 1, 0];
 pub const FOREST_WEIGHTED_PROBABILITIES: &[f32] = &[1.0, 0.0, 1.0, 0.0, 0.1428571492433548, 0.8571428656578064, 0.1428571492433548, 0.8571428656578064, 0.66666668653488159, 0.3333333432674408];
 pub const FOREST_WEIGHTED_REGRESSION: &[f32] = &[-0.3333333432674408, -0.3333333432674408, 1.75, 5.3333334922790527, 8.3333330154418945];
+pub const TREE_CLASSES: &[u8] = &[0, 1];
+pub const TREE_LABELS: &[u8] = &[0, 0, 0, 1, 1];
+pub const TREE_PROBABILITIES: &[f32] = &[1.0, 0.0, 1.0, 0.0, 0.5, 0.5, 0.25, 0.75, 0.25, 0.75];
+pub const TREE_REGRESSION: &[f32] = &[-0.5, -0.5, 1.5, 5.0, 8.0];
+pub const TREE_BOUNDED_LABELS: &[u8] = &[0, 0, 0, 1, 1];
+pub const TREE_BOUNDED_PROBABILITIES: &[f32] = &[0.75, 0.25, 0.75, 0.25, 0.75, 0.25, 0.25, 0.75, 0.25, 0.75];
+pub const TREE_BOUNDED_REGRESSION: &[f32] = &[0.5, 0.5, 0.5, 6.5, 6.5];
 pub const TIE_TRAIN_X: &[f32] = &[0.0, 1.0, 2.0, 3.0];
 pub const TIE_Y: &[u8] = &[0, 1, 0, 1];
 pub const TIE_TEST_X: &[f32] = &[-1.0, 1.5, 4.0];
@@ -169,9 +176,19 @@ pub const QUALITY_REFERENCES: &[QualityReference] = &[
     QualityReference { lane: "noise", seed: 33, accuracy: 0.48697916666666669, brier: 0.25721229280205754, nrmse: 0.0 },
     QualityReference { lane: "noise", seed: 44, accuracy: 0.54947916666666663, brier: 0.24965895039890071, nrmse: 0.0 },
     QualityReference { lane: "noise", seed: 55, accuracy: 0.53385416666666663, brier: 0.25229331787028803, nrmse: 0.0 },
+    QualityReference { lane: "extra_trees_nonlinear", seed: 11, accuracy: 0.83333333333333337, brier: 0.1515578355890046, nrmse: 0.0 },
+    QualityReference { lane: "extra_trees_nonlinear", seed: 22, accuracy: 0.8125, brier: 0.15759193559690179, nrmse: 0.0 },
+    QualityReference { lane: "extra_trees_nonlinear", seed: 33, accuracy: 0.80729166666666663, brier: 0.1536715281443756, nrmse: 0.0 },
+    QualityReference { lane: "extra_trees_nonlinear", seed: 44, accuracy: 0.81510416666666663, brier: 0.1492011416202734, nrmse: 0.0 },
+    QualityReference { lane: "extra_trees_nonlinear", seed: 55, accuracy: 0.84895833333333337, brier: 0.13672736479696804, nrmse: 0.0 },
     QualityReference { lane: "regression", seed: 11, accuracy: 0.0, brier: 0.0, nrmse: 0.24186311590882517 },
     QualityReference { lane: "regression", seed: 22, accuracy: 0.0, brier: 0.0, nrmse: 0.23901463672470494 },
     QualityReference { lane: "regression", seed: 33, accuracy: 0.0, brier: 0.0, nrmse: 0.26025475911554852 },
     QualityReference { lane: "regression", seed: 44, accuracy: 0.0, brier: 0.0, nrmse: 0.24397924444397501 },
     QualityReference { lane: "regression", seed: 55, accuracy: 0.0, brier: 0.0, nrmse: 0.24407533069232981 },
+    QualityReference { lane: "extra_trees_regression", seed: 11, accuracy: 0.0, brier: 0.0, nrmse: 0.24808771526294254 },
+    QualityReference { lane: "extra_trees_regression", seed: 22, accuracy: 0.0, brier: 0.0, nrmse: 0.24761031113945867 },
+    QualityReference { lane: "extra_trees_regression", seed: 33, accuracy: 0.0, brier: 0.0, nrmse: 0.26349086618937173 },
+    QualityReference { lane: "extra_trees_regression", seed: 44, accuracy: 0.0, brier: 0.0, nrmse: 0.24300937873706335 },
+    QualityReference { lane: "extra_trees_regression", seed: 55, accuracy: 0.0, brier: 0.0, nrmse: 0.24148671687390968 },
 ];

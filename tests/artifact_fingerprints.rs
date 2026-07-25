@@ -1,9 +1,10 @@
 use ferricml::data::{BinaryTargets, ClassTargets, DenseMatrix, RegressionTargets};
 use ferricml::ensemble::{
-    HistGradientBoostingClassifier, HistGradientBoostingClassifierParams,
-    HistGradientBoostingRegressor, HistGradientBoostingRegressorParams, MaxFeatures,
-    RandomForestClassifier, RandomForestClassifierParams, RandomForestRegressor,
-    RandomForestRegressorParams,
+    ExtraTreesClassifier, ExtraTreesClassifierParams, ExtraTreesRegressor,
+    ExtraTreesRegressorParams, HistGradientBoostingClassifier,
+    HistGradientBoostingClassifierParams, HistGradientBoostingRegressor,
+    HistGradientBoostingRegressorParams, MaxFeatures, RandomForestClassifier,
+    RandomForestClassifierParams, RandomForestRegressor, RandomForestRegressorParams,
 };
 use ferricml::linear_model::{
     LinearRegression, LinearRegressionParams, LogisticRegression, LogisticRegressionParams, Ridge,
@@ -16,6 +17,10 @@ use ferricml::preprocessing::{
 };
 use ferricml::ranking::{
     PairIndex, PairOutcome, PairwiseLinearRanker, PairwiseLinearRankerParams, PairwiseObservation,
+};
+use ferricml::tree::{
+    DecisionTreeClassifier, DecisionTreeClassifierParams, DecisionTreeRegressor,
+    DecisionTreeRegressorParams, Splitter,
 };
 use sha2::{Digest, Sha256};
 
@@ -304,6 +309,142 @@ fn fitted_artifact_fingerprints_are_frozen() {
         [
             89, 182, 208, 111, 239, 82, 138, 10, 170, 201, 231, 232, 108, 177, 151, 116, 130, 156,
             121, 230, 156, 233, 230, 25, 201, 87, 142, 118, 141, 43, 145, 2,
+        ],
+    );
+
+    // The randomized ensembles. Their thresholds come out of the crate's own
+    // generator rather than out of the data, so freezing them is what turns
+    // "the randomized search is deterministic" into a checked claim.
+    let extra_trees_regressor = ExtraTreesRegressor::fit(
+        &data.as_view(),
+        &regression,
+        ExtraTreesRegressorParams::default()
+            .with_n_estimators(3)
+            .with_max_depth(Some(4))
+            .with_max_features(MaxFeatures::All)
+            .with_random_state(11),
+    )
+    .unwrap();
+    assert_fingerprint(
+        "extra-trees-regressor",
+        extra_trees_regressor.to_artifact([5; 32]).unwrap(),
+        extra_trees_regressor.to_artifact([5; 32]).unwrap(),
+        640,
+        [
+            107, 92, 114, 97, 34, 105, 208, 9, 197, 111, 89, 241, 209, 249, 73, 132, 31, 239, 139,
+            23, 222, 43, 251, 149, 139, 173, 126, 63, 172, 40, 63, 147,
+        ],
+    );
+    let extra_trees_classifier_params = ExtraTreesClassifierParams::default()
+        .with_n_estimators(3)
+        .with_max_depth(Some(4))
+        .with_max_features(MaxFeatures::All)
+        .with_random_state(11);
+    let extra_trees_classifier = ExtraTreesClassifier::fit(
+        &data.as_view(),
+        &binary,
+        extra_trees_classifier_params.clone(),
+    )
+    .unwrap();
+    assert_fingerprint(
+        "extra-trees-classifier",
+        extra_trees_classifier.to_artifact([5; 32]).unwrap(),
+        extra_trees_classifier.to_artifact([5; 32]).unwrap(),
+        536,
+        [
+            209, 117, 217, 225, 131, 62, 7, 182, 91, 127, 75, 76, 0, 91, 34, 141, 28, 192, 246,
+            109, 19, 239, 112, 27, 105, 190, 130, 197, 234, 214, 236, 139,
+        ],
+    );
+    let multiclass_extra_trees = ExtraTreesClassifier::fit_multiclass(
+        &data.as_view(),
+        &ClassTargets::new(vec![3, 7, 10, 7]).unwrap(),
+        extra_trees_classifier_params,
+    )
+    .unwrap();
+    assert_fingerprint(
+        "extra-trees-classifier-multiclass",
+        multiclass_extra_trees.to_artifact([5; 32]).unwrap(),
+        multiclass_extra_trees.to_artifact([5; 32]).unwrap(),
+        852,
+        [
+            215, 167, 160, 133, 178, 124, 16, 108, 146, 32, 218, 122, 116, 245, 190, 157, 153, 56,
+            166, 48, 102, 212, 11, 94, 35, 29, 203, 134, 119, 166, 220, 215,
+        ],
+    );
+
+    // The standalone trees, in all three fitted shapes. A tree is grown by the
+    // same arithmetic-only code path the forest is, so its bytes are tier-1
+    // deterministic and are frozen here rather than only round-tripped.
+    let tree_regressor_params = DecisionTreeRegressorParams::default()
+        .with_max_depth(Some(4))
+        .with_max_features(MaxFeatures::All)
+        .with_random_state(11);
+    let tree_regressor =
+        DecisionTreeRegressor::fit(&data.as_view(), &regression, tree_regressor_params.clone())
+            .unwrap();
+    assert_fingerprint(
+        "decision-tree-regressor",
+        tree_regressor.to_artifact([5; 32]).unwrap(),
+        tree_regressor.to_artifact([5; 32]).unwrap(),
+        304,
+        [
+            60, 194, 231, 4, 136, 244, 119, 9, 190, 8, 107, 167, 182, 81, 76, 163, 44, 174, 27, 46,
+            242, 151, 228, 185, 108, 10, 15, 8, 56, 4, 99, 192,
+        ],
+    );
+
+    // The randomized splitter is a second user-facing fit under the same kind,
+    // and its thresholds come straight out of the crate's own generator, so it
+    // owes its own frozen bytes rather than inheriting the exhaustive tree's.
+    let randomized_tree = DecisionTreeRegressor::fit(
+        &data.as_view(),
+        &regression,
+        tree_regressor_params.with_splitter(Splitter::Random),
+    )
+    .unwrap();
+    assert_fingerprint(
+        "decision-tree-regressor-randomized",
+        randomized_tree.to_artifact([5; 32]).unwrap(),
+        randomized_tree.to_artifact([5; 32]).unwrap(),
+        304,
+        [
+            150, 148, 138, 103, 114, 169, 150, 4, 135, 77, 246, 31, 167, 76, 38, 112, 65, 119, 153,
+            52, 38, 75, 238, 24, 51, 154, 152, 247, 209, 131, 251, 159,
+        ],
+    );
+
+    let tree_classifier_params = DecisionTreeClassifierParams::default()
+        .with_max_depth(Some(4))
+        .with_max_features(MaxFeatures::All)
+        .with_random_state(11);
+    let tree_classifier =
+        DecisionTreeClassifier::fit(&data.as_view(), &binary, tree_classifier_params.clone())
+            .unwrap();
+    assert_fingerprint(
+        "decision-tree-classifier",
+        tree_classifier.to_artifact([5; 32]).unwrap(),
+        tree_classifier.to_artifact([5; 32]).unwrap(),
+        240,
+        [
+            206, 147, 223, 133, 169, 132, 241, 118, 90, 158, 130, 183, 229, 66, 6, 118, 130, 178,
+            41, 178, 65, 244, 107, 237, 50, 23, 116, 55, 130, 52, 66, 92,
+        ],
+    );
+    let multiclass_tree = DecisionTreeClassifier::fit_multiclass(
+        &data.as_view(),
+        &ClassTargets::new(vec![3, 7, 10, 7]).unwrap(),
+        tree_classifier_params,
+    )
+    .unwrap();
+    assert_fingerprint(
+        "decision-tree-classifier-multiclass",
+        multiclass_tree.to_artifact([5; 32]).unwrap(),
+        multiclass_tree.to_artifact([5; 32]).unwrap(),
+        388,
+        [
+            254, 162, 143, 250, 96, 41, 137, 179, 7, 23, 76, 73, 248, 154, 54, 163, 98, 72, 75, 90,
+            138, 105, 45, 204, 1, 75, 29, 245, 129, 125, 143, 35,
         ],
     );
 

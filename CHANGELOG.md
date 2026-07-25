@@ -7,6 +7,38 @@ and releases use [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+
+- `tree::DecisionTreeClassifier` and `tree::DecisionTreeRegressor`, standalone
+  decision trees over the same grower a random forest uses. Both support
+  weighted fitting and persist under new artifact kinds; the classifier fits
+  binary or natively multiclass targets and declares genuine probabilities,
+  because a leaf *is* a distribution over the training rows that reached it.
+  `MaxFeatures` is now also reachable as `tree::MaxFeatures`; the existing
+  `ensemble::MaxFeatures` path is unchanged and names the same type.
+- `tree::Splitter`, set through `with_splitter` on either standalone tree's
+  parameters. `Splitter::Best` (the default) evaluates every boundary between
+  adjacent distinct values in each candidate column; `Splitter::Random` draws
+  one threshold uniformly inside each candidate column's own range within the
+  node and keeps the best-scoring draw, which is what makes an *extremely
+  randomized* tree. The candidate columns are drawn identically either way, an
+  inadmissible draw is discarded rather than redrawn, and a column that is
+  constant within the node consumes no draw at all — so the generator's stream
+  does not depend on which columns happen to be constant. Random forests are
+  unaffected: they keep the exhaustive search and their artifact bytes are
+  unchanged.
+- `ensemble::ExtraTreesClassifier` and `ensemble::ExtraTreesRegressor`,
+  extremely randomized tree ensembles over the same core a random forest uses.
+  Each member draws one uniform threshold per candidate column instead of
+  optimizing within it; the candidate columns themselves are drawn exactly as a
+  random forest draws them. `bootstrap` therefore defaults to `false` here and
+  stays `true` on a random forest — trees decorrelate through their thresholds,
+  so resampling on top of that would only remove training rows. Both persist
+  under new artifact kinds, fit with or without sample weights, and the
+  classifier fits binary or natively multiclass targets. An ensemble of one
+  member is bit-identical to the corresponding standalone tree at the same
+  seed, which is asserted rather than assumed.
+
 ### Changed
 
 - **Breaking.** Producing probabilities is no longer required of every
