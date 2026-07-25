@@ -40,6 +40,7 @@ pub struct Capabilities {
     sample_weights: bool,
     artifact: bool,
     multiclass: bool,
+    decision_function: bool,
 }
 
 impl Capabilities {
@@ -52,6 +53,7 @@ impl Capabilities {
         sample_weights: false,
         artifact: false,
         multiclass: false,
+        decision_function: false,
     };
 
     /// Declares whether fitting accepts per-sample weights.
@@ -72,6 +74,13 @@ impl Capabilities {
     #[must_use]
     pub const fn with_multiclass(mut self, supported: bool) -> Self {
         self.multiclass = supported;
+        self
+    }
+
+    /// Declares whether the fitted classifier exposes a raw decision score.
+    #[must_use]
+    pub const fn with_decision_function(mut self, supported: bool) -> Self {
+        self.decision_function = supported;
         self
     }
 
@@ -102,6 +111,30 @@ impl Capabilities {
         self.multiclass
     }
 
+    /// Whether the fitted classifier exposes a raw, unsquashed decision score.
+    ///
+    /// A type declaring this offers a `decision_function` entry point producing
+    /// one real-valued score per row, monotone in the model's confidence, whose
+    /// squashing is the probability. Producing *probabilities* is required of
+    /// every [`Classifier`](super::Classifier) and is not what this records.
+    ///
+    /// This exists because Rust has no runtime attribute lookup: a
+    /// meta-estimator generic over a classifier cannot discover whether the
+    /// type it holds has a decision function, and the classical formulations of
+    /// probability calibration and of threshold-sweeping scores are both
+    /// written against one. The declaration is what lets such a consumer select
+    /// its behavior at compile time instead of assuming a method exists.
+    ///
+    /// Note the deliberate limit of what a tag can do. Declaring this makes the
+    /// capability *discoverable*; it does not make the method *callable*,
+    /// because a decision function is an inherent method rather than part of
+    /// the object-safe classifier contract. A consumer that needs to call one
+    /// still needs a bound naming a trait that carries it.
+    #[must_use]
+    pub const fn decision_function(self) -> bool {
+        self.decision_function
+    }
+
     /// Capabilities declared by both descriptors.
     ///
     /// This is what a runtime dispatch enum or a fitted composition can promise
@@ -113,6 +146,7 @@ impl Capabilities {
             sample_weights: self.sample_weights && other.sample_weights,
             artifact: self.artifact && other.artifact,
             multiclass: self.multiclass && other.multiclass,
+            decision_function: self.decision_function && other.decision_function,
         }
     }
 }
@@ -144,6 +178,7 @@ mod tests {
         assert!(!Capabilities::NONE.sample_weights());
         assert!(!Capabilities::NONE.artifact());
         assert!(!Capabilities::NONE.multiclass());
+        assert!(!Capabilities::NONE.decision_function());
     }
 
     #[test]
@@ -151,14 +186,18 @@ mod tests {
         const WEIGHTS: Capabilities = Capabilities::NONE.with_sample_weights(true);
         const ARTIFACT: Capabilities = Capabilities::NONE.with_artifact(true);
         const MULTICLASS: Capabilities = Capabilities::NONE.with_multiclass(true);
+        const DECISION: Capabilities = Capabilities::NONE.with_decision_function(true);
         const BOTH: Capabilities = WEIGHTS.with_artifact(true);
 
         assert!(WEIGHTS.sample_weights() && !WEIGHTS.artifact() && !WEIGHTS.multiclass());
         assert!(!ARTIFACT.sample_weights() && ARTIFACT.artifact() && !ARTIFACT.multiclass());
         assert!(!MULTICLASS.sample_weights() && !MULTICLASS.artifact() && MULTICLASS.multiclass());
         assert!(BOTH.sample_weights() && BOTH.artifact() && !BOTH.multiclass());
+        assert!(DECISION.decision_function() && !DECISION.multiclass() && !DECISION.artifact());
+        assert!(!WEIGHTS.decision_function() && !BOTH.decision_function());
         assert_eq!(BOTH.with_sample_weights(false), ARTIFACT);
         assert_eq!(MULTICLASS.with_multiclass(false), Capabilities::NONE);
+        assert_eq!(DECISION.with_decision_function(false), Capabilities::NONE);
     }
 
     #[test]
@@ -172,6 +211,11 @@ mod tests {
             BOTH.with_multiclass(true).intersection(BOTH),
             BOTH,
             "a capability only one side declares is not promised"
+        );
+        assert_eq!(
+            BOTH.with_decision_function(true).intersection(BOTH),
+            BOTH,
+            "a decision function only one side has is not promised"
         );
         assert_eq!(BOTH.intersection(Capabilities::NONE), Capabilities::NONE);
         assert_eq!(WEIGHTS.intersection(BOTH), BOTH.intersection(WEIGHTS));

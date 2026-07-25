@@ -199,6 +199,16 @@ and releases use [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - `calibration::Calibrator`, the fitted monotone score-to-probability map
   contract, with an in-place batch form so calibrated prediction needs no second
   buffer.
+- `calibration::CalibratedClassifier`, a fitted classifier composed with a
+  fitted calibrator. It is an ordinary `Classifier`, so it scores and
+  cross-validates through the existing paths unchanged. It calibrates the
+  wrapped model's positive-class probability, takes its calibration rows as an
+  explicit parameter rather than reusing training rows, and predicts labels from
+  its own calibrated probabilities. A Platt-calibrated composition additionally
+  exposes `decision_function`.
+- `api::Capabilities::decision_function`, declaring whether a fitted classifier
+  exposes a raw, unsquashed decision score. Producing probabilities is required
+  of every `Classifier` and is not what this records.
 
 ### Changed
 

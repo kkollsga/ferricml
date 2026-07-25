@@ -141,10 +141,12 @@ pub struct ferricml::api::Capabilities
 impl ferricml::api::Capabilities
 pub const ferricml::api::Capabilities::NONE: Self
 pub const fn ferricml::api::Capabilities::artifact(self) -> bool
+pub const fn ferricml::api::Capabilities::decision_function(self) -> bool
 pub const fn ferricml::api::Capabilities::intersection(self, Self) -> Self
 pub const fn ferricml::api::Capabilities::multiclass(self) -> bool
 pub const fn ferricml::api::Capabilities::sample_weights(self) -> bool
 pub const fn ferricml::api::Capabilities::with_artifact(self, bool) -> Self
+pub const fn ferricml::api::Capabilities::with_decision_function(self, bool) -> Self
 pub const fn ferricml::api::Capabilities::with_multiclass(self, bool) -> Self
 pub const fn ferricml::api::Capabilities::with_sample_weights(self, bool) -> Self
 pub trait ferricml::api::Classifier: ferricml::api::Estimator
@@ -187,6 +189,14 @@ pub fn ferricml::linear_model::LogisticRegression::predict_class_proba_into(&sel
 pub fn ferricml::linear_model::LogisticRegression::predict_into(&self, &ferricml::data::MatrixView<'_>, &mut [u8]) -> core::result::Result<(), ferricml::api::ModelError>
 pub fn ferricml::linear_model::LogisticRegression::predict_proba(&self, &ferricml::data::MatrixView<'_>) -> core::result::Result<alloc::vec::Vec<f32>, ferricml::api::ModelError>
 pub fn ferricml::linear_model::LogisticRegression::predict_proba_into(&self, &ferricml::data::MatrixView<'_>, &mut [f32]) -> core::result::Result<(), ferricml::api::ModelError>
+impl<C: ferricml::api::Classifier, K: ferricml::calibration::Calibrator> ferricml::api::Classifier for ferricml::calibration::CalibratedClassifier<C, K>
+pub fn ferricml::calibration::CalibratedClassifier<C, K>::classes(&self) -> &[u8]
+pub fn ferricml::calibration::CalibratedClassifier<C, K>::predict(&self, &ferricml::data::MatrixView<'_>) -> core::result::Result<alloc::vec::Vec<u8>, ferricml::api::ModelError>
+pub fn ferricml::calibration::CalibratedClassifier<C, K>::predict_class_proba(&self, &ferricml::data::MatrixView<'_>, u8) -> core::result::Result<alloc::vec::Vec<f32>, ferricml::api::ModelError>
+pub fn ferricml::calibration::CalibratedClassifier<C, K>::predict_class_proba_into(&self, &ferricml::data::MatrixView<'_>, u8, &mut [f32]) -> core::result::Result<(), ferricml::api::ModelError>
+pub fn ferricml::calibration::CalibratedClassifier<C, K>::predict_into(&self, &ferricml::data::MatrixView<'_>, &mut [u8]) -> core::result::Result<(), ferricml::api::ModelError>
+pub fn ferricml::calibration::CalibratedClassifier<C, K>::predict_proba(&self, &ferricml::data::MatrixView<'_>) -> core::result::Result<alloc::vec::Vec<f32>, ferricml::api::ModelError>
+pub fn ferricml::calibration::CalibratedClassifier<C, K>::predict_proba_into(&self, &ferricml::data::MatrixView<'_>, &mut [f32]) -> core::result::Result<(), ferricml::api::ModelError>
 pub trait ferricml::api::Estimator
 pub fn ferricml::api::Estimator::n_features_in(&self) -> usize
 impl ferricml::api::Estimator for ferricml::api::AnyClassifier
@@ -219,6 +229,8 @@ impl ferricml::api::Estimator for ferricml::preprocessing::StandardScaler
 pub fn ferricml::preprocessing::StandardScaler::n_features_in(&self) -> usize
 impl ferricml::api::Estimator for ferricml::ranking::PairwiseLinearRanker
 pub fn ferricml::ranking::PairwiseLinearRanker::n_features_in(&self) -> usize
+impl<C: ferricml::api::Classifier, K: ferricml::calibration::Calibrator> ferricml::api::Estimator for ferricml::calibration::CalibratedClassifier<C, K>
+pub fn ferricml::calibration::CalibratedClassifier<C, K>::n_features_in(&self) -> usize
 impl<S, E> ferricml::api::Estimator for ferricml::pipeline::StagedPipeline<S, E> where S: ferricml::pipeline::TransformerStack, E: ferricml::api::Estimator
 pub fn ferricml::pipeline::StagedPipeline<S, E>::n_features_in(&self) -> usize
 impl<T, E> ferricml::api::Estimator for ferricml::pipeline::Pipeline<T, E> where T: ferricml::api::Transformer, E: ferricml::api::Estimator
@@ -259,6 +271,10 @@ impl ferricml::api::HasCapabilities for ferricml::preprocessing::MinMaxScaler
 pub const ferricml::preprocessing::MinMaxScaler::CAPABILITIES: ferricml::api::Capabilities
 impl ferricml::api::HasCapabilities for ferricml::preprocessing::StandardScaler
 pub const ferricml::preprocessing::StandardScaler::CAPABILITIES: ferricml::api::Capabilities
+impl<C: ferricml::api::Classifier> ferricml::api::HasCapabilities for ferricml::calibration::CalibratedClassifier<C, ferricml::calibration::IsotonicRegression>
+pub const ferricml::calibration::CalibratedClassifier<C, ferricml::calibration::IsotonicRegression>::CAPABILITIES: ferricml::api::Capabilities
+impl<C: ferricml::api::Classifier> ferricml::api::HasCapabilities for ferricml::calibration::CalibratedClassifier<C, ferricml::calibration::PlattCalibrator>
+pub const ferricml::calibration::CalibratedClassifier<C, ferricml::calibration::PlattCalibrator>::CAPABILITIES: ferricml::api::Capabilities
 impl<S, E> ferricml::api::HasCapabilities for ferricml::pipeline::StagedPipeline<S, E> where S: ferricml::pipeline::TransformerStack + ferricml::pipeline::PersistedStack, E: ferricml::api::Estimator + ferricml::pipeline::ModelArtifact
 pub const ferricml::pipeline::StagedPipeline<S, E>::CAPABILITIES: ferricml::api::Capabilities
 pub trait ferricml::api::HasParams
@@ -366,6 +382,33 @@ pub fn ferricml::artifact::ArtifactError::fmt(&self, &mut core::fmt::Formatter<'
 pub const ferricml::artifact::MAX_MODEL_ARTIFACT_BYTES: usize
 pub const ferricml::artifact::MODEL_ARTIFACT_VERSION: u16
 pub mod ferricml::calibration
+pub struct ferricml::calibration::CalibratedClassifier<C, K>
+impl<C: ferricml::api::Classifier, K: ferricml::calibration::Calibrator> ferricml::calibration::CalibratedClassifier<C, K>
+pub const fn ferricml::calibration::CalibratedClassifier<C, K>::calibrator(&self) -> &K
+pub const fn ferricml::calibration::CalibratedClassifier<C, K>::inner(&self) -> &C
+pub fn ferricml::calibration::CalibratedClassifier<C, K>::into_parts(self) -> (C, K)
+pub fn ferricml::calibration::CalibratedClassifier<C, K>::new(C, K) -> core::result::Result<Self, ferricml::api::ModelError>
+pub fn ferricml::calibration::CalibratedClassifier<C, K>::predict_into_with(&self, &ferricml::data::MatrixView<'_>, &mut [f32], &mut [u8]) -> core::result::Result<(), ferricml::api::ModelError>
+impl<C: ferricml::api::Classifier> ferricml::calibration::CalibratedClassifier<C, ferricml::calibration::IsotonicRegression>
+pub fn ferricml::calibration::CalibratedClassifier<C, ferricml::calibration::IsotonicRegression>::fit_isotonic(C, &ferricml::data::MatrixView<'_>, &ferricml::data::BinaryTargets) -> core::result::Result<Self, ferricml::api::ModelError>
+impl<C: ferricml::api::Classifier> ferricml::calibration::CalibratedClassifier<C, ferricml::calibration::PlattCalibrator>
+pub fn ferricml::calibration::CalibratedClassifier<C, ferricml::calibration::PlattCalibrator>::decision_function(&self, &ferricml::data::MatrixView<'_>) -> core::result::Result<alloc::vec::Vec<f32>, ferricml::api::ModelError>
+pub fn ferricml::calibration::CalibratedClassifier<C, ferricml::calibration::PlattCalibrator>::decision_function_into(&self, &ferricml::data::MatrixView<'_>, &mut [f32]) -> core::result::Result<(), ferricml::api::ModelError>
+pub fn ferricml::calibration::CalibratedClassifier<C, ferricml::calibration::PlattCalibrator>::fit_platt(C, &ferricml::data::MatrixView<'_>, &ferricml::data::BinaryTargets, ferricml::calibration::PlattParams) -> core::result::Result<Self, ferricml::api::ModelError>
+impl<C: ferricml::api::Classifier, K: ferricml::calibration::Calibrator> ferricml::api::Classifier for ferricml::calibration::CalibratedClassifier<C, K>
+pub fn ferricml::calibration::CalibratedClassifier<C, K>::classes(&self) -> &[u8]
+pub fn ferricml::calibration::CalibratedClassifier<C, K>::predict(&self, &ferricml::data::MatrixView<'_>) -> core::result::Result<alloc::vec::Vec<u8>, ferricml::api::ModelError>
+pub fn ferricml::calibration::CalibratedClassifier<C, K>::predict_class_proba(&self, &ferricml::data::MatrixView<'_>, u8) -> core::result::Result<alloc::vec::Vec<f32>, ferricml::api::ModelError>
+pub fn ferricml::calibration::CalibratedClassifier<C, K>::predict_class_proba_into(&self, &ferricml::data::MatrixView<'_>, u8, &mut [f32]) -> core::result::Result<(), ferricml::api::ModelError>
+pub fn ferricml::calibration::CalibratedClassifier<C, K>::predict_into(&self, &ferricml::data::MatrixView<'_>, &mut [u8]) -> core::result::Result<(), ferricml::api::ModelError>
+pub fn ferricml::calibration::CalibratedClassifier<C, K>::predict_proba(&self, &ferricml::data::MatrixView<'_>) -> core::result::Result<alloc::vec::Vec<f32>, ferricml::api::ModelError>
+pub fn ferricml::calibration::CalibratedClassifier<C, K>::predict_proba_into(&self, &ferricml::data::MatrixView<'_>, &mut [f32]) -> core::result::Result<(), ferricml::api::ModelError>
+impl<C: ferricml::api::Classifier, K: ferricml::calibration::Calibrator> ferricml::api::Estimator for ferricml::calibration::CalibratedClassifier<C, K>
+pub fn ferricml::calibration::CalibratedClassifier<C, K>::n_features_in(&self) -> usize
+impl<C: ferricml::api::Classifier> ferricml::api::HasCapabilities for ferricml::calibration::CalibratedClassifier<C, ferricml::calibration::IsotonicRegression>
+pub const ferricml::calibration::CalibratedClassifier<C, ferricml::calibration::IsotonicRegression>::CAPABILITIES: ferricml::api::Capabilities
+impl<C: ferricml::api::Classifier> ferricml::api::HasCapabilities for ferricml::calibration::CalibratedClassifier<C, ferricml::calibration::PlattCalibrator>
+pub const ferricml::calibration::CalibratedClassifier<C, ferricml::calibration::PlattCalibrator>::CAPABILITIES: ferricml::api::Capabilities
 pub struct ferricml::calibration::IsotonicRegression
 impl ferricml::calibration::IsotonicRegression
 pub fn ferricml::calibration::IsotonicRegression::fit(&ferricml::data::MatrixView<'_>, &ferricml::data::RegressionTargets) -> core::result::Result<Self, ferricml::api::ModelError>

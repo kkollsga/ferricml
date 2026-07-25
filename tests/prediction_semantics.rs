@@ -19,6 +19,9 @@ use ferricml::api::{
     Regressor,
 };
 use ferricml::artifact::ArtifactError;
+use ferricml::calibration::{
+    CalibratedClassifier, IsotonicRegression, PlattCalibrator, PlattParams,
+};
 use ferricml::data::{
     BinaryTargets, ClassTargets, DenseMatrix, MatrixView, RegressionTargets, SampleWeights,
 };
@@ -179,6 +182,46 @@ impl ClassifierCase for AnyLogisticClassifierCase {
 
     fn fit(data: &MatrixView<'_>, labels: &BinaryTargets) -> Self::Model {
         LogisticRegressionCase::fit(data, labels).into()
+    }
+}
+
+/// The two calibrated compositions, registered like any other classifier.
+///
+/// The battery's one fixture is both the training and the calibration sample
+/// here, which is deliberately *not* how a calibrated model should be built —
+/// but these obligations are structural, and the fixture is the only data the
+/// battery has. Held-out calibration is proven in `tests/calibration.rs`, where
+/// there is room for two folds.
+struct IsotonicCalibratedForestCase;
+
+impl ClassifierCase for IsotonicCalibratedForestCase {
+    type Model = CalibratedClassifier<RandomForestClassifier, IsotonicRegression>;
+    const NAME: &'static str = "CalibratedClassifier<RandomForestClassifier, IsotonicRegression>";
+
+    fn fit(data: &MatrixView<'_>, labels: &BinaryTargets) -> Self::Model {
+        CalibratedClassifier::fit_isotonic(
+            RandomForestClassifierCase::fit(data, labels),
+            data,
+            labels,
+        )
+        .expect("isotonic calibration of the fixture forest")
+    }
+}
+
+struct PlattCalibratedForestCase;
+
+impl ClassifierCase for PlattCalibratedForestCase {
+    type Model = CalibratedClassifier<RandomForestClassifier, PlattCalibrator>;
+    const NAME: &'static str = "CalibratedClassifier<RandomForestClassifier, PlattCalibrator>";
+
+    fn fit(data: &MatrixView<'_>, labels: &BinaryTargets) -> Self::Model {
+        CalibratedClassifier::fit_platt(
+            RandomForestClassifierCase::fit(data, labels),
+            data,
+            labels,
+            PlattParams::default(),
+        )
+        .expect("Platt calibration of the fixture forest")
     }
 }
 
@@ -458,6 +501,12 @@ fn logistic_regression_conforms() {
 fn any_classifier_conforms_for_every_variant() {
     check_batch_only_classifier::<AnyForestClassifierCase>();
     check_batch_only_classifier::<AnyLogisticClassifierCase>();
+}
+
+#[test]
+fn calibrated_classifiers_conform_for_both_calibrators() {
+    check_batch_only_classifier::<IsotonicCalibratedForestCase>();
+    check_batch_only_classifier::<PlattCalibratedForestCase>();
 }
 
 #[test]

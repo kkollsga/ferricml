@@ -23,7 +23,15 @@ estimator meaning follow the reference contract.
   fitting, artifact persistence, and multiclass fitting — so it never
   becomes a second parameter system; it is carried by `HasCapabilities`, a
   generic trait rather than an associated constant on the object-safe
-  categories, which must stay dyn-compatible.
+  categories, which must stay dyn-compatible. `decision_function` records
+  whether a fitted classifier exposes a raw, unsquashed score: producing
+  probabilities is required of every `Classifier` and is not what it records.
+  It exists because Rust has no runtime attribute lookup, so a meta-estimator
+  generic over a classifier cannot otherwise discover that the type it holds
+  has one. Note what a tag can and cannot do — it makes the capability
+  discoverable, not callable, because a decision function is an inherent method
+  rather than part of the object-safe contract, so a consumer that must *call*
+  one still needs a bound naming a trait that carries it.
 - `data` owns validated row-major inputs, targets, and sample weights.
 - `ensemble` owns public ensemble estimators and parameter types; each private
   estimator family owns its validation, training, persistence conversion, and
@@ -87,6 +95,23 @@ estimator meaning follow the reference contract.
   perfectly — with raw labels that problem has no finite maximum-likelihood
   solution, and the resulting map would assert exactly the certainty
   calibration exists to remove.
+  `CalibratedClassifier<C, K>` composes an already-fitted classifier with an
+  already-fitted calibrator and is itself an ordinary `Classifier`, so it
+  reaches the scorer, cross-validation, and permutation-importance paths without
+  any of them learning that calibration exists. The score it calibrates is the
+  wrapped model's positive-class probability, which is the one score every
+  classifier is required to produce; that is what lets the wrapper be generic
+  over the public contract rather than over the estimators FerricML ships. The
+  calibration rows are always a caller-supplied parameter, never the wrapped
+  model's own training rows taken implicitly. Predicted labels are the argmax of
+  the *calibrated* probabilities, so a row whose probability crosses the
+  decision point does change label; because the map is monotone, the ranking of
+  any two rows — and therefore any threshold-sweeping score such as ROC AUC — is
+  unchanged. The composition declares its capabilities per calibrator rather
+  than by intersecting the wrapped model's: it owns fitted parts, so weighted
+  fitting, persistence, and multiclass fitting are declared away structurally,
+  while a Platt composition genuinely gains a `decision_function` the wrapped
+  model never had.
 - `inspection` owns model-agnostic attribution. Permutation importance works
   through the public batch prediction and scoring contracts only, so it needs
   no estimator cooperation and exposes no model internals. It holds no scoring

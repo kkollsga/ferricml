@@ -24,15 +24,21 @@
 //!   produce. Calibrating a raw decision function instead is the classical
 //!   formulation, but `decision_function` is an inherent method of one
 //!   estimator rather than part of the classifier contract, so a generic
-//!   wrapper cannot reach it.
+//!   wrapper cannot reach it. [`Capabilities::decision_function`] records which
+//!   types have one, which is what a consumer selecting its behavior at compile
+//!   time reads.
+//!
+//! [`Capabilities::decision_function`]: crate::api::Capabilities::decision_function
 //! - The calibration sample is supplied by the caller and is never taken from
 //!   the wrapped model's own training rows implicitly. A calibrator fitted on
 //!   the rows its model was trained on measures the model's memory, not its
 //!   probabilities, and FerricML makes that the caller's explicit choice.
 
+mod classifier;
 mod isotonic;
 mod platt;
 
+pub use classifier::CalibratedClassifier;
 pub use isotonic::IsotonicRegression;
 pub use platt::{PlattCalibrator, PlattParams};
 
@@ -48,7 +54,10 @@ use crate::data::BinaryTargets;
 /// confident* a prediction is, never *which way round* two rows are ordered.
 ///
 /// The trait is open so a caller can supply a calibration family FerricML does
-/// not ship.
+/// not ship. Such a calibrator composes with [`CalibratedClassifier`] for
+/// prediction; the capability declaration on the composition is written per
+/// shipped calibrator, because what a composition can do depends on which
+/// calibrator it holds, so a caller-defined one carries no declaration.
 pub trait Calibrator {
     /// Maps one raw model score onto a calibrated probability in `0.0..=1.0`.
     fn calibrate(&self, score: f32) -> f32;

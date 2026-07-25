@@ -11,7 +11,7 @@
 //! not have, or has one it did not declare, fails there.
 
 use ferricml::api::{AnyClassifier, AnyRegressor, Capabilities, HasCapabilities};
-use ferricml::calibration::IsotonicRegression;
+use ferricml::calibration::{CalibratedClassifier, IsotonicRegression, PlattCalibrator};
 use ferricml::data::{BinaryTargets, DenseMatrix, RegressionTargets};
 use ferricml::dummy::{DummyClassifier, DummyRegressor};
 use ferricml::ensemble::{
@@ -91,6 +91,41 @@ fn baseline_estimators_declare_nothing() {
     // point, so the conservative default is the whole truth.
     assert_eq!(DummyClassifier::CAPABILITIES, Capabilities::NONE);
     assert_eq!(DummyRegressor::CAPABILITIES, Capabilities::NONE);
+}
+
+#[test]
+fn a_calibrated_composition_declares_only_what_its_calibrator_gives_it() {
+    // Both compositions own already-fitted parts, so neither has a weighted
+    // entry point, an artifact kind, or a multiclass fit — declared away
+    // structurally rather than intersected from the wrapped model, which would
+    // have promised entry points the wrapper does not have at all.
+    assert_eq!(
+        <CalibratedClassifier<RandomForestClassifier, IsotonicRegression> as HasCapabilities>::CAPABILITIES,
+        Capabilities::NONE
+    );
+    // The parametric calibrator does add one thing the wrapped model never had:
+    // a raw decision score, `slope * score + intercept`, whose sigmoid is the
+    // calibrated probability. That is what makes this field vary rather than
+    // being a constant dressed up as a capability.
+    assert_eq!(
+        <CalibratedClassifier<RandomForestClassifier, PlattCalibrator> as HasCapabilities>::CAPABILITIES,
+        Capabilities::NONE.with_decision_function(true)
+    );
+}
+
+#[test]
+fn a_decision_function_is_declared_by_nothing_that_only_produces_probabilities() {
+    // Every fitted estimator FerricML ships today declares no decision
+    // function, including the one type that has the method. `LogisticRegression`
+    // is the gap and is recorded here rather than left to be discovered:
+    // its declaration lives beside the estimator, so the consumer that needed
+    // the field could not also land the declaration.
+    assert!(!LogisticRegression::CAPABILITIES.decision_function());
+    assert!(!RandomForestClassifier::CAPABILITIES.decision_function());
+    assert!(!DummyClassifier::CAPABILITIES.decision_function());
+    assert!(!AnyClassifier::CAPABILITIES.decision_function());
+    assert!(!AnyRegressor::CAPABILITIES.decision_function());
+    assert!(!IsotonicRegression::CAPABILITIES.decision_function());
 }
 
 #[test]
