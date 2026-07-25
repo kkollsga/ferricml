@@ -88,7 +88,6 @@ MODEL_INFERENCE = (
     "ferricml_models_v2_scaler_into_1024x48/transform",
     "ferricml_model_selection_v2_holdout_1000000/ordinary_shuffled_20pct",
     "ferricml_model_selection_v2_holdout_1000000/ordinary_shuffled_80pct",
-    "ferricml_model_selection_v2_holdout_1000000/ordinary_unshuffled_20pct",
     "ferricml_model_selection_v2_holdout_1000000/stratified_4_class_20pct",
     "ferricml_model_selection_v2_stratified_262144/256_class_50pct",
     "ferricml_forest_v1_regressor_into_32x64_100t/predict",
@@ -101,6 +100,24 @@ MODEL_INFERENCE = (
     "ferricml_artifact_v1_forest_classifier_512x16_32t/multiclass_decode",
     "ferricml_inspection_v1_permutation_256x8_3r/forest_mse",
     "ferricml_inspection_v1_permutation_256x8_3r/ridge_r2",
+)
+# Diagnostic lanes are captured, recorded, and reported exactly like gated
+# lanes — so the workload stays registered and visible to `bench-history` — but
+# carry no limit, so they can never produce a pass/fail verdict.
+#
+# `ordinary_unshuffled_20pct` is the unshuffled branch of `train_test_split`:
+# two `Vec<usize>` allocations totalling 8 MB, sequentially filled, containing
+# no algorithm.  What it measures is the allocator's page-supply state, and it
+# does not settle.  Its own within-run median confidence interval is 8.46 /
+# 13.65 / 24.56% across the three archived captures (sample-size 20) at
+# 11k-17k iterations, while every sibling in its group stays under 2.58% at
+# 630-1260 iterations; raising the sample count does not help it either
+# (2.23 / 21.19 / 20.24% across three live trees at sample-size 100, siblings
+# under 1.14%, with a 33% spread in the point estimate on identical code).  A
+# lane whose single-run interval is +/-10-21% cannot be judged against a 1.10
+# ratio limit.  See performance-gate-reliability.md, G0 Findings 2 and 5.
+MODEL_DIAGNOSTIC = (
+    "ferricml_model_selection_v2_holdout_1000000/ordinary_unshuffled_20pct",
 )
 BENCH_TARGETS = ("forest", "models", "boosting")
 
@@ -116,11 +133,13 @@ SUITE_SPECS = {
         "protocol": FOREST_PROTOCOL,
         "benchmarks": (FIT, *INFERENCE),
         "limits": limits((FIT,), INFERENCE),
+        "diagnostic": (),
     },
     FERRICML_MODELS_SUITE: {
         "protocol": FERRICML_MODELS_PROTOCOL,
-        "benchmarks": (*MODEL_FIT, *MODEL_INFERENCE),
+        "benchmarks": (*MODEL_FIT, *MODEL_INFERENCE, *MODEL_DIAGNOSTIC),
         "limits": limits(MODEL_FIT, MODEL_INFERENCE),
+        "diagnostic": MODEL_DIAGNOSTIC,
     },
 }
 
@@ -358,6 +377,9 @@ def compare_one(
         "reference_version": reference_version,
         "comparability": comparable,
         "ratios": ratios,
+        "diagnostic_ratios": {
+            name: ratio for name, ratio in ratios.items() if name not in limits
+        },
         "new_lanes": new_lanes,
         "missing_lanes": missing_lanes,
         "failures": failures,
@@ -796,6 +818,57 @@ def idle_self_test(root: Path) -> None:
     assert idle_summary({"run": {"cpu_idle_percent_before": ["90"]}}) is None
 
 
+def diagnostic_self_test(root: Path) -> None:
+    for suite_name, spec in SUITE_SPECS.items():
+        gated, diagnostic = set(spec["limits"]), set(spec["diagnostic"])
+        # A lane must be exactly one of gated or diagnostic.  Falling out of
+        # both is how a workload silently stops being measured at all.
+        assert gated | diagnostic == set(spec["benchmarks"]), (
+            f"{suite_name}: every benchmark must be gated or diagnostic; "
+            f"unclassified={sorted(set(spec['benchmarks']) - gated - diagnostic)}"
+        )
+        assert not gated & diagnostic, (
+            f"{suite_name}: lanes in both sets: {sorted(gated & diagnostic)}"
+        )
+    for name in MODEL_DIAGNOSTIC:
+        assert name in SUITE_SPECS[FERRICML_MODELS_SUITE]["benchmarks"], (
+            f"{name} must still be captured and recorded"
+        )
+        assert name not in SUITE_SPECS[FERRICML_MODELS_SUITE]["limits"], (
+            f"{name} must not carry a limit"
+        )
+
+    lane = "forest_diagnostic_lane"
+    history = root / "history"
+    history.mkdir()
+    reference = fixture("0.1.0")
+    reference["suites"]["forest-v1"]["metrics"][lane] = 100.0
+    (history / "v0.1.0.json").write_text(json.dumps(reference))
+
+    # A limitless lane five times slower produces no failure ...
+    current = fixture("0.2.0")
+    current["suites"]["forest-v1"]["metrics"][lane] = 500.0
+    previous = comparisons(current, history)["suites"]["forest-v1"]["previous_release"]
+    assert previous["status"] == "pass", f"diagnostic lane gated the verdict: {previous}"
+    assert previous["failures"] == []
+    assert previous["diagnostic_ratios"] == {lane: 5.0}, (
+        "a diagnostic lane must still be reported, just not judged"
+    )
+
+    # ... while the same ratio on a gated lane still fails.
+    regressed = fixture("0.2.0")
+    regressed["suites"]["forest-v1"]["metrics"][lane] = 100.0
+    regressed["suites"]["forest-v1"]["metrics"][INFERENCE[0]] = 500.0
+    previous = comparisons(regressed, history)["suites"]["forest-v1"]["previous_release"]
+    assert previous["status"] == "regression", "the gated control did not fire"
+
+    # Dropping a diagnostic lane is still noticed.
+    dropped = comparisons(fixture("0.2.0"), history)
+    previous = dropped["suites"]["forest-v1"]["previous_release"]
+    assert previous["status"] == "insufficient_history"
+    assert previous["missing_lanes"] == [lane]
+
+
 def self_test() -> int:
     metadata = "\n".join(
         (
@@ -894,10 +967,15 @@ def self_test() -> int:
         idle_root = Path(temporary) / "idle"
         idle_root.mkdir()
         idle_self_test(idle_root)
+
+        diagnostic_root = Path(temporary) / "diagnostic"
+        diagnostic_root.mkdir()
+        diagnostic_self_test(diagnostic_root)
     print(
         "performance history self-test passed "
         "(mixed protocols, missing/new lanes, prior, anchor, regression, "
-        f"{len(IDLE_CASES)} idle-comparability cases over {len(IDLE_BANDS)} bands)"
+        f"{len(IDLE_CASES)} idle-comparability cases over {len(IDLE_BANDS)} bands, "
+        f"{len(MODEL_DIAGNOSTIC)} diagnostic-only lanes)"
     )
     return 0
 
