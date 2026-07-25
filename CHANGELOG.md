@@ -134,6 +134,11 @@ and releases use [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   any fitting (`Setup`) from a candidate's own failure (`Candidate`, keeping the
   fold index) and from a score that returns a value no ranking can order
   (`NonFiniteScore`).
+- `data::ClassTargets`, validated general classification targets over arbitrary
+  `u8` labels. It carries the sorted, deduplicated set of labels actually
+  observed, which is the probability column order of any classifier fitted on
+  it. Labels are never assumed contiguous or zero-based, so `{7, 3, 10}` gives
+  classes `[3, 7, 10]`, and selecting a subset recomputes the observed set.
 
 ### Changed
 

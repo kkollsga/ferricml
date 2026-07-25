@@ -192,6 +192,80 @@ fn selection_validates_every_index_before_allocating() {
 }
 
 #[test]
+fn class_targets_accept_any_label_and_record_the_sorted_observed_set() {
+    let targets = ClassTargets::new(vec![7, 3, 10, 3, 7]).unwrap();
+    assert_eq!(targets.len(), 5);
+    assert!(!targets.is_empty());
+    assert_eq!(targets.as_slice(), &[7, 3, 10, 3, 7]);
+    assert_eq!(targets.get(1), Some(3));
+    assert_eq!(targets.get(5), None);
+    // Sorted unique, with gaps preserved and no zero-base assumption.
+    assert_eq!(targets.classes(), &[3, 7, 10]);
+    assert_eq!(targets.n_classes(), 3);
+    assert_eq!(targets.into_values(), vec![7, 3, 10, 3, 7]);
+
+    assert_eq!(ClassTargets::new(Vec::new()), Err(DataError::EmptyTargets));
+}
+
+#[test]
+fn class_target_columns_are_looked_up_by_label_not_by_value() {
+    let targets = ClassTargets::new(vec![5, 20, 9]).unwrap();
+    assert_eq!(targets.classes(), &[5, 9, 20]);
+    for (index, &label) in targets.classes().iter().enumerate() {
+        assert_eq!(targets.class_index(label), Some(index));
+    }
+    for absent in [0_u8, 4, 6, 10, 19, 21, 255] {
+        assert_eq!(targets.class_index(absent), None, "label {absent}");
+    }
+}
+
+#[test]
+fn class_target_extremes_and_full_label_range_are_ordered_numerically() {
+    let all = ClassTargets::new((0..=u8::MAX).collect()).unwrap();
+    assert_eq!(all.n_classes(), 256);
+    assert_eq!(all.classes()[0], 0);
+    assert_eq!(all.classes()[255], 255);
+
+    // A single observed class is valid and reports exactly one column.
+    let single = ClassTargets::new(vec![200; 4]).unwrap();
+    assert_eq!(single.classes(), &[200]);
+    assert_eq!(single.n_classes(), 1);
+
+    // Ordering is numeric, so a high label never sorts before a low one.
+    let mixed = ClassTargets::new(vec![255, 0, 128]).unwrap();
+    assert_eq!(mixed.classes(), &[0, 128, 255]);
+}
+
+#[test]
+fn class_target_selection_recomputes_the_observed_set() {
+    let targets = ClassTargets::new(vec![3, 7, 10, 7]).unwrap();
+    let selected = targets.select(&[1, 3, 1]).unwrap();
+    assert_eq!(selected.as_slice(), &[7, 7, 7]);
+    // The selection saw only one label, so it reports only that label.
+    assert_eq!(selected.classes(), &[7]);
+    assert_eq!(
+        targets.select(&[4]),
+        Err(SelectionError::IndexOutOfBounds {
+            position: 0,
+            index: 4,
+            available: 4,
+        })
+    );
+    assert_eq!(targets.select(&[]), Err(SelectionError::Empty));
+}
+
+#[test]
+fn binary_targets_widen_into_class_targets_without_inventing_a_class() {
+    let both = ClassTargets::from(BinaryTargets::new(vec![0, 1, 1]).unwrap());
+    assert_eq!(both.as_slice(), &[0, 1, 1]);
+    assert_eq!(both.classes(), &[0, 1]);
+
+    // The observed set records what was seen, not what a binary vector allows.
+    let one_sided = ClassTargets::from(BinaryTargets::new(vec![0, 0]).unwrap());
+    assert_eq!(one_sided.classes(), &[0]);
+}
+
+#[test]
 fn sample_weights_are_nonempty_finite_nonnegative_and_positive() {
     let weights = SampleWeights::new(vec![0.0, 1.5, 2.5]).unwrap();
     assert_eq!(weights.len(), 3);

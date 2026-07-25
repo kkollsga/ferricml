@@ -395,6 +395,22 @@ pub fn ferricml::data::BinaryTargets::is_empty(&self) -> bool
 pub fn ferricml::data::BinaryTargets::len(&self) -> usize
 pub fn ferricml::data::BinaryTargets::new(alloc::vec::Vec<u8>) -> core::result::Result<Self, ferricml::data::DataError>
 pub fn ferricml::data::BinaryTargets::select(&self, &[usize]) -> core::result::Result<Self, ferricml::data::SelectionError>
+impl core::convert::From<ferricml::data::BinaryTargets> for ferricml::data::ClassTargets
+pub fn ferricml::data::ClassTargets::from(ferricml::data::BinaryTargets) -> Self
+pub struct ferricml::data::ClassTargets
+impl ferricml::data::ClassTargets
+pub fn ferricml::data::ClassTargets::as_slice(&self) -> &[u8]
+pub fn ferricml::data::ClassTargets::class_index(&self, u8) -> core::option::Option<usize>
+pub fn ferricml::data::ClassTargets::classes(&self) -> &[u8]
+pub fn ferricml::data::ClassTargets::get(&self, usize) -> core::option::Option<u8>
+pub fn ferricml::data::ClassTargets::into_values(self) -> alloc::vec::Vec<u8>
+pub fn ferricml::data::ClassTargets::is_empty(&self) -> bool
+pub fn ferricml::data::ClassTargets::len(&self) -> usize
+pub fn ferricml::data::ClassTargets::n_classes(&self) -> usize
+pub fn ferricml::data::ClassTargets::new(alloc::vec::Vec<u8>) -> core::result::Result<Self, ferricml::data::DataError>
+pub fn ferricml::data::ClassTargets::select(&self, &[usize]) -> core::result::Result<Self, ferricml::data::SelectionError>
+impl core::convert::From<ferricml::data::BinaryTargets> for ferricml::data::ClassTargets
+pub fn ferricml::data::ClassTargets::from(ferricml::data::BinaryTargets) -> Self
 pub struct ferricml::data::DenseMatrix
 impl ferricml::data::DenseMatrix
 pub fn ferricml::data::DenseMatrix::as_slice(&self) -> &[f32]
