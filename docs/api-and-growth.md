@@ -32,7 +32,12 @@ estimator meaning follow the reference contract.
   discoverable, not callable, because a decision function is an inherent method
   rather than part of the object-safe contract, so a consumer that must *call*
   one still needs a bound naming a trait that carries it.
-- `data` owns validated row-major inputs, targets, and sample weights.
+- `data` owns validated row-major inputs, targets, and sample weights. Sample
+  weights are the crate's only weighting concept: no estimator takes a
+  `class_weight`, because a per-class weight is a function of the label and so
+  already a per-row weight. The balanced rule is a documented, tested recipe for
+  building `SampleWeights`, which keeps one weighting notion for every estimator,
+  one capability flag, and one validation order to freeze.
 - `ensemble` owns public ensemble estimators and parameter types; each private
   estimator family owns its validation, training, persistence conversion, and
   compact representation below the public facade. A forest's weighted entry
