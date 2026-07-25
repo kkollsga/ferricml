@@ -15,6 +15,7 @@ mod loss;
 pub mod metrics;
 pub mod model_selection;
 mod numeric;
+mod optimize;
 pub mod pipeline;
 pub mod preprocessing;
 pub mod ranking;

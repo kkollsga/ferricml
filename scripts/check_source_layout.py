@@ -128,6 +128,29 @@ def loss_depends_on_no_estimator(root: Path) -> list[str]:
     ]
 
 
+def optimize_depends_only_on_loss_and_numeric(root: Path) -> list[str]:
+    """A solver minimizes an objective, never a named model.
+
+    The optimizer seam exists so that a new objective reaches a matrix-free
+    solver without shipping a solver of its own. Naming a concrete estimator
+    module inside it would invert that dependency and rebuild the
+    per-estimator fusion of objective and update rule the seam removes, and it
+    would make the solver's own proofs depend on whichever models happen to
+    exist. Only `loss` and `numeric` sit below it. The module has to exist for
+    the rule to mean anything, so its absence is itself a finding rather than a
+    silently vacuous pass.
+    """
+    text = directory_text(root / "src" / "optimize")
+    if not text:
+        return ["optimize module is missing"]
+    permitted = ("loss", "numeric")
+    return [
+        f"optimize depends on module {module} outside {permitted}"
+        for module in (*ESTIMATOR_MODULES, "api", "artifact", "data")
+        if f"crate::{module}" in text
+    ]
+
+
 def capability_descriptor_names_no_estimator(root: Path) -> list[str]:
     """The capability descriptor is vocabulary, not a registry of estimators.
 
@@ -260,6 +283,7 @@ RULES: tuple[tuple[str, Callable[[Path], list[str]]], ...] = (
     ("numeric-below-estimators", numeric_depends_on_no_estimator),
     ("inspection-public-surfaces-only", inspection_uses_only_public_surfaces),
     ("loss-below-estimators", loss_depends_on_no_estimator),
+    ("optimize-below-estimators", optimize_depends_only_on_loss_and_numeric),
     ("capability-descriptor-neutral", capability_descriptor_names_no_estimator),
     ("baselines-independent", baselines_depend_on_no_estimator),
     ("composition-families-private", composition_families_stay_private),
@@ -290,6 +314,8 @@ def write_clean_tree(root: Path) -> Path:
         "numeric/rng.rs": "//! rng\n",
         "loss/mod.rs": "//! loss\nmod objective;\n",
         "loss/objective.rs": "//! objective\nuse crate::numeric::kernel;\n",
+        "optimize/mod.rs": "//! optimize\nmod lbfgs;\n",
+        "optimize/lbfgs.rs": "//! lbfgs\nuse crate::numeric::kernel;\nuse crate::loss::Objective;\n",
         "inspection/mod.rs": "//! inspection\nmod permutation;\n",
         "inspection/permutation.rs": "//! permutation\nuse crate::api::Regressor;\n",
         "api/mod.rs": "//! api\nmod capabilities;\n",
@@ -364,6 +390,14 @@ SYNTHETIC_VIOLATIONS: tuple[tuple[str, Callable[[Path], None], str], ...] = (
             "use crate::ensemble::HistGradientBoostingRegressor;\n",
         ),
         "loss contract depends on estimator module ensemble",
+    ),
+    (
+        "optimize-below-estimators",
+        lambda root: append(
+            root / "src" / "optimize" / "lbfgs.rs",
+            "use crate::linear_model::LogisticRegression;\n",
+        ),
+        "optimize depends on module linear_model",
     ),
     (
         "capability-descriptor-neutral",
