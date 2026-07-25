@@ -18,7 +18,7 @@ use super::{Calibrator, IsotonicRegression, PlattCalibrator, PlattParams};
 ///
 /// The score handed to the calibrator is the wrapped model's **positive-class
 /// probability**, taken through
-/// [`predict_class_proba_into`](Classifier::predict_class_proba_into). That is
+/// [`predict_class_proba_into`](ProbabilisticClassifier::predict_class_proba_into). That is
 /// the one score every classifier is required to produce, which is what makes
 /// this wrapper work for a model FerricML does not ship. Platt's original
 /// formulation calibrates a raw decision function instead; `decision_function`
@@ -147,7 +147,7 @@ impl<C: ProbabilisticClassifier> CalibratedClassifier<C, PlattCalibrator> {
     /// Writes one raw calibrated decision score per row.
     ///
     /// This is the score whose logistic squashing is
-    /// [`predict_class_proba`](Classifier::predict_class_proba) for class `1`.
+    /// [`predict_class_proba`](ProbabilisticClassifier::predict_class_proba) for class `1`.
     /// It exists only on a Platt-calibrated model, which is exactly what
     /// [`Capabilities::decision_function`] declares.
     pub fn decision_function_into(

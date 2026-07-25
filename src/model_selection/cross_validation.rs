@@ -187,7 +187,7 @@ where
 /// This is [`cross_validate_classifier`] for a classifier that produces no
 /// probabilities. Only label metrics apply: a probability metric returns
 /// [`ScoringError::UnsupportedOutput`] through
-/// [`CrossValidationError::Scoring`] rather than a substituted value.
+/// [`CrossValidationError::UnsupportedOutput`] rather than a substituted value.
 pub fn cross_validate_classifier_labels<M, I, F, S>(
     data: &MatrixView<'_>,
     targets: &BinaryTargets,

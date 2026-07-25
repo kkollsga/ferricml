@@ -172,7 +172,7 @@ impl HistGradientBoostingClassifierParams {
 /// The model is an additive ensemble in **raw score** space: a fitted baseline
 /// plus the shrunk prediction of every tree. The logistic sigmoid of that score
 /// is the probability of class `1`, which is what
-/// [`predict_proba`](Classifier::predict_proba) reports in its second column.
+/// [`predict_proba`](ProbabilisticClassifier::predict_proba) reports in its second column.
 ///
 /// Each boosting iteration fits one tree to the negative gradient of the binary
 /// log loss, `y - p`, and divides every leaf by the summed curvature `p(1 - p)`
