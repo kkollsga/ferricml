@@ -2,6 +2,7 @@
 
 mod cross_validation;
 mod scoring;
+mod search;
 mod split;
 
 pub use cross_validation::{
@@ -13,6 +14,7 @@ pub use scoring::{
     RegressionScore, RegressionScorer, ScoringError, ScoringWorkspace, score_classifier,
     score_classifier_with, score_regressor, score_regressor_with,
 };
+pub use search::ParameterGrid;
 pub use split::{
     GroupKFold, GroupKFoldIter, GroupShuffleSplit, GroupShuffleSplitIter, HoldoutParams, KFold,
     KFoldIter, LeaveOneOut, LeaveOneOutIter, RepeatedKFold, RepeatedKFoldIter, Split, SplitError,

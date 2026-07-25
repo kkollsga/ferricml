@@ -1098,6 +1098,15 @@ impl core::iter::traits::iterator::Iterator for ferricml::model_selection::Leave
 pub type ferricml::model_selection::LeaveOneOutIter::Item = ferricml::model_selection::Split
 pub fn ferricml::model_selection::LeaveOneOutIter::next(&mut self) -> core::option::Option<Self::Item>
 pub fn ferricml::model_selection::LeaveOneOutIter::size_hint(&self) -> (usize, core::option::Option<usize>)
+pub struct ferricml::model_selection::ParameterGrid<P>
+impl<P: core::clone::Clone> ferricml::model_selection::ParameterGrid<P>
+pub fn ferricml::model_selection::ParameterGrid<P>::axis<T, F>(self, impl core::iter::traits::collect::IntoIterator<Item = T>, F) -> Self where T: core::clone::Clone, F: core::ops::function::Fn(P, T) -> P
+impl<P> ferricml::model_selection::ParameterGrid<P>
+pub fn ferricml::model_selection::ParameterGrid<P>::candidates(&self) -> &[P]
+pub fn ferricml::model_selection::ParameterGrid<P>::from_candidates(alloc::vec::Vec<P>) -> Self
+pub fn ferricml::model_selection::ParameterGrid<P>::is_empty(&self) -> bool
+pub fn ferricml::model_selection::ParameterGrid<P>::len(&self) -> usize
+pub fn ferricml::model_selection::ParameterGrid<P>::new(P) -> Self
 pub struct ferricml::model_selection::RepeatedKFold
 impl ferricml::model_selection::RepeatedKFold
 pub const fn ferricml::model_selection::RepeatedKFold::n_repeats(&self) -> usize

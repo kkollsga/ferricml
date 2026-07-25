@@ -114,6 +114,12 @@ and releases use [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   only be approximated, while a group target is exact. A size that would empty
   either side is the new `SplitError::InvalidTestGroupCount`, which names groups
   rather than reusing the row-counting `InvalidTestCount`.
+- `model_selection::ParameterGrid`, an ordered set of typed hyperparameter
+  candidates. An axis is a parameter type's own `with_*` builder method plus the
+  values to pass it, so there are no string keys and a misnamed parameter is a
+  compile error. Different axes carry different value types, the axis added last
+  varies fastest, and `from_candidates` takes an explicit list for parameters
+  that are not independent.
 
 ### Changed
 
