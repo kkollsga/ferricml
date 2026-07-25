@@ -17,7 +17,12 @@ prediction for 32x7, 64x7, 64x15, and 128x15 tree/leaf limits; 32-row and
 1,024-row caller-owned prediction for 64x7; and 2,048x48 fitting for 64x7.
 The `forest` target measures classifier inference and fitting, 32-row and
 1,024-row caller-owned regressor prediction for a 2,048x64 100-tree model, and
-artifact encode/decode round trips for a 512x16 32-tree regressor. The `models`
+artifact encode/decode round trips for a 512x16 32-tree regressor and for the
+same-shaped classifier in both its fitted leaf representations. Weighted
+fitting is registered beside the unweighted fit of the same 2,048x64 20-tree
+workload for both forests, and beside the unweighted 2,048x48 64x7 fit for
+histogram boosting, so the arm that must not move is measured in the same run
+as the arm that is new. The `models`
 target also measures permutation importance over a 256x8 fixture with three
 repeats, for a forest and a ridge model.
 All data, targets, pair construction, parameters, and model schemas are fixed

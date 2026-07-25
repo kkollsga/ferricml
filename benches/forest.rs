@@ -1,5 +1,5 @@
 use criterion::{BatchSize, BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
-use ferricml::data::{BinaryTargets, DenseMatrix, RegressionTargets};
+use ferricml::data::{BinaryTargets, ClassTargets, DenseMatrix, RegressionTargets, SampleWeights};
 use ferricml::ensemble::{
     MaxFeatures, RandomForestClassifier, RandomForestClassifierParams, RandomForestRegressor,
     RandomForestRegressorParams,
@@ -170,6 +170,154 @@ fn artifact(c: &mut Criterion) {
     group.finish();
 }
 
+/// Weighted fitting, beside the unweighted fit of the same workload.
+///
+/// Sample weights turned every node statistic from a row count into a weight
+/// total on the crate's most benchmarked fitting path, so the two arms are
+/// registered together: the unweighted arm is the one that must not move, and
+/// the weighted arm is what the new capability costs.
+fn weighted_training(c: &mut Criterion) {
+    let (rows, columns, trees) = (2048, 64, 20);
+    let (data, targets) = fixture(rows, columns);
+    let regression = regression_targets(&targets);
+    let weights = SampleWeights::new(
+        (0..rows)
+            .map(|row| 0.25 + ((row % 7) as f32) * 0.5)
+            .collect(),
+    )
+    .unwrap();
+    let params = RandomForestClassifierParams::default()
+        .with_n_estimators(trees)
+        .with_max_depth(Some(12))
+        .with_max_features(MaxFeatures::Sqrt)
+        .with_random_state(42);
+    let regressor_params = RandomForestRegressorParams::default()
+        .with_n_estimators(trees)
+        .with_max_depth(Some(12))
+        .with_max_features(MaxFeatures::Sqrt)
+        .with_random_state(42);
+
+    let mut group = c.benchmark_group("ferricml_forest_v2_weighted_fit_2048x64_20t");
+    group.throughput(Throughput::Elements((rows * trees) as u64));
+    group.bench_function(
+        BenchmarkId::from_parameter("classifier_unweighted"),
+        |bencher| {
+            bencher.iter_batched(
+                || params.clone(),
+                |params| {
+                    black_box(
+                        RandomForestClassifier::fit(&data.as_view(), &targets, params).unwrap(),
+                    );
+                },
+                BatchSize::SmallInput,
+            );
+        },
+    );
+    group.bench_function(
+        BenchmarkId::from_parameter("classifier_weighted"),
+        |bencher| {
+            bencher.iter_batched(
+                || params.clone(),
+                |params| {
+                    black_box(
+                        RandomForestClassifier::fit_weighted(
+                            &data.as_view(),
+                            &targets,
+                            &weights,
+                            params,
+                        )
+                        .unwrap(),
+                    );
+                },
+                BatchSize::SmallInput,
+            );
+        },
+    );
+    group.bench_function(
+        BenchmarkId::from_parameter("regressor_weighted"),
+        |bencher| {
+            bencher.iter_batched(
+                || regressor_params.clone(),
+                |params| {
+                    black_box(
+                        RandomForestRegressor::fit_weighted(
+                            &data.as_view(),
+                            &regression,
+                            &weights,
+                            params,
+                        )
+                        .unwrap(),
+                    );
+                },
+                BatchSize::SmallInput,
+            );
+        },
+    );
+    group.finish();
+}
+
+/// Round-tripping a fitted classifier through its artifact, in both leaf
+/// representations. The multiclass arm carries a probability block per tree
+/// that the binary arm does not, so the two are separate parameters.
+fn classifier_artifact(c: &mut Criterion) {
+    let (data, targets) = fixture(512, 16);
+    let params = RandomForestClassifierParams::default()
+        .with_n_estimators(32)
+        .with_max_depth(Some(8))
+        .with_max_features(MaxFeatures::All)
+        .with_random_state(42);
+    let binary = RandomForestClassifier::fit(&data.as_view(), &targets, params.clone()).unwrap();
+    let classes = ClassTargets::new(
+        targets
+            .as_slice()
+            .iter()
+            .enumerate()
+            .map(|(row, &label)| if row % 5 == 0 { 10 } else { label * 7 })
+            .collect(),
+    )
+    .unwrap();
+    let multiclass =
+        RandomForestClassifier::fit_multiclass(&data.as_view(), &classes, params).unwrap();
+    let schema = [42; 32];
+    let binary_encoded = binary.to_artifact(schema).unwrap();
+    let multiclass_encoded = multiclass.to_artifact(schema).unwrap();
+
+    let mut group = c.benchmark_group("ferricml_artifact_v1_forest_classifier_512x16_32t");
+    group.throughput(Throughput::Bytes(binary_encoded.len() as u64));
+    group.bench_function(BenchmarkId::from_parameter("encode"), |bencher| {
+        bencher.iter(|| {
+            black_box(binary.to_artifact(black_box(schema)).unwrap());
+        });
+    });
+    group.bench_function(BenchmarkId::from_parameter("decode"), |bencher| {
+        bencher.iter(|| {
+            black_box(
+                RandomForestClassifier::from_artifact(black_box(&binary_encoded), schema).unwrap(),
+            );
+        });
+    });
+    group.bench_function(
+        BenchmarkId::from_parameter("multiclass_encode"),
+        |bencher| {
+            bencher.iter(|| {
+                black_box(multiclass.to_artifact(black_box(schema)).unwrap());
+            });
+        },
+    );
+    group.bench_function(
+        BenchmarkId::from_parameter("multiclass_decode"),
+        |bencher| {
+            bencher.iter(|| {
+                black_box(
+                    RandomForestClassifier::from_artifact(black_box(&multiclass_encoded), schema)
+                        .unwrap(),
+                );
+            });
+        },
+    );
+    group.finish();
+}
+
 /// Caller-owned batch regression inference.
 ///
 /// The classifier lanes above cover label and probability prediction, but the
@@ -198,5 +346,13 @@ fn regressor_inference(c: &mut Criterion) {
     }
 }
 
-criterion_group!(benches, inference, training, artifact, regressor_inference);
+criterion_group!(
+    benches,
+    inference,
+    training,
+    artifact,
+    classifier_artifact,
+    weighted_training,
+    regressor_inference
+);
 criterion_main!(benches);

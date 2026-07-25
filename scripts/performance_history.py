@@ -48,6 +48,11 @@ MODEL_FIT = (
     "ferricml_boosting_v1_fit_2048x48_64t7l/ferricml",
     "ferricml_models_v2_logistic_fit_2048x48/ferricml",
     "ferricml_models_v2_scaler_fit_2048x48/ferricml",
+    "ferricml_forest_v2_weighted_fit_2048x64_20t/classifier_unweighted",
+    "ferricml_forest_v2_weighted_fit_2048x64_20t/classifier_weighted",
+    "ferricml_forest_v2_weighted_fit_2048x64_20t/regressor_weighted",
+    "ferricml_boosting_v2_weighted_fit_2048x48_64t7l/unweighted",
+    "ferricml_boosting_v2_weighted_fit_2048x48_64t7l/weighted",
 )
 MODEL_INFERENCE = (
     "ferricml_models_v1_into_1024x48/linear",
@@ -71,6 +76,10 @@ MODEL_INFERENCE = (
     "ferricml_forest_v1_regressor_into_1024x64_100t/predict",
     "ferricml_artifact_v1_forest_regressor_512x16_32t/encode",
     "ferricml_artifact_v1_forest_regressor_512x16_32t/decode",
+    "ferricml_artifact_v1_forest_classifier_512x16_32t/encode",
+    "ferricml_artifact_v1_forest_classifier_512x16_32t/decode",
+    "ferricml_artifact_v1_forest_classifier_512x16_32t/multiclass_encode",
+    "ferricml_artifact_v1_forest_classifier_512x16_32t/multiclass_decode",
     "ferricml_inspection_v1_permutation_256x8_3r/forest_mse",
     "ferricml_inspection_v1_permutation_256x8_3r/ridge_r2",
 )
@@ -461,6 +470,8 @@ def capture(args: argparse.Namespace) -> int:
                 prefix in source.as_posix()
                 for prefix in (
                     "forest_historical_",
+                    "ferricml_forest_v2_",
+                    "ferricml_artifact_v1_",
                     "ferricml_models_v1_",
                     "ferricml_models_v2_",
                     "ferricml_boosting_v1_",

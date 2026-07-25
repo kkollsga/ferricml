@@ -1,5 +1,5 @@
 use criterion::{BatchSize, BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
-use ferricml::data::{DenseMatrix, RegressionTargets};
+use ferricml::data::{DenseMatrix, RegressionTargets, SampleWeights};
 use ferricml::ensemble::{HistGradientBoostingRegressor, HistGradientBoostingRegressorParams};
 use std::hint::black_box;
 
@@ -162,5 +162,51 @@ fn training(c: &mut Criterion) {
     group.finish();
 }
 
-criterion_group!(benches, inference, training);
+/// Weighted fitting beside the unweighted fit of the same workload.
+///
+/// The histogram scan now accumulates a per-bin weight total where it counted
+/// rows, so the unweighted arm is registered alongside the weighted one: it is
+/// the arm that must not move.
+fn weighted_training(c: &mut Criterion) {
+    let (data, targets) = fixture(TRAIN_ROWS, COLUMNS);
+    let weights = SampleWeights::new(
+        (0..TRAIN_ROWS)
+            .map(|row| 0.25 + ((row % 7) as f32) * 0.5)
+            .collect(),
+    )
+    .unwrap();
+    let mut group = c.benchmark_group("ferricml_boosting_v2_weighted_fit_2048x48_64t7l");
+    group.throughput(Throughput::Elements(TRAIN_ROWS as u64));
+    group.bench_function(BenchmarkId::from_parameter("unweighted"), |bencher| {
+        bencher.iter_batched(
+            || params(64, 7),
+            |params| {
+                black_box(
+                    HistGradientBoostingRegressor::fit(&data.as_view(), &targets, params).unwrap(),
+                );
+            },
+            BatchSize::SmallInput,
+        );
+    });
+    group.bench_function(BenchmarkId::from_parameter("weighted"), |bencher| {
+        bencher.iter_batched(
+            || params(64, 7),
+            |params| {
+                black_box(
+                    HistGradientBoostingRegressor::fit_weighted(
+                        &data.as_view(),
+                        &targets,
+                        &weights,
+                        params,
+                    )
+                    .unwrap(),
+                );
+            },
+            BatchSize::SmallInput,
+        );
+    });
+    group.finish();
+}
+
+criterion_group!(benches, inference, training, weighted_training);
 criterion_main!(benches);
