@@ -26,6 +26,7 @@ ESTIMATOR_MODULES = (
     "pipeline",
     "preprocessing",
     "ranking",
+    "tree",
 )
 
 
@@ -275,6 +276,49 @@ def search_consumes_the_scorer_seam(root: Path) -> list[str]:
     return []
 
 
+def tree_sits_below_the_estimators_that_consume_it(root: Path) -> list[str]:
+    """The shared grower sits below every estimator family that grows a tree.
+
+    A standalone tree and one member of a forest are the same tree, and the
+    only way that stays a fact about the code rather than a claim about two
+    implementations is if one grower serves both. That requires the dependency
+    to run one way: `ensemble` consumes `tree`, never the reverse. Naming a
+    consumer inside `tree` is the observable symptom of the inversion, and it
+    would let the grower specialise for the forest — which is precisely the
+    coupling that would make a standalone tree diverge from a forest member
+    again. The module has to exist for the rule to mean anything, so its
+    absence is itself a finding rather than a silently vacuous pass.
+    """
+    text = directory_text(root / "src" / "tree")
+    if not text:
+        return ["tree module is missing"]
+    return [
+        f"tree grower depends on estimator module {module}"
+        for module in ESTIMATOR_MODULES
+        if module != "tree" and f"crate::{module}" in text
+    ]
+
+
+def tree_family_stays_private(root: Path) -> list[str]:
+    """The packed layout and the split search stay behind the tree facade.
+
+    `tree` publishes estimators and parameter types; it does not publish how a
+    node is stored, how leaves are packed into their parent's child slots, or
+    how candidates are swept. Exposing a child module as `pub mod` would make
+    that arrangement public API and turn a later compaction of the layout into
+    a breaking change — the same rule the ensemble, preprocessing, pipeline,
+    metrics, and model-selection facades already carry, and the one that keeps
+    "callers must not depend on tree layout" enforceable rather than merely
+    intended.
+    """
+    text = read_if_present(root / "src" / "tree" / "mod.rs")
+    return [
+        f"tree facade exposes child module: {line.strip()}"
+        for line in text.splitlines()
+        if line.strip().startswith("pub mod ")
+    ]
+
+
 RULES: tuple[tuple[str, Callable[[Path], list[str]]], ...] = (
     ("crate-root-lib-only", crate_root_is_lib_only),
     ("obsolete-root-implementations", obsolete_root_implementations_are_gone),
@@ -292,6 +336,8 @@ RULES: tuple[tuple[str, Callable[[Path], list[str]]], ...] = (
     ("split-families-private", split_families_stay_private),
     ("search-consumes-the-scorer-seam", search_consumes_the_scorer_seam),
     ("calibration-public-surfaces-only", calibration_uses_only_public_surfaces),
+    ("tree-below-estimators", tree_sits_below_the_estimators_that_consume_it),
+    ("tree-family-private", tree_family_stays_private),
 )
 
 
@@ -309,7 +355,9 @@ def write_clean_tree(root: Path) -> Path:
         "lib.rs": "pub mod artifact;\npub mod ensemble;\nmod numeric;\n",
         "artifact/mod.rs": "//! artifact\npub(crate) use self::inner::Thing;\n",
         "ensemble/mod.rs": "//! ensemble\nmod random_forest;\npub use random_forest::Forest;\n",
-        "ensemble/random_forest/mod.rs": "//! forest\n",
+        "ensemble/random_forest/mod.rs": "//! forest\nuse crate::tree::grow_tree;\n",
+        "tree/mod.rs": "//! tree\nmod grower;\npub use grower::DecisionTreeRegressor;\n",
+        "tree/grower.rs": "//! grower\nuse crate::numeric::kernel;\npub struct DecisionTreeRegressor;\n",
         "numeric/mod.rs": "//! numeric\npub(crate) fn kernel() {}\n",
         "numeric/rng.rs": "//! rng\n",
         "loss/mod.rs": "//! loss\nmod objective;\n",
@@ -459,6 +507,19 @@ SYNTHETIC_VIOLATIONS: tuple[tuple[str, Callable[[Path], None], str], ...] = (
             "use crate::ensemble::RandomForestClassifier;\n",
         ),
         "calibration depends on non-public-surface module ensemble",
+    ),
+    (
+        "tree-below-estimators",
+        lambda root: append(
+            root / "src" / "tree" / "grower.rs",
+            "use crate::ensemble::RandomForestRegressor;\n",
+        ),
+        "tree grower depends on estimator module ensemble",
+    ),
+    (
+        "tree-family-private",
+        lambda root: append(root / "src" / "tree" / "mod.rs", "pub mod grower;\n"),
+        "tree facade exposes child module",
     ),
 )
 

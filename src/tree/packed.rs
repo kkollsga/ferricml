@@ -1,11 +1,11 @@
 use crate::api::ModelError;
 use crate::artifact::{ArtifactError, LogicalTreeNode};
 
-pub(super) const LEAF_FEATURE: u32 = u32::MAX;
-pub(super) const NO_CHILD: u32 = u32::MAX;
-pub(super) const LEFT_IS_LEAF: u32 = 1 << 31;
-pub(super) const RIGHT_IS_LEAF: u32 = 1 << 30;
-pub(super) const FEATURE_MASK: u32 = RIGHT_IS_LEAF - 1;
+pub(crate) const LEAF_FEATURE: u32 = u32::MAX;
+pub(crate) const NO_CHILD: u32 = u32::MAX;
+pub(crate) const LEFT_IS_LEAF: u32 = 1 << 31;
+pub(crate) const RIGHT_IS_LEAF: u32 = 1 << 30;
+pub(crate) const FEATURE_MASK: u32 = RIGHT_IS_LEAF - 1;
 
 /// Temporary uniform node used while building a tree.
 ///
@@ -14,33 +14,33 @@ pub(super) const FEATURE_MASK: u32 = RIGHT_IS_LEAF - 1;
 /// `<= threshold` left and other values right.
 #[derive(Clone, Copy, Debug, PartialEq)]
 #[repr(C)]
-pub(super) struct BuildNode {
-    pub(super) feature: u32,
-    pub(super) left: u32,
-    pub(super) right: u32,
+pub(crate) struct BuildNode {
+    pub(crate) feature: u32,
+    pub(crate) left: u32,
+    pub(crate) right: u32,
     /// Split threshold for branches, prediction for leaves.
-    pub(super) payload: f32,
+    pub(crate) payload: f32,
 }
 
 impl BuildNode {
     #[inline]
-    pub(super) fn is_leaf(&self) -> bool {
+    pub(crate) fn is_leaf(&self) -> bool {
         self.feature == LEAF_FEATURE
     }
 
     #[inline]
-    pub(super) fn threshold(&self) -> f32 {
+    pub(crate) fn threshold(&self) -> f32 {
         debug_assert!(!self.is_leaf());
         self.payload
     }
 
     #[inline]
-    pub(super) fn value(&self) -> f32 {
+    pub(crate) fn value(&self) -> f32 {
         debug_assert!(self.is_leaf());
         self.payload
     }
 
-    pub(super) fn leaf(value: f32) -> Self {
+    pub(crate) fn leaf(value: f32) -> Self {
         Self {
             feature: LEAF_FEATURE,
             left: NO_CHILD,
@@ -55,18 +55,18 @@ impl BuildNode {
 /// array entry merely to discover a leaf.
 #[derive(Clone, Copy, Debug, PartialEq)]
 #[repr(C)]
-pub(super) struct PackedNode {
-    pub(super) left: u32,
-    pub(super) right: u32,
-    pub(super) threshold: f32,
-    pub(super) feature_and_flags: u32,
+pub(crate) struct PackedNode {
+    pub(crate) left: u32,
+    pub(crate) right: u32,
+    pub(crate) threshold: f32,
+    pub(crate) feature_and_flags: u32,
 }
 
 /// A compact decision tree optimized for inference.
 #[derive(Clone, Debug, PartialEq)]
-pub(super) struct PackedTree {
-    pub(super) nodes: Vec<PackedNode>,
-    pub(super) root_leaf: Option<f32>,
+pub(crate) struct PackedTree {
+    pub(crate) nodes: Vec<PackedNode>,
+    pub(crate) root_leaf: Option<f32>,
 }
 
 /// Packs validated build nodes into the inference layout.
@@ -132,7 +132,7 @@ fn pack_topology(
 }
 
 impl PackedTree {
-    pub(super) fn from_build_nodes(
+    pub(crate) fn from_build_nodes(
         build: Vec<BuildNode>,
         n_features: usize,
     ) -> Result<Self, ModelError> {
@@ -154,7 +154,7 @@ impl PackedTree {
     }
 
     #[inline(always)]
-    pub(super) fn predict(&self, row: &[f32]) -> f32 {
+    pub(crate) fn predict(&self, row: &[f32]) -> f32 {
         if let Some(value) = self.root_leaf {
             return value;
         }
@@ -218,7 +218,7 @@ impl PackedTree {
     ///
     /// Every branch has exactly two children, so a tree with `b` stored
     /// branches expands to `b` branch records and `b + 1` synthesized leaves.
-    pub(super) fn logical_node_count(&self) -> usize {
+    pub(crate) fn logical_node_count(&self) -> usize {
         if self.root_leaf.is_some() {
             1
         } else {
@@ -227,7 +227,7 @@ impl PackedTree {
     }
 
     /// Largest absolute leaf value, including inline and root leaves.
-    pub(super) fn max_abs_leaf(&self) -> f32 {
+    pub(crate) fn max_abs_leaf(&self) -> f32 {
         if let Some(value) = self.root_leaf {
             return value.abs();
         }
@@ -249,7 +249,7 @@ impl PackedTree {
     /// a branch's left child is always the next record, and a tree with `L`
     /// leaves has exactly `2L - 1` records. A `root_leaf` tree becomes the
     /// single-node logical tree.
-    pub(super) fn to_logical_nodes(&self) -> Vec<LogicalTreeNode> {
+    pub(crate) fn to_logical_nodes(&self) -> Vec<LogicalTreeNode> {
         if let Some(value) = self.root_leaf {
             return vec![LogicalTreeNode::Leaf { value }];
         }
@@ -297,7 +297,7 @@ impl PackedTree {
     /// [`PackedTree::from_build_nodes`], so an artifact goes through exactly
     /// the topology, feature-width, and finiteness checks that a freshly
     /// fitted tree does.
-    pub(super) fn from_logical_nodes(
+    pub(crate) fn from_logical_nodes(
         nodes: &[LogicalTreeNode],
         n_features: usize,
     ) -> Result<Self, ArtifactError> {
@@ -331,7 +331,7 @@ impl PackedTree {
 /// Traversal is otherwise identical, and inference returns a borrowed row of
 /// probabilities so a forest can average without allocating.
 #[derive(Clone, Debug, PartialEq)]
-pub(super) struct ClassTree {
+pub(crate) struct ClassTree {
     nodes: Vec<PackedNode>,
     /// Row-major, one row of `classes` values per leaf ordinal. A tree whose
     /// root is a leaf has no branches and exactly one row.
@@ -346,7 +346,7 @@ impl ClassTree {
     /// `weights[i]` is the total weight reaching build node `i` and
     /// `class_weights[i * classes ..]` its per-class split, so a leaf's stored
     /// probability is one division of `f64` accumulations narrowed once.
-    pub(super) fn from_build_nodes(
+    pub(crate) fn from_build_nodes(
         build: Vec<BuildNode>,
         class_weights: &[f64],
         weights: &[f64],
@@ -390,13 +390,13 @@ impl ClassTree {
 
     /// Number of probability columns each leaf stores.
     #[inline]
-    pub(super) fn classes(&self) -> usize {
+    pub(crate) fn classes(&self) -> usize {
         self.classes
     }
 
     /// The leaf probabilities one row reaches.
     #[inline(always)]
-    pub(super) fn probabilities(&self, row: &[f32]) -> &[f32] {
+    pub(crate) fn probabilities(&self, row: &[f32]) -> &[f32] {
         let ordinal = if self.nodes.is_empty() {
             0
         } else {
@@ -483,7 +483,7 @@ impl ClassTree {
 /// is determined by the topology alone, so a model has exactly one encoding.
 impl ClassTree {
     /// Number of logical records [`Self::to_logical_nodes`] will produce.
-    pub(super) fn logical_node_count(&self) -> usize {
+    pub(crate) fn logical_node_count(&self) -> usize {
         if self.nodes.is_empty() {
             1
         } else {
@@ -492,7 +492,7 @@ impl ClassTree {
     }
 
     /// Expands the tree into pre-order records and its pre-order leaf block.
-    pub(super) fn to_logical_nodes(&self) -> (Vec<LogicalTreeNode>, Vec<f32>) {
+    pub(crate) fn to_logical_nodes(&self) -> (Vec<LogicalTreeNode>, Vec<f32>) {
         let leaves = self.nodes.len() + 1;
         let mut probabilities = Vec::with_capacity(leaves * self.classes);
         if self.nodes.is_empty() {
@@ -541,7 +541,7 @@ impl ClassTree {
     /// same topology validator fitting uses, and the reconstructed model is
     /// re-checked against the same class-topology invariant a fitted tree
     /// satisfies, so the decoded bytes are never trusted.
-    pub(super) fn from_logical_nodes(
+    pub(crate) fn from_logical_nodes(
         nodes: &[LogicalTreeNode],
         leaf_probabilities: &[f32],
         classes: usize,

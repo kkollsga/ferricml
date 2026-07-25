@@ -1,8 +1,7 @@
 use super::parameters::{
     MaxFeatures, NJobs, RandomForestClassifierParams, RandomForestRegressorParams,
 };
-use super::training::{Classification, ForestConfig, Regression, train_class_forest, train_forest};
-use super::tree::{ClassTree, FEATURE_MASK, PackedTree};
+use super::training::{ForestConfig, train_class_forest, train_forest};
 use crate::api::{
     Capabilities, Classifier, Estimator, HasCapabilities, HasParams, ModelError,
     ProbabilisticClassifier, Regressor, validate_prediction,
@@ -14,6 +13,7 @@ use crate::artifact::{
     encode_logical_tree, encode_v2_envelope,
 };
 use crate::data::{BinaryTargets, ClassTargets, MatrixView, RegressionTargets, SampleWeights};
+use crate::tree::{ClassTree, Classification, FEATURE_MASK, PackedTree, Regression};
 
 const REGRESSOR_PAYLOAD_VERSION: u16 = 1;
 const CLASSIFIER_PAYLOAD_VERSION: u16 = 1;
@@ -1412,13 +1412,13 @@ fn validate_common(
     if config.n_estimators == 0 {
         return Err(ModelError::InvalidEstimatorCount);
     }
-    if config.max_depth == Some(0) {
+    if config.grower.max_depth == Some(0) {
         return Err(ModelError::InvalidMaxDepth);
     }
-    if config.min_samples_split < 2 {
+    if config.grower.min_samples_split < 2 {
         return Err(ModelError::InvalidMinSamplesSplit);
     }
-    if config.min_samples_leaf == 0 {
+    if config.grower.min_samples_leaf == 0 {
         return Err(ModelError::InvalidMinSamplesLeaf);
     }
     if config.n_jobs == 0 {
@@ -1430,7 +1430,7 @@ fn validate_common(
     if data.columns() > FEATURE_MASK as usize {
         return Err(ModelError::TooManyFeatures);
     }
-    if let MaxFeatures::Count(requested) = config.max_features
+    if let MaxFeatures::Count(requested) = config.grower.max_features
         && (requested == 0 || requested > data.columns())
     {
         return Err(ModelError::InvalidMaxFeatures {

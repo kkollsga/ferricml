@@ -1,15 +1,10 @@
 //! Public random-forest parameter types.
 
-/// How many randomly selected features are considered at each split.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum MaxFeatures {
-    /// Consider every feature.
-    All,
-    /// Consider `floor(sqrt(n_features))`, with a minimum of one.
-    Sqrt,
-    /// Consider exactly this many features.
-    Count(usize),
-}
+/// Re-exported so `ferricml::ensemble::MaxFeatures` keeps naming the one type
+/// every tree-shaped estimator shares. It is defined beside the grower that
+/// consumes it, in [`crate::tree`], because the forest is one of its consumers
+/// rather than its owner.
+pub use crate::tree::MaxFeatures;
 
 /// Requested training parallelism for an estimator.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
