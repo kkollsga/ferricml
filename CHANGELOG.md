@@ -275,6 +275,12 @@ and releases use [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   model fitted under a non-default one reports
   `ArtifactError::UnsupportedModelState` rather than writing bytes that would
   decode as a model claiming `Newton` provenance.
+- Joint multinomial logistic fits above the exact solver's parameter ceiling,
+  through `LogisticSolver::Lbfgs`. The ceiling is a property of the selected
+  solver's storage rather than of the model, so the exact path keeps refusing
+  above 2048 stacked parameters and keeps producing the identical fit below it,
+  while the matrix-free path accepts 131 072 within the same storage budget.
+  `ModelError::MulticlassSystemTooLarge` now reports whichever limit applied.
 - `ModelError::SolverDidNotConverge`, reported when an iterative solver
   exhausts `max_iter` — or is asked for a tolerance below what the objective's
   own numerical resolution can certify — instead of returning the last iterate

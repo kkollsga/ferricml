@@ -56,6 +56,21 @@ use crate::numeric::softmax_in_place;
 /// an out-of-memory abort partway through fitting.
 pub(super) const MAX_NEWTON_PARAMETERS: usize = 2_048;
 
+/// Largest stacked system the matrix-free multinomial fit will accept.
+///
+/// The same 32 MiB storage budget, applied to what
+/// [`LogisticSolver::Lbfgs`](super::LogisticSolver::Lbfgs) actually allocates.
+/// Its workspace is `4 + 2 * memory` `f64` per parameter — four working vectors
+/// plus one iterate difference and one gradient difference per stored
+/// correction pair — which is 20 `f64`, or 160 bytes, at the default memory.
+/// That puts this bound at 20 MiB, comfortably inside the same envelope the
+/// exact path is held to.
+///
+/// It is sixty-four times the exact bound because the cost is *linear* here
+/// rather than quadratic. That is the whole reason this solver exists, and the
+/// two constants sitting next to each other is the clearest statement of it.
+pub(super) const MAX_MATRIX_FREE_PARAMETERS: usize = 131_072;
+
 pub(super) fn fit(
     data: &MatrixView<'_>,
     targets: &ClassTargets,
@@ -253,14 +268,23 @@ fn validate_fit(
     if targets.n_classes() < 2 {
         return Err(ModelError::RequiresTwoClasses);
     }
+    // The bound is a property of the solver's storage, not of the model, so it
+    // is read from the selected solver rather than fixed at the worst case.
+    // Every shape the exact path accepted before still takes the exact path and
+    // still produces the identical fit; the matrix-free path widens the domain
+    // rather than reinterpreting any part of it.
+    let limit = match params.solver() {
+        LogisticSolver::Newton => MAX_NEWTON_PARAMETERS,
+        LogisticSolver::Lbfgs => MAX_MATRIX_FREE_PARAMETERS,
+    };
     let parameters = targets
         .n_classes()
         .checked_mul(data.columns() + usize::from(params.fit_intercept))
-        .filter(|&parameters| parameters <= MAX_NEWTON_PARAMETERS)
+        .filter(|&parameters| parameters <= limit)
         .ok_or(ModelError::MulticlassSystemTooLarge {
             classes: targets.n_classes(),
             features: data.columns(),
-            limit: MAX_NEWTON_PARAMETERS,
+            limit,
         })?;
     debug_assert!(parameters > 0);
     Ok(())
@@ -905,6 +929,91 @@ mod tests {
         );
         // Dropping the intercept drops one parameter per class, which lands
         // exactly on the bound.
+        assert_eq!(
+            validate_fit(
+                &data.as_view(),
+                &targets,
+                None,
+                &params.with_fit_intercept(false),
+            ),
+            Ok(())
+        );
+    }
+
+    #[test]
+    fn the_matrix_free_solver_fits_shapes_the_exact_one_refuses() {
+        // The whole reason the seam exists. This shape needs 2408 stacked
+        // parameters, so the exact path refuses it before allocating a 46 MB
+        // system; the matrix-free path holds 20 f64 per parameter and fits.
+        let (classes, columns, rows) = (8_usize, 300_usize, 64_usize);
+        let mut state = 0x5eed_u64;
+        let values = (0..rows * columns)
+            .map(|_| {
+                state = state
+                    .wrapping_mul(6_364_136_223_846_793_005)
+                    .wrapping_add(1_442_695_040_888_963_407);
+                ((state >> 33) as f32 / (1_u32 << 31) as f32) * 2.0 - 1.0
+            })
+            .collect::<Vec<_>>();
+        let data = DenseMatrix::new(values, rows, columns).unwrap();
+        let targets =
+            ClassTargets::new((0..rows).map(|row| (row % classes) as u8).collect()).unwrap();
+
+        assert_eq!(
+            LogisticRegression::fit_multiclass(
+                &data.as_view(),
+                &targets,
+                LogisticRegressionParams::default(),
+            )
+            .unwrap_err(),
+            ModelError::MulticlassSystemTooLarge {
+                classes,
+                features: columns,
+                limit: MAX_NEWTON_PARAMETERS,
+            },
+            "the exact path's refusal is unchanged"
+        );
+
+        let model = LogisticRegression::fit_multiclass(
+            &data.as_view(),
+            &targets,
+            LogisticRegressionParams::default()
+                .with_solver(LogisticSolver::Lbfgs)
+                .with_max_iter(500),
+        )
+        .expect("the matrix-free path fits it");
+        assert_eq!(model.n_decision_columns(), classes);
+        assert_eq!(model.coefficients().len(), classes * columns);
+        // Fitted, not merely returned: every training row is classified
+        // correctly on a problem this over-parameterized, and the score rows
+        // are still centred.
+        let labels = model.predict(&data.as_view()).expect("labels");
+        assert_eq!(labels, targets.as_slice());
+        let scores = model.decision_function(&data.as_view()).expect("scores");
+        for row in scores.chunks_exact(classes) {
+            assert!(row.iter().sum::<f32>().abs() <= 1.0e-3, "{row:?}");
+        }
+    }
+
+    #[test]
+    fn the_matrix_free_bound_is_enforced_where_it_says_it_is() {
+        // Checked through the validator: the point is that the refusal happens
+        // before allocation, so building the fit to observe it would defeat it.
+        let classes = 256_usize;
+        let columns = MAX_MATRIX_FREE_PARAMETERS / classes;
+        let rows = classes;
+        let data = DenseMatrix::new(vec![0.5; rows * columns], rows, columns).unwrap();
+        let targets = ClassTargets::new((0..rows).map(|row| row as u8).collect()).unwrap();
+        let params = LogisticRegressionParams::default().with_solver(LogisticSolver::Lbfgs);
+        assert_eq!(
+            validate_fit(&data.as_view(), &targets, None, &params).unwrap_err(),
+            ModelError::MulticlassSystemTooLarge {
+                classes,
+                features: columns,
+                limit: MAX_MATRIX_FREE_PARAMETERS,
+            },
+            "{classes} x ({columns} + intercept) is one parameter over the bound"
+        );
         assert_eq!(
             validate_fit(
                 &data.as_view(),

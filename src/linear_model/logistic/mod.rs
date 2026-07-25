@@ -52,9 +52,12 @@ const LOGISTIC_MULTICLASS_FIXED_PAYLOAD_BYTES: usize = 8 * 4;
 /// refuses rather than allocate one it cannot hold.
 ///
 /// [`Lbfgs`](Self::Lbfgs) never forms that system. Its storage is linear in the
-/// parameter count, which is what makes a wide multiclass fit possible at all,
-/// and it is the path to select when the exact one reports
-/// [`ModelError::MulticlassSystemTooLarge`]. It needs more iterations to reach
+/// parameter count, so it accepts sixty-four times as many multiclass
+/// parameters within the same storage budget, and it is the path to select when
+/// the exact one reports [`ModelError::MulticlassSystemTooLarge`]. The bound is
+/// a property of the selected solver rather than of the model: a shape the
+/// exact path accepts still takes the exact path and produces the identical
+/// fit. It needs more iterations to reach
 /// the same answer, and it reports
 /// [`ModelError::SolverDidNotConverge`] rather than returning an
 /// unconverged model — both when `max_iter` runs out and when the requested
