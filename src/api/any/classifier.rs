@@ -130,13 +130,18 @@ impl Estimator for AnyClassifier {
 /// Declares only what holds for every variant, so a caller that has not
 /// inspected the runtime variant is never promised more than it gets.
 ///
-/// Weighted fitting is declared away structurally rather than composed: the
-/// enum owns fitted models and no fitting entry point, so it could not accept
-/// weights even if every variant did.
+/// Weighted and multiclass fitting are both declared away structurally rather
+/// than composed: the enum owns fitted models and no fitting entry point, so it
+/// could accept neither weights nor a class set even though every variant can.
+/// An intersection would have declared multiclass fitting the enum does not
+/// offer. It still *holds* and serves a multiclass model — `classes()` and
+/// `predict_proba` are already shaped by the fitted model — which is a property
+/// of the value, not a capability of this type.
 impl HasCapabilities for AnyClassifier {
     const CAPABILITIES: Capabilities = RandomForestClassifier::CAPABILITIES
         .intersection(LogisticRegression::CAPABILITIES)
-        .with_sample_weights(false);
+        .with_sample_weights(false)
+        .with_multiclass(false);
 }
 
 impl Classifier for AnyClassifier {

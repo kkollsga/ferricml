@@ -39,6 +39,7 @@ use super::Estimator;
 pub struct Capabilities {
     sample_weights: bool,
     artifact: bool,
+    multiclass: bool,
 }
 
 impl Capabilities {
@@ -50,6 +51,7 @@ impl Capabilities {
     pub const NONE: Self = Self {
         sample_weights: false,
         artifact: false,
+        multiclass: false,
     };
 
     /// Declares whether fitting accepts per-sample weights.
@@ -63,6 +65,13 @@ impl Capabilities {
     #[must_use]
     pub const fn with_artifact(mut self, supported: bool) -> Self {
         self.artifact = supported;
+        self
+    }
+
+    /// Declares whether fitting accepts an arbitrary observed class set.
+    #[must_use]
+    pub const fn with_multiclass(mut self, supported: bool) -> Self {
+        self.multiclass = supported;
         self
     }
 
@@ -81,6 +90,18 @@ impl Capabilities {
         self.artifact
     }
 
+    /// Whether fitting accepts an arbitrary observed class set.
+    ///
+    /// A type declaring this offers a multiclass fitting entry point over
+    /// [`ClassTargets`](crate::data::ClassTargets) whose fitted result has one
+    /// probability column per observed label, in sorted label order, for any
+    /// number of classes. Producing probabilities at all is required of every
+    /// [`Classifier`](super::Classifier) and is not what this records.
+    #[must_use]
+    pub const fn multiclass(self) -> bool {
+        self.multiclass
+    }
+
     /// Capabilities declared by both descriptors.
     ///
     /// This is what a runtime dispatch enum or a fitted composition can promise
@@ -91,6 +112,7 @@ impl Capabilities {
         Self {
             sample_weights: self.sample_weights && other.sample_weights,
             artifact: self.artifact && other.artifact,
+            multiclass: self.multiclass && other.multiclass,
         }
     }
 }
@@ -121,18 +143,22 @@ mod tests {
     fn the_conservative_descriptor_declares_nothing() {
         assert!(!Capabilities::NONE.sample_weights());
         assert!(!Capabilities::NONE.artifact());
+        assert!(!Capabilities::NONE.multiclass());
     }
 
     #[test]
     fn declarations_are_independent_and_const_evaluable() {
         const WEIGHTS: Capabilities = Capabilities::NONE.with_sample_weights(true);
         const ARTIFACT: Capabilities = Capabilities::NONE.with_artifact(true);
+        const MULTICLASS: Capabilities = Capabilities::NONE.with_multiclass(true);
         const BOTH: Capabilities = WEIGHTS.with_artifact(true);
 
-        assert!(WEIGHTS.sample_weights() && !WEIGHTS.artifact());
-        assert!(!ARTIFACT.sample_weights() && ARTIFACT.artifact());
-        assert!(BOTH.sample_weights() && BOTH.artifact());
+        assert!(WEIGHTS.sample_weights() && !WEIGHTS.artifact() && !WEIGHTS.multiclass());
+        assert!(!ARTIFACT.sample_weights() && ARTIFACT.artifact() && !ARTIFACT.multiclass());
+        assert!(!MULTICLASS.sample_weights() && !MULTICLASS.artifact() && MULTICLASS.multiclass());
+        assert!(BOTH.sample_weights() && BOTH.artifact() && !BOTH.multiclass());
         assert_eq!(BOTH.with_sample_weights(false), ARTIFACT);
+        assert_eq!(MULTICLASS.with_multiclass(false), Capabilities::NONE);
     }
 
     #[test]
@@ -142,6 +168,11 @@ mod tests {
 
         assert_eq!(BOTH.intersection(BOTH), BOTH);
         assert_eq!(BOTH.intersection(WEIGHTS), WEIGHTS);
+        assert_eq!(
+            BOTH.with_multiclass(true).intersection(BOTH),
+            BOTH,
+            "a capability only one side declares is not promised"
+        );
         assert_eq!(BOTH.intersection(Capabilities::NONE), Capabilities::NONE);
         assert_eq!(WEIGHTS.intersection(BOTH), BOTH.intersection(WEIGHTS));
     }

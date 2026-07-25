@@ -134,6 +134,12 @@ and releases use [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   any fitting (`Setup`) from a candidate's own failure (`Candidate`, keeping the
   fold index) and from a score that returns a value no ranking can order
   (`NonFiniteScore`).
+- `api::Capabilities::multiclass`, declaring that an estimator offers a
+  multiclass fitting entry point over `ClassTargets`. `LogisticRegression` and
+  `RandomForestClassifier` declare it; `AnyClassifier` declares it away
+  structurally, because it owns fitted models and no fitting entry point.
+  The estimator conformance battery drives a new
+  `multiclass_declaration_matches_behavior` obligation from it.
 - `metrics::multiclass_log_loss` and `metrics::multiclass_brier_score`, which
   score a whole row-major probability matrix against a sorted class list.
   Neither renormalizes a row, because FerricML's rows sum to one only within

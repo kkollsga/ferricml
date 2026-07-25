@@ -19,7 +19,8 @@ estimator meaning follow the reference contract.
 - `api` owns backend-independent estimator categories, errors, retained
   parameter access, batch-level runtime model enums, and the compile-time
   capability descriptor. `Capabilities` records only what varies between
-  estimator types and is not already guaranteed by the type system, so it never
+  estimator types and is not already guaranteed by the type system — weighted
+  fitting, artifact persistence, and multiclass fitting — so it never
   becomes a second parameter system; it is carried by `HasCapabilities`, a
   generic trait rather than an associated constant on the object-safe
   categories, which must stay dyn-compatible.
@@ -76,6 +77,19 @@ estimator meaning follow the reference contract.
   score's own declaration. Its per-feature
   values are quality losses, oriented so a larger number always means a more
   important feature whichever direction the underlying metric improves in.
+
+Classification covers an arbitrary observed class set. `ClassTargets` carries
+the sorted, deduplicated labels a fit observed, and that set is the probability
+column order; nothing assumes the labels are contiguous or zero-based.
+`LogisticRegression::fit_multiclass` is one joint multinomial optimization
+whose probabilities are the softmax of a centred score vector with no pinned
+reference class, and `RandomForestClassifier::fit_multiclass` averages per-tree
+probability vectors rather than voting on per-tree labels. Both keep their
+original binary fit unchanged beside the new one, including its asymmetric
+single-row decision score, because the two parametrizations are different
+models rather than two spellings of one. Probability rows are never
+renormalized: they sum to one only within `n_classes` `f32` ulps, which is a
+frozen part of the contract rather than a tolerance to tighten later.
 
 `AnyClassifier` and `AnyRegressor` remain the owned runtime-swap layer. They
 match once per batch; the regressor variants cover forests, linear regression,

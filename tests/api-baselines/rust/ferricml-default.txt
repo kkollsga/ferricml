@@ -142,8 +142,10 @@ impl ferricml::api::Capabilities
 pub const ferricml::api::Capabilities::NONE: Self
 pub const fn ferricml::api::Capabilities::artifact(self) -> bool
 pub const fn ferricml::api::Capabilities::intersection(self, Self) -> Self
+pub const fn ferricml::api::Capabilities::multiclass(self) -> bool
 pub const fn ferricml::api::Capabilities::sample_weights(self) -> bool
 pub const fn ferricml::api::Capabilities::with_artifact(self, bool) -> Self
+pub const fn ferricml::api::Capabilities::with_multiclass(self, bool) -> Self
 pub const fn ferricml::api::Capabilities::with_sample_weights(self, bool) -> Self
 pub trait ferricml::api::Classifier: ferricml::api::Estimator
 pub fn ferricml::api::Classifier::classes(&self) -> &[u8]

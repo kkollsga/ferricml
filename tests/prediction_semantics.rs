@@ -19,7 +19,9 @@ use ferricml::api::{
     Regressor,
 };
 use ferricml::artifact::ArtifactError;
-use ferricml::data::{BinaryTargets, DenseMatrix, MatrixView, RegressionTargets, SampleWeights};
+use ferricml::data::{
+    BinaryTargets, ClassTargets, DenseMatrix, MatrixView, RegressionTargets, SampleWeights,
+};
 use ferricml::dummy::{
     DummyClassifier, DummyClassifierParams, DummyRegressor, DummyRegressorParams,
 };
@@ -96,6 +98,13 @@ impl ClassifierCase for RandomForestClassifierCase {
     fn fit(data: &MatrixView<'_>, labels: &BinaryTargets) -> Self::Model {
         RandomForestClassifier::fit(data, labels, forest_classifier_params()).expect("fit")
     }
+
+    fn fit_multiclass(data: &MatrixView<'_>, labels: &ClassTargets) -> Option<Self::Model> {
+        Some(
+            RandomForestClassifier::fit_multiclass(data, labels, forest_classifier_params())
+                .expect("multiclass fit"),
+        )
+    }
 }
 
 impl ScalarClassifierCase for RandomForestClassifierCase {
@@ -112,6 +121,13 @@ impl ClassifierCase for LogisticRegressionCase {
 
     fn fit(data: &MatrixView<'_>, labels: &BinaryTargets) -> Self::Model {
         LogisticRegression::fit(data, labels, LogisticRegressionParams::default()).expect("fit")
+    }
+
+    fn fit_multiclass(data: &MatrixView<'_>, labels: &ClassTargets) -> Option<Self::Model> {
+        Some(
+            LogisticRegression::fit_multiclass(data, labels, LogisticRegressionParams::default())
+                .expect("multiclass fit"),
+        )
     }
 
     fn fit_weighted(

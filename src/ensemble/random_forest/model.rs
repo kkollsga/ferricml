@@ -536,10 +536,12 @@ impl HasParams for RandomForestClassifier {
     }
 }
 
-/// Declares nothing: bootstrap resampling has no weighted entry point yet, and
-/// the classifier has no artifact kind until leaf probability semantics are
-/// frozen.
-impl HasCapabilities for RandomForestClassifier {}
+/// Declares multiclass fitting only: bootstrap resampling has no weighted entry
+/// point yet, and the classifier has no artifact kind until its leaf
+/// representation is persisted.
+impl HasCapabilities for RandomForestClassifier {
+    const CAPABILITIES: Capabilities = Capabilities::NONE.with_multiclass(true);
+}
 
 impl RandomForestRegressor {
     /// Returns the feature width required by this model.

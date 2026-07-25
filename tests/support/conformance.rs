@@ -35,7 +35,9 @@ use ferricml::api::{
     Capabilities, Classifier, Estimator, HasCapabilities, ModelError, Regressor, Transformer,
 };
 use ferricml::artifact::ArtifactError;
-use ferricml::data::{BinaryTargets, DenseMatrix, MatrixView, RegressionTargets, SampleWeights};
+use ferricml::data::{
+    BinaryTargets, ClassTargets, DenseMatrix, MatrixView, RegressionTargets, SampleWeights,
+};
 
 /// Schema identity used for every artifact obligation in the battery.
 pub const SCHEMA: [u8; 32] = [42; 32];
@@ -53,6 +55,7 @@ pub const CLASSIFIER_OBLIGATIONS: &[&str] = &[
     "refit_is_deterministic",
     "sample_weight_declaration_matches_behavior",
     "artifact_declaration_matches_behavior",
+    "multiclass_declaration_matches_behavior",
 ];
 
 /// Additional obligations owed by a classifier with a scalar prediction path.
@@ -157,6 +160,12 @@ pub struct Fixture {
     pub data: DenseMatrix,
     /// Balanced binary labels, separable on the fixture.
     pub labels: BinaryTargets,
+    /// Three non-contiguous, non-zero-based labels over the same rows.
+    ///
+    /// The labels are deliberately `{3, 7, 10}` rather than `{0, 1, 2}`, so a
+    /// classifier that assumed contiguous or zero-based classes fails here
+    /// instead of passing by coincidence.
+    pub class_labels: ClassTargets,
     /// Monotone regression targets.
     pub values: RegressionTargets,
 }
@@ -180,6 +189,8 @@ impl Fixture {
             )
             .expect("fixture matrix"),
             labels: BinaryTargets::new(vec![0, 0, 0, 0, 1, 1, 1, 1]).expect("fixture labels"),
+            class_labels: ClassTargets::new(vec![7, 7, 3, 3, 10, 10, 3, 7])
+                .expect("fixture class labels"),
             values: RegressionTargets::new(vec![0.0, 1.0, 4.0, 9.0, 16.0, 25.0, 36.0, 49.0])
                 .expect("fixture values"),
         }
@@ -233,6 +244,14 @@ pub trait ClassifierCase {
         _labels: &BinaryTargets,
         _weights: &SampleWeights,
     ) -> Option<Self::Model> {
+        None
+    }
+
+    /// Fits over an arbitrary observed class set.
+    ///
+    /// Required exactly when the model declares
+    /// [`Capabilities::multiclass`]; supplying it otherwise is a violation.
+    fn fit_multiclass(_data: &MatrixView<'_>, _labels: &ClassTargets) -> Option<Self::Model> {
         None
     }
 
@@ -579,6 +598,8 @@ pub fn batch_classifier_report<C: ClassifierCase>() -> Report {
             )
         }),
     );
+
+    check_multiclass_declaration::<C>(&mut report, &fixture);
 
     let round_tripped = C::round_trip(&model);
     check_artifact_declaration(
@@ -961,6 +982,101 @@ fn check_non_finite_scalar(
             }),
         || format!("a scalar row of the wrong width returned {rejected:?}"),
     );
+}
+
+/// A declared multiclass fit must exist and must be genuinely multiclass.
+///
+/// The obligation is not "does it return something": it is that the fitted
+/// model reports exactly the fixture's observed labels in sorted order, that
+/// its probability matrix has one column per label, that each column is the
+/// one `predict_class_proba` returns for that label, that every row sums to
+/// one within the documented tolerance, and that the label is the argmax of
+/// that row. A model that quietly collapsed the class set, permuted the
+/// columns, or renormalized would fail one of those.
+fn check_multiclass_declaration<C: ClassifierCase>(report: &mut Report, fixture: &Fixture) {
+    let view = fixture.data.as_view();
+    let declared = C::Model::CAPABILITIES.multiclass();
+    let fitted = C::fit_multiclass(&view, &fixture.class_labels);
+    report.require(
+        "multiclass_declaration_matches_behavior",
+        declared == fitted.is_some(),
+        || {
+            format!(
+                "declares multiclass = {declared} but {} a multiclass-fit hook",
+                if fitted.is_some() {
+                    "supplies"
+                } else {
+                    "supplies no"
+                }
+            )
+        },
+    );
+    let Some(model) = fitted.filter(|_| declared) else {
+        return;
+    };
+
+    let classes = model.classes().to_vec();
+    report.require(
+        "multiclass_declaration_matches_behavior",
+        classes == fixture.class_labels.classes(),
+        || {
+            format!(
+                "multiclass fit reports classes {classes:?}, expected {:?}",
+                fixture.class_labels.classes()
+            )
+        },
+    );
+    let (Ok(labels), Ok(probabilities)) = (model.predict(&view), model.predict_proba(&view)) else {
+        report.record(
+            "multiclass_declaration_matches_behavior",
+            "the multiclass fit failed to predict on the data it was fitted on".to_owned(),
+        );
+        return;
+    };
+    if probabilities.len() != view.rows() * classes.len() || labels.len() != view.rows() {
+        report.record(
+            "multiclass_declaration_matches_behavior",
+            format!(
+                "multiclass fit produced {} labels and {} probabilities for {} rows and {} classes",
+                labels.len(),
+                probabilities.len(),
+                view.rows(),
+                classes.len()
+            ),
+        );
+        return;
+    }
+    for (column, &class) in classes.iter().enumerate() {
+        let expected: Vec<f32> = probabilities
+            .chunks_exact(classes.len())
+            .map(|row| row[column])
+            .collect();
+        report.require(
+            "multiclass_declaration_matches_behavior",
+            model.predict_class_proba(&view, class).as_ref() == Ok(&expected),
+            || format!("multiclass class {class} is not column {column} of predict_proba"),
+        );
+    }
+    let tolerance = classes.len() as f32 * f32::EPSILON;
+    for (index, row) in probabilities.chunks_exact(classes.len()).enumerate() {
+        let total: f32 = row.iter().sum();
+        report.require(
+            "multiclass_declaration_matches_behavior",
+            (total - 1.0).abs() <= tolerance,
+            || format!("multiclass row {index} sums to {total}: {row:?}"),
+        );
+        report.require(
+            "multiclass_declaration_matches_behavior",
+            labels[index] == classes[argmax_first_wins(row)],
+            || {
+                format!(
+                    "multiclass row {index} predicted {} but its probabilities {row:?} favor {}",
+                    labels[index],
+                    classes[argmax_first_wins(row)]
+                )
+            },
+        );
+    }
 }
 
 fn check_weight_declaration(

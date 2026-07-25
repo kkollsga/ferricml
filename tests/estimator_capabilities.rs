@@ -30,10 +30,15 @@ const WEIGHTED_AND_PERSISTED: Capabilities = Capabilities::NONE
     .with_sample_weights(true)
     .with_artifact(true);
 const PERSISTED_ONLY: Capabilities = Capabilities::NONE.with_artifact(true);
+const MULTICLASS_ONLY: Capabilities = Capabilities::NONE.with_multiclass(true);
 
 #[test]
 fn linear_estimators_declare_weighted_fitting_and_persistence() {
-    assert_eq!(LogisticRegression::CAPABILITIES, WEIGHTED_AND_PERSISTED);
+    assert_eq!(
+        LogisticRegression::CAPABILITIES,
+        WEIGHTED_AND_PERSISTED.with_multiclass(true),
+        "logistic regression is the one linear model that also fits a class set"
+    );
     assert_eq!(LinearRegression::CAPABILITIES, WEIGHTED_AND_PERSISTED);
     assert_eq!(Ridge::CAPABILITIES, WEIGHTED_AND_PERSISTED);
 }
@@ -58,10 +63,25 @@ fn tree_ensembles_declare_persistence_but_not_weighted_fitting() {
 }
 
 #[test]
-fn the_forest_classifier_declares_nothing_yet() {
-    // No weighted entry point, and no artifact kind until leaf probability
-    // semantics are frozen. The conservative default is the honest answer.
-    assert_eq!(RandomForestClassifier::CAPABILITIES, Capabilities::NONE);
+fn the_forest_classifier_declares_multiclass_fitting_only() {
+    // It fits an arbitrary class set, but has no weighted entry point and no
+    // artifact kind until its leaf representation is persisted.
+    assert_eq!(RandomForestClassifier::CAPABILITIES, MULTICLASS_ONLY);
+}
+
+#[test]
+fn multiclass_fitting_is_declared_by_the_types_that_offer_it() {
+    // A capability that never varies is not a capability, so this is the pair
+    // that makes the field worth having.
+    assert!(LogisticRegression::CAPABILITIES.multiclass());
+    assert!(RandomForestClassifier::CAPABILITIES.multiclass());
+    assert!(!DummyClassifier::CAPABILITIES.multiclass());
+    // A composition whose `fit` takes binary targets does not offer it, and
+    // the intersection says so without anyone maintaining a second table.
+    assert!(
+        !<Pipeline<StandardScaler, LogisticRegression> as HasCapabilities>::CAPABILITIES
+            .multiclass()
+    );
 }
 
 #[test]
@@ -75,8 +95,14 @@ fn baseline_estimators_declare_nothing() {
 #[test]
 fn runtime_dispatch_declares_only_what_every_variant_offers() {
     // The forest classifier does not persist, so neither can the enum that may
-    // be holding one.
+    // be holding one. Multiclass *fitting* is declared away structurally rather
+    // than intersected: both variants offer it, but the enum owns fitted models
+    // and no fitting entry point, so an intersection would have promised an
+    // entry point that does not exist.
     assert_eq!(AnyClassifier::CAPABILITIES, Capabilities::NONE);
+    assert!(LogisticRegression::CAPABILITIES.multiclass());
+    assert!(RandomForestClassifier::CAPABILITIES.multiclass());
+    assert!(!AnyClassifier::CAPABILITIES.multiclass());
     // Every regressor variant persists, so the enum does too.
     assert_eq!(AnyRegressor::CAPABILITIES, PERSISTED_ONLY);
 }
@@ -115,8 +141,11 @@ fn runtime_dispatch_reports_the_selected_variant_without_type_matching() {
     )
     .unwrap()
     .into();
-    assert_eq!(logistic.capabilities(), WEIGHTED_AND_PERSISTED);
-    assert_eq!(forest_classifier.capabilities(), Capabilities::NONE);
+    assert_eq!(
+        logistic.capabilities(),
+        WEIGHTED_AND_PERSISTED.with_multiclass(true)
+    );
+    assert_eq!(forest_classifier.capabilities(), MULTICLASS_ONLY);
 }
 
 #[test]

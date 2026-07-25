@@ -16,7 +16,9 @@ mod support;
 use ferricml::api::{
     Capabilities, Classifier, Estimator, HasCapabilities, ModelError, Regressor, Transformer,
 };
-use ferricml::data::{BinaryTargets, DenseMatrix, MatrixView, RegressionTargets, SampleWeights};
+use ferricml::data::{
+    BinaryTargets, ClassTargets, DenseMatrix, MatrixView, RegressionTargets, SampleWeights,
+};
 use std::cell::Cell;
 use std::collections::BTreeSet;
 
@@ -49,6 +51,9 @@ const ARTIFACT_DECODES_DIFFERENTLY: u8 = 15;
 const SCALAR_DISAGREES: u8 = 16;
 const NON_FINITE_ACCEPTED: u8 = 17;
 const SHAPE_IS_WRONG: u8 = 18;
+const MULTICLASS_DECLARED_WITHOUT_HOOK: u8 = 19;
+const MULTICLASS_HOOK_WITHOUT_DECLARATION: u8 = 20;
+const MULTICLASS_COLLAPSES_CLASSES: u8 = 21;
 
 const BASE_THRESHOLD: f32 = 3.5;
 const BASE_OFFSET: f32 = 0.0;
@@ -59,6 +64,11 @@ const fn probe_capabilities(fault: u8) -> Capabilities {
     Capabilities::NONE
         .with_sample_weights(fault != WEIGHT_HOOK_WITHOUT_DECLARATION)
         .with_artifact(fault != ARTIFACT_HOOK_WITHOUT_DECLARATION)
+        // Multiclass is the one capability the honest probe does *not* have, so
+        // it is opted into by fault rather than out of.
+        .with_multiclass(
+            fault == MULTICLASS_DECLARED_WITHOUT_HOOK || fault == MULTICLASS_COLLAPSES_CLASSES,
+        )
 }
 
 thread_local! {
@@ -126,23 +136,56 @@ struct ClassifierProbe<const FAULT: u8> {
 
 impl<const FAULT: u8> ClassifierProbe<FAULT> {
     fn with_threshold(data: &MatrixView<'_>, threshold: f32) -> Self {
+        Self::with_classes(data, threshold, vec![0, 1])
+    }
+
+    fn with_classes(data: &MatrixView<'_>, threshold: f32, classes: Vec<u8>) -> Self {
         Self {
             features: data.columns(),
-            classes: vec![0, 1],
+            classes,
             threshold,
         }
     }
 
-    fn positive(&self, row: &[f32]) -> f32 {
-        if row[0] > self.threshold { 0.75 } else { 0.25 }
+    /// One row of probabilities over however many classes this probe has.
+    ///
+    /// The favoured class takes `0.75` and the rest split `0.25` evenly, which
+    /// is exactly the two-class `[0.25, 0.75]` the binary probe used and sums
+    /// to one exactly at every width, so the row-sum obligation measures the
+    /// battery rather than this arithmetic.
+    fn class_probabilities(&self, row: &[f32]) -> Vec<f32> {
+        let classes = self.classes.len();
+        if classes == 1 {
+            return vec![1.0];
+        }
+        let favoured = if row[0] > self.threshold {
+            classes - 1
+        } else {
+            0
+        };
+        let rest = 0.25 / (classes - 1) as f32;
+        (0..classes)
+            .map(|class| if class == favoured { 0.75 } else { rest })
+            .collect()
+    }
+
+    fn favoured(&self, row: &[f32]) -> usize {
+        let probabilities = self.class_probabilities(row);
+        let mut best = 0;
+        for class in 1..probabilities.len() {
+            if probabilities[class] > probabilities[best] {
+                best = class;
+            }
+        }
+        best
     }
 
     fn label(&self, row: &[f32]) -> u8 {
-        let honest = u8::from(self.positive(row) > 0.5);
+        let honest = self.favoured(row);
         if FAULT == LABEL_IGNORES_PROBABILITY {
-            1 - honest
+            self.classes[(honest + 1) % self.classes.len()]
         } else {
-            honest
+            self.classes[honest]
         }
     }
 
@@ -212,10 +255,8 @@ impl<const FAULT: u8> Classifier for ClassifierProbe<FAULT> {
         self.check_width(data.columns())?;
         self.check_len(output.len(), data.rows() * self.classes.len())?;
         for (slot, row) in output.chunks_mut(self.classes.len()).zip(data.iter_rows()) {
-            let positive = self.positive(row);
             if slot.len() == self.classes.len() {
-                slot[0] = 1.0 - positive;
-                slot[1] = positive;
+                slot.copy_from_slice(&self.class_probabilities(row));
             }
         }
         Ok(())
@@ -232,9 +273,9 @@ impl<const FAULT: u8> Classifier for ClassifierProbe<FAULT> {
             return Err(ModelError::UnknownClass { class });
         }
         self.check_len(output.len(), data.rows())?;
+        let column = self.classes.iter().position(|&known| known == class);
         for (slot, row) in output.iter_mut().zip(data.iter_rows()) {
-            let positive = self.positive(row);
-            let honest = if class == 1 { positive } else { 1.0 - positive };
+            let honest = column.map_or(0.0, |column| self.class_probabilities(row)[column]);
             *slot = if FAULT == WRONG_PROBABILITY_COLUMN {
                 1.0 - honest
             } else {
@@ -272,6 +313,24 @@ impl<const FAULT: u8> ClassifierCase for ClassifierProbeCase<FAULT> {
                 data,
                 BASE_THRESHOLD + FIRST_DRIFT,
             )),
+        }
+    }
+
+    fn fit_multiclass(data: &MatrixView<'_>, labels: &ClassTargets) -> Option<Self::Model> {
+        match FAULT {
+            MULTICLASS_DECLARED_WITHOUT_HOOK => None,
+            // A hook that quietly returns a two-class model: the shape checks
+            // all pass, and only the class set gives it away.
+            MULTICLASS_COLLAPSES_CLASSES => Some(ClassifierProbe::with_threshold(
+                data,
+                BASE_THRESHOLD + FIRST_DRIFT,
+            )),
+            MULTICLASS_HOOK_WITHOUT_DECLARATION => Some(ClassifierProbe::with_classes(
+                data,
+                BASE_THRESHOLD + FIRST_DRIFT,
+                labels.classes().to_vec(),
+            )),
+            _ => None,
         }
     }
 
@@ -690,6 +749,21 @@ violates!(
     ["artifact_declaration_matches_behavior"]
 );
 violates!(
+    classifier_multiclass_declared_without_hook,
+    classifier_report::<ClassifierProbeCase<MULTICLASS_DECLARED_WITHOUT_HOOK>>(),
+    ["multiclass_declaration_matches_behavior"]
+);
+violates!(
+    classifier_multiclass_hook_without_declaration,
+    classifier_report::<ClassifierProbeCase<MULTICLASS_HOOK_WITHOUT_DECLARATION>>(),
+    ["multiclass_declaration_matches_behavior"]
+);
+violates!(
+    classifier_multiclass_collapses_the_class_set,
+    classifier_report::<ClassifierProbeCase<MULTICLASS_COLLAPSES_CLASSES>>(),
+    ["multiclass_declaration_matches_behavior"]
+);
+violates!(
     classifier_scalar_disagrees,
     classifier_report::<ClassifierProbeCase<SCALAR_DISAGREES>>(),
     ["scalar_matches_batch"]
@@ -873,6 +947,9 @@ fn every_declared_obligation_has_a_probe_that_trips_it() {
         >()),
         sorted(&classifier_report::<
             ClassifierProbeCase<ARTIFACT_DECLARED_WITHOUT_HOOK>,
+        >()),
+        sorted(&classifier_report::<
+            ClassifierProbeCase<MULTICLASS_DECLARED_WITHOUT_HOOK>,
         >()),
         sorted(&classifier_report::<ClassifierProbeCase<SCALAR_DISAGREES>>()),
         sorted(&classifier_report::<ClassifierProbeCase<NON_FINITE_ACCEPTED>>()),
