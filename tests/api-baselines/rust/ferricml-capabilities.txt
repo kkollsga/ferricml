@@ -26,3 +26,5 @@ ferricml::preprocessing::MaxAbsScaler = artifact
 ferricml::preprocessing::MinMaxScaler = artifact
 ferricml::preprocessing::StandardScaler = sample_weights, artifact
 ferricml::ranking::PairwiseLinearRanker = artifact
+ferricml::tree::DecisionTreeClassifier = sample_weights, artifact, multiclass, probability
+ferricml::tree::DecisionTreeRegressor = sample_weights, artifact

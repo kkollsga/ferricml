@@ -48,6 +48,7 @@ use ferricml::ensemble::{
     HistGradientBoostingClassifier, HistGradientBoostingRegressor, RandomForestClassifier,
     RandomForestRegressor,
 };
+use ferricml::tree::{DecisionTreeClassifier, DecisionTreeRegressor};
 use ferricml::linear_model::{ElasticNet, Lasso, LinearRegression, LogisticRegression, Ridge};
 use ferricml::pipeline::{Pipeline, StagedPipeline};
 use ferricml::preprocessing::{MaxAbsScaler, MinMaxScaler, StandardScaler};
@@ -120,6 +121,14 @@ fn declarations() -> Vec<(&'static str, Capabilities)> {
         (
             "ferricml::ensemble::RandomForestClassifier",
             RandomForestClassifier::CAPABILITIES,
+        ),
+        (
+            "ferricml::tree::DecisionTreeClassifier",
+            DecisionTreeClassifier::CAPABILITIES,
+        ),
+        (
+            "ferricml::tree::DecisionTreeRegressor",
+            DecisionTreeRegressor::CAPABILITIES,
         ),
         (
             "ferricml::ensemble::RandomForestRegressor",

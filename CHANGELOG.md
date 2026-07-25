@@ -7,6 +7,16 @@ and releases use [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+
+- `tree::DecisionTreeClassifier` and `tree::DecisionTreeRegressor`, standalone
+  decision trees over the same grower a random forest uses. Both support
+  weighted fitting and persist under new artifact kinds; the classifier fits
+  binary or natively multiclass targets and declares genuine probabilities,
+  because a leaf *is* a distribution over the training rows that reached it.
+  `MaxFeatures` is now also reachable as `tree::MaxFeatures`; the existing
+  `ensemble::MaxFeatures` path is unchanged and names the same type.
+
 ### Changed
 
 - **Breaking.** Producing probabilities is no longer required of every

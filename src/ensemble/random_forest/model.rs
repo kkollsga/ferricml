@@ -13,7 +13,10 @@ use crate::artifact::{
     encode_logical_tree, encode_v2_envelope,
 };
 use crate::data::{BinaryTargets, ClassTargets, MatrixView, RegressionTargets, SampleWeights};
-use crate::tree::{ClassTree, Classification, FEATURE_MASK, PackedTree, Regression};
+use crate::tree::{
+    ClassTree, Classification, FEATURE_MASK, PackedTree, Regression, decode_max_features,
+    encode_max_features,
+};
 
 const REGRESSOR_PAYLOAD_VERSION: u16 = 1;
 const CLASSIFIER_PAYLOAD_VERSION: u16 = 1;
@@ -51,9 +54,6 @@ const _: () = assert!(MAX_ARTIFACT_FEATURES < FEATURE_MASK as usize);
 /// on the stack at this width rather than allocating inside an `_into` method.
 const MAX_CLASSES: usize = 256;
 
-const MAX_FEATURES_ALL: u32 = 1;
-const MAX_FEATURES_SQRT: u32 = 2;
-const MAX_FEATURES_COUNT: u32 = 3;
 const N_JOBS_SERIAL: u32 = 1;
 const N_JOBS_ALL: u32 = 2;
 const N_JOBS_COUNT: u32 = 3;
@@ -1208,28 +1208,6 @@ fn decode_leaf_probabilities(
         return Err(ArtifactError::TrailingBytes);
     }
     Ok(probabilities)
-}
-
-fn encode_max_features(value: MaxFeatures) -> Result<(u32, u32), ArtifactError> {
-    Ok(match value {
-        MaxFeatures::All => (MAX_FEATURES_ALL, 0),
-        MaxFeatures::Sqrt => (MAX_FEATURES_SQRT, 0),
-        MaxFeatures::Count(count) => (
-            MAX_FEATURES_COUNT,
-            u32::try_from(count).map_err(|_| ArtifactError::InvalidPayload)?,
-        ),
-    })
-}
-
-fn decode_max_features(tag: u32, count: u32, n_features: usize) -> Option<MaxFeatures> {
-    match tag {
-        MAX_FEATURES_ALL if count == 0 => Some(MaxFeatures::All),
-        MAX_FEATURES_SQRT if count == 0 => Some(MaxFeatures::Sqrt),
-        MAX_FEATURES_COUNT if count != 0 && count as usize <= n_features => {
-            Some(MaxFeatures::Count(count as usize))
-        }
-        _ => None,
-    }
 }
 
 fn encode_n_jobs(value: NJobs) -> Result<(u32, u32), ArtifactError> {

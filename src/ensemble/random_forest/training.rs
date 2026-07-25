@@ -2,7 +2,10 @@ use super::parameters::{RandomForestClassifierParams, RandomForestRegressorParam
 use crate::api::ModelError;
 use crate::data::MatrixView;
 use crate::numeric::{OwnedRng, derive_tree_seed};
-use crate::tree::{ClassTree, GrowerConfig, Objective, PackedTree, grow_class_tree, grow_tree};
+use crate::tree::{
+    ClassTree, GrowerConfig, Objective, PackedTree, grow_class_tree, grow_tree,
+    unbootstrapped_sample,
+};
 use std::thread;
 
 /// What an ensemble adds around the shared grower.
@@ -117,14 +120,17 @@ fn tree_sample(
     sample_weights: Option<&[f32]>,
     rng: &mut OwnedRng,
 ) -> (Vec<f64>, Vec<usize>) {
+    if !bootstrap {
+        // Resampling is the only thing a forest adds here, so without it this
+        // is exactly the standalone tree's sample and is shared rather than
+        // restated: `1.0` per eligible row, scaled by that row's weight.
+        return unbootstrapped_sample(rows, sample_weights);
+    }
+
     let Some(sample_weights) = sample_weights else {
         let mut weights = vec![0.0_f64; rows];
-        if bootstrap {
-            for _ in 0..rows {
-                weights[rng.index(rows)] += 1.0;
-            }
-        } else {
-            weights.fill(1.0);
+        for _ in 0..rows {
+            weights[rng.index(rows)] += 1.0;
         }
         let retained = weights
             .iter()
@@ -136,14 +142,8 @@ fn tree_sample(
 
     let eligible: Vec<usize> = (0..rows).filter(|&row| sample_weights[row] > 0.0).collect();
     let mut weights = vec![0.0_f64; rows];
-    if bootstrap {
-        for _ in 0..eligible.len() {
-            weights[eligible[rng.index(eligible.len())]] += 1.0;
-        }
-    } else {
-        for &row in &eligible {
-            weights[row] = 1.0;
-        }
+    for _ in 0..eligible.len() {
+        weights[eligible[rng.index(eligible.len())]] += 1.0;
     }
     let mut retained = Vec::with_capacity(eligible.len());
     for &row in &eligible {

@@ -13,16 +13,26 @@
 //! (`PackedTree`, `ClassTree`, `BuildNode`) stay crate-private, so no caller
 //! can come to depend on a forest's — or a tree's — node layout.
 
+mod classifier;
 mod grower;
 mod packed;
 mod parameters;
+mod regressor;
+mod validation;
 
 pub(crate) use grower::{
     Classification, GrowerConfig, Objective, Regression, grow_class_tree, grow_tree,
+    unbootstrapped_sample,
 };
 pub(crate) use packed::{ClassTree, FEATURE_MASK, PackedTree};
 
 #[cfg(test)]
 pub(crate) use packed::{LEFT_IS_LEAF, PackedNode, RIGHT_IS_LEAF};
 
-pub use parameters::MaxFeatures;
+pub use classifier::DecisionTreeClassifier;
+pub use parameters::{DecisionTreeClassifierParams, DecisionTreeRegressorParams, MaxFeatures};
+pub(crate) use parameters::{decode_max_features, encode_max_features};
+pub use regressor::DecisionTreeRegressor;
+
+#[cfg(test)]
+mod tests;

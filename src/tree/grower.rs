@@ -73,6 +73,33 @@ impl Objective<f32> for Regression {
     }
 }
 
+/// The per-row training weights and retained rows of an unresampled fit.
+///
+/// A row of zero weight is not in the training sample at all, so it is left out
+/// of the row list entirely rather than carried as a zero — which is what keeps
+/// a node from ever dividing by a zero total weight.
+///
+/// This consumes no randomness. That is the property a one-tree, no-bootstrap
+/// forest member and a standalone tree at the same derived seed depend on: both
+/// enter the grower with the generator in the same state.
+pub(crate) fn unbootstrapped_sample(
+    rows: usize,
+    sample_weights: Option<&[f32]>,
+) -> (Vec<f64>, Vec<usize>) {
+    let Some(sample_weights) = sample_weights else {
+        return (vec![1.0_f64; rows], (0..rows).collect());
+    };
+    let mut weights = vec![0.0_f64; rows];
+    let mut retained = Vec::with_capacity(rows);
+    for row in 0..rows {
+        if sample_weights[row] > 0.0 {
+            weights[row] = f64::from(sample_weights[row]);
+            retained.push(row);
+        }
+    }
+    (weights, retained)
+}
+
 /// Grows one scalar-leaf tree over the rows the caller retained.
 ///
 /// `row_weights[row]` is that row's total training weight, and `rows` lists

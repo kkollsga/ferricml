@@ -19,4 +19,4 @@ mod optimize;
 pub mod pipeline;
 pub mod preprocessing;
 pub mod ranking;
-mod tree;
+pub mod tree;
