@@ -5,9 +5,9 @@ use crate::artifact::{ArtifactError, STANDARD_SCALER_ARTIFACT_KIND};
 use crate::data::{MatrixView, SampleWeights};
 
 use super::scaling::{
-    ScalerHeader, ScalerParameters, decode_flag, decode_scaler_artifact, encode_scaler_artifact,
-    inverse_transform_allocating, substituted_divisor, transform_preflighted,
-    validate_inverse_request, validate_transform_request,
+    BASE_PAYLOAD_VERSION, ScalerHeader, ScalerParameters, decode_flag, decode_scaler_artifact,
+    encode_scaler_artifact, inverse_transform_allocating, substituted_divisor,
+    transform_preflighted, validate_inverse_request, validate_transform_request,
 };
 
 /// Parameters for [`StandardScaler`].
@@ -243,6 +243,7 @@ impl StandardScaler {
             transformed_schema,
             self.n_features_in,
             ScalerParameters {
+                version: BASE_PAYLOAD_VERSION,
                 flags: &[
                     u32::from(self.params.with_mean),
                     u32::from(self.params.with_std),
@@ -274,6 +275,7 @@ impl StandardScaler {
             STANDARD_SCALER_ARTIFACT_KIND,
             input_schema,
             transformed_schema,
+            BASE_PAYLOAD_VERSION,
             2,
             0,
         )?;

@@ -78,6 +78,7 @@ pub ferricml::api::ModelError::InvalidBinaryTarget::value: u8
 pub ferricml::api::ModelError::InvalidBoostingIterationCount
 pub ferricml::api::ModelError::InvalidBoostingMaxDepth
 pub ferricml::api::ModelError::InvalidEstimatorCount
+pub ferricml::api::ModelError::InvalidFeatureRange
 pub ferricml::api::ModelError::InvalidIterationCount
 pub ferricml::api::ModelError::InvalidJobCount
 pub ferricml::api::ModelError::InvalidL1Ratio
@@ -1853,7 +1854,11 @@ pub fn ferricml::preprocessing::MinMaxScaler::to_stage_artifact(&self, [u8; 32],
 pub struct ferricml::preprocessing::MinMaxScalerParams
 impl ferricml::preprocessing::MinMaxScalerParams
 pub const fn ferricml::preprocessing::MinMaxScalerParams::clip_enabled(&self) -> bool
+pub const fn ferricml::preprocessing::MinMaxScalerParams::feature_range(&self) -> (f64, f64)
 pub const fn ferricml::preprocessing::MinMaxScalerParams::with_clip(self, bool) -> Self
+pub const fn ferricml::preprocessing::MinMaxScalerParams::with_feature_range(self, f64, f64) -> Self
+impl core::default::Default for ferricml::preprocessing::MinMaxScalerParams
+pub fn ferricml::preprocessing::MinMaxScalerParams::default() -> Self
 pub struct ferricml::preprocessing::Normalizer
 impl ferricml::preprocessing::Normalizer
 pub fn ferricml::preprocessing::Normalizer::fit(&ferricml::data::MatrixView<'_>, ferricml::preprocessing::NormalizerParams) -> core::result::Result<Self, ferricml::api::ModelError>

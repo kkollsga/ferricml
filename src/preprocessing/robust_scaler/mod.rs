@@ -6,9 +6,9 @@ use crate::data::MatrixView;
 use crate::numeric::{QuantileRule, quantile_sorted, sort_for_quantiles};
 
 use super::scaling::{
-    ScalerHeader, ScalerParameters, decode_flag, decode_scaler_artifact, encode_scaler_artifact,
-    inverse_transform_allocating, substituted_divisor, transform_preflighted,
-    validate_inverse_request, validate_transform_request,
+    BASE_PAYLOAD_VERSION, ScalerHeader, ScalerParameters, decode_flag, decode_scaler_artifact,
+    encode_scaler_artifact, inverse_transform_allocating, substituted_divisor,
+    transform_preflighted, validate_inverse_request, validate_transform_request,
 };
 
 /// The quantile definition every fitted [`RobustScaler`] statistic is taken
@@ -292,6 +292,7 @@ impl RobustScaler {
             transformed_schema,
             self.n_features_in,
             ScalerParameters {
+                version: BASE_PAYLOAD_VERSION,
                 flags: &[
                     u32::from(self.params.with_centering),
                     u32::from(self.params.with_scaling),
@@ -322,6 +323,7 @@ impl RobustScaler {
             ROBUST_SCALER_ARTIFACT_KIND,
             input_schema,
             transformed_schema,
+            BASE_PAYLOAD_VERSION,
             2,
             2,
         )?;

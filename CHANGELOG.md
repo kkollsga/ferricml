@@ -130,6 +130,22 @@ and releases use [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   `ModelError::NoInverseFunction` when no inverse was supplied, rather than
   silently applying the identity — which would look exactly like a successful
   recovery.
+- `MinMaxScalerParams::with_feature_range` and `feature_range`, choosing the
+  interval each column's fitted range is mapped onto. The default is unchanged
+  at `0.0..=1.0`, `clip` now clamps into the configured interval, and a
+  zero-range column lands on the interval's lower bound. An empty or inverted
+  range is `ModelError::InvalidFeatureRange`, raised before any allocation.
+
+  **Existing `MinMaxScaler` artifacts are byte-identical.** The output range is
+  written only when it is one an older reader could not have assumed, so a
+  default-configured scaler emits exactly the bytes it emitted before this
+  parameter existed and every previously frozen artifact is unmoved. Older
+  payloads are read, not rejected, and decode to an identical model. Each
+  fitted model still has exactly one valid encoding, because the payload
+  version is a function of the parameters rather than a choice — a default
+  range written at the newer version is refused.
+- `api::ModelError::InvalidFeatureRange`, raised when a min-max output range is
+  not a finite interval with its minimum strictly below its maximum.
 - `api::ModelError::NoInverseFunction`, raised when an inverse transformation is
   requested of a transformer that was not given one.
 - `api::ModelError::InvalidThreshold`, raised when a decision threshold is not

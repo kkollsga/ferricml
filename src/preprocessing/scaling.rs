@@ -18,7 +18,9 @@ const STACK_PREFLIGHT_FEATURES: usize = 256;
 
 /// Largest fitted width a scaler artifact accepts, encoding or decoding.
 const MAX_ARTIFACT_FEATURES: usize = 1_000_000;
-const PAYLOAD_VERSION: u16 = 1;
+/// The payload version every scaler wrote before any of them had real-valued
+/// parameters, and the version each still writes when it has none to store.
+pub(super) const BASE_PAYLOAD_VERSION: u16 = 1;
 const STATE_COMPONENT_KIND: u16 = 1;
 const STATE_COMPONENT_VERSION: u16 = 1;
 
@@ -167,7 +169,11 @@ pub(super) fn encode_scaler_artifact(
     fields_per_feature: usize,
     mut write_feature: impl FnMut(usize, &mut ArtifactPayloadWriter),
 ) -> Result<Vec<u8>, ArtifactError> {
-    let ScalerParameters { flags, reals } = parameters;
+    let ScalerParameters {
+        version,
+        flags,
+        reals,
+    } = parameters;
     if n_features_in > MAX_ARTIFACT_FEATURES {
         return Err(ArtifactError::InvalidPayload);
     }
@@ -192,7 +198,7 @@ pub(super) fn encode_scaler_artifact(
     )?;
     encode_v2_envelope(
         kind,
-        PAYLOAD_VERSION,
+        version,
         &[
             (SchemaRole::Input, input_schema),
             (SchemaRole::Transformed, transformed_schema),
@@ -208,6 +214,15 @@ pub(super) fn encode_scaler_artifact(
 /// pattern. A scaler with neither passes both empty and writes exactly the
 /// bytes it wrote before this block existed.
 pub(super) struct ScalerParameters<'a> {
+    /// Which payload layout these parameters describe.
+    ///
+    /// A scaler that can be configured in a way older versions could not
+    /// represent writes a higher version *only when it is so configured*, so a
+    /// default-configured model keeps writing the bytes it always wrote and no
+    /// already-frozen artifact moves. Each fitted model still has exactly one
+    /// valid encoding, because the version is a function of the parameters
+    /// rather than a choice.
+    pub version: u16,
     /// Boolean toggles, one `u32` each.
     pub flags: &'a [u32],
     /// Real-valued parameters, one `f64` each.
@@ -235,6 +250,7 @@ pub(super) fn decode_scaler_artifact<'a>(
     kind: u16,
     input_schema: [u8; 32],
     transformed_schema: [u8; 32],
+    payload_version: u16,
     flag_count: usize,
     parameter_count: usize,
 ) -> Result<ScalerHeader<'a>, ArtifactError> {
@@ -245,7 +261,7 @@ pub(super) fn decode_scaler_artifact<'a>(
     let mut envelope = decode_v2_envelope(
         bytes,
         kind,
-        PAYLOAD_VERSION,
+        payload_version,
         &[
             (SchemaRole::Input, input_schema),
             (SchemaRole::Transformed, transformed_schema),

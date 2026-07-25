@@ -1624,6 +1624,36 @@ fn corpus() -> Vec<Case> {
             bytes: stated(15, &SCALER_ROLES, &words(&[inflated, inflated])),
         },
         Case {
+            name: "min-max-scaler-default-range-at-the-newer-version",
+            provenance: "the default output range written at the version that exists to carry a non-default one",
+            decoder: "min-max-scaler",
+            expected: ArtifactError::InvalidPayload,
+            bytes: {
+                let mut state = words(&[1, 0]);
+                state.extend_from_slice(&0.0_f64.to_le_bits_vec());
+                state.extend_from_slice(&1.0_f64.to_le_bits_vec());
+                state.extend_from_slice(&words(&[1]));
+                state.extend_from_slice(&0.0_f64.to_le_bits_vec());
+                state.extend_from_slice(&1.0_f64.to_le_bits_vec());
+                envelope(14, 2, &SCALER_ROLES, &component(1, 1, &state))
+            },
+        },
+        Case {
+            name: "min-max-scaler-inverted-feature-range",
+            provenance: "an output range whose minimum is not below its maximum",
+            decoder: "min-max-scaler",
+            expected: ArtifactError::InvalidPayload,
+            bytes: {
+                let mut state = words(&[1, 0]);
+                state.extend_from_slice(&2.0_f64.to_le_bits_vec());
+                state.extend_from_slice(&(-1.0_f64).to_le_bits_vec());
+                state.extend_from_slice(&words(&[1]));
+                state.extend_from_slice(&0.0_f64.to_le_bits_vec());
+                state.extend_from_slice(&1.0_f64.to_le_bits_vec());
+                envelope(14, 2, &SCALER_ROLES, &component(1, 1, &state))
+            },
+        },
+        Case {
             name: "robust-scaler-inflated-width",
             provenance: "same shape against the scaler carrying a parameter block",
             decoder: "robust-scaler",
