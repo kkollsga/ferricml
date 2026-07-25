@@ -319,6 +319,85 @@ fn an_inadmissible_random_draw_is_discarded_rather_than_redrawn() {
     );
 }
 
+/// A drawn column that is constant inside the node **consumes** the quota.
+///
+/// This is a recorded divergence, and it is asserted here rather than left to
+/// the contract table because it is invisible in the parameter region the
+/// existing fixtures use: at `MaxFeatures::All` every column is drawn anyway,
+/// so the quota question never arises and a change to this rule would move
+/// nothing that is currently checked.
+///
+/// The reference skips a constant column and keeps drawing, so with one
+/// informative column beside nineteen constant ones at a quota of one it splits
+/// on the informative column every time. FerricML draws one column and stops,
+/// so it splits only when the informative column is the one drawn — about one
+/// seed in twenty. A test asserting the reference's behaviour would fail, and
+/// correctly.
+#[test]
+fn a_constant_column_consumes_the_feature_quota_unlike_the_reference() {
+    let rows = 24_usize;
+    let columns = 20_usize;
+    let mut values = vec![0.5_f32; rows * columns];
+    for row in 0..rows {
+        values[row * columns] = row as f32;
+    }
+    let data = DenseMatrix::new(values, rows, columns).unwrap();
+    let view = data.as_view();
+    let targets =
+        RegressionTargets::new((0..rows).map(|row| f32::from(row >= 12)).collect()).unwrap();
+
+    let seeds = 400_u64;
+    let mut split = 0;
+    for seed in 0..seeds {
+        let model = DecisionTreeRegressor::fit(
+            &view,
+            &targets,
+            DecisionTreeRegressorParams::default()
+                .with_max_features(MaxFeatures::Count(1))
+                .with_max_depth(Some(1))
+                .with_random_state(seed),
+        )
+        .unwrap();
+        let predictions = model.predict(&view).unwrap();
+        if predictions.iter().any(|&value| value != predictions[0]) {
+            split += 1;
+        }
+    }
+    // The reference's rule would give `seeds`; ours gives roughly `seeds / 20`.
+    assert!(
+        split > 0 && split < seeds / 4,
+        "{split} of {seeds} seeds split; the reference's skip-and-redraw rule          would give {seeds}"
+    );
+}
+
+/// Two values are distinct by **exact** comparison.
+///
+/// The other recorded divergence the existing fixtures cannot show, for the
+/// same reason: near-duplicate values never appear in them. The reference
+/// treats two values as the same unless they are separated by roughly `1e-7`
+/// absolute, so at magnitude 1.0 a column whose classes are separated by one
+/// `f32` ulp yields a depth-0 leaf there. FerricML splits it.
+#[test]
+fn adjacent_float_values_are_distinct_unlike_the_reference() {
+    let low = 1.0_f32;
+    let high = f32::from_bits(low.to_bits() + 1);
+    assert!(
+        high - low < 2.0e-7,
+        "the gap must be inside the reference's rule"
+    );
+    let data = matrix(&[&[low], &[low], &[high], &[high]]);
+    let view = data.as_view();
+    let model = DecisionTreeRegressor::fit(
+        &view,
+        &RegressionTargets::new(vec![0.0, 0.0, 1.0, 1.0]).unwrap(),
+        regressor_params(),
+    )
+    .unwrap();
+    // A depth-0 leaf would predict the mean everywhere; a genuine split
+    // reproduces the step. The reference produces the former.
+    assert_eq!(model.predict(&view).unwrap(), vec![0.0, 0.0, 1.0, 1.0]);
+}
+
 #[test]
 fn artifacts_round_trip_through_every_fitted_shape() {
     let (x, y, labels) = separable();
