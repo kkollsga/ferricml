@@ -16,17 +16,16 @@ mod support;
 use ferricml::api::{
     Capabilities, Classifier, Estimator, HasCapabilities, ModelError, Regressor, Transformer,
 };
-use ferricml::data::{
-    BinaryTargets, ClassTargets, DenseMatrix, MatrixView, RegressionTargets, SampleWeights,
-};
+use ferricml::data::{DenseMatrix, MatrixView};
 use std::cell::Cell;
 use std::collections::BTreeSet;
 
 use support::conformance::{
-    CLASSIFIER_OBLIGATIONS, ClassifierCase, REGRESSOR_OBLIGATIONS, RegressorCase, Report,
-    RoundTrip, SCALAR_CLASSIFIER_OBLIGATIONS, SCALAR_REGRESSOR_OBLIGATIONS, ScalarClassifierCase,
-    ScalarRegressorCase, TRANSFORMER_OBLIGATIONS, TransformerCase, batch_classifier_report,
-    classifier_report, regressor_report, transformer_report,
+    CLASSIFIER_OBLIGATIONS, ClassifierCase, OptionalFit, REGRESSOR_OBLIGATIONS, RegressorCase,
+    Report, RoundTrip, SCALAR_CLASSIFIER_OBLIGATIONS, SCALAR_REGRESSOR_OBLIGATIONS, Sample,
+    ScalarClassifierCase, ScalarRegressorCase, TRANSFORMER_OBLIGATIONS, TransformerCase,
+    WORKSPACE_OBLIGATIONS, WorkspaceRegressorCase, batch_classifier_report, classifier_report,
+    regressor_report, transformer_report, workspace_regressor_report,
 };
 
 // Faults, one per obligation the battery declares. `HONEST` must produce a
@@ -54,6 +53,12 @@ const SHAPE_IS_WRONG: u8 = 18;
 const MULTICLASS_DECLARED_WITHOUT_HOOK: u8 = 19;
 const MULTICLASS_HOOK_WITHOUT_DECLARATION: u8 = 20;
 const MULTICLASS_COLLAPSES_CLASSES: u8 = 21;
+const FIT_FAILS: u8 = 22;
+
+// Faults of the workspace probe, which is a different family: only a model
+// predicted through caller-owned scratch storage can have them.
+const WORKSPACE_LENGTH_UNCHECKED: u8 = 23;
+const WORKSPACE_LEAKS: u8 = 24;
 
 const BASE_THRESHOLD: f32 = 3.5;
 const BASE_OFFSET: f32 = 0.0;
@@ -123,6 +128,11 @@ fn sorted(report: &Report) -> Vec<&'static str> {
         .collect::<BTreeSet<_>>()
         .into_iter()
         .collect()
+}
+
+/// The error a `FIT_FAILS` probe refuses the fixture with.
+fn refusal() -> ModelError {
+    ModelError::EmptyData
 }
 
 // ---------------------------------------------------------------- classifier
@@ -292,44 +302,46 @@ impl<const FAULT: u8> ClassifierCase for ClassifierProbeCase<FAULT> {
     type Model = ClassifierProbe<FAULT>;
     const NAME: &'static str = "classifier probe";
 
-    fn fit(data: &MatrixView<'_>, _labels: &BinaryTargets) -> Self::Model {
+    fn fit(train: &Sample, _holdout: &Sample) -> Result<Self::Model, ModelError> {
+        if FAULT == FIT_FAILS {
+            return Err(refusal());
+        }
         let drift = if FAULT == NONDETERMINISTIC_FIT {
             next_drift()
         } else {
             FIRST_DRIFT
         };
-        ClassifierProbe::with_threshold(data, BASE_THRESHOLD + drift)
+        Ok(ClassifierProbe::with_threshold(
+            &train.view(),
+            BASE_THRESHOLD + drift,
+        ))
     }
 
-    fn fit_weighted(
-        data: &MatrixView<'_>,
-        _labels: &BinaryTargets,
-        _weights: &SampleWeights,
-    ) -> Option<Self::Model> {
+    fn fit_weighted(train: &Sample, _holdout: &Sample) -> OptionalFit<Self::Model> {
         match FAULT {
             WEIGHTS_DECLARED_WITHOUT_HOOK => None,
-            WEIGHTED_FIT_DIFFERS => Some(ClassifierProbe::with_threshold(data, 0.0)),
-            _ => Some(ClassifierProbe::with_threshold(
-                data,
+            WEIGHTED_FIT_DIFFERS => Some(Ok(ClassifierProbe::with_threshold(&train.view(), 0.0))),
+            _ => Some(Ok(ClassifierProbe::with_threshold(
+                &train.view(),
                 BASE_THRESHOLD + FIRST_DRIFT,
-            )),
+            ))),
         }
     }
 
-    fn fit_multiclass(data: &MatrixView<'_>, labels: &ClassTargets) -> Option<Self::Model> {
+    fn fit_multiclass(train: &Sample, _holdout: &Sample) -> OptionalFit<Self::Model> {
         match FAULT {
             MULTICLASS_DECLARED_WITHOUT_HOOK => None,
             // A hook that quietly returns a two-class model: the shape checks
             // all pass, and only the class set gives it away.
-            MULTICLASS_COLLAPSES_CLASSES => Some(ClassifierProbe::with_threshold(
-                data,
+            MULTICLASS_COLLAPSES_CLASSES => Some(Ok(ClassifierProbe::with_threshold(
+                &train.view(),
                 BASE_THRESHOLD + FIRST_DRIFT,
-            )),
-            MULTICLASS_HOOK_WITHOUT_DECLARATION => Some(ClassifierProbe::with_classes(
-                data,
+            ))),
+            MULTICLASS_HOOK_WITHOUT_DECLARATION => Some(Ok(ClassifierProbe::with_classes(
+                &train.view(),
                 BASE_THRESHOLD + FIRST_DRIFT,
-                labels.classes().to_vec(),
-            )),
+                train.class_labels.classes().to_vec(),
+            ))),
             _ => None,
         }
     }
@@ -450,24 +462,29 @@ impl<const FAULT: u8> RegressorCase for RegressorProbeCase<FAULT> {
     type Model = RegressorProbe<FAULT>;
     const NAME: &'static str = "regressor probe";
 
-    fn fit(data: &MatrixView<'_>, _values: &RegressionTargets) -> Self::Model {
+    fn fit(train: &Sample, _holdout: &Sample) -> Result<Self::Model, ModelError> {
+        if FAULT == FIT_FAILS {
+            return Err(refusal());
+        }
         let drift = if FAULT == NONDETERMINISTIC_FIT {
             next_drift()
         } else {
             FIRST_DRIFT
         };
-        RegressorProbe::with_offset(data, BASE_OFFSET + drift)
+        Ok(RegressorProbe::with_offset(
+            &train.view(),
+            BASE_OFFSET + drift,
+        ))
     }
 
-    fn fit_weighted(
-        data: &MatrixView<'_>,
-        _values: &RegressionTargets,
-        _weights: &SampleWeights,
-    ) -> Option<Self::Model> {
+    fn fit_weighted(train: &Sample, _holdout: &Sample) -> OptionalFit<Self::Model> {
         match FAULT {
             WEIGHTS_DECLARED_WITHOUT_HOOK => None,
-            WEIGHTED_FIT_DIFFERS => Some(RegressorProbe::with_offset(data, 1.0)),
-            _ => Some(RegressorProbe::with_offset(data, BASE_OFFSET + FIRST_DRIFT)),
+            WEIGHTED_FIT_DIFFERS => Some(Ok(RegressorProbe::with_offset(&train.view(), 1.0))),
+            _ => Some(Ok(RegressorProbe::with_offset(
+                &train.view(),
+                BASE_OFFSET + FIRST_DRIFT,
+            ))),
         }
     }
 
@@ -610,20 +627,29 @@ impl<const FAULT: u8> TransformerCase for TransformerProbeCase<FAULT> {
     type Model = TransformerProbe<FAULT>;
     const NAME: &'static str = "transformer probe";
 
-    fn fit(data: &MatrixView<'_>) -> Self::Model {
+    fn fit(train: &Sample, _holdout: &Sample) -> Result<Self::Model, ModelError> {
+        if FAULT == FIT_FAILS {
+            return Err(refusal());
+        }
         let drift = if FAULT == NONDETERMINISTIC_FIT {
             next_drift()
         } else {
             FIRST_DRIFT
         };
-        TransformerProbe::with_scale(data, BASE_SCALE + drift)
+        Ok(TransformerProbe::with_scale(
+            &train.view(),
+            BASE_SCALE + drift,
+        ))
     }
 
-    fn fit_weighted(data: &MatrixView<'_>, _weights: &SampleWeights) -> Option<Self::Model> {
+    fn fit_weighted(train: &Sample, _holdout: &Sample) -> OptionalFit<Self::Model> {
         match FAULT {
             WEIGHTS_DECLARED_WITHOUT_HOOK => None,
-            WEIGHTED_FIT_DIFFERS => Some(TransformerProbe::with_scale(data, 3.0)),
-            _ => Some(TransformerProbe::with_scale(data, BASE_SCALE + FIRST_DRIFT)),
+            WEIGHTED_FIT_DIFFERS => Some(Ok(TransformerProbe::with_scale(&train.view(), 3.0))),
+            _ => Some(Ok(TransformerProbe::with_scale(
+                &train.view(),
+                BASE_SCALE + FIRST_DRIFT,
+            ))),
         }
     }
 
@@ -642,7 +668,117 @@ impl<const FAULT: u8> TransformerCase for TransformerProbeCase<FAULT> {
     }
 }
 
-// ------------------------------------------------------------------- proofs
+// ----------------------------------------------------------------- workspace
+
+/// A model that predicts through caller-owned scratch storage.
+///
+/// Deliberately shaped like the compositions this exists for: it stages the
+/// batch into the workspace and predicts from the staged copy, so a workspace
+/// that is the wrong length or that still holds the previous batch changes the
+/// answer. It declares nothing, so its weighted and artifact obligations pass
+/// without a hook.
+#[derive(Clone, Debug, PartialEq)]
+struct WorkspaceProbe<const FAULT: u8> {
+    features: usize,
+    offset: f32,
+}
+
+impl<const FAULT: u8> WorkspaceProbe<FAULT> {
+    fn staged_len(&self, rows: usize) -> usize {
+        rows * self.features
+    }
+
+    fn predict_into(
+        &self,
+        data: &MatrixView<'_>,
+        workspace: &mut [f32],
+        output: &mut [f32],
+    ) -> Result<(), ModelError> {
+        if data.columns() != self.features {
+            return Err(ModelError::FeatureDimension {
+                expected: self.features,
+                actual: data.columns(),
+            });
+        }
+        let expected = self.staged_len(data.rows());
+        if FAULT != WORKSPACE_LENGTH_UNCHECKED && workspace.len() != expected {
+            return Err(ModelError::OutputLength {
+                expected,
+                actual: workspace.len(),
+            });
+        }
+        if output.len() != data.rows() {
+            return Err(ModelError::OutputLength {
+                expected: data.rows(),
+                actual: output.len(),
+            });
+        }
+        // Staging. A leaking probe treats an already-written slot as state and
+        // declines to restage it, which is exactly what mistaking scratch for
+        // state looks like: correct on a fresh buffer, stale on a reused one.
+        // The fault is deliberately confined to *reuse* — restaging the same
+        // batch is idempotent — so the probe violates one obligation, not two.
+        for (slot, &value) in workspace.iter_mut().zip(data.as_slice()) {
+            if FAULT == WORKSPACE_LEAKS && *slot != 0.0 {
+                continue;
+            }
+            *slot = value;
+        }
+        for (index, slot) in output.iter_mut().enumerate() {
+            *slot = workspace[index * self.features] + self.offset;
+        }
+        Ok(())
+    }
+}
+
+impl<const FAULT: u8> Estimator for WorkspaceProbe<FAULT> {
+    fn n_features_in(&self) -> usize {
+        self.features
+    }
+}
+
+impl<const FAULT: u8> HasCapabilities for WorkspaceProbe<FAULT> {
+    const CAPABILITIES: Capabilities = Capabilities::NONE;
+}
+
+struct WorkspaceProbeCase<const FAULT: u8>;
+
+impl<const FAULT: u8> WorkspaceRegressorCase for WorkspaceProbeCase<FAULT> {
+    type Model = WorkspaceProbe<FAULT>;
+    const NAME: &'static str = "workspace probe";
+
+    fn fit(train: &Sample, _holdout: &Sample) -> Result<Self::Model, ModelError> {
+        Ok(WorkspaceProbe {
+            features: train.columns(),
+            offset: BASE_OFFSET,
+        })
+    }
+
+    fn workspace_len(model: &Self::Model, rows: usize) -> Result<usize, ModelError> {
+        Ok(model.staged_len(rows))
+    }
+
+    fn predict(
+        model: &Self::Model,
+        data: &MatrixView<'_>,
+        workspace: &mut [f32],
+    ) -> Result<Vec<f32>, ModelError> {
+        let mut output = vec![0.0; data.rows()];
+        model.predict_into(data, workspace, &mut output)?;
+        Ok(output)
+    }
+
+    fn predict_into(
+        model: &Self::Model,
+        data: &MatrixView<'_>,
+        workspace: &mut [f32],
+        output: &mut [f32],
+    ) -> Result<(), ModelError> {
+        model.predict_into(data, workspace, output)
+    }
+}
+
+// -------------------------------------------------------------------- proofs
 
 #[test]
 fn an_honest_estimator_violates_nothing() {
@@ -662,6 +798,10 @@ fn an_honest_estimator_violates_nothing() {
         sorted(&batch_classifier_report::<ClassifierProbeCase<HONEST>>()),
         Vec::<&str>::new()
     );
+    assert_eq!(
+        sorted(&workspace_regressor_report::<WorkspaceProbeCase<HONEST>>()),
+        Vec::<&str>::new()
+    );
 }
 
 macro_rules! violates {
@@ -673,6 +813,11 @@ macro_rules! violates {
     };
 }
 
+violates!(
+    classifier_fit_failure,
+    classifier_report::<ClassifierProbeCase<FIT_FAILS>>(),
+    ["fits_the_fixture"]
+);
 violates!(
     classifier_predict_failure,
     classifier_report::<ClassifierProbeCase<PREDICT_FAILS>>(),
@@ -775,6 +920,11 @@ violates!(
 );
 
 violates!(
+    regressor_fit_failure,
+    regressor_report::<RegressorProbeCase<FIT_FAILS>>(),
+    ["fits_the_fixture"]
+);
+violates!(
     regressor_predict_failure,
     regressor_report::<RegressorProbeCase<PREDICT_FAILS>>(),
     ["predicts_the_fixture"]
@@ -826,6 +976,11 @@ violates!(
 );
 
 violates!(
+    transformer_fit_failure,
+    transformer_report::<TransformerProbeCase<FIT_FAILS>>(),
+    ["fits_the_fixture"]
+);
+violates!(
     transformer_transform_failure,
     transformer_report::<TransformerProbeCase<PREDICT_FAILS>>(),
     ["transforms_the_fixture"]
@@ -871,6 +1026,17 @@ violates!(
     ["artifact_declaration_matches_behavior"]
 );
 
+violates!(
+    workspace_length_unchecked,
+    workspace_regressor_report::<WorkspaceProbeCase<WORKSPACE_LENGTH_UNCHECKED>>(),
+    ["workspace_length_validated_before_write"]
+);
+violates!(
+    workspace_leaks_between_batches,
+    workspace_regressor_report::<WorkspaceProbeCase<WORKSPACE_LEAKS>>(),
+    ["workspace_reuse_is_independent"]
+);
+
 /// A nondeterministic probe must report the same violation every time.
 ///
 /// Regression test for a real defect in this file: the manufactured drift was
@@ -909,6 +1075,12 @@ fn a_nondeterministic_probe_reports_the_same_violations_on_every_invocation() {
 /// This is the check that makes the battery honest as it grows: adding an
 /// obligation without a probe fails here, exactly as adding a source-layout
 /// rule without a synthetic violation fails that checker's self-test.
+///
+/// The workspace obligations are checked as their own set. Both the classifier
+/// and the regressor battery reach one shared implementation of them, so a
+/// probe tripping them on the regressor side proves the code path for both —
+/// the same reasoning that lets one `check_output_length` serve three
+/// categories.
 #[test]
 fn every_declared_obligation_has_a_probe_that_trips_it() {
     let classifier: BTreeSet<&str> = CLASSIFIER_OBLIGATIONS
@@ -922,9 +1094,15 @@ fn every_declared_obligation_has_a_probe_that_trips_it() {
         .copied()
         .collect();
     let transformer: BTreeSet<&str> = TRANSFORMER_OBLIGATIONS.iter().copied().collect();
+    // A workspace-shaped case owes the regressor obligations *and* the two
+    // that only caller-owned scratch storage can violate, so its probes are
+    // allowed to report from either list.
+    let workspace: BTreeSet<&str> = WORKSPACE_OBLIGATIONS.iter().copied().collect();
+    let workspace_reportable: BTreeSet<&str> = workspace.union(&regressor).copied().collect();
 
     let mut tripped_classifier = BTreeSet::new();
     for names in [
+        sorted(&classifier_report::<ClassifierProbeCase<FIT_FAILS>>()),
         sorted(&classifier_report::<ClassifierProbeCase<PREDICT_FAILS>>()),
         sorted(&classifier_report::<ClassifierProbeCase<WRONG_METADATA>>()),
         sorted(&classifier_report::<ClassifierProbeCase<INTO_DISAGREES>>()),
@@ -959,6 +1137,7 @@ fn every_declared_obligation_has_a_probe_that_trips_it() {
 
     let mut tripped_regressor = BTreeSet::new();
     for names in [
+        sorted(&regressor_report::<RegressorProbeCase<FIT_FAILS>>()),
         sorted(&regressor_report::<RegressorProbeCase<PREDICT_FAILS>>()),
         sorted(&regressor_report::<RegressorProbeCase<WRONG_METADATA>>()),
         sorted(&regressor_report::<RegressorProbeCase<INTO_DISAGREES>>()),
@@ -981,6 +1160,7 @@ fn every_declared_obligation_has_a_probe_that_trips_it() {
 
     let mut tripped_transformer = BTreeSet::new();
     for names in [
+        sorted(&transformer_report::<TransformerProbeCase<FIT_FAILS>>()),
         sorted(&transformer_report::<TransformerProbeCase<PREDICT_FAILS>>()),
         sorted(&transformer_report::<TransformerProbeCase<WRONG_METADATA>>()),
         sorted(&transformer_report::<TransformerProbeCase<INTO_DISAGREES>>()),
@@ -998,6 +1178,18 @@ fn every_declared_obligation_has_a_probe_that_trips_it() {
         >()),
     ] {
         tripped_transformer.extend(names);
+    }
+
+    let mut tripped_workspace = BTreeSet::new();
+    for names in [
+        sorted(&workspace_regressor_report::<
+            WorkspaceProbeCase<WORKSPACE_LENGTH_UNCHECKED>,
+        >()),
+        sorted(&workspace_regressor_report::<
+            WorkspaceProbeCase<WORKSPACE_LEAKS>,
+        >()),
+    ] {
+        tripped_workspace.extend(names);
     }
 
     assert_eq!(
@@ -1020,6 +1212,11 @@ fn every_declared_obligation_has_a_probe_that_trips_it() {
         "transformer obligations with no probe that trips them"
     );
     assert_eq!(
+        workspace.difference(&tripped_workspace).collect::<Vec<_>>(),
+        Vec::<&&str>::new(),
+        "workspace obligations with no probe that trips them"
+    );
+    assert_eq!(
         tripped_classifier
             .difference(&classifier)
             .collect::<Vec<_>>(),
@@ -1034,6 +1231,13 @@ fn every_declared_obligation_has_a_probe_that_trips_it() {
     assert_eq!(
         tripped_transformer
             .difference(&transformer)
+            .collect::<Vec<_>>(),
+        Vec::<&&str>::new(),
+        "the battery reported obligations it never declared"
+    );
+    assert_eq!(
+        tripped_workspace
+            .difference(&workspace_reportable)
             .collect::<Vec<_>>(),
         Vec::<&&str>::new(),
         "the battery reported obligations it never declared"

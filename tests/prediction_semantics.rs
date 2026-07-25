@@ -22,9 +22,7 @@ use ferricml::artifact::ArtifactError;
 use ferricml::calibration::{
     CalibratedClassifier, IsotonicRegression, PlattCalibrator, PlattParams,
 };
-use ferricml::data::{
-    BinaryTargets, ClassTargets, DenseMatrix, MatrixView, RegressionTargets, SampleWeights,
-};
+use ferricml::data::{BinaryTargets, DenseMatrix, RegressionTargets};
 use ferricml::dummy::{
     DummyClassifier, DummyClassifierParams, DummyRegressor, DummyRegressorParams,
 };
@@ -48,9 +46,9 @@ use ferricml::ranking::{
 };
 
 use support::conformance::{
-    ClassifierCase, RegressorCase, RoundTrip, SCHEMA, ScalarClassifierCase, ScalarRegressorCase,
-    TransformerCase, check_batch_only_classifier, check_batch_only_regressor, check_classifier,
-    check_regressor, check_transformer,
+    ClassifierCase, OptionalFit, RegressorCase, RoundTrip, SCHEMA, Sample, ScalarClassifierCase,
+    ScalarRegressorCase, TransformerCase, check_batch_only_classifier, check_batch_only_regressor,
+    check_classifier, check_regressor, check_transformer,
 };
 
 /// Second schema identity, for artifacts that bind an input and an output
@@ -106,26 +104,25 @@ impl ClassifierCase for RandomForestClassifierCase {
     type Model = RandomForestClassifier;
     const NAME: &'static str = "RandomForestClassifier";
 
-    fn fit(data: &MatrixView<'_>, labels: &BinaryTargets) -> Self::Model {
-        RandomForestClassifier::fit(data, labels, forest_classifier_params()).expect("fit")
+    fn fit(train: &Sample, _holdout: &Sample) -> Result<Self::Model, ModelError> {
+        RandomForestClassifier::fit(&train.view(), &train.labels, forest_classifier_params())
     }
 
-    fn fit_multiclass(data: &MatrixView<'_>, labels: &ClassTargets) -> Option<Self::Model> {
-        Some(
-            RandomForestClassifier::fit_multiclass(data, labels, forest_classifier_params())
-                .expect("multiclass fit"),
-        )
+    fn fit_multiclass(train: &Sample, _holdout: &Sample) -> OptionalFit<Self::Model> {
+        Some(RandomForestClassifier::fit_multiclass(
+            &train.view(),
+            &train.class_labels,
+            forest_classifier_params(),
+        ))
     }
 
-    fn fit_weighted(
-        data: &MatrixView<'_>,
-        labels: &BinaryTargets,
-        weights: &SampleWeights,
-    ) -> Option<Self::Model> {
-        Some(
-            RandomForestClassifier::fit_weighted(data, labels, weights, forest_classifier_params())
-                .expect("weighted fit"),
-        )
+    fn fit_weighted(train: &Sample, _holdout: &Sample) -> OptionalFit<Self::Model> {
+        Some(RandomForestClassifier::fit_weighted(
+            &train.view(),
+            &train.labels,
+            &train.unit_weights(),
+            forest_classifier_params(),
+        ))
     }
 
     fn round_trip(model: &Self::Model) -> RoundTrip<Self::Model> {
@@ -148,31 +145,29 @@ impl ClassifierCase for LogisticRegressionCase {
     type Model = LogisticRegression;
     const NAME: &'static str = "LogisticRegression";
 
-    fn fit(data: &MatrixView<'_>, labels: &BinaryTargets) -> Self::Model {
-        LogisticRegression::fit(data, labels, LogisticRegressionParams::default()).expect("fit")
-    }
-
-    fn fit_multiclass(data: &MatrixView<'_>, labels: &ClassTargets) -> Option<Self::Model> {
-        Some(
-            LogisticRegression::fit_multiclass(data, labels, LogisticRegressionParams::default())
-                .expect("multiclass fit"),
+    fn fit(train: &Sample, _holdout: &Sample) -> Result<Self::Model, ModelError> {
+        LogisticRegression::fit(
+            &train.view(),
+            &train.labels,
+            LogisticRegressionParams::default(),
         )
     }
 
-    fn fit_weighted(
-        data: &MatrixView<'_>,
-        labels: &BinaryTargets,
-        weights: &SampleWeights,
-    ) -> Option<Self::Model> {
-        Some(
-            LogisticRegression::fit_weighted(
-                data,
-                labels,
-                weights,
-                LogisticRegressionParams::default(),
-            )
-            .expect("weighted fit"),
-        )
+    fn fit_multiclass(train: &Sample, _holdout: &Sample) -> OptionalFit<Self::Model> {
+        Some(LogisticRegression::fit_multiclass(
+            &train.view(),
+            &train.class_labels,
+            LogisticRegressionParams::default(),
+        ))
+    }
+
+    fn fit_weighted(train: &Sample, _holdout: &Sample) -> OptionalFit<Self::Model> {
+        Some(LogisticRegression::fit_weighted(
+            &train.view(),
+            &train.labels,
+            &train.unit_weights(),
+            LogisticRegressionParams::default(),
+        ))
     }
 
     fn round_trip(model: &Self::Model) -> RoundTrip<Self::Model> {
@@ -189,59 +184,43 @@ impl ScalarClassifierCase for LogisticRegressionCase {
     }
 }
 
-struct AnyForestClassifierCase;
+macro_rules! any_classifier_case {
+    ($case:ident, $inner:ty, $name:literal) => {
+        struct $case;
 
-impl ClassifierCase for AnyForestClassifierCase {
-    type Model = AnyClassifier;
-    const NAME: &'static str = "AnyClassifier::RandomForest";
+        impl ClassifierCase for $case {
+            type Model = AnyClassifier;
+            const NAME: &'static str = $name;
 
-    fn fit(data: &MatrixView<'_>, labels: &BinaryTargets) -> Self::Model {
-        RandomForestClassifierCase::fit(data, labels).into()
-    }
+            fn fit(train: &Sample, holdout: &Sample) -> Result<Self::Model, ModelError> {
+                <$inner as ClassifierCase>::fit(train, holdout).map(Into::into)
+            }
 
-    fn round_trip(model: &Self::Model) -> RoundTrip<Self::Model> {
-        round_trip(
-            || model.to_artifact(SCHEMA),
-            |bytes| AnyClassifier::from_artifact(bytes, SCHEMA),
-        )
-    }
+            fn round_trip(model: &Self::Model) -> RoundTrip<Self::Model> {
+                round_trip(
+                    || model.to_artifact(SCHEMA),
+                    |bytes| AnyClassifier::from_artifact(bytes, SCHEMA),
+                )
+            }
+        }
+    };
 }
 
-struct AnyBoostedClassifierCase;
-
-impl ClassifierCase for AnyBoostedClassifierCase {
-    type Model = AnyClassifier;
-    const NAME: &'static str = "AnyClassifier::HistGradientBoosting";
-
-    fn fit(data: &MatrixView<'_>, labels: &BinaryTargets) -> Self::Model {
-        HistGradientBoostingClassifierCase::fit(data, labels).into()
-    }
-
-    fn round_trip(model: &Self::Model) -> RoundTrip<Self::Model> {
-        round_trip(
-            || model.to_artifact(SCHEMA),
-            |bytes| AnyClassifier::from_artifact(bytes, SCHEMA),
-        )
-    }
-}
-
-struct AnyLogisticClassifierCase;
-
-impl ClassifierCase for AnyLogisticClassifierCase {
-    type Model = AnyClassifier;
-    const NAME: &'static str = "AnyClassifier::LogisticRegression";
-
-    fn fit(data: &MatrixView<'_>, labels: &BinaryTargets) -> Self::Model {
-        LogisticRegressionCase::fit(data, labels).into()
-    }
-
-    fn round_trip(model: &Self::Model) -> RoundTrip<Self::Model> {
-        round_trip(
-            || model.to_artifact(SCHEMA),
-            |bytes| AnyClassifier::from_artifact(bytes, SCHEMA),
-        )
-    }
-}
+any_classifier_case!(
+    AnyForestClassifierCase,
+    RandomForestClassifierCase,
+    "AnyClassifier::RandomForest"
+);
+any_classifier_case!(
+    AnyLogisticClassifierCase,
+    LogisticRegressionCase,
+    "AnyClassifier::LogisticRegression"
+);
+any_classifier_case!(
+    AnyBoostedClassifierCase,
+    HistGradientBoostingClassifierCase,
+    "AnyClassifier::HistGradientBoosting"
+);
 
 /// The two calibrated compositions, registered like any other classifier.
 ///
@@ -256,13 +235,12 @@ impl ClassifierCase for IsotonicCalibratedForestCase {
     type Model = CalibratedClassifier<RandomForestClassifier, IsotonicRegression>;
     const NAME: &'static str = "CalibratedClassifier<RandomForestClassifier, IsotonicRegression>";
 
-    fn fit(data: &MatrixView<'_>, labels: &BinaryTargets) -> Self::Model {
+    fn fit(train: &Sample, holdout: &Sample) -> Result<Self::Model, ModelError> {
         CalibratedClassifier::fit_isotonic(
-            RandomForestClassifierCase::fit(data, labels),
-            data,
-            labels,
+            RandomForestClassifierCase::fit(train, holdout)?,
+            &train.view(),
+            &train.labels,
         )
-        .expect("isotonic calibration of the fixture forest")
     }
 }
 
@@ -272,14 +250,13 @@ impl ClassifierCase for PlattCalibratedForestCase {
     type Model = CalibratedClassifier<RandomForestClassifier, PlattCalibrator>;
     const NAME: &'static str = "CalibratedClassifier<RandomForestClassifier, PlattCalibrator>";
 
-    fn fit(data: &MatrixView<'_>, labels: &BinaryTargets) -> Self::Model {
+    fn fit(train: &Sample, holdout: &Sample) -> Result<Self::Model, ModelError> {
         CalibratedClassifier::fit_platt(
-            RandomForestClassifierCase::fit(data, labels),
-            data,
-            labels,
+            RandomForestClassifierCase::fit(train, holdout)?,
+            &train.view(),
+            &train.labels,
             PlattParams::default(),
         )
-        .expect("Platt calibration of the fixture forest")
     }
 }
 
@@ -289,19 +266,17 @@ impl RegressorCase for RandomForestRegressorCase {
     type Model = RandomForestRegressor;
     const NAME: &'static str = "RandomForestRegressor";
 
-    fn fit(data: &MatrixView<'_>, values: &RegressionTargets) -> Self::Model {
-        RandomForestRegressor::fit(data, values, forest_regressor_params()).expect("fit")
+    fn fit(train: &Sample, _holdout: &Sample) -> Result<Self::Model, ModelError> {
+        RandomForestRegressor::fit(&train.view(), &train.values, forest_regressor_params())
     }
 
-    fn fit_weighted(
-        data: &MatrixView<'_>,
-        values: &RegressionTargets,
-        weights: &SampleWeights,
-    ) -> Option<Self::Model> {
-        Some(
-            RandomForestRegressor::fit_weighted(data, values, weights, forest_regressor_params())
-                .expect("weighted fit"),
-        )
+    fn fit_weighted(train: &Sample, _holdout: &Sample) -> OptionalFit<Self::Model> {
+        Some(RandomForestRegressor::fit_weighted(
+            &train.view(),
+            &train.values,
+            &train.unit_weights(),
+            forest_regressor_params(),
+        ))
     }
 
     fn round_trip(model: &Self::Model) -> RoundTrip<Self::Model> {
@@ -324,24 +299,21 @@ impl RegressorCase for LinearRegressionCase {
     type Model = LinearRegression;
     const NAME: &'static str = "LinearRegression";
 
-    fn fit(data: &MatrixView<'_>, values: &RegressionTargets) -> Self::Model {
-        LinearRegression::fit(data, values, LinearRegressionParams::default()).expect("fit")
+    fn fit(train: &Sample, _holdout: &Sample) -> Result<Self::Model, ModelError> {
+        LinearRegression::fit(
+            &train.view(),
+            &train.values,
+            LinearRegressionParams::default(),
+        )
     }
 
-    fn fit_weighted(
-        data: &MatrixView<'_>,
-        values: &RegressionTargets,
-        weights: &SampleWeights,
-    ) -> Option<Self::Model> {
-        Some(
-            LinearRegression::fit_weighted(
-                data,
-                values,
-                weights,
-                LinearRegressionParams::default(),
-            )
-            .expect("weighted fit"),
-        )
+    fn fit_weighted(train: &Sample, _holdout: &Sample) -> OptionalFit<Self::Model> {
+        Some(LinearRegression::fit_weighted(
+            &train.view(),
+            &train.values,
+            &train.unit_weights(),
+            LinearRegressionParams::default(),
+        ))
     }
 
     fn round_trip(model: &Self::Model) -> RoundTrip<Self::Model> {
@@ -364,19 +336,17 @@ impl RegressorCase for RidgeCase {
     type Model = Ridge;
     const NAME: &'static str = "Ridge";
 
-    fn fit(data: &MatrixView<'_>, values: &RegressionTargets) -> Self::Model {
-        Ridge::fit(data, values, RidgeParams::default()).expect("fit")
+    fn fit(train: &Sample, _holdout: &Sample) -> Result<Self::Model, ModelError> {
+        Ridge::fit(&train.view(), &train.values, RidgeParams::default())
     }
 
-    fn fit_weighted(
-        data: &MatrixView<'_>,
-        values: &RegressionTargets,
-        weights: &SampleWeights,
-    ) -> Option<Self::Model> {
-        Some(
-            Ridge::fit_weighted(data, values, weights, RidgeParams::default())
-                .expect("weighted fit"),
-        )
+    fn fit_weighted(train: &Sample, _holdout: &Sample) -> OptionalFit<Self::Model> {
+        Some(Ridge::fit_weighted(
+            &train.view(),
+            &train.values,
+            &train.unit_weights(),
+            RidgeParams::default(),
+        ))
     }
 
     fn round_trip(model: &Self::Model) -> RoundTrip<Self::Model> {
@@ -399,16 +369,17 @@ impl RegressorCase for LassoCase {
     type Model = Lasso;
     const NAME: &'static str = "Lasso";
 
-    fn fit(data: &MatrixView<'_>, values: &RegressionTargets) -> Self::Model {
-        Lasso::fit(data, values, lasso_params()).expect("fit")
+    fn fit(train: &Sample, _holdout: &Sample) -> Result<Self::Model, ModelError> {
+        Lasso::fit(&train.view(), &train.values, lasso_params())
     }
 
-    fn fit_weighted(
-        data: &MatrixView<'_>,
-        values: &RegressionTargets,
-        weights: &SampleWeights,
-    ) -> Option<Self::Model> {
-        Some(Lasso::fit_weighted(data, values, weights, lasso_params()).expect("weighted fit"))
+    fn fit_weighted(train: &Sample, _holdout: &Sample) -> OptionalFit<Self::Model> {
+        Some(Lasso::fit_weighted(
+            &train.view(),
+            &train.values,
+            &train.unit_weights(),
+            lasso_params(),
+        ))
     }
 }
 
@@ -432,19 +403,17 @@ impl RegressorCase for ElasticNetCase {
     type Model = ElasticNet;
     const NAME: &'static str = "ElasticNet";
 
-    fn fit(data: &MatrixView<'_>, values: &RegressionTargets) -> Self::Model {
-        ElasticNet::fit(data, values, elastic_net_params()).expect("fit")
+    fn fit(train: &Sample, _holdout: &Sample) -> Result<Self::Model, ModelError> {
+        ElasticNet::fit(&train.view(), &train.values, elastic_net_params())
     }
 
-    fn fit_weighted(
-        data: &MatrixView<'_>,
-        values: &RegressionTargets,
-        weights: &SampleWeights,
-    ) -> Option<Self::Model> {
-        Some(
-            ElasticNet::fit_weighted(data, values, weights, elastic_net_params())
-                .expect("weighted fit"),
-        )
+    fn fit_weighted(train: &Sample, _holdout: &Sample) -> OptionalFit<Self::Model> {
+        Some(ElasticNet::fit_weighted(
+            &train.view(),
+            &train.values,
+            &train.unit_weights(),
+            elastic_net_params(),
+        ))
     }
 }
 
@@ -466,19 +435,17 @@ impl RegressorCase for HistGradientBoostingRegressorCase {
     type Model = HistGradientBoostingRegressor;
     const NAME: &'static str = "HistGradientBoostingRegressor";
 
-    fn fit(data: &MatrixView<'_>, values: &RegressionTargets) -> Self::Model {
-        HistGradientBoostingRegressor::fit(data, values, boosting_params()).expect("fit")
+    fn fit(train: &Sample, _holdout: &Sample) -> Result<Self::Model, ModelError> {
+        HistGradientBoostingRegressor::fit(&train.view(), &train.values, boosting_params())
     }
 
-    fn fit_weighted(
-        data: &MatrixView<'_>,
-        values: &RegressionTargets,
-        weights: &SampleWeights,
-    ) -> Option<Self::Model> {
-        Some(
-            HistGradientBoostingRegressor::fit_weighted(data, values, weights, boosting_params())
-                .expect("weighted fit"),
-        )
+    fn fit_weighted(train: &Sample, _holdout: &Sample) -> OptionalFit<Self::Model> {
+        Some(HistGradientBoostingRegressor::fit_weighted(
+            &train.view(),
+            &train.values,
+            &train.unit_weights(),
+            boosting_params(),
+        ))
     }
 
     fn round_trip(model: &Self::Model) -> RoundTrip<Self::Model> {
@@ -501,25 +468,21 @@ impl ClassifierCase for HistGradientBoostingClassifierCase {
     type Model = HistGradientBoostingClassifier;
     const NAME: &'static str = "HistGradientBoostingClassifier";
 
-    fn fit(data: &MatrixView<'_>, labels: &BinaryTargets) -> Self::Model {
-        HistGradientBoostingClassifier::fit(data, labels, boosting_classifier_params())
-            .expect("fit")
+    fn fit(train: &Sample, _holdout: &Sample) -> Result<Self::Model, ModelError> {
+        HistGradientBoostingClassifier::fit(
+            &train.view(),
+            &train.labels,
+            boosting_classifier_params(),
+        )
     }
 
-    fn fit_weighted(
-        data: &MatrixView<'_>,
-        labels: &BinaryTargets,
-        weights: &SampleWeights,
-    ) -> Option<Self::Model> {
-        Some(
-            HistGradientBoostingClassifier::fit_weighted(
-                data,
-                labels,
-                weights,
-                boosting_classifier_params(),
-            )
-            .expect("weighted fit"),
-        )
+    fn fit_weighted(train: &Sample, _holdout: &Sample) -> OptionalFit<Self::Model> {
+        Some(HistGradientBoostingClassifier::fit_weighted(
+            &train.view(),
+            &train.labels,
+            &train.unit_weights(),
+            boosting_classifier_params(),
+        ))
     }
 
     fn round_trip(model: &Self::Model) -> RoundTrip<Self::Model> {
@@ -544,8 +507,8 @@ macro_rules! any_regressor_case {
             type Model = AnyRegressor;
             const NAME: &'static str = $name;
 
-            fn fit(data: &MatrixView<'_>, values: &RegressionTargets) -> Self::Model {
-                <$inner as RegressorCase>::fit(data, values).into()
+            fn fit(train: &Sample, holdout: &Sample) -> Result<Self::Model, ModelError> {
+                <$inner as RegressorCase>::fit(train, holdout).map(Into::into)
             }
 
             fn round_trip(model: &Self::Model) -> RoundTrip<Self::Model> {
@@ -581,8 +544,8 @@ impl ClassifierCase for DummyClassifierCase {
     type Model = DummyClassifier;
     const NAME: &'static str = "DummyClassifier";
 
-    fn fit(data: &MatrixView<'_>, labels: &BinaryTargets) -> Self::Model {
-        DummyClassifier::fit(data, labels, DummyClassifierParams).expect("fit")
+    fn fit(train: &Sample, _holdout: &Sample) -> Result<Self::Model, ModelError> {
+        DummyClassifier::fit(&train.view(), &train.labels, DummyClassifierParams)
     }
 }
 
@@ -598,8 +561,8 @@ impl RegressorCase for DummyRegressorCase {
     type Model = DummyRegressor;
     const NAME: &'static str = "DummyRegressor";
 
-    fn fit(data: &MatrixView<'_>, values: &RegressionTargets) -> Self::Model {
-        DummyRegressor::fit(data, values, DummyRegressorParams).expect("fit")
+    fn fit(train: &Sample, _holdout: &Sample) -> Result<Self::Model, ModelError> {
+        DummyRegressor::fit(&train.view(), &train.values, DummyRegressorParams)
     }
 }
 
@@ -615,15 +578,16 @@ impl TransformerCase for StandardScalerCase {
     type Model = StandardScaler;
     const NAME: &'static str = "StandardScaler";
 
-    fn fit(data: &MatrixView<'_>) -> Self::Model {
-        StandardScaler::fit(data, StandardScalerParams::default()).expect("fit")
+    fn fit(train: &Sample, _holdout: &Sample) -> Result<Self::Model, ModelError> {
+        StandardScaler::fit(&train.view(), StandardScalerParams::default())
     }
 
-    fn fit_weighted(data: &MatrixView<'_>, weights: &SampleWeights) -> Option<Self::Model> {
-        Some(
-            StandardScaler::fit_weighted(data, weights, StandardScalerParams::default())
-                .expect("weighted fit"),
-        )
+    fn fit_weighted(train: &Sample, _holdout: &Sample) -> OptionalFit<Self::Model> {
+        Some(StandardScaler::fit_weighted(
+            &train.view(),
+            &train.unit_weights(),
+            StandardScalerParams::default(),
+        ))
     }
 
     fn round_trip(model: &Self::Model) -> RoundTrip<Self::Model> {
@@ -640,8 +604,8 @@ impl TransformerCase for MinMaxScalerCase {
     type Model = MinMaxScaler;
     const NAME: &'static str = "MinMaxScaler";
 
-    fn fit(data: &MatrixView<'_>) -> Self::Model {
-        MinMaxScaler::fit(data, MinMaxScalerParams::default()).expect("fit")
+    fn fit(train: &Sample, _holdout: &Sample) -> Result<Self::Model, ModelError> {
+        MinMaxScaler::fit(&train.view(), MinMaxScalerParams::default())
     }
 
     fn round_trip(model: &Self::Model) -> RoundTrip<Self::Model> {
@@ -658,8 +622,8 @@ impl TransformerCase for MaxAbsScalerCase {
     type Model = MaxAbsScaler;
     const NAME: &'static str = "MaxAbsScaler";
 
-    fn fit(data: &MatrixView<'_>) -> Self::Model {
-        MaxAbsScaler::fit(data, MaxAbsScalerParams).expect("fit")
+    fn fit(train: &Sample, _holdout: &Sample) -> Result<Self::Model, ModelError> {
+        MaxAbsScaler::fit(&train.view(), MaxAbsScalerParams)
     }
 
     fn round_trip(model: &Self::Model) -> RoundTrip<Self::Model> {
