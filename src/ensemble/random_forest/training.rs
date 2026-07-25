@@ -429,6 +429,16 @@ impl<Y, O: Objective<Y>> TreeBuilder<'_, '_, Y, O> {
             let mut left_sum = 0.0;
             let mut left_sum_sq = 0.0;
             let mut left_weight = 0.0;
+            // `value` is re-converted once per candidate feature per node, and
+            // hoisting it looks free. It is not: precomputing a per-row
+            // `{weight, sum, sum_sq}` record was built, proven bit-identical,
+            // measured at +2.12% and +0.92%, and rejected. This loop is
+            // memory-bound on the scattered `ordered[]` gather, so trading two
+            // 8/4-byte reads for one 24-byte read loses more than the removed
+            // conversion and multiplies save. See
+            // dev-docs/designs/forest-sweep-measurements.md before retrying it,
+            // and note the same file's rule against extracting anything from
+            // this loop body.
             for boundary in 0..ordered.len().saturating_sub(1) {
                 let row = ordered[boundary];
                 let row_weight = self.row_weights[row];
