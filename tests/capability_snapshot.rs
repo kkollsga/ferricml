@@ -48,11 +48,11 @@ use ferricml::ensemble::{
     HistGradientBoostingClassifier, HistGradientBoostingRegressor, RandomForestClassifier,
     RandomForestRegressor,
 };
-use ferricml::tree::{DecisionTreeClassifier, DecisionTreeRegressor};
 use ferricml::linear_model::{ElasticNet, Lasso, LinearRegression, LogisticRegression, Ridge};
 use ferricml::pipeline::{Pipeline, StagedPipeline};
 use ferricml::preprocessing::{MaxAbsScaler, MinMaxScaler, StandardScaler};
 use ferricml::ranking::PairwiseLinearRanker;
+use ferricml::tree::{DecisionTreeClassifier, DecisionTreeRegressor};
 
 /// The environment variable that rewrites the snapshot instead of checking it.
 const REFRESH: &str = "FERRICML_REFRESH_CAPABILITY_SNAPSHOT";
