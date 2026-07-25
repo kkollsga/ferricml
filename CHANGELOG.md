@@ -183,6 +183,16 @@ and releases use [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   `score_multiclass_classifier_with`, scoring a fitted classifier against
   `data::ClassTargets`. They share one implementation with the binary entry
   points, so there is still a single prediction and class-layout path.
+- `calibration::IsotonicRegression`, a deterministic pool-adjacent-violators
+  monotone fit. It is both the non-parametric probability calibrator and a
+  standalone monotone regressor over a single-column matrix. Observations that
+  share an input value are pooled into their mean before pooling adjacent
+  violators, so the fit depends on the multiset of observations and not on their
+  order; prediction interpolates linearly between fitted points and holds the
+  end values outside the fitted range.
+- `calibration::Calibrator`, the fitted monotone score-to-probability map
+  contract, with an in-place batch form so calibrated prediction needs no second
+  buffer.
 
 ### Changed
 

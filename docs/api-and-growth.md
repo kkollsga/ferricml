@@ -69,6 +69,17 @@ estimator meaning follow the reference contract.
   estimator has to beat and the reference implementation of the estimator
   contract, so they carry no tunable behavior, no weighted entry point, and no
   artifact kind.
+- `calibration` owns post-hoc probability calibration. A calibrator is a fitted
+  monotone map of one model score onto a probability, so it changes how
+  confident a prediction is without changing which way round two rows are
+  ordered. `IsotonicRegression` is the non-parametric one and is also a
+  standalone monotone regressor over a single-column matrix. It states its tie
+  convention rather than inheriting one: observations sharing an input value are
+  pooled into their mean *before* pool-adjacent-violators runs, which is forced
+  rather than chosen — a function of one input takes one value at one input —
+  and it makes the fit independent of observation order. Prediction interpolates
+  linearly between fitted points and holds the end values outside the fitted
+  range rather than extrapolating a trend the fit never observed.
 - `inspection` owns model-agnostic attribution. Permutation importance works
   through the public batch prediction and scoring contracts only, so it needs
   no estimator cooperation and exposes no model internals. It holds no scoring

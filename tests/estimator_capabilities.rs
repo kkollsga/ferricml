@@ -11,6 +11,7 @@
 //! not have, or has one it did not declare, fails there.
 
 use ferricml::api::{AnyClassifier, AnyRegressor, Capabilities, HasCapabilities};
+use ferricml::calibration::IsotonicRegression;
 use ferricml::data::{BinaryTargets, DenseMatrix, RegressionTargets};
 use ferricml::dummy::{DummyClassifier, DummyRegressor};
 use ferricml::ensemble::{
@@ -90,6 +91,14 @@ fn baseline_estimators_declare_nothing() {
     // point, so the conservative default is the whole truth.
     assert_eq!(DummyClassifier::CAPABILITIES, Capabilities::NONE);
     assert_eq!(DummyRegressor::CAPABILITIES, Capabilities::NONE);
+}
+
+#[test]
+fn the_monotone_calibrator_declares_nothing() {
+    // A monotone map of one score has no weighted entry point, no artifact
+    // kind, and no class set to widen, so the conservative default is the whole
+    // truth rather than an omission.
+    assert_eq!(IsotonicRegression::CAPABILITIES, Capabilities::NONE);
 }
 
 #[test]

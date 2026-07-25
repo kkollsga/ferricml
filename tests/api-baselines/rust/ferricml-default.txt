@@ -193,6 +193,8 @@ impl ferricml::api::Estimator for ferricml::api::AnyClassifier
 pub fn ferricml::api::AnyClassifier::n_features_in(&self) -> usize
 impl ferricml::api::Estimator for ferricml::api::AnyRegressor
 pub fn ferricml::api::AnyRegressor::n_features_in(&self) -> usize
+impl ferricml::api::Estimator for ferricml::calibration::IsotonicRegression
+pub fn ferricml::calibration::IsotonicRegression::n_features_in(&self) -> usize
 impl ferricml::api::Estimator for ferricml::dummy::DummyClassifier
 pub fn ferricml::dummy::DummyClassifier::n_features_in(&self) -> usize
 impl ferricml::api::Estimator for ferricml::dummy::DummyRegressor
@@ -227,6 +229,8 @@ impl ferricml::api::HasCapabilities for ferricml::api::AnyClassifier
 pub const ferricml::api::AnyClassifier::CAPABILITIES: ferricml::api::Capabilities
 impl ferricml::api::HasCapabilities for ferricml::api::AnyRegressor
 pub const ferricml::api::AnyRegressor::CAPABILITIES: ferricml::api::Capabilities
+impl ferricml::api::HasCapabilities for ferricml::calibration::IsotonicRegression
+pub const ferricml::calibration::IsotonicRegression::CAPABILITIES: ferricml::api::Capabilities
 impl ferricml::api::HasCapabilities for ferricml::dummy::DummyClassifier
 pub const ferricml::dummy::DummyClassifier::CAPABILITIES: ferricml::api::Capabilities
 impl ferricml::api::HasCapabilities for ferricml::dummy::DummyRegressor
@@ -302,6 +306,9 @@ pub fn ferricml::api::Regressor::predict_into(&self, &ferricml::data::MatrixView
 impl ferricml::api::Regressor for ferricml::api::AnyRegressor
 pub fn ferricml::api::AnyRegressor::predict(&self, &ferricml::data::MatrixView<'_>) -> core::result::Result<alloc::vec::Vec<f32>, ferricml::api::ModelError>
 pub fn ferricml::api::AnyRegressor::predict_into(&self, &ferricml::data::MatrixView<'_>, &mut [f32]) -> core::result::Result<(), ferricml::api::ModelError>
+impl ferricml::api::Regressor for ferricml::calibration::IsotonicRegression
+pub fn ferricml::calibration::IsotonicRegression::predict(&self, &ferricml::data::MatrixView<'_>) -> core::result::Result<alloc::vec::Vec<f32>, ferricml::api::ModelError>
+pub fn ferricml::calibration::IsotonicRegression::predict_into(&self, &ferricml::data::MatrixView<'_>, &mut [f32]) -> core::result::Result<(), ferricml::api::ModelError>
 impl ferricml::api::Regressor for ferricml::dummy::DummyRegressor
 pub fn ferricml::dummy::DummyRegressor::predict(&self, &ferricml::data::MatrixView<'_>) -> core::result::Result<alloc::vec::Vec<f32>, ferricml::api::ModelError>
 pub fn ferricml::dummy::DummyRegressor::predict_into(&self, &ferricml::data::MatrixView<'_>, &mut [f32]) -> core::result::Result<(), ferricml::api::ModelError>
@@ -358,6 +365,34 @@ impl core::fmt::Display for ferricml::artifact::ArtifactError
 pub fn ferricml::artifact::ArtifactError::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
 pub const ferricml::artifact::MAX_MODEL_ARTIFACT_BYTES: usize
 pub const ferricml::artifact::MODEL_ARTIFACT_VERSION: u16
+pub mod ferricml::calibration
+pub struct ferricml::calibration::IsotonicRegression
+impl ferricml::calibration::IsotonicRegression
+pub fn ferricml::calibration::IsotonicRegression::fit(&ferricml::data::MatrixView<'_>, &ferricml::data::RegressionTargets) -> core::result::Result<Self, ferricml::api::ModelError>
+pub fn ferricml::calibration::IsotonicRegression::fit_calibration(&[f32], &ferricml::data::BinaryTargets) -> core::result::Result<Self, ferricml::api::ModelError>
+pub fn ferricml::calibration::IsotonicRegression::map(&self, f32) -> f32
+pub fn ferricml::calibration::IsotonicRegression::predict_one(&self, &[f32]) -> core::result::Result<f32, ferricml::api::ModelError>
+pub fn ferricml::calibration::IsotonicRegression::thresholds(&self) -> &[f32]
+pub fn ferricml::calibration::IsotonicRegression::values(&self) -> &[f32]
+impl ferricml::api::Estimator for ferricml::calibration::IsotonicRegression
+pub fn ferricml::calibration::IsotonicRegression::n_features_in(&self) -> usize
+impl ferricml::api::HasCapabilities for ferricml::calibration::IsotonicRegression
+pub const ferricml::calibration::IsotonicRegression::CAPABILITIES: ferricml::api::Capabilities
+impl ferricml::api::Regressor for ferricml::calibration::IsotonicRegression
+pub fn ferricml::calibration::IsotonicRegression::predict(&self, &ferricml::data::MatrixView<'_>) -> core::result::Result<alloc::vec::Vec<f32>, ferricml::api::ModelError>
+pub fn ferricml::calibration::IsotonicRegression::predict_into(&self, &ferricml::data::MatrixView<'_>, &mut [f32]) -> core::result::Result<(), ferricml::api::ModelError>
+impl ferricml::calibration::Calibrator for ferricml::calibration::IsotonicRegression
+pub fn ferricml::calibration::IsotonicRegression::calibrate(&self, f32) -> f32
+pub fn ferricml::calibration::IsotonicRegression::calibrate_in_place(&self, &mut [f32])
+pub trait ferricml::calibration::Calibrator
+pub fn ferricml::calibration::Calibrator::calibrate(&self, f32) -> f32
+pub fn ferricml::calibration::Calibrator::calibrate_in_place(&self, &mut [f32])
+impl ferricml::calibration::Calibrator for ferricml::calibration::IsotonicRegression
+pub fn ferricml::calibration::IsotonicRegression::calibrate(&self, f32) -> f32
+pub fn ferricml::calibration::IsotonicRegression::calibrate_in_place(&self, &mut [f32])
+impl<K: ferricml::calibration::Calibrator + ?core::marker::Sized> ferricml::calibration::Calibrator for &K
+pub fn &K::calibrate(&self, f32) -> f32
+pub fn &K::calibrate_in_place(&self, &mut [f32])
 pub mod ferricml::data
 pub enum ferricml::data::DataError
 pub ferricml::data::DataError::DimensionOverflow

@@ -90,6 +90,28 @@ def inspection_uses_only_public_surfaces(root: Path) -> list[str]:
     ]
 
 
+def calibration_uses_only_public_surfaces(root: Path) -> list[str]:
+    """Calibration wraps a fitted model through its public contract alone.
+
+    A calibrator is defined by being addable *around* any fitted classifier, so
+    it reaches the wrapped model only through the public prediction and scoring
+    surfaces. Naming a concrete estimator family — or the persistence layer
+    below one — is the observable symptom of a wrapper that works for the models
+    FerricML happens to ship rather than for the contract, which is exactly the
+    generality the module exists to prove. The module has to exist for the rule
+    to mean anything, so its absence is itself a finding rather than a silently
+    vacuous pass.
+    """
+    text = directory_text(root / "src" / "calibration")
+    if not text:
+        return ["calibration module is missing"]
+    return [
+        f"calibration depends on non-public-surface module {module}"
+        for module in (*ESTIMATOR_MODULES, "artifact")
+        if f"crate::{module}" in text
+    ]
+
+
 def loss_depends_on_no_estimator(root: Path) -> list[str]:
     """The objective contract sits below every solver that consumes it.
 
@@ -245,6 +267,7 @@ RULES: tuple[tuple[str, Callable[[Path], list[str]]], ...] = (
     ("evaluation-families-private", evaluation_families_stay_private),
     ("split-families-private", split_families_stay_private),
     ("search-consumes-the-scorer-seam", search_consumes_the_scorer_seam),
+    ("calibration-public-surfaces-only", calibration_uses_only_public_surfaces),
 )
 
 
@@ -283,6 +306,8 @@ def write_clean_tree(root: Path) -> Path:
         "model_selection/search.rs": "//! search\nuse crate::api::Regressor;\n",
         "model_selection/split/mod.rs": "//! split\nmod grouped;\npub use grouped::GroupKFold;\n",
         "model_selection/split/grouped.rs": "//! grouped\npub struct GroupKFold;\n",
+        "calibration/mod.rs": "//! calibration\nmod isotonic;\npub use isotonic::IsotonicRegression;\n",
+        "calibration/isotonic.rs": "//! isotonic\nuse crate::api::Regressor;\n",
     }.items():
         path = source / relative
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -392,6 +417,14 @@ SYNTHETIC_VIOLATIONS: tuple[tuple[str, Callable[[Path], None], str], ...] = (
             "use crate::metrics::accuracy_score;\n",
         ),
         "search re-derives scoring instead of consuming the scorer contract",
+    ),
+    (
+        "calibration-public-surfaces-only",
+        lambda root: append(
+            root / "src" / "calibration" / "isotonic.rs",
+            "use crate::ensemble::RandomForestClassifier;\n",
+        ),
+        "calibration depends on non-public-surface module ensemble",
     ),
 )
 

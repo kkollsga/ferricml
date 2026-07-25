@@ -5,6 +5,7 @@
 
 pub mod api;
 pub mod artifact;
+pub mod calibration;
 pub mod data;
 pub mod dummy;
 pub mod ensemble;
