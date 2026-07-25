@@ -14,9 +14,10 @@ use ferricml::metrics::{
     Average, ConfusionMatrix, average_precision_score, mean_squared_error, roc_auc_score,
 };
 use ferricml::model_selection::{
-    GroupKFold, HoldoutParams, KFold, LeaveOneOut, RegressionScorer, RepeatedKFold,
-    ScoringWorkspace, TestSize, TimeSeriesSplit, cross_validate_regressor, score_regressor,
-    score_regressor_with, stratified_train_test_split, train_test_split,
+    ClassificationScorer, GroupKFold, GroupShuffleSplit, HoldoutParams, KFold, LeaveOneOut,
+    ParameterGrid, RegressionScorer, RepeatedKFold, ScoringWorkspace, TestGroupSize, TestSize,
+    TimeSeriesSplit, cross_validate_regressor, grid_search_classifier, grid_search_regressor,
+    score_regressor, score_regressor_with, stratified_train_test_split, train_test_split,
 };
 use ferricml::pipeline::{Pipeline, StagedPipeline};
 use ferricml::preprocessing::{
@@ -492,6 +493,89 @@ fn evaluation_splitters(c: &mut Criterion) {
             );
         });
     });
+    group.bench_function(
+        BenchmarkId::from_parameter("group_shuffle_5x25pct"),
+        |bencher| {
+            bencher.iter(|| {
+                black_box(
+                    GroupShuffleSplit::new(5)
+                        .with_test_size(TestGroupSize::Fraction(0.25))
+                        .with_random_state(19)
+                        .split(black_box(&groups))
+                        .unwrap()
+                        .count(),
+                );
+            });
+        },
+    );
+    group.finish();
+}
+
+/// Typed parameter search. Each lane runs a whole grid, so what is measured is
+/// the full candidate loop through cross-validation and the shared scorer, not
+/// one fit.
+fn parameter_search(c: &mut Criterion) {
+    let (data, targets) = fixture(CV_ROWS, CV_COLUMNS);
+    let labels =
+        BinaryTargets::new((0..CV_ROWS).map(|row| u8::from(row % 3 == 0)).collect()).unwrap();
+
+    let mut group = c.benchmark_group("ferricml_model_selection_v4_search_256x12");
+    group.throughput(Throughput::Elements(CV_ROWS as u64));
+    group.bench_function(
+        BenchmarkId::from_parameter("ridge_grid_4x3fold"),
+        |bencher| {
+            let grid = ParameterGrid::new(RidgeParams::default())
+                .axis([0.01_f32, 1.0], RidgeParams::with_alpha)
+                .axis([true, false], RidgeParams::with_fit_intercept);
+            bencher.iter(|| {
+                let splits = KFold::new(3)
+                    .with_shuffle(true)
+                    .with_random_state(23)
+                    .split(CV_ROWS)
+                    .unwrap();
+                black_box(
+                    grid_search_regressor(
+                        black_box(&data.as_view()),
+                        black_box(&targets),
+                        splits,
+                        black_box(&grid),
+                        RegressionScorer::MeanSquaredError,
+                        |train, train_targets, params| {
+                            Ridge::fit(train, train_targets, params.clone())
+                        },
+                    )
+                    .unwrap(),
+                );
+            });
+        },
+    );
+    group.bench_function(
+        BenchmarkId::from_parameter("logistic_grid_2x3fold"),
+        |bencher| {
+            let grid = ParameterGrid::new(LogisticRegressionParams::default().with_max_iter(25))
+                .axis([0.1_f32, 1.0], LogisticRegressionParams::with_c);
+            bencher.iter(|| {
+                let splits = KFold::new(3)
+                    .with_shuffle(true)
+                    .with_random_state(23)
+                    .split(CV_ROWS)
+                    .unwrap();
+                black_box(
+                    grid_search_classifier(
+                        black_box(&data.as_view()),
+                        black_box(&labels),
+                        splits,
+                        black_box(&grid),
+                        ClassificationScorer::Accuracy,
+                        |train, train_targets, params| {
+                            LogisticRegression::fit(train, train_targets, params.clone())
+                        },
+                    )
+                    .unwrap(),
+                );
+            });
+        },
+    );
     group.finish();
 }
 
@@ -807,6 +891,7 @@ criterion_group!(
     evaluation,
     evaluation_vocabulary,
     evaluation_splitters,
+    parameter_search,
     split_workloads,
     inspection
 );
