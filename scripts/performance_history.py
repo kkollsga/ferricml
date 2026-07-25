@@ -48,6 +48,22 @@ IDLE_GAP_MAX = 4.0
 IDLE_RATIO_PER_POINT = 0.01
 IDLE_BANDS = ("comparable", "widened", "favored", "not_comparable", "unknown")
 
+# Capture measurement configuration.  Criterion's median interval narrows as
+# 1/sqrt(n), and at the former sample-size 20 the worst gated lane carried a
+# 13.52% mean interval — wider than the 10% margin the 1.10 limit allows, so
+# the gate was judging lanes it could not resolve.  Requiring the ratio's own
+# uncertainty to stay inside half that margin needs an interval of at most
+# 7.07%, which 75 samples just reaches and 100 clears at 6.05%.  100 is also
+# Criterion's default, so `bench-self` and `bench-history` finally measure
+# identically and the tripwire can corroborate the gate; it is additionally
+# the only candidate with independent live-tree corroboration (2.34-6.16%
+# measured for exactly that lane).  See performance-gate-reliability.md,
+# G0 Finding 5.
+DEFAULT_SAMPLE_SIZE = 100
+DEFAULT_WARM_UP_SECONDS = 3.0
+DEFAULT_MEASUREMENT_SECONDS = 5.0
+MEASUREMENT_FIELDS = ("sample_size", "warm_up_seconds", "measurement_seconds")
+
 FIT = "forest_historical_fit_2048x64_20t/ferricml"
 INFERENCE = tuple(
     f"forest_historical_into_{rows}x64_100t/{operation}"
@@ -294,30 +310,66 @@ def idle_summary(record: dict[str, Any]) -> dict[str, Any] | None:
     }
 
 
-def comparability(
-    current_idle: dict[str, Any] | None, reference_idle: dict[str, Any] | None
-) -> dict[str, Any]:
-    """Classify how comparable two runs' machine states were.
+def measurement_config(record: dict[str, Any]) -> dict[str, Any] | None:
+    """Return a run's Criterion measurement configuration, or None."""
+    run = record.get("run") or {}
+    values = {field: run.get(field) for field in MEASUREMENT_FIELDS}
+    for value in values.values():
+        if isinstance(value, bool) or not isinstance(value, (int, float)):
+            return None
+    return values
 
-    A negative gap means the current run was the noisier one, so its ratios are
-    inflated and the envelope is widened.  A positive gap means the current run
-    was the quieter one: the limits are *not* relaxed, because that direction
-    produces an optimistic pass rather than a false regression, and an
-    optimistic pass has to stay legible instead of being rewarded.
+
+def comparability(
+    current_idle: dict[str, Any] | None,
+    reference_idle: dict[str, Any] | None,
+    current_config: dict[str, Any] | None = None,
+    reference_config: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Classify how comparable two runs were.
+
+    Two things can make a pair incomparable.  A measurement-configuration
+    difference is absolute: the sample count sets how tightly a lane's median
+    can be resolved at all, so a 20-sample run and a 100-sample run are not
+    measuring the same quantity.  An idle difference is graded: a negative gap
+    means the current run was the noisier one, so its ratios are inflated and
+    the envelope is widened, while a positive gap means it was the quieter one
+    and the limits are *not* relaxed — that direction produces an optimistic
+    pass rather than a false regression, and an optimistic pass has to stay
+    legible instead of being rewarded.
     """
+    evidence = {
+        "current_idle": current_idle,
+        "reference_idle": reference_idle,
+        "current_measurement": current_config,
+        "reference_measurement": reference_config,
+    }
+    if (
+        current_config is not None
+        and reference_config is not None
+        and current_config != reference_config
+    ):
+        return {
+            "band": "not_comparable",
+            "reason": "measurement_configuration",
+            "gap": None,
+            "limit_scale": 1.0,
+            **evidence,
+        }
     if current_idle is None or reference_idle is None:
         return {
             "band": "unknown",
+            "reason": None,
             "gap": None,
             "limit_scale": 1.0,
-            "current_idle": current_idle,
-            "reference_idle": reference_idle,
+            **evidence,
         }
     gap = current_idle["mean"] - reference_idle["mean"]
     distance = abs(gap)
     scale = 1.0
+    reason = None
     if distance > IDLE_GAP_MAX:
-        band = "not_comparable"
+        band, reason = "not_comparable", "idle_gap"
     elif distance > IDLE_GAP_COMPARABLE:
         if gap < 0:
             band = "widened"
@@ -328,10 +380,10 @@ def comparability(
         band = "comparable"
     return {
         "band": band,
+        "reason": reason,
         "gap": gap,
         "limit_scale": scale,
-        "current_idle": current_idle,
-        "reference_idle": reference_idle,
+        **evidence,
     }
 
 
@@ -392,6 +444,7 @@ def comparisons(
 ) -> dict[str, Any]:
     history = load_history(history_dir, current, include_equal_version)
     current_idle = idle_summary(current)
+    current_config = measurement_config(current)
     suite_results = {}
     for suite_name, current_suite in record_suites(current).items():
         compatible = []
@@ -399,16 +452,23 @@ def comparisons(
             candidate_suite = record_suites(candidate).get(suite_name)
             if candidate_suite and candidate_suite.get("protocol") == current_suite.get("protocol"):
                 compatible.append(
-                    (candidate["version"], candidate_suite, idle_summary(candidate))
+                    (
+                        candidate["version"],
+                        candidate_suite,
+                        idle_summary(candidate),
+                        measurement_config(candidate),
+                    )
                 )
         if compatible:
-            reference_version, reference_suite, reference_idle = compatible[-1]
+            reference_version, reference_suite, reference_idle, reference_config = compatible[-1]
             previous = compare_one(
                 current_suite,
                 reference_suite,
                 reference_version,
                 "previous_release",
-                comparability(current_idle, reference_idle),
+                comparability(
+                    current_idle, reference_idle, current_config, reference_config
+                ),
             )
         else:
             previous = {
@@ -417,13 +477,15 @@ def comparisons(
                 "reason": "no earlier compatible release exists for this runner and suite",
             }
         if len(compatible) >= 3:
-            reference_version, reference_suite, reference_idle = compatible[-3]
+            reference_version, reference_suite, reference_idle, reference_config = compatible[-3]
             anchor = compare_one(
                 current_suite,
                 reference_suite,
                 reference_version,
                 "approximately_three_release_anchor",
-                comparability(current_idle, reference_idle),
+                comparability(
+                    current_idle, reference_idle, current_config, reference_config
+                ),
             )
         else:
             anchor = {
@@ -470,26 +532,34 @@ def verdict_report(comparison: dict[str, Any]) -> list[str]:
             if result.get("status") != "not_comparable":
                 continue
             evidence = result["comparability"]
-            current, reference = evidence["current_idle"], evidence["reference_idle"]
             lines.append(
                 f"not comparable: {suite_name} vs v{result['reference_version']} "
-                f"({result['kind']})"
+                f"({result['kind']}); reason: {evidence['reason']}"
             )
-            lines.append(
-                f"  idle before this run: {current['samples']} (mean "
-                f"{current['mean']:.2f}%); reference: {reference['samples']} "
-                f"(mean {reference['mean']:.2f}%); gap {evidence['gap']:+.2f} points, "
-                f"limit {IDLE_GAP_MAX:.1f}"
-            )
+            current, reference = evidence["current_idle"], evidence["reference_idle"]
+            if current and reference:
+                lines.append(
+                    f"  idle before this run: {current['samples']} (mean "
+                    f"{current['mean']:.2f}%); reference: {reference['samples']} "
+                    f"(mean {reference['mean']:.2f}%); gap {evidence['gap']:+.2f} points, "
+                    f"limit {IDLE_GAP_MAX:.1f}"
+                )
+            if evidence["reason"] == "measurement_configuration":
+                lines.append(
+                    f"  measurement configuration differs: this run "
+                    f"{evidence['current_measurement']}; reference "
+                    f"{evidence['reference_measurement']}"
+                )
             for failure in result.get("unexplained_failures", []):
                 lines.append(
                     f"  over limit but not attributable: {failure['benchmark']} "
                     f"ratio {failure['ratio']:.4f} vs {failure['limit']:.4f}"
                 )
             lines.append(
-                "  this is NOT a pass: the machine states differ by more than the "
-                "ratio limit they would be judged against, so neither a pass nor a "
-                "regression is knowable. Re-measure both points under one idle regime."
+                "  this is NOT a pass: the two runs differ by more than the ratio "
+                "limit they would be judged against, so neither a pass nor a "
+                "regression is knowable. Re-measure both points under one idle "
+                "regime and one measurement configuration."
             )
     return lines
 
@@ -677,6 +747,7 @@ def fixture(
     inference: float = 100.0,
     include_models: bool = False,
     idle: list[float] | None = None,
+    measurement: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     metrics = {FIT: fit}
     metrics.update({name: inference for name in INFERENCE})
@@ -693,8 +764,13 @@ def fixture(
             }
         },
     }
+    run: dict[str, Any] = {}
     if idle is not None:
-        record["run"] = {"cpu_idle_percent_before": list(idle)}
+        run["cpu_idle_percent_before"] = list(idle)
+    if measurement is not None:
+        run.update(measurement)
+    if run:
+        record["run"] = run
     if include_models:
         model_metrics = {name: fit for name in MODEL_FIT}
         model_metrics.update({name: inference for name in MODEL_INFERENCE})
@@ -816,6 +892,61 @@ def idle_self_test(root: Path) -> None:
     assert idle_summary({}) is None
     assert idle_summary({"run": {"cpu_idle_percent_before": []}}) is None
     assert idle_summary({"run": {"cpu_idle_percent_before": ["90"]}}) is None
+
+
+def measurement_self_test(root: Path) -> None:
+    # The parser must keep serving the configuration the derivation chose;
+    # a default drifting away from the constant would silently restore the
+    # under-sampled captures the constants exist to prevent.
+    defaults = parser().parse_args(["capture"])
+    assert defaults.sample_size == DEFAULT_SAMPLE_SIZE
+    assert defaults.warm_up_time == DEFAULT_WARM_UP_SECONDS
+    assert defaults.measurement_time == DEFAULT_MEASUREMENT_SECONDS
+
+    settled = {
+        "sample_size": DEFAULT_SAMPLE_SIZE,
+        "warm_up_seconds": DEFAULT_WARM_UP_SECONDS,
+        "measurement_seconds": DEFAULT_MEASUREMENT_SECONDS,
+    }
+    idle = [92.0] * 3
+
+    def previous(label: str, reference_measurement: dict[str, Any] | None) -> dict[str, Any]:
+        history = root / label
+        history.mkdir()
+        (history / "v0.1.0.json").write_text(
+            json.dumps(fixture("0.1.0", idle=idle, measurement=reference_measurement))
+        )
+        current = fixture("0.2.0", idle=idle, measurement=settled)
+        result = comparisons(current, history)
+        return result["suites"]["forest-v1"]["previous_release"]
+
+    matched = previous("matched", dict(settled))
+    assert matched["status"] == "pass", matched
+    assert matched["comparability"]["band"] == "comparable"
+
+    # Each field independently makes the pair incomparable: the sample count
+    # sets how tightly a median can be resolved, and the time budgets set how
+    # many iterations back each sample.
+    for field, changed in (
+        ("sample_size", 20),
+        ("warm_up_seconds", 1.0),
+        ("measurement_seconds", 2.0),
+    ):
+        reference = dict(settled)
+        reference[field] = changed
+        result = previous(f"differs_{field}", reference)
+        assert result["status"] == "not_comparable", f"{field}: {result['status']}"
+        assert result["comparability"]["reason"] == "measurement_configuration"
+
+    # History predating the fields falls back to the idle bands rather than
+    # failing, so older records stay readable.
+    legacy = previous("legacy", None)
+    assert legacy["comparability"]["band"] == "comparable", legacy["comparability"]
+    assert legacy["status"] == "pass"
+
+    assert measurement_config({"run": dict(settled)}) == settled
+    assert measurement_config({"run": {"sample_size": 100}}) is None
+    assert measurement_config({}) is None
 
 
 def diagnostic_self_test(root: Path) -> None:
@@ -971,11 +1102,16 @@ def self_test() -> int:
         diagnostic_root = Path(temporary) / "diagnostic"
         diagnostic_root.mkdir()
         diagnostic_self_test(diagnostic_root)
+
+        measurement_root = Path(temporary) / "measurement"
+        measurement_root.mkdir()
+        measurement_self_test(measurement_root)
     print(
         "performance history self-test passed "
         "(mixed protocols, missing/new lanes, prior, anchor, regression, "
         f"{len(IDLE_CASES)} idle-comparability cases over {len(IDLE_BANDS)} bands, "
-        f"{len(MODEL_DIAGNOSTIC)} diagnostic-only lanes)"
+        f"{len(MODEL_DIAGNOSTIC)} diagnostic-only lanes, "
+        f"{len(MEASUREMENT_FIELDS)} measurement-configuration fields)"
     )
     return 0
 
@@ -988,9 +1124,13 @@ def parser() -> argparse.ArgumentParser:
     capture_parser.add_argument("--version")
     capture_parser.add_argument("--history-dir", default=DEFAULT_HISTORY)
     capture_parser.add_argument("--out-dir", default=DEFAULT_OUT)
-    capture_parser.add_argument("--sample-size", type=int, default=20)
-    capture_parser.add_argument("--warm-up-time", type=float, default=1.0)
-    capture_parser.add_argument("--measurement-time", type=float, default=2.0)
+    capture_parser.add_argument("--sample-size", type=int, default=DEFAULT_SAMPLE_SIZE)
+    capture_parser.add_argument(
+        "--warm-up-time", type=float, default=DEFAULT_WARM_UP_SECONDS
+    )
+    capture_parser.add_argument(
+        "--measurement-time", type=float, default=DEFAULT_MEASUREMENT_SECONDS
+    )
     capture_parser.add_argument("--note", default="")
     capture_parser.add_argument("--idle-samples", type=int, default=3)
     capture_parser.add_argument("--minimum-idle", type=float, default=90.0)
