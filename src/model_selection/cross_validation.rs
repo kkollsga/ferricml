@@ -411,6 +411,81 @@ mod tests {
         assert_eq!(result.len(), 3);
     }
 
+    /// A score FerricML does not enumerate, to prove cross-validation reaches
+    /// the scorer through the trait rather than through a private table.
+    struct HalvedMeanSquaredError;
+
+    impl RegressionScore for HalvedMeanSquaredError {
+        fn greater_is_better(&self) -> bool {
+            false
+        }
+
+        fn score(&self, expected: &[f32], predicted: &[f32]) -> Result<f64, ScoringError> {
+            crate::metrics::mean_squared_error(expected, predicted)
+                .map(|value| value / 2.0)
+                .map_err(ScoringError::Metric)
+        }
+    }
+
+    #[test]
+    fn each_fold_score_equals_scoring_that_fold_directly() {
+        let data = data();
+        let targets =
+            RegressionTargets::new((0..12).map(|row| (row * row) as f32).collect()).unwrap();
+        let splits = KFold::new(3)
+            .with_shuffle(true)
+            .with_random_state(5)
+            .split(12)
+            .unwrap()
+            .collect::<Vec<_>>();
+
+        for scorer in [RegressionScorer::MeanSquaredError, RegressionScorer::R2] {
+            let folds = cross_validate_regressor(
+                &data.as_view(),
+                &targets,
+                splits.clone(),
+                scorer,
+                |train, train_targets| Ridge::fit(train, train_targets, RidgeParams::default()),
+            )
+            .unwrap();
+
+            for (fold, split) in splits.iter().enumerate() {
+                let train = data.select_rows(split.train_indices()).unwrap();
+                let train_targets = targets.select(split.train_indices()).unwrap();
+                let model =
+                    Ridge::fit(&train.as_view(), &train_targets, RidgeParams::default()).unwrap();
+                let test = data.select_rows(split.test_indices()).unwrap();
+                let test_targets = targets.select(split.test_indices()).unwrap();
+                assert_eq!(
+                    Ok(folds.scores()[fold]),
+                    super::super::score_regressor(&model, &test.as_view(), &test_targets, scorer),
+                    "{scorer:?} fold {fold}"
+                );
+            }
+        }
+
+        // The same holds for a score the crate does not enumerate.
+        let custom = cross_validate_regressor(
+            &data.as_view(),
+            &targets,
+            splits.clone(),
+            HalvedMeanSquaredError,
+            |train, train_targets| Ridge::fit(train, train_targets, RidgeParams::default()),
+        )
+        .unwrap();
+        let built_in = cross_validate_regressor(
+            &data.as_view(),
+            &targets,
+            splits,
+            RegressionScorer::MeanSquaredError,
+            |train, train_targets| Ridge::fit(train, train_targets, RidgeParams::default()),
+        )
+        .unwrap();
+        for (custom, built_in) in custom.scores().iter().zip(built_in.scores()) {
+            assert_eq!(*custom, built_in / 2.0);
+        }
+    }
+
     #[test]
     fn a_partial_time_series_split_never_lets_a_fold_train_on_its_future() {
         let data = data();
