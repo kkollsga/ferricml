@@ -3,6 +3,7 @@
 use ferricml::api::ModelError;
 use ferricml::data::{BinaryTargets, ClassTargets, DenseMatrix, RegressionTargets, SampleWeights};
 use ferricml::ensemble::{
+    HistGradientBoostingClassifier, HistGradientBoostingClassifierParams,
     HistGradientBoostingRegressor, HistGradientBoostingRegressorParams, MaxFeatures, NJobs,
     RandomForestClassifier, RandomForestClassifierParams, RandomForestRegressor,
     RandomForestRegressorParams,
@@ -944,6 +945,137 @@ fn weighted_histogram_boosting_matches_frozen_reference_outputs() {
     assert_close(
         &model.predict(&test.as_view()).unwrap(),
         reference::HGB_WEIGHTED_PREDICTIONS,
+    );
+}
+
+/// One boosting step of the binary log loss, against the reference's public
+/// `decision_function`, `predict_proba`, and `predict`.
+///
+/// The labels are balanced, so the baseline log-odds is exactly zero and every
+/// row starts at `p = 0.5`. Each side of the split at 3.5 then carries gradient
+/// `+-2` and curvature `1`, which is what makes the fitted score `-+2` an exact
+/// value both implementations must reach rather than a number to compare
+/// loosely. It is also the case that separates this model from a squared-error
+/// fit of the same labels: dividing by the row count instead of the curvature
+/// would give `+-0.5`.
+#[test]
+fn boosted_classification_matches_frozen_reference_one_step_outputs() {
+    let train = matrix(reference::HGB_TRAIN_X, 8, 1);
+    let targets = BinaryTargets::new(reference::HGBC_TRAIN_Y.to_vec()).unwrap();
+    let test = matrix(reference::HGB_TEST_X, 4, 1);
+    let model = HistGradientBoostingClassifier::fit(
+        &train.as_view(),
+        &targets,
+        one_step_boosted_classifier_params(),
+    )
+    .unwrap();
+    assert_eq!(model.n_iter(), 1);
+    assert_eq!(model.classes(), &[0, 1]);
+    assert_eq!(model.baseline(), 0.0);
+    assert_close_with_tolerance(
+        &model.decision_function(&test.as_view()).unwrap(),
+        reference::HGBC_DECISIONS,
+        LOGISTIC_TOLERANCE,
+    );
+    assert_close_with_tolerance(
+        &model.predict_proba(&test.as_view()).unwrap(),
+        reference::HGBC_PROBABILITIES,
+        LOGISTIC_TOLERANCE,
+    );
+    assert_eq!(
+        model.predict(&test.as_view()).unwrap(),
+        reference::HGBC_LABELS
+    );
+}
+
+/// The same one-step configuration, weighted.
+///
+/// The leaf bound is one so it never binds, which is what keeps this comparison
+/// meaningful: FerricML bounds summed weight where the reference counts rows,
+/// and that recorded divergence is observable only when the bound binds.
+#[test]
+fn weighted_boosted_classification_matches_frozen_reference_outputs() {
+    let train = matrix(reference::HGB_TRAIN_X, 8, 1);
+    let targets = BinaryTargets::new(reference::HGBC_TRAIN_Y.to_vec()).unwrap();
+    let test = matrix(reference::HGB_TEST_X, 4, 1);
+    let weights = SampleWeights::new(reference::HGB_WEIGHTS.to_vec()).unwrap();
+    let model = HistGradientBoostingClassifier::fit_weighted(
+        &train.as_view(),
+        &targets,
+        &weights,
+        one_step_boosted_classifier_params(),
+    )
+    .unwrap();
+    assert_eq!(model.n_iter(), 1);
+    assert_close_with_tolerance(
+        &model.decision_function(&test.as_view()).unwrap(),
+        reference::HGBC_WEIGHTED_DECISIONS,
+        LOGISTIC_TOLERANCE,
+    );
+    // Weighting is not inert: an unbalanced positive rate moves the baseline
+    // off zero, so the two fits are genuinely different models.
+    assert_ne!(model.baseline(), 0.0);
+}
+
+fn one_step_boosted_classifier_params() -> HistGradientBoostingClassifierParams {
+    HistGradientBoostingClassifierParams::default()
+        .with_learning_rate(1.0)
+        .with_max_iter(1)
+        .with_max_leaf_nodes(2)
+        .with_min_samples_leaf(1)
+}
+
+/// Boosted classification quality against the reference's own boosted
+/// classifier, on the same three seeds its regressor sibling uses.
+///
+/// The allowances are the crate-wide classification ones — at most 0.02 accuracy
+/// behind and at most 0.02 Brier above — evaluated on the mean over seeds rather
+/// than per seed, because a per-seed comparison of two different tree searches
+/// measures tie-breaking rather than quality.
+#[test]
+fn boosted_classification_multi_seed_quality_stays_near_frozen_baseline() {
+    let mut ferric_accuracy = 0.0;
+    let mut ferric_brier = 0.0;
+    let mut baseline_accuracy = 0.0;
+    let mut baseline_brier = 0.0;
+    for (index, seed) in HGB_QUALITY_SEEDS.into_iter().enumerate() {
+        let (train, train_y, test, test_y) = classification_data("nonlinear", seed);
+        let model = HistGradientBoostingClassifier::fit(
+            &train.as_view(),
+            &train_y,
+            HistGradientBoostingClassifierParams::default()
+                .with_learning_rate(0.1)
+                .with_max_iter(32)
+                .with_max_leaf_nodes(7)
+                .with_min_samples_leaf(10)
+                .with_max_bins(64),
+        )
+        .unwrap();
+        ferric_accuracy +=
+            accuracy_score(test_y.as_slice(), &model.predict(&test.as_view()).unwrap()).unwrap();
+        ferric_brier += brier_score(
+            test_y.as_slice(),
+            &model.predict_class_proba(&test.as_view(), 1).unwrap(),
+        )
+        .unwrap();
+        baseline_accuracy += reference::HGBC_QUALITY_ACCURACY[index];
+        baseline_brier += reference::HGBC_QUALITY_BRIER[index];
+    }
+    let count = HGB_QUALITY_SEEDS.len() as f64;
+    ferric_accuracy /= count;
+    ferric_brier /= count;
+    baseline_accuracy /= count;
+    baseline_brier /= count;
+    eprintln!(
+        "quality boosted classification: ferric accuracy={ferric_accuracy:.6} brier={ferric_brier:.6}; baseline accuracy={baseline_accuracy:.6} brier={baseline_brier:.6}"
+    );
+    assert!(
+        ferric_accuracy + 0.02 >= baseline_accuracy,
+        "FerricML boosted accuracy {ferric_accuracy:.6} trails baseline {baseline_accuracy:.6} by more than 0.02"
+    );
+    assert!(
+        ferric_brier <= baseline_brier + 0.02,
+        "FerricML boosted Brier {ferric_brier:.6} exceeds baseline {baseline_brier:.6} by more than 0.02"
     );
 }
 
