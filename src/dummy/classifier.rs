@@ -86,7 +86,7 @@ impl DummyClassifier {
             .iter()
             .map(|&label| (counts[usize::from(label)] as f64 / total) as f32)
             .collect();
-        let majority = Self::majority_label(&classes, &priors);
+        let majority = Self::majority_label(&classes, &counts);
 
         Ok(Self {
             n_features_in: data.columns(),
@@ -97,13 +97,25 @@ impl DummyClassifier {
         })
     }
 
-    /// Scans ascending and keeps only a strictly larger frequency, so an exact
-    /// tie resolves towards the smaller label and the predicted label always
-    /// matches the first probability maximum.
-    fn majority_label(classes: &[u8], priors: &[f32]) -> u8 {
+    /// Scans ascending and keeps only a strictly larger **count**, so an exact
+    /// tie resolves towards the smaller label.
+    ///
+    /// The comparison is on the counts rather than on [`Self::class_priors`]
+    /// because a prior is an `f32` view of a ratio of `usize` counts, and
+    /// narrowing is not order-preserving: two counts that differ by one collapse
+    /// onto one `f32` as soon as their relative gap falls below half an ulp.
+    /// The first such pair is `(16_777_216, 16_777_217)`, where both ratios
+    /// round to exactly `0.5` — the strict `>` then fails and the *minority*
+    /// class is returned. Counts are exact, so the comparison on them is exact.
+    ///
+    /// One consequence is deliberate: at such a total the predicted label is no
+    /// longer the first maximum of the reported probabilities, because the
+    /// reported probabilities are equal where the counts are not. The
+    /// prediction follows the counts; [`Self::class_priors`] says so.
+    fn majority_label(classes: &[u8], counts: &[usize; 2]) -> u8 {
         let mut best = 0;
-        for index in 1..priors.len() {
-            if priors[index] > priors[best] {
+        for index in 1..classes.len() {
+            if counts[usize::from(classes[index])] > counts[usize::from(classes[best])] {
                 best = index;
             }
         }
@@ -126,6 +138,12 @@ impl DummyClassifier {
     }
 
     /// Returns the observed class frequencies, ordered like [`Self::classes`].
+    ///
+    /// These are `f32` narrowings of exact `usize` ratios, so two frequencies
+    /// can be equal here while the counts behind them are not — from a training
+    /// set of `33_554_433` rows onwards, a one-row majority is invisible at this
+    /// precision. [`Self::predict`] compares the counts, so it still reports the
+    /// true majority; only the reported frequencies lose the distinction.
     pub fn class_priors(&self) -> &[f32] {
         &self.priors
     }
@@ -318,6 +336,55 @@ mod tests {
 
         assert_eq!(model.class_priors(), &[0.5, 0.5]);
         assert_eq!(model.predict(&data.as_view()).unwrap(), vec![0; 2]);
+    }
+
+    /// The smallest training set on which the majority is invisible in `f32`.
+    ///
+    /// `16_777_216 / 33_554_433` and `16_777_217 / 33_554_433` both round to
+    /// exactly `0.5` — bit pattern `0x3f00_0000` for each — so a comparison on
+    /// the reported frequencies sees a tie, resolves it towards the smaller
+    /// label, and predicts the class that occurs *less* often. Searched rather
+    /// than guessed: at every smaller power-of-two total, down to `1_048_577`,
+    /// the same one-row majority is still strictly larger as an `f32`, so this
+    /// pair is the first collapse and not merely one of them.
+    ///
+    /// The row count is what the defect costs to state; the test is cheap
+    /// anyway, because the features are one constant column a baseline ignores.
+    #[test]
+    fn the_majority_is_predicted_where_the_two_frequencies_round_to_one_f32() {
+        let minority = 16_777_216_usize;
+        let majority = minority + 1;
+        let rows = minority + majority;
+
+        let features = vec![0.0_f32; rows];
+        let view = MatrixView::new(&features, rows, 1).unwrap();
+        let mut labels = vec![0_u8; rows];
+        labels[minority..].fill(1);
+        let model = DummyClassifier::fit(
+            &view,
+            &BinaryTargets::new(labels).unwrap(),
+            DummyClassifierParams,
+        )
+        .unwrap();
+
+        // The premise: the two frequencies really are one `f32`, so a
+        // comparison on them cannot see the majority. Asserted so that a future
+        // change to a wider prior turns this test into a statement about a
+        // condition that no longer holds rather than into a silent pass.
+        assert_eq!(model.class_priors(), &[0.5, 0.5]);
+        assert_eq!(
+            model.class_priors()[0].to_bits(),
+            model.class_priors()[1].to_bits()
+        );
+
+        // Class `1` occurs once more than class `0`, so it is the majority.
+        assert_eq!(model.predict_one(&[0.0]).unwrap(), 1);
+        assert_eq!(
+            model
+                .predict(&MatrixView::new(&features[..3], 3, 1).unwrap())
+                .unwrap(),
+            vec![1; 3]
+        );
     }
 
     #[test]

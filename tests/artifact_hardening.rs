@@ -75,6 +75,7 @@ use sha2::{Digest, Sha256};
 use std::alloc::{GlobalAlloc, Layout, System};
 use std::cell::Cell;
 use std::collections::HashSet;
+use std::sync::LazyLock;
 
 mod support;
 
@@ -307,14 +308,43 @@ const COMPONENT_HEADER_BYTES: usize = 8;
 const INPUT_SCHEMA: [u8; 32] = [3; 32];
 const TRANSFORMED_SCHEMA: [u8; 32] = [4; 32];
 
+/// Kinds that name nothing, which the sweep presents anyway.
+///
+/// `17`-`19` are reserved and unimplemented and `0` is unassigned; keeping them
+/// in the sweep is what proves a decoder refuses a kind rather than merely
+/// missing one. Unlike the assigned kinds this list cannot be derived, because
+/// a number that names nothing has nothing to read it from — but it also cannot
+/// rot: `the_reserved_kinds_are_claimed_by_nothing` in
+/// `tests/artifact_tags.rs` fails if any type claims `17`-`19`, and `0` is
+/// claimed by nothing because no writer emits it.
+const UNASSIGNED_KINDS: [u16; 4] = [0, 17, 18, 19];
+
 /// Every artifact kind the crate reads today, plus the neighbours it must not.
 ///
-/// `17`-`19` are reserved and unimplemented, and `0` is unassigned; keeping them
-/// in the sweep is what proves a decoder refuses a kind rather than merely
-/// missing one.
-const ARTIFACT_KINDS: [u16; 25] = [
-    0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24,
-];
+/// **Derived, not written down.** The assigned kinds are read out of the decoder
+/// table's `ARTIFACT_KIND` constants, and that table is closed against the frozen
+/// API profile in both directions by
+/// [`every_persistence_impl_receives_hostile_bytes_and_no_entry_is_stale`]. A
+/// new persistable type therefore cannot reach the crate without also reaching
+/// this sweep.
+///
+/// It used to be the literal range `0..=24`, under a comment claiming it was
+/// every kind the crate reads. It was not: `44` (`RobustScaler`), `46`
+/// (`PolynomialFeatures`), `69` (`Lasso`) and `70` (`ElasticNet`) had been
+/// assigned since, so the cross-kind confusion sweep — bytes of kind *n*
+/// presented as kind *m* — could reach every kind except the four newest. A
+/// hand-maintained list that claims completeness is the defect shape this
+/// crate keeps finding; the fix is to stop maintaining one.
+static ARTIFACT_KINDS: LazyLock<Vec<u16>> = LazyLock::new(|| {
+    let mut kinds: Vec<u16> = decoders()
+        .iter()
+        .map(|&(_, _, kind, ..)| kind)
+        .chain(UNASSIGNED_KINDS)
+        .collect();
+    kinds.sort_unstable();
+    kinds.dedup();
+    kinds
+});
 
 fn u16_at(bytes: &[u8], offset: usize) -> u16 {
     u16::from_le_bytes(bytes[offset..offset + 2].try_into().expect("two bytes"))
@@ -529,6 +559,7 @@ fn exercised<M: Estimator>(
 type Decoder = (
     &'static str,
     &'static str,
+    u16,
     fn(&[u8]) -> Outcome,
     fn(&[u8]) -> Inference,
 );
@@ -577,6 +608,7 @@ fn decoders() -> Vec<Decoder> {
         (
             "logistic",
             "ferricml::linear_model::LogisticRegression",
+            <LogisticRegression as ModelArtifact>::ARTIFACT_KIND,
             |bytes| {
                 accepted(
                     LogisticRegression::from_artifact(bytes, INPUT_SCHEMA),
@@ -593,6 +625,7 @@ fn decoders() -> Vec<Decoder> {
         (
             "linear",
             "ferricml::linear_model::LinearRegression",
+            <LinearRegression as ModelArtifact>::ARTIFACT_KIND,
             |bytes| {
                 accepted(LinearRegression::from_artifact(bytes, INPUT_SCHEMA), |m| {
                     m.to_artifact(INPUT_SCHEMA)
@@ -608,6 +641,7 @@ fn decoders() -> Vec<Decoder> {
         (
             "ridge",
             "ferricml::linear_model::Ridge",
+            <Ridge as ModelArtifact>::ARTIFACT_KIND,
             |bytes| {
                 accepted(Ridge::from_artifact(bytes, INPUT_SCHEMA), |m| {
                     m.to_artifact(INPUT_SCHEMA)
@@ -618,6 +652,7 @@ fn decoders() -> Vec<Decoder> {
         (
             "lasso",
             "ferricml::linear_model::Lasso",
+            <Lasso as ModelArtifact>::ARTIFACT_KIND,
             |bytes| {
                 accepted(Lasso::from_artifact(bytes, INPUT_SCHEMA), |m| {
                     m.to_artifact(INPUT_SCHEMA)
@@ -628,6 +663,7 @@ fn decoders() -> Vec<Decoder> {
         (
             "elastic-net",
             "ferricml::linear_model::ElasticNet",
+            <ElasticNet as ModelArtifact>::ARTIFACT_KIND,
             |bytes| {
                 accepted(ElasticNet::from_artifact(bytes, INPUT_SCHEMA), |m| {
                     m.to_artifact(INPUT_SCHEMA)
@@ -638,6 +674,7 @@ fn decoders() -> Vec<Decoder> {
         (
             "standard-scaler",
             "ferricml::preprocessing::StandardScaler",
+            <StandardScaler as StageArtifact>::ARTIFACT_KIND,
             |bytes| {
                 accepted(
                     StandardScaler::from_artifact(bytes, INPUT_SCHEMA, TRANSFORMED_SCHEMA),
@@ -654,6 +691,7 @@ fn decoders() -> Vec<Decoder> {
         (
             "min-max-scaler",
             "ferricml::preprocessing::MinMaxScaler",
+            <MinMaxScaler as StageArtifact>::ARTIFACT_KIND,
             |bytes| {
                 accepted(
                     MinMaxScaler::from_artifact(bytes, INPUT_SCHEMA, TRANSFORMED_SCHEMA),
@@ -670,6 +708,7 @@ fn decoders() -> Vec<Decoder> {
         (
             "max-abs-scaler",
             "ferricml::preprocessing::MaxAbsScaler",
+            <MaxAbsScaler as StageArtifact>::ARTIFACT_KIND,
             |bytes| {
                 accepted(
                     MaxAbsScaler::from_artifact(bytes, INPUT_SCHEMA, TRANSFORMED_SCHEMA),
@@ -686,6 +725,7 @@ fn decoders() -> Vec<Decoder> {
         (
             "robust-scaler",
             "ferricml::preprocessing::RobustScaler",
+            <RobustScaler as StageArtifact>::ARTIFACT_KIND,
             |bytes| {
                 accepted(
                     RobustScaler::from_artifact(bytes, INPUT_SCHEMA, TRANSFORMED_SCHEMA),
@@ -702,6 +742,7 @@ fn decoders() -> Vec<Decoder> {
         (
             "polynomial-features",
             "ferricml::preprocessing::PolynomialFeatures",
+            <PolynomialFeatures as StageArtifact>::ARTIFACT_KIND,
             |bytes| {
                 accepted(
                     PolynomialFeatures::from_artifact(bytes, INPUT_SCHEMA, TRANSFORMED_SCHEMA),
@@ -718,6 +759,7 @@ fn decoders() -> Vec<Decoder> {
         (
             "pipeline-logistic",
             "ferricml::pipeline::Pipeline<ferricml::preprocessing::StandardScaler, ferricml::linear_model::LogisticRegression>",
+            <Pipeline<StandardScaler, LogisticRegression> as StageArtifact>::ARTIFACT_KIND,
             |bytes| {
                 accepted(
                     Pipeline::<StandardScaler, LogisticRegression>::from_artifact(
@@ -749,6 +791,7 @@ fn decoders() -> Vec<Decoder> {
         (
             "pipeline-linear",
             "ferricml::pipeline::Pipeline<ferricml::preprocessing::StandardScaler, ferricml::linear_model::LinearRegression>",
+            <Pipeline<StandardScaler, LinearRegression> as StageArtifact>::ARTIFACT_KIND,
             |bytes| {
                 accepted(
                     Pipeline::<StandardScaler, LinearRegression>::from_artifact(
@@ -780,6 +823,7 @@ fn decoders() -> Vec<Decoder> {
         (
             "pipeline-ridge",
             "ferricml::pipeline::Pipeline<ferricml::preprocessing::StandardScaler, ferricml::linear_model::Ridge>",
+            <Pipeline<StandardScaler, Ridge> as StageArtifact>::ARTIFACT_KIND,
             |bytes| {
                 accepted(
                     Pipeline::<StandardScaler, Ridge>::from_artifact(
@@ -811,6 +855,7 @@ fn decoders() -> Vec<Decoder> {
         (
             "pairwise-ranker",
             "ferricml::ranking::PairwiseLinearRanker",
+            <PairwiseLinearRanker as ModelArtifact>::ARTIFACT_KIND,
             |bytes| {
                 accepted(
                     PairwiseLinearRanker::from_artifact(bytes, INPUT_SCHEMA),
@@ -832,6 +877,7 @@ fn decoders() -> Vec<Decoder> {
         (
             "hist-gradient-boosting",
             "ferricml::ensemble::HistGradientBoostingRegressor",
+            <HistGradientBoostingRegressor as ModelArtifact>::ARTIFACT_KIND,
             |bytes| {
                 accepted(
                     HistGradientBoostingRegressor::from_artifact(bytes, INPUT_SCHEMA),
@@ -848,6 +894,7 @@ fn decoders() -> Vec<Decoder> {
         (
             "hist-gradient-boosting-classifier",
             "ferricml::ensemble::HistGradientBoostingClassifier",
+            <HistGradientBoostingClassifier as ModelArtifact>::ARTIFACT_KIND,
             |bytes| {
                 accepted(
                     HistGradientBoostingClassifier::from_artifact(bytes, INPUT_SCHEMA),
@@ -864,6 +911,7 @@ fn decoders() -> Vec<Decoder> {
         (
             "random-forest",
             "ferricml::ensemble::RandomForestRegressor",
+            <RandomForestRegressor as ModelArtifact>::ARTIFACT_KIND,
             |bytes| {
                 accepted(
                     RandomForestRegressor::from_artifact(bytes, INPUT_SCHEMA),
@@ -880,6 +928,7 @@ fn decoders() -> Vec<Decoder> {
         (
             "random-forest-classifier",
             "ferricml::ensemble::RandomForestClassifier",
+            <RandomForestClassifier as ModelArtifact>::ARTIFACT_KIND,
             |bytes| {
                 accepted(
                     RandomForestClassifier::from_artifact(bytes, INPUT_SCHEMA),
@@ -896,6 +945,7 @@ fn decoders() -> Vec<Decoder> {
         (
             "extra-trees",
             "ferricml::ensemble::ExtraTreesRegressor",
+            <ExtraTreesRegressor as ModelArtifact>::ARTIFACT_KIND,
             |bytes| {
                 accepted(
                     ExtraTreesRegressor::from_artifact(bytes, INPUT_SCHEMA),
@@ -912,6 +962,7 @@ fn decoders() -> Vec<Decoder> {
         (
             "extra-trees-classifier",
             "ferricml::ensemble::ExtraTreesClassifier",
+            <ExtraTreesClassifier as ModelArtifact>::ARTIFACT_KIND,
             |bytes| {
                 accepted(
                     ExtraTreesClassifier::from_artifact(bytes, INPUT_SCHEMA),
@@ -928,6 +979,7 @@ fn decoders() -> Vec<Decoder> {
         (
             "decision-tree",
             "ferricml::tree::DecisionTreeRegressor",
+            <DecisionTreeRegressor as ModelArtifact>::ARTIFACT_KIND,
             |bytes| {
                 accepted(
                     DecisionTreeRegressor::from_artifact(bytes, INPUT_SCHEMA),
@@ -944,6 +996,7 @@ fn decoders() -> Vec<Decoder> {
         (
             "decision-tree-classifier",
             "ferricml::tree::DecisionTreeClassifier",
+            <DecisionTreeClassifier as ModelArtifact>::ARTIFACT_KIND,
             |bytes| {
                 accepted(
                     DecisionTreeClassifier::from_artifact(bytes, INPUT_SCHEMA),
@@ -960,6 +1013,7 @@ fn decoders() -> Vec<Decoder> {
         (
             "any-regressor",
             "ferricml::api::AnyRegressor",
+            <AnyRegressor as ModelArtifact>::ARTIFACT_KIND,
             |bytes| {
                 accepted(AnyRegressor::from_artifact(bytes, INPUT_SCHEMA), |m| {
                     m.to_artifact(INPUT_SCHEMA)
@@ -975,6 +1029,7 @@ fn decoders() -> Vec<Decoder> {
         (
             "any-classifier",
             "ferricml::api::AnyClassifier",
+            <AnyClassifier as ModelArtifact>::ARTIFACT_KIND,
             |bytes| {
                 accepted(AnyClassifier::from_artifact(bytes, INPUT_SCHEMA), |m| {
                     m.to_artifact(INPUT_SCHEMA)
@@ -990,6 +1045,7 @@ fn decoders() -> Vec<Decoder> {
         (
             "staged-two",
             "ferricml::pipeline::StagedPipeline<(ferricml::preprocessing::MinMaxScaler, ferricml::preprocessing::StandardScaler), ferricml::linear_model::Ridge>",
+            <StagedTwo as StageArtifact>::ARTIFACT_KIND,
             |bytes| {
                 accepted(
                     StagedTwo::from_artifact(bytes, INPUT_SCHEMA, TRANSFORMED_SCHEMA),
@@ -1006,6 +1062,7 @@ fn decoders() -> Vec<Decoder> {
         (
             "staged-three",
             "ferricml::pipeline::StagedPipeline<(ferricml::preprocessing::MinMaxScaler, ferricml::preprocessing::StandardScaler, ferricml::preprocessing::MaxAbsScaler), ferricml::linear_model::Ridge>",
+            <StagedThree as StageArtifact>::ARTIFACT_KIND,
             |bytes| {
                 accepted(
                     StagedThree::from_artifact(bytes, INPUT_SCHEMA, TRANSFORMED_SCHEMA),
@@ -1022,6 +1079,7 @@ fn decoders() -> Vec<Decoder> {
         (
             "staged-forest",
             "ferricml::pipeline::StagedPipeline<(ferricml::preprocessing::MinMaxScaler, ferricml::preprocessing::StandardScaler), ferricml::ensemble::RandomForestRegressor>",
+            <StagedForest as StageArtifact>::ARTIFACT_KIND,
             |bytes| {
                 accepted(
                     StagedForest::from_artifact(bytes, INPUT_SCHEMA, TRANSFORMED_SCHEMA),
@@ -1038,6 +1096,7 @@ fn decoders() -> Vec<Decoder> {
         (
             "staged-boosting",
             "ferricml::pipeline::StagedPipeline<(ferricml::preprocessing::MinMaxScaler, ferricml::preprocessing::StandardScaler), ferricml::ensemble::HistGradientBoostingRegressor>",
+            <StagedBoosting as StageArtifact>::ARTIFACT_KIND,
             |bytes| {
                 accepted(
                     StagedBoosting::from_artifact(bytes, INPUT_SCHEMA, TRANSFORMED_SCHEMA),
@@ -1094,6 +1153,54 @@ fn every_persistence_impl_receives_hostile_bytes_and_no_entry_is_stale() {
 /// The implementing type of every decoder in the table.
 fn decoder_targets() -> Vec<&'static str> {
     decoders().iter().map(|(_, target, ..)| *target).collect()
+}
+
+/// The kind list the cross-kind sweep draws from covers every decoder, so a new
+/// persistable type cannot be added without its kind being presented to the
+/// others.
+///
+/// The derivation is what makes this hold, and this test says what the
+/// derivation is for. It is deliberately *not* a frozen list of numbers: a
+/// snapshot would have to be extended by hand, which is the thing that failed.
+/// The four numbers named below are pinned as a regression rather than as a
+/// registry — they are the kinds the literal `0..=24` range missed.
+#[test]
+fn the_swept_kinds_cover_every_decoder_and_the_kinds_that_name_nothing() {
+    for &(name, _, kind, ..) in &decoders() {
+        assert!(
+            ARTIFACT_KINDS.contains(&kind),
+            "{name} decodes kind {kind}, which the cross-kind sweep never presents"
+        );
+    }
+    for unassigned in UNASSIGNED_KINDS {
+        assert!(
+            ARTIFACT_KINDS.contains(&unassigned),
+            "kind {unassigned} names nothing and must still be presented, so a \
+             decoder is seen to refuse it rather than merely to miss it"
+        );
+    }
+
+    // The regression. These four were assigned after the sweep's kind list was
+    // written as the literal range `0..=24`, and the comment above that range
+    // claimed it was every kind the crate reads.
+    for (kind, owner) in [
+        (44, "RobustScaler"),
+        (46, "PolynomialFeatures"),
+        (69, "Lasso"),
+        (70, "ElasticNet"),
+    ] {
+        assert!(
+            ARTIFACT_KINDS.contains(&kind),
+            "kind {kind} ({owner}) is missing from the cross-kind sweep again"
+        );
+    }
+
+    // A sorted, duplicate-free list, because the four staged compositions share
+    // one kind and drawing it four times as often would skew the sweep.
+    let mut expected = ARTIFACT_KINDS.clone();
+    expected.sort_unstable();
+    expected.dedup();
+    assert_eq!(*ARTIFACT_KINDS, expected);
 }
 
 /// The closure must be able to fail, in both of its directions.
@@ -2245,7 +2352,7 @@ fn the_envelope_model_agrees_with_the_real_decoder() {
             .find(|(seed_name, _)| *seed_name == name)
             .unwrap_or_else(|| panic!("no {name} seed"))
             .1;
-        let (_, _, decode, _) = *table
+        let (_, _, _, decode, _) = *table
             .iter()
             .find(|(decoder_name, ..)| *decoder_name == name)
             .unwrap_or_else(|| panic!("no {name} decoder"));
@@ -2423,7 +2530,7 @@ struct Probe {
 /// rather than assumed, because a decoder that accepted bytes once and rejected
 /// them the second time would leave nothing to run and would do it silently.
 fn decode_under_oracles(label: &str, decoder: &Decoder, bytes: &[u8]) -> Option<usize> {
-    let (name, _, decode, exercise) = *decoder;
+    let (name, _, _, decode, exercise) = *decoder;
     let (outcome, peak) = measure_peak(|| decode(bytes));
     let budget = ALLOC_BASE_BYTES + ALLOC_INPUT_FACTOR * bytes.len();
     let length = bytes.len();
@@ -2729,7 +2836,7 @@ impl Campaign {
         let identities = decoders
             .iter()
             .map(|decoder| {
-                let (name, _, decode, _) = *decoder;
+                let (name, _, _, decode, _) = *decoder;
                 let accepted = corpus
                     .iter()
                     .map(|(_, bytes)| bytes)
@@ -4768,7 +4875,7 @@ fn attributed_repairs() -> Vec<(&'static str, Vec<u8>)> {
 /// something that has to be proven able to fire — see
 /// [`the_attribution_oracle_reports_a_fixture_rejected_by_another_clause`].
 fn attribution_failure(decoder: &Decoder, frozen: &[u8], repaired: &[u8]) -> Option<String> {
-    let (name, _, decode, _) = *decoder;
+    let (name, _, _, decode, _) = *decoder;
     if frozen == repaired {
         return Some(
             "the repair is byte-identical to the fixture, so it undoes no fault".to_owned(),
@@ -4863,7 +4970,7 @@ fn the_attribution_oracle_reports_a_fixture_rejected_by_another_clause() {
 
     // Both are rejected with the recorded kind, which is precisely why the
     // corpus assertions cannot tell them apart.
-    let (_, _, decode, _) = *decoder;
+    let (_, _, _, decode, _) = *decoder;
     for bytes in [&two_faults, &named_fault_undone] {
         match decode(bytes) {
             Outcome::Rejected(ArtifactError::InvalidPayload) => {}
@@ -4952,7 +5059,7 @@ fn the_frozen_adversarial_corpus_decodes_exactly_as_recorded() {
             exercised_rows += decode_under_oracles(case.name, decoder, &frozen).unwrap_or(0);
         }
 
-        let (_, _, decode, _) = *decoders
+        let (_, _, _, decode, _) = *decoders
             .iter()
             .find(|(name, ..)| *name == case.decoder)
             .unwrap_or_else(|| panic!("{}: no decoder named {}", case.name, case.decoder));
