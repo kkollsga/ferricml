@@ -398,6 +398,75 @@ fn adjacent_float_values_are_distinct_unlike_the_reference() {
     assert_eq!(model.predict(&view).unwrap(), vec![0.0, 0.0, 1.0, 1.0]);
 }
 
+/// Among exactly-tied splits the **first drawn** column wins — not the
+/// lowest-indexed one.
+///
+/// This is the crate's cross-column tie-break, and until now nothing asserted
+/// it. `TIE_TRAIN_X` is a single column, so a *cross*-column rule cannot show
+/// in it at all, and the whole reference-semantics suite passes unchanged when
+/// the rule is replaced by lowest-column-index. Two tests do notice, both
+/// incidentally: `the_identity_is_of_member_zero_and_not_of_the_public_seed`
+/// loses the *inequality* it asserts once every tree picks the same column,
+/// and the frozen adversarial artifact corpus is byte-frozen. Neither states
+/// the rule, so neither tells a reader what changed.
+///
+/// The construction gives the rule something to decide: four bit-identical
+/// columns produce the same sorted order, the same threshold and the same
+/// score, so every candidate ties exactly and the winner is decided purely by
+/// visit order. `MaxFeatures::Count(1)` draws exactly one column and consumes
+/// the generator identically to the first draw of `MaxFeatures::All`, so it
+/// names the first drawn column over a path where no tie-break can be
+/// involved — the rule is checked against the draw itself, not against a
+/// second copy of the draw written in the test.
+#[test]
+fn the_first_drawn_column_wins_an_exactly_tied_split() {
+    const COLUMNS: usize = 4;
+    let column = [0.0_f32, 1.0, 2.0, 3.0, 4.0, 5.0];
+    let data = DenseMatrix::new(
+        column.iter().flat_map(|&v| [v; COLUMNS]).collect(),
+        column.len(),
+        COLUMNS,
+    )
+    .unwrap();
+    let targets = RegressionTargets::new(vec![0.0, 0.0, 0.0, 1.0, 1.0, 1.0]).unwrap();
+
+    let root_split_column = |max_features: MaxFeatures, seed: u64| {
+        let model = DecisionTreeRegressor::fit(
+            &data.as_view(),
+            &targets,
+            DecisionTreeRegressorParams::default()
+                .with_max_features(max_features)
+                .with_max_depth(Some(1))
+                .with_random_state(seed),
+        )
+        .unwrap();
+        let packed = model.packed();
+        assert!(packed.root_leaf.is_none(), "seed {seed} grew no split");
+        (packed.nodes[0].feature_and_flags & FEATURE_MASK) as usize
+    };
+
+    let mut winners = [0_u32; COLUMNS];
+    for seed in 0..64 {
+        let first_drawn = root_split_column(MaxFeatures::Count(1), seed);
+        assert_eq!(
+            root_split_column(MaxFeatures::All, seed),
+            first_drawn,
+            "seed {seed} broke an exact tie somewhere other than the first drawn column"
+        );
+        winners[first_drawn] += 1;
+    }
+    // The half that makes the assertion above capable of failing: the draw
+    // really does put a column other than column 0 first, so lowest-column-index
+    // tie-breaking would disagree rather than coincide. Every column must win
+    // somewhere, or the permutation would be closer to the identity than the
+    // rule claims.
+    assert!(
+        winners.iter().all(|&count| count > 0),
+        "the seeded draw never put some column first ({winners:?}); \
+         a lowest-index rule would be indistinguishable"
+    );
+}
+
 #[test]
 fn artifacts_round_trip_through_every_fitted_shape() {
     let (x, y, labels) = separable();
