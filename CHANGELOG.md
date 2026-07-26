@@ -9,6 +9,25 @@ and releases use [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- `scripts/check_solver_registration.py`, run by `make gate`, which enforces
+  that every params type exposing both `with_max_iter` and `with_tol` is named
+  in `tests/solver_convergence_contract.rs`. That battery is the mechanism
+  behind the claim below that *every* iterative solver refuses an exhausted
+  budget, and it caught a listed solver regressing while saying nothing about a
+  new one arriving unlisted — a budgeted estimator could ship with the claim
+  unenforced for it and nothing anywhere reporting the omission. The rule is
+  deliberately syntactic, so it cannot be satisfied by weakening a tolerance or
+  by accepting an unconverged iterate; the only thing that satisfies it is a
+  row, which then has to pass the battery on its own merits. Requiring *both*
+  builders is what keeps the predicate honest: a budget without a convergence
+  test is a fixed round count, as on the two boosted estimators, and a tolerance
+  without a budget is a rank threshold inside a direct solve, as on
+  `LinearRegressionParams` — neither has an iterate to refuse. Its `--self-test`
+  proves each rule against a synthetic violation, proves two of them again
+  against a violation in a child module a facade-only reader would miss, proves
+  that losing either input is reported rather than passed, and reconstructs the
+  omission it was written for.
+
 - `scripts/check_accessor_pairing.py`, run by `make gate`, which enforces that
   an `X_into` method and its allocating `X` partner are actually a pair: the
   caller-owned form takes exactly the allocating form's arguments plus its

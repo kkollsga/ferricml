@@ -17,8 +17,9 @@ MUTANTS_JOBS ?= 4
 .PHONY: gate gate-full api-check api-refresh reference-check package-check semver-check mutants bench-self bench-history bench-diagnostic docs-env docs-build docs-serve
 
 ## Ordinary pre-push gate: formatting, default lint/tests, dependency isolation,
-## documentation-versus-code agreement, allocating/`_into` accessor pairing, and
-## the extracted-package external-consumer contract.
+## documentation-versus-code agreement, allocating/`_into` accessor pairing,
+## budgeted-solver registration in the convergence battery, and the
+## extracted-package external-consumer contract.
 gate:
 	cargo fmt --all -- --check
 	cargo clippy --locked --all-targets -- -D warnings
@@ -33,6 +34,8 @@ gate:
 	$(PYTHON) scripts/check_documentation_truth.py --self-test
 	$(PYTHON) scripts/check_accessor_pairing.py
 	$(PYTHON) scripts/check_accessor_pairing.py --self-test
+	$(PYTHON) scripts/check_solver_registration.py
+	$(PYTHON) scripts/check_solver_registration.py --self-test
 	$(PYTHON) scripts/check_release_workflow.py
 	$(PYTHON) scripts/check_release_workflow.py --self-test
 	$(PYTHON) scripts/check_semver.py --self-test
