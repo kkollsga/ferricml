@@ -684,6 +684,58 @@ mod tests {
         );
     }
 
+    /// The `f32` twin of [`softmax_boundary_inputs_are_exact`], case for case.
+    ///
+    /// Both functions document the *same* degenerate contract — `+inf` entries
+    /// share the mass equally, every other entry is exactly zero, and an
+    /// all-`-inf` row is uniform — so both owe the same battery. The `f32` half
+    /// previously had only the single-winner `[+inf, 0]` case, where neither
+    /// half of the degenerate branch is observable: with one winner, counting
+    /// `== INFINITY` and counting `!= INFINITY` both give `1`, and `1.0 / 1`
+    /// and `1.0 * 1` are the same number. The multi-winner rows below are what
+    /// make the winner count and the reciprocal share visible in the result.
+    #[test]
+    fn softmax_f32_boundary_inputs_are_exact() {
+        let mut empty: [f32; 0] = [];
+        softmax_in_place_f32(&mut empty);
+
+        assert_eq!(softmax_f32(&[7.5]), vec![1.0]);
+        assert!(
+            softmax_f32(&[f32::NAN, 0.0])
+                .iter()
+                .all(|value| value.is_nan())
+        );
+        assert!(
+            softmax_f32(&[0.0, f32::NAN])
+                .iter()
+                .all(|value| value.is_nan())
+        );
+        assert_eq!(
+            softmax_f32(&[f32::INFINITY, 0.0, f32::INFINITY]),
+            vec![0.5, 0.0, 0.5]
+        );
+        assert_eq!(softmax_f32(&[f32::INFINITY, 3.0]), vec![1.0, 0.0]);
+        assert_eq!(
+            softmax_f32(&[f32::NEG_INFINITY, f32::NEG_INFINITY]),
+            vec![0.5, 0.5]
+        );
+        assert_eq!(softmax_f32(&[f32::NEG_INFINITY, 2.0]), vec![0.0, 1.0]);
+        // Three winners rather than two, so the share is neither `1` nor `1/2`
+        // and no arithmetic other than the reciprocal of the count reproduces
+        // it. The finite entry between them stays exactly zero.
+        let third = 1.0_f32 / 3.0;
+        assert_eq!(
+            softmax_f32(&[f32::INFINITY, 0.0, f32::INFINITY, f32::INFINITY]),
+            vec![third, 0.0, third, third]
+        );
+        // The all-`-inf` row takes the other arm of the same branch: every
+        // entry is a winner, so the share is the reciprocal of the row length.
+        assert_eq!(
+            softmax_f32(&[f32::NEG_INFINITY; 4]),
+            vec![0.25, 0.25, 0.25, 0.25]
+        );
+    }
+
     #[test]
     fn log_sum_exp_is_monotone_in_each_argument() {
         let mut previous = f64::NEG_INFINITY;
