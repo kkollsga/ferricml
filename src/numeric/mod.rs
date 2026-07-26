@@ -684,6 +684,82 @@ mod tests {
         );
     }
 
+    /// The `f32` twin of [`softmax_boundary_inputs_are_exact`], case for case.
+    ///
+    /// Both functions document the *same* degenerate contract — `+inf` entries
+    /// share the mass equally, every other entry is exactly zero, and an
+    /// all-`-inf` row is uniform — so both owe the same battery. The `f32` half
+    /// previously had only the single-winner `[+inf, 0]` case, where neither
+    /// half of the degenerate branch is observable: with one winner, counting
+    /// `== INFINITY` and counting `!= INFINITY` both give `1`, and `1.0 / 1`
+    /// and `1.0 * 1` are the same number. The multi-winner rows below are what
+    /// make the winner count and the reciprocal share visible in the result.
+    #[test]
+    fn softmax_f32_boundary_inputs_are_exact() {
+        let mut empty: [f32; 0] = [];
+        softmax_in_place_f32(&mut empty);
+
+        assert_eq!(softmax_f32(&[7.5]), vec![1.0]);
+        assert!(
+            softmax_f32(&[f32::NAN, 0.0])
+                .iter()
+                .all(|value| value.is_nan())
+        );
+        assert!(
+            softmax_f32(&[0.0, f32::NAN])
+                .iter()
+                .all(|value| value.is_nan())
+        );
+        assert_eq!(
+            softmax_f32(&[f32::INFINITY, 0.0, f32::INFINITY]),
+            vec![0.5, 0.0, 0.5]
+        );
+        assert_eq!(softmax_f32(&[f32::INFINITY, 3.0]), vec![1.0, 0.0]);
+        assert_eq!(
+            softmax_f32(&[f32::NEG_INFINITY, f32::NEG_INFINITY]),
+            vec![0.5, 0.5]
+        );
+        assert_eq!(softmax_f32(&[f32::NEG_INFINITY, 2.0]), vec![0.0, 1.0]);
+        // Three winners rather than two, so the share is neither `1` nor `1/2`
+        // and no arithmetic other than the reciprocal of the count reproduces
+        // it. The finite entry between them stays exactly zero.
+        let third = 1.0_f32 / 3.0;
+        assert_eq!(
+            softmax_f32(&[f32::INFINITY, 0.0, f32::INFINITY, f32::INFINITY]),
+            vec![third, 0.0, third, third]
+        );
+        // The all-`-inf` row takes the other arm of the same branch: every
+        // entry is a winner, so the share is the reciprocal of the row length.
+        assert_eq!(
+            softmax_f32(&[f32::NEG_INFINITY; 4]),
+            vec![0.25, 0.25, 0.25, 0.25]
+        );
+    }
+
+    /// The `f32` twin of
+    /// [`softmax_rows_are_not_renormalized_and_may_miss_one_by_rounding`].
+    ///
+    /// The `f32` function states its row-sum contract by reference to the `f64`
+    /// one rather than restating it, and the residual it is allowed is *wider*
+    /// — which is why the narrow width owes its own proof instead of borrowing
+    /// the wide one's. A renormalizing second pass is a line no mutation of the
+    /// present code can propose, so only an assertion that the residual is real
+    /// keeps this contract from being silently "improved" away.
+    #[test]
+    fn softmax_f32_rows_are_not_renormalized_and_may_miss_one_by_rounding() {
+        let mut worst = 0.0_f32;
+        let mut inexact = 0_usize;
+        for step in -400..=400 {
+            let value = step as f32 / 7.0;
+            let row = softmax_f32(&[value, -value, value / 3.0, 0.0, 1.0 - value]);
+            let sum = row.iter().sum::<f32>();
+            worst = worst.max((sum - 1.0).abs());
+            inexact += usize::from(sum != 1.0);
+        }
+        assert!(worst <= 8.0 * f32::EPSILON, "row-sum deviation {worst}");
+        assert!(inexact > 0, "the residual is real, not hypothetical");
+    }
+
     #[test]
     fn log_sum_exp_is_monotone_in_each_argument() {
         let mut previous = f64::NEG_INFINITY;

@@ -1944,6 +1944,45 @@ fn corpus() -> Vec<Case> {
             expected: ArtifactError::Truncated,
             bytes: stated(3, &MODEL_ROLES, &words(&[inflated, 0, 1, 0, inflated])),
         },
+        // The ridge state validation is a six-clause disjunction, and a clause
+        // is only proven to be load-bearing by a payload that violates *it and
+        // nothing else*: any payload violating two clauses would still be
+        // refused with one of them deleted. Three of the six had no such
+        // payload. The fields are, in order, the declared width, the penalty,
+        // the intercept flag, the intercept, and the coefficient count.
+        Case {
+            name: "ridge-width-past-the-ceiling",
+            provenance: "a declared width one past the million-feature ceiling, every other field valid",
+            decoder: "ridge",
+            expected: ArtifactError::InvalidPayload,
+            bytes: stated(
+                3,
+                &MODEL_ROLES,
+                &words(&[inflated + 1, 0x3f80_0000, 1, 0, inflated + 1]),
+            ),
+        },
+        Case {
+            name: "ridge-negative-alpha",
+            provenance: "a finite penalty of -1.0, which the fitting boundary refuses and the reader must too",
+            decoder: "ridge",
+            expected: ArtifactError::InvalidPayload,
+            bytes: stated(
+                3,
+                &MODEL_ROLES,
+                &words(&[1, 0xbf80_0000, 1, 0, 1, 0x3f80_0000]),
+            ),
+        },
+        Case {
+            name: "ridge-non-finite-intercept",
+            provenance: "an infinite intercept beside finite coefficients, which no fit can produce",
+            decoder: "ridge",
+            expected: ArtifactError::InvalidPayload,
+            bytes: stated(
+                3,
+                &MODEL_ROLES,
+                &words(&[1, 0x3f80_0000, 1, 0x7f80_0000, 1, 0x3f80_0000]),
+            ),
+        },
         Case {
             name: "legacy-logistic-inflated-coefficients",
             provenance: "the same inflation through the version-1 envelope",

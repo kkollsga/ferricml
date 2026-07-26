@@ -484,4 +484,37 @@ mod tests {
             ModelError::InvalidRidgeAlpha
         );
     }
+
+    /// `fit_intercept` is the one payload field with two legal encodings, and
+    /// only one of them was ever decoded anywhere in the crate: every other
+    /// round-trip, fingerprint and hardening fixture persists the fitting
+    /// default. A reader that lost the `0` arm would reject every stored
+    /// no-intercept model and no test would notice, so both configurations are
+    /// decoded here — and each is decoded back to the *same bytes*, which is
+    /// what makes the flag round-trip rather than merely survive.
+    #[test]
+    fn both_persisted_intercept_configurations_decode_to_the_model_that_wrote_them() {
+        let data = DenseMatrix::new(vec![0.0, 1.0, 1.0, 0.0, 2.0, 1.0, 3.0, 2.0], 4, 2).unwrap();
+        let targets = RegressionTargets::new(vec![1.0, 2.0, 3.0, 5.0]).unwrap();
+        let mut encodings = Vec::new();
+        for fit_intercept in [false, true] {
+            let model = Ridge::fit(
+                &data.as_view(),
+                &targets,
+                RidgeParams::default().with_fit_intercept(fit_intercept),
+            )
+            .unwrap();
+            assert_eq!(model.get_params().fit_intercept(), fit_intercept);
+            let bytes = model.to_artifact([5; 32]).unwrap();
+            let decoded = Ridge::from_artifact(&bytes, [5; 32]).unwrap();
+            assert_eq!(decoded, model);
+            assert_eq!(decoded.get_params().fit_intercept(), fit_intercept);
+            assert_eq!(decoded.to_artifact([5; 32]).unwrap(), bytes);
+            encodings.push(bytes);
+        }
+        assert_ne!(
+            encodings[0], encodings[1],
+            "the two configurations must not encode to the same bytes"
+        );
+    }
 }
