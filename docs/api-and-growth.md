@@ -211,3 +211,44 @@ which concrete parts it holds inside the payload: order, estimator type, and
 stage count are all checked on decode, so one composition never decodes as
 another. `Pipeline`'s three concrete compositions predate that scheme and keep
 their own artifact kinds, so their declarations stay per composition.
+
+## What the documentation checker does not check
+
+Documentation that contradicts behaviour has been this crate's most active
+defect class, so `make gate` runs `scripts/check_documentation_truth.py`. It
+reads prose — rustdoc comments in `src/` and the narrative pages in `docs/`,
+which rustdoc never sees at all — and reports four kinds of claim that stopped
+being true:
+
+- a capability declaration whose doc comment does not name a capability the
+  declaration turns on;
+- a `Type::member` reference to a type this crate declares, where the member
+  does not exist;
+- a generic bound written in prose that the documented item does not carry;
+- a repository path cited in prose that is not there.
+
+Each rule is proven twice by `--self-test`: once against a synthetic violation,
+and once against a tree with the rule's input removed, because a check that
+passes by not looking is the failure mode this crate keeps rediscovering. Two
+historical defects — the "declares nothing" comment above a probability
+declaration, and a documented `CrossValidationError` variant named `Scoring`
+that never existed — are reconstructed there as inputs. Prose about an entity
+that is *supposed* to be absent has to be written that way round, because the
+checker cannot tell a cautionary example from a live reference, and a rule with
+an escape hatch is a rule with a hole in it.
+
+**The blind spots are the point of this section.** The checker verifies that a
+*named entity* exists; it cannot verify a *claim about behaviour*. The five
+`calibration` sentences that told a reader probabilities were required of every
+`Classifier` were plain English, and only the one that spelled the bound as
+`C: Classifier` was mechanically detectable. Completeness claims are worse:
+"the only", "every", "exactly one" and their relatives appear on some 600 prose
+lines here, and no rule can separate a true one from a false one. Requiring
+each to cite its enforcement was considered and rejected on evidence — the two
+completeness defects this crate has actually had, `determinism.md`'s
+cross-platform argument and this page's own claim about the API profile's
+single blind spot, **both cited their evidence correctly** and were wrong about
+what that evidence established. A rule demanding pointers would have passed
+both while flagging hundreds of sound sentences, and a checker that cries wolf
+gets disabled. Those claims are caught by review, and the honest position is
+that they are written down as unchecked rather than presumed safe.
