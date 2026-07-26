@@ -7,6 +7,45 @@ and releases use [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Fixed
+
+- **Breaking (fitted values).** The multinomial Newton path supplies curvature
+  for the whole subspace the softmax cannot see, instead of for the one member
+  of it that no penalty reaches. Adding the same vector to every class's
+  parameter row leaves every probability unchanged, so the loss curvature is
+  exactly zero along one direction per parameter coordinate — feature
+  coordinates included, and with or without an intercept. Only the intercept
+  direction was supplied with curvature; the feature directions were left to the
+  L2 penalty `1/(C * scale^2)`, which on a weakly regularized, badly scaled
+  design is `1e-12` or smaller against a largest curvature of order the sample
+  weight. Two user-visible defects followed, both measured over a 576-case
+  ill-conditioned region:
+
+  - `fit_multiclass` refused **191 of 576** designs with
+    `ModelError::LinearSolveFailed`, because the Cholesky pivot in a direction
+    the answer does not use was decided by rounding. It now refuses 13, and all
+    563 fits land at a local minimum of the penalized objective in the caller's
+    own feature space. The 13 that remain are a genuine collapse of the *data's*
+    curvature — every one is twelve rows over four columns across five classes —
+    and are left refusing.
+  - **231 of the 385** designs that did fit were returned **uncentred**,
+    violating the frozen semantic that a multinomial fit is one centred
+    coefficient row and intercept per class with no pinned reference class. The
+    worst was off by twice its own largest coefficient. Probabilities and
+    predicted labels were unaffected — the softmax is shift-invariant — but
+    `coefficients`, `intercepts` and `decision_function` reported a different
+    representative from the one the contract names. Every fit is now centred to
+    within `n_classes` `f32` ulps.
+
+  No reference class is pinned and no semantic changed: the added blocks are
+  orthogonal to the subspace the answer lives in, so in exact arithmetic they
+  change no fitted value. Fitted values do move in floating point. On
+  well-conditioned data they do not move at all — the frozen reference fixture's
+  multinomial fit is bit-identical, and `make reference-check` is green without
+  regeneration — but `n_iter` falls on 96 of the region's 385 previously-fitted
+  designs as the better-conditioned solve converges sooner, and coefficients on
+  ill-conditioned designs move to their centred representative.
+
 ## [0.2.0] - 2026-07-26
 
 ### Added

@@ -22,6 +22,13 @@
 //! iterate, and therefore the fitted model, stays centred. Raw scores are
 //! consequently centred rather than measured against a reference class.
 //!
+//! That argument is about the exact system, and it is only as good as the
+//! *factorized* one. A shared direction the assembled matrix barely sees is a
+//! direction in which rounding decides the update, and an update with a shared
+//! component moves the iterate out of the centred subspace — which is how a
+//! frozen semantic turns into a rounding artefact. The Newton section below is
+//! what makes the argument true of the arithmetic as well.
+//!
 //! # The Newton system
 //!
 //! The update is the same exact second-order step the binary path takes, over
@@ -33,11 +40,35 @@
 //! returned unconverged models. Cost was the wrong thing to optimize when
 //! `max_iter` has to mean the same thing here as it does for a binary fit.
 //!
-//! With an intercept the exact system is singular in exactly one direction:
-//! adding a constant to every class's intercept changes nothing, and no
-//! penalty opposes it. That direction is regularized explicitly. Because the
-//! gradient is orthogonal to it, the solution in every other direction is
-//! untouched and the update simply cannot drift out of the centred subspace.
+//! The exact system is singular on a whole subspace, not in one direction.
+//! Adding the same vector to every class's parameter row leaves every
+//! probability unchanged, so the loss curvature annihilates every stacked
+//! vector of the form "one shared row, repeated per class" — one direction per
+//! parameter coordinate, feature coordinates included, whether or not an
+//! intercept is fitted.
+//!
+//! Only the intercept direction is *exactly* singular in the assembled system;
+//! the feature directions carry the L2 penalty `1/(C * scale^2)` and nothing
+//! else. That is identification on paper and not in arithmetic: on a weakly
+//! regularized, badly scaled design the penalty is `1e-11` or smaller against a
+//! largest curvature of order the sample weight, so the factorization's pivot
+//! in that direction is decided by rounding and the solve refuses. Assembling
+//! the system was the whole cost, and it was being thrown away for a direction
+//! the answer does not even use.
+//!
+//! So the curvature is supplied for the whole subspace rather than for the one
+//! member of it that no penalty reaches. Each shared coordinate gets a rank-one
+//! block across classes, sized to the curvature that coordinate carries at
+//! uniform probabilities. This changes no fitted value in exact arithmetic and
+//! is not a modelling choice: the loss curvature, the penalty and the added
+//! blocks all preserve the split between the shared subspace and its orthogonal
+//! complement, the gradient lies in the complement at every iterate, and the
+//! iterate starts at zero — so the added blocks multiply a zero component at
+//! every iteration. What they change is the conditioning of the matrix that
+//! component is solved against.
+//!
+//! No reference class is pinned, and none can be: the centred representative is
+//! the crate's frozen semantic for this fit.
 
 use super::{
     LogisticRegression, LogisticRegressionParams, LogisticSolver, Standardization, build_design,
@@ -129,9 +160,16 @@ pub(super) fn fit(
             iterations,
         );
     }
-    // Curvature for the one direction the loss and the penalty both ignore:
-    // shifting every class's intercept by the same amount. Scaled like the
-    // intercept curvature it replaces, so it neither dominates the system nor
+    // Curvature for the directions the loss ignores entirely: adding the same
+    // vector to every class's parameter row. There is one such direction per
+    // parameter coordinate, not one in total — see the module documentation.
+    //
+    // The size is the curvature a standardized coordinate carries at uniform
+    // probabilities. `standardize` gives every design column, including the
+    // intercept's constant one, a weighted second moment of `total_weight`, and
+    // at `p = 1/classes` the per-coordinate curvature block is
+    // `total_weight / classes * (I - 1 1' / classes)`. So one constant is the
+    // right scale for every coordinate: it neither dominates the system nor
     // vanishes into it.
     let centring_curvature = total_weight / classes as f64;
 
@@ -211,12 +249,15 @@ pub(super) fn fit(
                 hessian[(offset + column) * parameters + offset + column] += penalty;
             }
         }
-        if let Some(index) = intercept_index {
+        // One rank-one block per coordinate, each supported on the classes that
+        // share it. Only the lower triangle is written, matching the
+        // factorization's reader.
+        for coordinate in 0..parameter_count {
             for left in 0..classes {
                 for right in 0..=left {
-                    hessian[(left * parameter_count + index) * parameters
+                    hessian[(left * parameter_count + coordinate) * parameters
                         + right * parameter_count
-                        + index] += centring_curvature;
+                        + coordinate] += centring_curvature;
                 }
             }
         }
@@ -1204,9 +1245,12 @@ mod tests {
     /// The multiclass twin of the binary ill-conditioned region.
     ///
     /// The stacked system carries the binary path's conditioning trouble plus
-    /// its own: the intercept block is singular in the direction that shifts
-    /// every class alike, and is regularized rather than identified. So this
-    /// region exhausts `max_iter` more readily, not less.
+    /// its own: the loss curvature annihilates every direction that shifts all
+    /// classes alike, one per parameter coordinate, so on a badly scaled design
+    /// the only thing left holding those directions up used to be a penalty of
+    /// order `1e-12`. That is why this region refused 191 of its 576 cases with
+    /// `LinearSolveFailed` until the curvature for that subspace was supplied
+    /// directly.
     fn ill_conditioned_neighbourhood() -> Vec<(DenseMatrix, ClassTargets, LogisticRegressionParams)>
     {
         let mut state = 0x0517_2026_0726_2001_u64;
@@ -1331,6 +1375,218 @@ mod tests {
             .collect()
     }
 
+    // ------------------------------------------------- shared-subspace curvature
+
+    /// A design whose shared-coordinate penalty is far below the arithmetic.
+    ///
+    /// Column 1 is column 0 scaled by `1e5`, so `standardize` gives it a scale
+    /// of about `1e5` and the L2 penalty it carries in standardized space is
+    /// `1/(C * scale^2)`. At `C = 1e6` that is around `1e-16`, against a largest
+    /// curvature of order the row count. Nothing else opposes the direction that
+    /// adds the same amount to that coordinate in every class, because the loss
+    /// is exactly flat along it — so before the curvature for that subspace was
+    /// supplied, the pivot there was decided by rounding and the factorization
+    /// refused.
+    fn shared_subspace_stress() -> (DenseMatrix, ClassTargets) {
+        let classes = 3_usize;
+        let rows = 30_usize;
+        let mut values = Vec::with_capacity(rows * 2);
+        let mut labels = Vec::with_capacity(rows);
+        for row in 0..rows {
+            let class = row % classes;
+            labels.push(class as u8);
+            let base = (row as f32) * 0.37 - 5.0 + class as f32 * 1.5;
+            values.push(base);
+            values.push(base * 1.0e5);
+        }
+        (
+            DenseMatrix::new(values, rows, 2).expect("stress matrix"),
+            ClassTargets::new(labels).expect("stress targets"),
+        )
+    }
+
+    /// The shared-coordinate subspace is held up by curvature, not by a penalty.
+    ///
+    /// This is the smallest statement of the defect the region test below
+    /// measures in bulk. Restricting the added curvature to the intercept
+    /// coordinate — which is what the crate did through 0.2.0 — makes both
+    /// assertions here fail with `LinearSolveFailed`, and the second one fails
+    /// even with the intercept case restored, because without an intercept the
+    /// old code added no curvature at all.
+    #[test]
+    fn a_shared_coordinate_the_penalty_barely_reaches_is_still_fitted() {
+        let (data, targets) = shared_subspace_stress();
+        let params = LogisticRegressionParams::default().with_c(1.0e6);
+        let model = LogisticRegression::fit_multiclass(&data.as_view(), &targets, params.clone())
+            .expect("the stacked system is identified in every direction");
+        assert!(
+            is_a_local_minimum(
+                &data,
+                &class_positions(&targets),
+                targets.classes().len(),
+                model.coefficients(),
+                model.intercepts(),
+                f64::from(params.c()),
+            ),
+            "the fit was returned away from the minimum"
+        );
+
+        // Without an intercept the shared subspace is still there — it is a
+        // property of the softmax, not of the intercept column.
+        let no_intercept = params.with_fit_intercept(false);
+        let model =
+            LogisticRegression::fit_multiclass(&data.as_view(), &targets, no_intercept.clone())
+                .expect("an intercept-free fit is identified too");
+        assert!(model.intercepts().iter().all(|&value| value == 0.0));
+        assert!(is_a_local_minimum(
+            &data,
+            &class_positions(&targets),
+            targets.classes().len(),
+            model.coefficients(),
+            model.intercepts(),
+            f64::from(no_intercept.c()),
+        ));
+    }
+
+    /// The whole ill-conditioned region, fitted rather than refused.
+    ///
+    /// The binary twin of this test requires every case to fit, and that is the
+    /// standard this one is measured against rather than a weaker one invented
+    /// for it. Supplying the shared subspace's curvature took the region from
+    /// **385 fits and 191 `LinearSolveFailed` refusals** to **563 fits and 13**,
+    /// and all 563 land at a local minimum of the penalized objective in the
+    /// caller's own feature space — measured both ways, as the damping work was.
+    ///
+    /// The 13 that remain are a different failure: every one of them is twelve
+    /// rows over four columns, mostly across five classes, so the design has two
+    /// or three rows per class and the curvature that collapses is the *data's*
+    /// rather than the parametrization's. That is the same class of refusal the
+    /// binary path can produce, and it is left refusing.
+    ///
+    /// The bounds below are what makes this non-vacuous. Restricting the added
+    /// curvature to the intercept coordinate returns 385 fits and 191 refusals,
+    /// which fails the first two; the last one fails if the generator ever stops
+    /// producing the region these numbers were measured on. None of them asserts
+    /// that a refusal still happens, so a later fix for the twelve-row residue
+    /// is not obstructed by this test.
+    #[test]
+    fn the_ill_conditioned_multinomial_region_is_fitted_rather_than_refused() {
+        let cases = ill_conditioned_neighbourhood();
+        let mut fitted = 0_usize;
+        let mut singular = 0_usize;
+        for (index, (data, targets, params)) in cases.iter().enumerate() {
+            let model = match LogisticRegression::fit_multiclass(
+                &data.as_view(),
+                targets,
+                params.clone(),
+            ) {
+                Ok(model) => model,
+                Err(ModelError::LinearSolveFailed) => {
+                    singular += 1;
+                    continue;
+                }
+                Err(other) => panic!("case {index} was refused with {other:?}"),
+            };
+            assert!(
+                is_a_local_minimum(
+                    data,
+                    &class_positions(targets),
+                    targets.classes().len(),
+                    model.coefficients(),
+                    model.intercepts(),
+                    f64::from(params.c()),
+                ),
+                "case {index} was returned away from the minimum"
+            );
+            fitted += 1;
+        }
+        assert_eq!(fitted + singular, cases.len());
+        assert!(
+            fitted >= 550,
+            "only {fitted} of {} cases were fitted; the shared-coordinate subspace is \
+             being left to the penalty again",
+            cases.len()
+        );
+        assert!(
+            singular <= 20,
+            "{singular} cases collapsed; the recorded residue is 13 and they are all the \
+             same twelve-row shape"
+        );
+        assert!(
+            cases.len() >= 576,
+            "the region shrank to {} cases and no longer covers the conditioning it was \
+             built from",
+            cases.len()
+        );
+    }
+
+    /// The centred representative survives the arithmetic, not only the algebra.
+    ///
+    /// "One centred coefficient row and intercept per class with no pinned
+    /// reference class" is the crate's frozen semantic for this fit, and the
+    /// argument for it is that the gradient lies in the sum-zero subspace, the
+    /// Newton system maps that subspace into itself, and the iterate starts
+    /// there. Every step of that is true of the exact system — and it was being
+    /// used to conclude something about the *factorized* one.
+    ///
+    /// It does not survive the factorization when the shared-coordinate
+    /// directions are held up only by a `1e-12` penalty. Rounding in the pivot
+    /// then puts an arbitrary shared component into the update, the iterate
+    /// leaves the centred subspace, and the fit is returned as some other
+    /// representative of the same probabilities. Restricting the added curvature
+    /// to the intercept coordinate makes **231 of this region's 385 fits** fail
+    /// the bound below, the worst of them off by twice its own largest
+    /// coefficient — so this was a live violation of a frozen semantic on every
+    /// ill-conditioned design, not a hypothetical one, and nothing detected it
+    /// because [`scores_are_centred_rather_than_measured_against_a_reference_class`]
+    /// only ever asked well-conditioned data.
+    ///
+    /// The bound is the one that test uses, applied per coordinate rather than
+    /// per score row: `n_classes` `f32` ulps of the largest value sharing the
+    /// coordinate. All 563 fits clear it with a factor of three to spare.
+    #[test]
+    fn every_ill_conditioned_multinomial_fit_is_returned_centred() {
+        let cases = ill_conditioned_neighbourhood();
+        let mut checked = 0_usize;
+        for (index, (data, targets, params)) in cases.iter().enumerate() {
+            let Ok(model) =
+                LogisticRegression::fit_multiclass(&data.as_view(), targets, params.clone())
+            else {
+                continue;
+            };
+            let classes = targets.classes().len();
+            let columns = data.columns();
+            let tolerance = row_sum_tolerance(classes);
+            let mut sums = Vec::with_capacity(columns + 1);
+            for column in 0..columns {
+                sums.push(
+                    (0..classes)
+                        .map(|class| model.coefficients()[class * columns + column])
+                        .collect::<Vec<_>>(),
+                );
+            }
+            sums.push(model.intercepts().to_vec());
+            for (coordinate, shared) in sums.iter().enumerate() {
+                let magnitude = shared
+                    .iter()
+                    .fold(1.0_f32, |max, value| max.max(value.abs()));
+                let sum = shared.iter().sum::<f32>().abs();
+                assert!(
+                    sum <= tolerance * magnitude,
+                    "case {index} coordinate {coordinate}: {shared:?} sums to {sum}, which \
+                     is more than {classes} f32 ulps of {magnitude} — the fit drifted out \
+                     of the centred subspace"
+                );
+            }
+            checked += 1;
+        }
+        assert!(
+            checked >= 550,
+            "only {checked} of {} cases produced a fit to check",
+            cases.len()
+        );
+    }
+
     /// An exhausted multinomial budget that reached the minimum is returned.
     ///
     /// The multiclass half of the same contract the binary path carries:
@@ -1338,19 +1594,33 @@ mod tests {
     /// spurious error. What changed with the damped step is *how* the exhausted
     /// population is reached. This region used to exhaust the default budget on
     /// 52 of its fits, because the undamped step overshot and never settled;
-    /// damped, the whole region converges in at most 53 iterations of the
-    /// hundred it is given, so the default budget no longer produces an
+    /// damped, the whole region converges well inside the hundred iterations it
+    /// is given — at most 57 — so the default budget no longer produces an
     /// exhausted fit at all and asserting that it does would be asserting a
     /// defect.
     ///
+    /// **That is the whole reason this construction exists, and it is not
+    /// evidence the certificate is dead.** `max_iter` is a public parameter: a
+    /// caller who budgets fewer iterations than a design needs lands in exactly
+    /// the state judged here, and this test is that caller. Surveyed after the
+    /// conditioning fix, 11 520 multinomial designs spanning one to four
+    /// columns, two to eight classes, column scales to `1e5`, separations to
+    /// `20` and `C` to `1e12` produced **no** default-budget exhaustion at all,
+    /// with a worst case of 74 iterations of 100 — so the certificate's
+    /// reachability on this path rests on the budget being a caller's to set,
+    /// not on a region that happens to be slow. It is the same rule the binary
+    /// path applies, where 139 of 704 designs do exhaust the default budget and
+    /// are accepted; giving the two shapes different acceptance rules because
+    /// one sample did not reach 100 iterations is how the defect that 0.2.0
+    /// closed comes back on the first design that needs 101.
+    ///
     /// The budget is therefore set to one iteration short of what each fit
     /// needs. The loop then runs out without the tolerance break ever firing,
-    /// which is exactly the state the certificate exists to judge, and the
-    /// construction is stronger than the one it replaces because it exercises
-    /// both answers: 348 of the 385 are accepted because the Newton decrement
-    /// says they are already at the minimum, and 37 are refused because they are
-    /// not. Deleting the certificate refuses all 385; making it unconditional
-    /// accepts all 385.
+    /// and the construction exercises both answers: 500 of the 563 are accepted
+    /// because the Newton decrement says they are already at the minimum — and
+    /// each of those is checked against the objective in the caller's own
+    /// feature space — while 63 are refused because they are not. Deleting the
+    /// certificate refuses all 563; making it unconditional accepts all 563.
     #[test]
     fn an_exhausted_multinomial_budget_that_reached_its_minimum_is_fitted_not_refused() {
         let cases = ill_conditioned_neighbourhood();
@@ -1411,7 +1681,7 @@ mod tests {
                 Err(other) => panic!("case {index} was refused with {other:?}"),
             }
         }
-        // As generated the region is 576 cases: 385 fits and 191
+        // As generated the region is 576 cases: 563 fits and 13
         // collapsed-curvature refusals, with no non-convergence refusal left.
         assert_eq!(fitted + singular, cases.len());
         assert_eq!(accepted + refused, probed);
@@ -1450,7 +1720,7 @@ mod tests {
                 refused += 1;
             }
         }
-        // All 344 are refused, for the reason the binary twin records.
+        // All 563 are refused, for the reason the binary twin records.
         assert!(reachable > 0, "the region produced no fits to starve");
         assert!(
             refused * 10 >= reachable * 9,
