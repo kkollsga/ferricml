@@ -4,6 +4,7 @@ mod cross_validation;
 mod scoring;
 mod search;
 mod split;
+mod targets;
 
 pub use cross_validation::{
     CrossValidationError, CrossValidationResult, cross_validate_classifier,
@@ -25,3 +26,4 @@ pub use split::{
     SplitPartition, StratifiedKFold, StratifiedKFoldIter, TestGroupSize, TestSize, TimeSeriesSplit,
     TimeSeriesSplitIter, stratified_train_test_split, train_test_split,
 };
+pub use targets::ClassificationTargets;

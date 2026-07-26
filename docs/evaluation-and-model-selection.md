@@ -186,6 +186,22 @@ and thread count produce repeatable fitted artifacts and scores. Errors retain
 the zero-based fold index for fitting, prediction, metric, or class-layout
 failures.
 
+`cross_validate_classifier` is the only classifier entry point, and the two
+choices a caller makes are carried rather than duplicated into more functions.
+The target vocabulary is a type parameter: any `ClassificationTargets` —
+`BinaryTargets` or `ClassTargets` — folds through the same loop, because label
+arity is a property of the metric and not of the loop, and `MulticlassLogLoss`
+and `MulticlassBrier` already read a whole probability matrix over any observed
+class set. The model's scoring capability is a value: a final `view` argument,
+`ScorableClassifier::probabilistic` or `ScorableClassifier::labels_only`, which
+is the same mechanism `score_classifier` and permutation importance take. The
+two axes compose instead of multiplying, so a further target shape or a further
+view is an implementation rather than a fourth entry point.
+`grid_search_classifier` forwards both unchanged. Neither buys leniency: a
+binary positive-probability metric asked for on a wider class set is still
+`CrossValidationError::UnsupportedClasses`, and a probability metric under a
+labels-only view is still `CrossValidationError::UnsupportedOutput`.
+
 ```rust
 use ferricml::data::{DenseMatrix, RegressionTargets};
 use ferricml::linear_model::{Ridge, RidgeParams};

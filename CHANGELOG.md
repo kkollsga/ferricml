@@ -68,6 +68,25 @@ and releases use [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ### Changed
 
 - **Breaking.** `model_selection::cross_validate_classifier` and
+  `model_selection::grid_search_classifier` are generic over the target
+  vocabulary, through the new sealed
+  `model_selection::ClassificationTargets` trait, instead of taking
+  `data::BinaryTargets` alone. `data::ClassTargets` now folds through exactly
+  the same entry point, so a natively multiclass estimator can be
+  cross-validated and tuned with the `CrossValidationError` fold attribution,
+  the `ScoringWorkspace` reuse, and the split and class-layout guards a
+  hand-rolled fold loop gives up. The loop branches on
+  classifier-versus-regressor and on nothing else: label arity is a property of
+  the metric — `ClassificationScorer::MulticlassLogLoss` and `MulticlassBrier`
+  already read a whole probability matrix over any observed class set — so
+  there is no multiclass entry point to add. Nothing becomes more permissive: a
+  binary positive-probability metric asked for on a wider class set is still
+  `CrossValidationError::UnsupportedClasses`. Existing binary calls compile
+  unchanged; the trait is sealed because `select` must preserve the
+  container's construction-time guarantees, so a new target shape arrives as a
+  new `data` container with its implementation.
+
+- **Breaking.** `model_selection::cross_validate_classifier` and
   `model_selection::grid_search_classifier` take a final `view` argument, and
   `model_selection::cross_validate_classifier_labels` and
   `model_selection::grid_search_classifier_labels` are removed. `view` says how

@@ -2,12 +2,13 @@ use std::error::Error;
 use std::fmt;
 
 use crate::api::{ModelError, Regressor};
-use crate::data::{BinaryTargets, MatrixView, RegressionTargets};
+use crate::data::{MatrixView, RegressionTargets};
 use crate::metrics::MetricError;
 
+use super::scoring::score_labelled;
 use super::{
-    ClassificationScore, ClassifierOutputKind, RegressionScore, ScorableClassifier, ScoringError,
-    ScoringWorkspace, Split, score_classifier_with, score_regressor_with,
+    ClassificationScore, ClassificationTargets, ClassifierOutputKind, RegressionScore,
+    ScorableClassifier, ScoringError, ScoringWorkspace, Split, score_regressor_with,
 };
 
 /// Errors produced while running serial cross-validation.
@@ -165,6 +166,19 @@ impl CrossValidationResult {
 
 /// Fits and scores one classifier per supplied split, serially and in order.
 ///
+/// This is the crate's only classifier cross-validation entry point, over
+/// **any** [`ClassificationTargets`] vocabulary. The loop branches on
+/// classifier-versus-regressor and on nothing else: how many classes the labels
+/// name is a property of the *metric*, which already declares what it reads
+/// through
+/// [`ClassificationScore::output_kind`](super::ClassificationScore::output_kind),
+/// so [`ClassTargets`](crate::data::ClassTargets) folds here exactly as
+/// [`BinaryTargets`](crate::data::BinaryTargets) does. A score reading
+/// [`ClassifierOutputKind::ProbabilityMatrix`] works for any observed class set;
+/// the binary positive-probability layouts still refuse a wider one with
+/// [`CrossValidationError::UnsupportedClasses`] rather than reinterpreting a
+/// column.
+///
 /// `view` says how each fold's fitted model presents itself to the scoring
 /// layer: [`ScorableClassifier::probabilistic`] for a model that produces
 /// probabilities, [`ScorableClassifier::labels_only`] for one that does not.
@@ -179,6 +193,10 @@ impl CrossValidationResult {
 /// closure returns an owned model *per fold*, and a `ScorableClassifier`
 /// borrows the model it wraps, so the borrow has to be taken inside the loop.
 /// Passing the constructor is what lets it be taken there.
+///
+/// The two choices are therefore independent: the target vocabulary is a type
+/// parameter, the model's scoring capability is a value, and neither multiplies
+/// the other into extra entry points.
 ///
 /// ```
 /// use ferricml::data::{BinaryTargets, DenseMatrix};
@@ -203,21 +221,22 @@ impl CrossValidationResult {
 /// assert_eq!(folds.len(), 3);
 /// # Ok::<(), Box<dyn std::error::Error>>(())
 /// ```
-pub fn cross_validate_classifier<M, I, F, S, V>(
+pub fn cross_validate_classifier<M, T, I, F, S, V>(
     data: &MatrixView<'_>,
-    targets: &BinaryTargets,
+    targets: &T,
     splits: I,
     scorer: S,
     mut fit: F,
     view: V,
 ) -> Result<CrossValidationResult, CrossValidationError>
 where
+    T: ClassificationTargets,
     I: IntoIterator<Item = Split>,
-    F: FnMut(&MatrixView<'_>, &BinaryTargets) -> Result<M, ModelError>,
+    F: FnMut(&MatrixView<'_>, &T) -> Result<M, ModelError>,
     S: ClassificationScore,
     V: for<'m> Fn(&'m M) -> ScorableClassifier<'m>,
 {
-    validate_target_length(data.rows(), targets.len())?;
+    validate_target_length(data.rows(), targets.as_slice().len())?;
     let mut feature_buffer = Vec::new();
     let mut workspace = ScoringWorkspace::new();
     let mut scores = Vec::new();
@@ -235,9 +254,14 @@ where
         let test_targets = targets
             .select(split.test_indices())
             .expect("validated split contains non-empty in-bounds indices");
-        let score =
-            score_classifier_with(view(&model), &test, &test_targets, &scorer, &mut workspace)
-                .map_err(|error| map_scoring_error(fold, error))?;
+        let score = score_labelled(
+            view(&model),
+            &test,
+            test_targets.as_slice(),
+            &scorer,
+            &mut workspace,
+        )
+        .map_err(|error| map_scoring_error(fold, error))?;
         scores.push(score);
     }
     finish(scores)
@@ -355,7 +379,7 @@ fn finish(scores: Vec<f64>) -> Result<CrossValidationResult, CrossValidationErro
 mod tests {
     use super::*;
     use crate::api::Estimator;
-    use crate::data::DenseMatrix;
+    use crate::data::{BinaryTargets, ClassTargets, DenseMatrix};
     use crate::linear_model::{LogisticRegression, LogisticRegressionParams, Ridge, RidgeParams};
     use crate::model_selection::{
         ClassificationScorer, KFold, RegressionScorer, StratifiedKFold, TimeSeriesSplit,
@@ -422,6 +446,128 @@ mod tests {
             .unwrap()
         };
         assert_eq!(run(), run());
+    }
+
+    /// Twelve rows over three deliberately non-contiguous, non-zero-based
+    /// labels, four of each.
+    fn multiclass_targets() -> ClassTargets {
+        ClassTargets::new((0..12).map(|row| [3_u8, 7, 10][row % 3]).collect()).unwrap()
+    }
+
+    /// The arity unification: an arbitrary observed class set folds through the
+    /// *same* entry point binary targets use, and what is admissible is decided
+    /// by the metric rather than by which function was called.
+    #[test]
+    fn an_arbitrary_class_set_cross_validates_through_the_same_entry_point() {
+        let data = data();
+        let targets = multiclass_targets();
+        assert_eq!(targets.classes(), &[3, 7, 10]);
+        let splits = StratifiedKFold::new(2)
+            .split(targets.as_slice())
+            .unwrap()
+            .collect::<Vec<_>>();
+        let params = LogisticRegressionParams::default().with_max_iter(200);
+
+        let folds = cross_validate_classifier(
+            &data.as_view(),
+            &targets,
+            splits.iter().cloned(),
+            ClassificationScorer::MulticlassLogLoss,
+            |train, train_targets| {
+                LogisticRegression::fit_multiclass(train, train_targets, params.clone())
+            },
+            |model| ScorableClassifier::probabilistic(model),
+        )
+        .unwrap();
+        assert_eq!(folds.len(), 2);
+        assert!(folds.scores().iter().all(|score| score.is_finite()));
+
+        // Every fold score equals scoring that fold directly, so the wider
+        // vocabulary reaches the model through the one scoring implementation
+        // rather than through a second loop.
+        for (fold, split) in splits.iter().enumerate() {
+            let train = data.select_rows(split.train_indices()).unwrap();
+            let train_targets = targets.select(split.train_indices()).unwrap();
+            let model = LogisticRegression::fit_multiclass(
+                &train.as_view(),
+                &train_targets,
+                params.clone(),
+            )
+            .unwrap();
+            let test = data.select_rows(split.test_indices()).unwrap();
+            let test_targets = targets.select(split.test_indices()).unwrap();
+            assert_eq!(
+                Ok(folds.scores()[fold]),
+                super::super::score_multiclass_classifier(
+                    ScorableClassifier::probabilistic(&model),
+                    &test.as_view(),
+                    &test_targets,
+                    ClassificationScorer::MulticlassLogLoss
+                ),
+                "fold {fold}"
+            );
+        }
+
+        // And the entry point did not simply become permissive: a binary
+        // positive-probability metric is still refused on a three-class model,
+        // with the fold that refused it. Arity lives in the metric.
+        assert_eq!(
+            cross_validate_classifier(
+                &data.as_view(),
+                &targets,
+                splits,
+                ClassificationScorer::Brier,
+                |train, train_targets| {
+                    LogisticRegression::fit_multiclass(train, train_targets, params.clone())
+                },
+                |model| ScorableClassifier::probabilistic(model),
+            ),
+            Err(CrossValidationError::UnsupportedClasses { fold: 0 })
+        );
+    }
+
+    /// The setup guards are the ones finding 5 said a hand-rolled fold loop
+    /// gives up, so the wider vocabulary owes proof that it reaches them.
+    #[test]
+    fn the_wider_vocabulary_reaches_the_same_setup_guards() {
+        let data = data();
+        let targets = multiclass_targets();
+        let params = LogisticRegressionParams::default();
+        let run = |targets: &ClassTargets, splits: Vec<Split>| {
+            cross_validate_classifier(
+                &data.as_view(),
+                targets,
+                splits,
+                ClassificationScorer::MulticlassLogLoss,
+                |train, train_targets| {
+                    LogisticRegression::fit_multiclass(train, train_targets, params.clone())
+                },
+                |model| ScorableClassifier::probabilistic(model),
+            )
+        };
+
+        assert_eq!(
+            run(&ClassTargets::new(vec![3, 7]).unwrap(), Vec::new()),
+            Err(CrossValidationError::TargetLength {
+                rows: 12,
+                targets: 2,
+            })
+        );
+        assert_eq!(
+            &run(&targets, Vec::new()),
+            &Err(CrossValidationError::NoSplits)
+        );
+        assert_eq!(
+            run(
+                &targets,
+                vec![Split::new(4, vec![0, 1], vec![2, 3]).unwrap()]
+            ),
+            Err(CrossValidationError::SplitSampleCount {
+                fold: 0,
+                expected: 12,
+                actual: 4,
+            })
+        );
     }
 
     #[test]
