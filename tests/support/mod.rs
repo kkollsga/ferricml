@@ -6,3 +6,4 @@
 
 pub mod api_profile;
 pub mod conformance;
+pub mod rng;
