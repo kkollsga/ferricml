@@ -36,7 +36,9 @@ use ferricml::linear_model::{
     ElasticNet, ElasticNetParams, Lasso, LassoParams, LinearRegression, LogisticRegression, Ridge,
 };
 use ferricml::pipeline::{Pipeline, StagedPipeline};
-use ferricml::preprocessing::{MaxAbsScaler, MinMaxScaler, RobustScaler, StandardScaler};
+use ferricml::preprocessing::{
+    MaxAbsScaler, MinMaxScaler, PolynomialFeatures, RobustScaler, StandardScaler,
+};
 use ferricml::ranking::PairwiseLinearRanker;
 use ferricml::tree::{DecisionTreeClassifier, DecisionTreeRegressor};
 
@@ -234,6 +236,12 @@ fn stage_rows() -> Vec<(Row, u16, u16, bool)> {
             ),
             16,
             16,
+            !LEGACY,
+        ),
+        (
+            stage_row::<PolynomialFeatures>("ferricml::preprocessing::PolynomialFeatures"),
+            46,
+            46,
             !LEGACY,
         ),
         (

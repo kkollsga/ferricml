@@ -30,6 +30,7 @@ ferricml::preprocessing::FunctionTransformer = -
 ferricml::preprocessing::MaxAbsScaler = artifact
 ferricml::preprocessing::MinMaxScaler = artifact
 ferricml::preprocessing::Normalizer = -
+ferricml::preprocessing::PolynomialFeatures = artifact
 ferricml::preprocessing::RobustScaler = artifact
 ferricml::preprocessing::StandardScaler = sample_weights, artifact
 ferricml::ranking::PairwiseLinearRanker = artifact

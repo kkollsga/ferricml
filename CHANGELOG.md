@@ -7,6 +7,39 @@ and releases use [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+
+- `PolynomialFeatures`, the first transformer whose output is wider than its
+  input. It claims `degree`, `interaction_only` and `include_bias`, persists as
+  artifact kind `46`, and composes as a `StagedPipeline` stage.
+
+  **The output width is public contract**: `C(n + d, d)` for the full
+  expansion, `sum over k in 0..=d of C(n, k)` with `interaction_only`, less one
+  where the bias column is disabled. It is evaluated in checked arithmetic at
+  *fit* time, before the expansion's term table is reserved, so a request that
+  cannot be built returns `ModelError::FeatureExpansionOverflow` naming the
+  feature count and the degree rather than attempting the allocation. Width is
+  this transformer's failure mode rather than an unlikely edge of it: fifty
+  features at degree ten is an unremarkable-looking request for seventy-five
+  billion output columns, and the reference FerricML is measured against
+  reports that number from `fit` without complaint.
+
+  **Column order is frozen contract**: the bias column first, then blocks of
+  ascending total degree, and within a block the lexicographic order of
+  non-decreasing feature-index tuples — `1, x0, x1, x0^2, x0 x1, x1^2` and so
+  on, with `interaction_only` taking the strictly increasing tuples of the same
+  order. A caller that persists a downstream model against this expansion is
+  relying on that order, so it is pinned by test rather than left to follow
+  from how the terms happen to be generated.
+
+  Not claimed, and recorded as such rather than as a divergence:
+  `degree=(min_degree, max_degree)`, and the memory-order knob — FerricML's
+  dense matrices are row-major by construction.
+
+- Two `ModelError` variants for the above: `FeatureExpansionOverflow`, and
+  `EmptyFeatureExpansion` for the one configuration that describes no columns
+  at all, degree zero with the bias disabled.
+
 ## [0.2.0] - 2026-07-26
 
 ### Added

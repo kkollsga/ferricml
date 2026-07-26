@@ -51,6 +51,14 @@ QUANTILE_DEFINITION_MARKERS = (
 # scaling seam alone.
 DEGENERACY_SUBSTITUTION_MARKER = "fn substituted_divisor"
 
+# The observable signature of the width-changing transform seam: the shape check
+# that sizes an expanded output, and the writer that proves every value finite
+# before writing any of them. Both belong to that seam alone.
+EXPANSION_SEAM_MARKERS = (
+    "fn validate_expansion_request",
+    "fn expand_preflighted",
+)
+
 # The observable signature of a seeded generator: SplitMix64's mixing function
 # and the golden-ratio increment its state advances by. A module that carries
 # either is deriving pseudo-random values of its own.
@@ -221,6 +229,55 @@ def is_scaling_seam(path: Path, source: Path) -> bool:
     return parts in {
         ("preprocessing", "scaling.rs"),
         ("preprocessing", "scaling", "mod.rs"),
+    }
+
+
+def expansion_seam_lives_only_in_its_own_module(root: Path) -> list[str]:
+    """One width-changing transform seam, and every wide transformer reaches it.
+
+    A transformer whose output is wider than its input owes three things that a
+    width-preserving one owes in a different shape: an output length derived
+    from a fitted width rather than from the batch, a finiteness proof that
+    cannot lean on per-column monotonicity, and — the one that is easy to lose —
+    the guarantee that a rejected batch leaves the caller's buffer untouched.
+    That last one is the reason this is a rule. It is not visible in a
+    transformer's own tests unless they look for it, so a second seam written
+    beside this one would most likely be a seam that writes as it validates,
+    and every transformer reaching it would quietly stop honouring a contract
+    the width-preserving side still keeps.
+
+    Both markers have to be present for this rule to mean anything, so their
+    absence is itself a finding rather than a silently vacuous pass.
+    """
+    source = root / "src"
+    preprocessing = tree_text(source / "preprocessing")
+    if not all(marker in preprocessing for marker in EXPANSION_SEAM_MARKERS):
+        return ["width-changing transform seam is missing from preprocessing"]
+    findings = []
+    for path in sorted(source.rglob("*.rs")):
+        if is_expansion_seam(path, source):
+            continue
+        text = path.read_text()
+        findings.extend(
+            f"expansion seam re-derived outside its own module: "
+            f"{path.relative_to(root)} defines {marker!r}"
+            for marker in EXPANSION_SEAM_MARKERS
+            if marker in text
+        )
+    return findings
+
+
+def is_expansion_seam(path: Path, source: Path) -> bool:
+    """Whether `path` is the shared width-changing transform seam.
+
+    Both spellings are accepted for the same reason [`is_scaling_seam`] accepts
+    two: a flat module file that grows into a directory must not make its own
+    rule start firing on it.
+    """
+    parts = path.relative_to(source).parts
+    return parts in {
+        ("preprocessing", "expansion.rs"),
+        ("preprocessing", "expansion", "mod.rs"),
     }
 
 
@@ -671,6 +728,7 @@ RULES: tuple[tuple[str, Callable[[Path], list[str]]], ...] = (
         "degeneracy-substitution-single-source",
         degeneracy_substitution_lives_only_in_the_scaling_seam,
     ),
+    ("expansion-seam-single-source", expansion_seam_lives_only_in_its_own_module),
     ("rng-single-source", rng_definition_lives_only_in_numeric),
     ("test-rng-single-source", rng_definition_in_tests_lives_only_in_shared_support),
     ("preprocessing-below-composition", preprocessing_sits_below_composition),
@@ -762,9 +820,13 @@ def write_clean_tree(root: Path) -> Path:
         "dummy/mod.rs": "//! dummy\nmod classifier;\nmod strategy;\n",
         "dummy/classifier.rs": "//! baseline\nuse crate::api::Classifier;\n",
         "dummy/strategy/mod.rs": "//! strategy\nuse crate::api::Classifier;\n",
-        "preprocessing/mod.rs": "//! preprocessing\nmod scaling;\nmod standard_scaler;\n",
+        "preprocessing/mod.rs": "//! preprocessing\nmod expansion;\nmod scaling;\nmod standard_scaler;\n",
         "preprocessing/scaling/mod.rs": (
             "//! scaling seam\npub(super) fn substituted_divisor(spread: f64) -> f64 { spread }\n"
+        ),
+        "preprocessing/expansion/mod.rs": (
+            "//! expansion seam\npub(super) fn validate_expansion_request() {}\n"
+            "pub(super) fn expand_preflighted() {}\n"
         ),
         "preprocessing/standard_scaler/mod.rs": "//! scaler\n",
         "pipeline/mod.rs": "//! pipeline\nmod staged;\npub use staged::StagedPipeline;\n",
@@ -856,6 +918,14 @@ SYNTHETIC_VIOLATIONS: tuple[tuple[str, Callable[[Path], None], str], ...] = (
             "fn substituted_divisor(spread: f64) -> f64 { spread }\n",
         ),
         "degeneracy rule re-derived outside the scaling seam",
+    ),
+    (
+        "expansion-seam-single-source",
+        lambda root: append(
+            root / "src" / "preprocessing" / "standard_scaler" / "mod.rs",
+            "fn expand_preflighted() {}\n",
+        ),
+        "expansion seam re-derived outside its own module",
     ),
     (
         "rng-single-source",
@@ -1046,6 +1116,16 @@ CHILD_MODULE_VIOLATIONS: tuple[tuple[str, Callable[[Path], None], str], ...] = (
         "degeneracy rule re-derived outside the scaling seam",
     ),
     (
+        # A second expansion seam would most plausibly appear inside the first
+        # transformer that wanted one, which is a child module by construction.
+        "expansion-seam-single-source",
+        lambda root: append(
+            root / "src" / "model_selection" / "search" / "grid" / "mod.rs",
+            "fn validate_expansion_request() {}\n",
+        ),
+        "expansion seam re-derived outside its own module",
+    ),
+    (
         # The other marker, one level below the facade, in the module the real
         # duplicate lived in: a private generator hides in a child module of a
         # splitter as easily as in the splitter itself.
@@ -1163,6 +1243,9 @@ CLEAN_TREE_PROVEN_RECURSION: dict[str, str] = {
     "degeneracy-substitution-single-source": (
         "degeneracy substitution is missing from the scaling seam"
     ),
+    "expansion-seam-single-source": (
+        "width-changing transform seam is missing from preprocessing"
+    ),
     "rng-single-source": "seeded generator is missing from the shared numeric kernels",
     "test-rng-single-source": "seeded generator is missing from the shared test support",
 }
@@ -1177,7 +1260,7 @@ CLEAN_TREE_PROVEN_RECURSION: dict[str, str] = {
 # an explicit edit to this number with a reason attached, which is the same
 # treatment the reach floors in `tests/artifact_hardening.rs` get. Raise it when
 # proofs are added; lower it only alongside the rule being retired.
-MINIMUM_CHILD_MODULE_PROOFS = 16
+MINIMUM_CHILD_MODULE_PROOFS = 17
 
 
 def rules_reading_a_module_directory() -> set[str]:

@@ -200,6 +200,29 @@ pub enum ModelError {
     /// is answerable exactly through its params' `inverse_func`, which is an
     /// `Option`.
     NoInverseFunction,
+    /// A polynomial expansion would be wider than FerricML will build.
+    ///
+    /// Raised at *fit* time, before the expansion's term table is reserved,
+    /// because width is the failure mode of this transformer rather than an
+    /// unlikely edge of it: the expanded width grows as `C(n + d, d)`, so a
+    /// merely unremarkable request — fifty features at degree ten — asks for
+    /// seventy-five billion output columns. Both causes report here, the
+    /// arithmetic overflowing and the width exceeding the supported bound,
+    /// because from a caller's side they are the same mistake and the two
+    /// numbers that caused it are what identifies it.
+    FeatureExpansionOverflow {
+        /// Number of input features the expansion was requested over.
+        n_features: usize,
+        /// Requested polynomial degree.
+        degree: u32,
+    },
+    /// A feature expansion was configured to produce no columns at all.
+    ///
+    /// Reachable one way: degree zero with the bias column disabled, which
+    /// asks for the empty expansion of every row. A zero-width output is not a
+    /// transformer's answer to anything, so it is refused where it is
+    /// described rather than returned as a matrix nothing can consume.
+    EmptyFeatureExpansion,
     /// A multiclass linear fit would need a second-order system larger than the
     /// supported bound, which is `classes * (features + intercept)` parameters.
     MulticlassSystemTooLarge {
@@ -260,6 +283,16 @@ impl fmt::Display for ModelError {
             }
             Self::OutputShapeOverflow { rows, columns } => {
                 write!(f, "output shape overflows usize: {rows} x {columns}")
+            }
+            Self::FeatureExpansionOverflow { n_features, degree } => {
+                write!(
+                    f,
+                    "a degree-{degree} expansion of {n_features} features is \
+                     wider than the supported bound"
+                )
+            }
+            Self::EmptyFeatureExpansion => {
+                f.write_str("a feature expansion must produce at least one column")
             }
             Self::UnknownClass { class } => {
                 write!(f, "class {class} was not observed during fitting")

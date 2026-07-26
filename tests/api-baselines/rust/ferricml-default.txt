@@ -104,9 +104,13 @@ impl<'a> core::marker::StructuralPartialEq for ferricml::api::AnyRegressorParams
 #[non_exhaustive] pub enum ferricml::api::ModelError
 pub ferricml::api::ModelError::BoostingModelTooLarge
 pub ferricml::api::ModelError::EmptyData
+pub ferricml::api::ModelError::EmptyFeatureExpansion
 pub ferricml::api::ModelError::FeatureDimension
 pub ferricml::api::ModelError::FeatureDimension::actual: usize
 pub ferricml::api::ModelError::FeatureDimension::expected: usize
+pub ferricml::api::ModelError::FeatureExpansionOverflow
+pub ferricml::api::ModelError::FeatureExpansionOverflow::degree: u32
+pub ferricml::api::ModelError::FeatureExpansionOverflow::n_features: usize
 pub ferricml::api::ModelError::InvalidBoostingIterationCount
 pub ferricml::api::ModelError::InvalidBoostingMaxDepth
 pub ferricml::api::ModelError::InvalidEstimatorCount
@@ -286,6 +290,8 @@ impl ferricml::api::Estimator for ferricml::preprocessing::MinMaxScaler
 pub fn ferricml::preprocessing::MinMaxScaler::n_features_in(&self) -> usize
 impl ferricml::api::Estimator for ferricml::preprocessing::Normalizer
 pub fn ferricml::preprocessing::Normalizer::n_features_in(&self) -> usize
+impl ferricml::api::Estimator for ferricml::preprocessing::PolynomialFeatures
+pub fn ferricml::preprocessing::PolynomialFeatures::n_features_in(&self) -> usize
 impl ferricml::api::Estimator for ferricml::preprocessing::RobustScaler
 pub fn ferricml::preprocessing::RobustScaler::n_features_in(&self) -> usize
 impl ferricml::api::Estimator for ferricml::preprocessing::StandardScaler
@@ -352,6 +358,8 @@ impl ferricml::api::HasCapabilities for ferricml::preprocessing::MinMaxScaler
 pub const ferricml::preprocessing::MinMaxScaler::CAPABILITIES: ferricml::api::Capabilities
 impl ferricml::api::HasCapabilities for ferricml::preprocessing::Normalizer
 pub const ferricml::preprocessing::Normalizer::CAPABILITIES: ferricml::api::Capabilities
+impl ferricml::api::HasCapabilities for ferricml::preprocessing::PolynomialFeatures
+pub const ferricml::preprocessing::PolynomialFeatures::CAPABILITIES: ferricml::api::Capabilities
 impl ferricml::api::HasCapabilities for ferricml::preprocessing::RobustScaler
 pub const ferricml::preprocessing::RobustScaler::CAPABILITIES: ferricml::api::Capabilities
 impl ferricml::api::HasCapabilities for ferricml::preprocessing::StandardScaler
@@ -428,6 +436,9 @@ pub fn ferricml::preprocessing::MinMaxScaler::get_params(&self) -> &Self::Params
 impl ferricml::api::HasParams for ferricml::preprocessing::Normalizer
 pub type ferricml::preprocessing::Normalizer::Params = ferricml::preprocessing::NormalizerParams
 pub fn ferricml::preprocessing::Normalizer::get_params(&self) -> &Self::Params
+impl ferricml::api::HasParams for ferricml::preprocessing::PolynomialFeatures
+pub type ferricml::preprocessing::PolynomialFeatures::Params = ferricml::preprocessing::PolynomialFeaturesParams
+pub fn ferricml::preprocessing::PolynomialFeatures::get_params(&self) -> &Self::Params
 impl ferricml::api::HasParams for ferricml::preprocessing::RobustScaler
 pub type ferricml::preprocessing::RobustScaler::Params = ferricml::preprocessing::RobustScalerParams
 pub fn ferricml::preprocessing::RobustScaler::get_params(&self) -> &Self::Params
@@ -543,6 +554,10 @@ impl ferricml::api::Transformer for ferricml::preprocessing::Normalizer
 pub fn ferricml::preprocessing::Normalizer::n_features_out(&self) -> usize
 pub fn ferricml::preprocessing::Normalizer::transform(&self, &ferricml::data::MatrixView<'_>) -> core::result::Result<ferricml::data::DenseMatrix, ferricml::api::ModelError>
 pub fn ferricml::preprocessing::Normalizer::transform_into<'output>(&self, &ferricml::data::MatrixView<'_>, &'output mut [f32]) -> core::result::Result<ferricml::data::MatrixView<'output>, ferricml::api::ModelError>
+impl ferricml::api::Transformer for ferricml::preprocessing::PolynomialFeatures
+pub fn ferricml::preprocessing::PolynomialFeatures::n_features_out(&self) -> usize
+pub fn ferricml::preprocessing::PolynomialFeatures::transform(&self, &ferricml::data::MatrixView<'_>) -> core::result::Result<ferricml::data::DenseMatrix, ferricml::api::ModelError>
+pub fn ferricml::preprocessing::PolynomialFeatures::transform_into<'output>(&self, &ferricml::data::MatrixView<'_>, &'output mut [f32]) -> core::result::Result<ferricml::data::MatrixView<'output>, ferricml::api::ModelError>
 impl ferricml::api::Transformer for ferricml::preprocessing::RobustScaler
 pub fn ferricml::preprocessing::RobustScaler::n_features_out(&self) -> usize
 pub fn ferricml::preprocessing::RobustScaler::transform(&self, &ferricml::data::MatrixView<'_>) -> core::result::Result<ferricml::data::DenseMatrix, ferricml::api::ModelError>
@@ -699,6 +714,11 @@ pub const ferricml::preprocessing::MinMaxScaler::ARTIFACT_KIND: u16
 pub const ferricml::preprocessing::MinMaxScaler::STAGE_TAG: u16
 pub fn ferricml::preprocessing::MinMaxScaler::from_artifact(&[u8], [u8; 32], [u8; 32]) -> core::result::Result<Self, ferricml::artifact::ArtifactError>
 pub fn ferricml::preprocessing::MinMaxScaler::to_artifact(&self, [u8; 32], [u8; 32]) -> core::result::Result<alloc::vec::Vec<u8>, ferricml::artifact::ArtifactError>
+impl ferricml::artifact::StageArtifact for ferricml::preprocessing::PolynomialFeatures
+pub const ferricml::preprocessing::PolynomialFeatures::ARTIFACT_KIND: u16
+pub const ferricml::preprocessing::PolynomialFeatures::STAGE_TAG: u16
+pub fn ferricml::preprocessing::PolynomialFeatures::from_artifact(&[u8], [u8; 32], [u8; 32]) -> core::result::Result<Self, ferricml::artifact::ArtifactError>
+pub fn ferricml::preprocessing::PolynomialFeatures::to_artifact(&self, [u8; 32], [u8; 32]) -> core::result::Result<alloc::vec::Vec<u8>, ferricml::artifact::ArtifactError>
 impl ferricml::artifact::StageArtifact for ferricml::preprocessing::RobustScaler
 pub const ferricml::preprocessing::RobustScaler::ARTIFACT_KIND: u16
 pub const ferricml::preprocessing::RobustScaler::STAGE_TAG: u16
@@ -3105,6 +3125,57 @@ impl core::fmt::Debug for ferricml::preprocessing::NormalizerParams
 pub fn ferricml::preprocessing::NormalizerParams::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
 impl core::marker::Copy for ferricml::preprocessing::NormalizerParams
 impl core::marker::StructuralPartialEq for ferricml::preprocessing::NormalizerParams
+pub struct ferricml::preprocessing::PolynomialFeatures
+impl ferricml::preprocessing::PolynomialFeatures
+pub fn ferricml::preprocessing::PolynomialFeatures::fit(&ferricml::data::MatrixView<'_>, ferricml::preprocessing::PolynomialFeaturesParams) -> core::result::Result<Self, ferricml::api::ModelError>
+pub const fn ferricml::preprocessing::PolynomialFeatures::get_params(&self) -> &ferricml::preprocessing::PolynomialFeaturesParams
+pub const fn ferricml::preprocessing::PolynomialFeatures::n_features_in(&self) -> usize
+pub const fn ferricml::preprocessing::PolynomialFeatures::n_features_out(&self) -> usize
+pub fn ferricml::preprocessing::PolynomialFeatures::transform(&self, &ferricml::data::MatrixView<'_>) -> core::result::Result<ferricml::data::DenseMatrix, ferricml::api::ModelError>
+pub fn ferricml::preprocessing::PolynomialFeatures::transform_into<'output>(&self, &ferricml::data::MatrixView<'_>, &'output mut [f32]) -> core::result::Result<ferricml::data::MatrixView<'output>, ferricml::api::ModelError>
+impl core::clone::Clone for ferricml::preprocessing::PolynomialFeatures
+pub fn ferricml::preprocessing::PolynomialFeatures::clone(&self) -> ferricml::preprocessing::PolynomialFeatures
+impl core::cmp::Eq for ferricml::preprocessing::PolynomialFeatures
+impl core::cmp::PartialEq for ferricml::preprocessing::PolynomialFeatures
+pub fn ferricml::preprocessing::PolynomialFeatures::eq(&self, &ferricml::preprocessing::PolynomialFeatures) -> bool
+impl core::fmt::Debug for ferricml::preprocessing::PolynomialFeatures
+pub fn ferricml::preprocessing::PolynomialFeatures::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::StructuralPartialEq for ferricml::preprocessing::PolynomialFeatures
+impl ferricml::api::Estimator for ferricml::preprocessing::PolynomialFeatures
+pub fn ferricml::preprocessing::PolynomialFeatures::n_features_in(&self) -> usize
+impl ferricml::api::HasCapabilities for ferricml::preprocessing::PolynomialFeatures
+pub const ferricml::preprocessing::PolynomialFeatures::CAPABILITIES: ferricml::api::Capabilities
+impl ferricml::api::HasParams for ferricml::preprocessing::PolynomialFeatures
+pub type ferricml::preprocessing::PolynomialFeatures::Params = ferricml::preprocessing::PolynomialFeaturesParams
+pub fn ferricml::preprocessing::PolynomialFeatures::get_params(&self) -> &Self::Params
+impl ferricml::api::Transformer for ferricml::preprocessing::PolynomialFeatures
+pub fn ferricml::preprocessing::PolynomialFeatures::n_features_out(&self) -> usize
+pub fn ferricml::preprocessing::PolynomialFeatures::transform(&self, &ferricml::data::MatrixView<'_>) -> core::result::Result<ferricml::data::DenseMatrix, ferricml::api::ModelError>
+pub fn ferricml::preprocessing::PolynomialFeatures::transform_into<'output>(&self, &ferricml::data::MatrixView<'_>, &'output mut [f32]) -> core::result::Result<ferricml::data::MatrixView<'output>, ferricml::api::ModelError>
+impl ferricml::artifact::StageArtifact for ferricml::preprocessing::PolynomialFeatures
+pub const ferricml::preprocessing::PolynomialFeatures::ARTIFACT_KIND: u16
+pub const ferricml::preprocessing::PolynomialFeatures::STAGE_TAG: u16
+pub fn ferricml::preprocessing::PolynomialFeatures::from_artifact(&[u8], [u8; 32], [u8; 32]) -> core::result::Result<Self, ferricml::artifact::ArtifactError>
+pub fn ferricml::preprocessing::PolynomialFeatures::to_artifact(&self, [u8; 32], [u8; 32]) -> core::result::Result<alloc::vec::Vec<u8>, ferricml::artifact::ArtifactError>
+pub struct ferricml::preprocessing::PolynomialFeaturesParams
+impl ferricml::preprocessing::PolynomialFeaturesParams
+pub const fn ferricml::preprocessing::PolynomialFeaturesParams::degree(&self) -> u32
+pub const fn ferricml::preprocessing::PolynomialFeaturesParams::include_bias(&self) -> bool
+pub const fn ferricml::preprocessing::PolynomialFeaturesParams::interaction_only(&self) -> bool
+pub const fn ferricml::preprocessing::PolynomialFeaturesParams::with_degree(self, u32) -> Self
+pub const fn ferricml::preprocessing::PolynomialFeaturesParams::with_include_bias(self, bool) -> Self
+pub const fn ferricml::preprocessing::PolynomialFeaturesParams::with_interaction_only(self, bool) -> Self
+impl core::clone::Clone for ferricml::preprocessing::PolynomialFeaturesParams
+pub fn ferricml::preprocessing::PolynomialFeaturesParams::clone(&self) -> ferricml::preprocessing::PolynomialFeaturesParams
+impl core::cmp::Eq for ferricml::preprocessing::PolynomialFeaturesParams
+impl core::cmp::PartialEq for ferricml::preprocessing::PolynomialFeaturesParams
+pub fn ferricml::preprocessing::PolynomialFeaturesParams::eq(&self, &ferricml::preprocessing::PolynomialFeaturesParams) -> bool
+impl core::default::Default for ferricml::preprocessing::PolynomialFeaturesParams
+pub fn ferricml::preprocessing::PolynomialFeaturesParams::default() -> Self
+impl core::fmt::Debug for ferricml::preprocessing::PolynomialFeaturesParams
+pub fn ferricml::preprocessing::PolynomialFeaturesParams::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for ferricml::preprocessing::PolynomialFeaturesParams
+impl core::marker::StructuralPartialEq for ferricml::preprocessing::PolynomialFeaturesParams
 pub struct ferricml::preprocessing::RobustScaler
 impl ferricml::preprocessing::RobustScaler
 pub fn ferricml::preprocessing::RobustScaler::centers(&self) -> &[f64]
