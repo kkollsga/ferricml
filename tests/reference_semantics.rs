@@ -39,6 +39,11 @@ mod reference {
     include!("fixtures/reference_semantics_v1.rs");
 }
 
+#[path = "support/rng.rs"]
+mod rng;
+
+use rng::TestRng;
+
 const EXACT_TOLERANCE: f32 = 1.0e-6;
 const LOGISTIC_TOLERANCE: f32 = 2.0e-5;
 const QUALITY_SEEDS: [u64; 5] = [11, 22, 33, 44, 55];
@@ -1731,29 +1736,90 @@ fn supported_defaults_names_and_validation_are_locked() {
     );
 }
 
-#[derive(Clone, Copy)]
-struct SplitMix64(u64);
-
-impl SplitMix64 {
-    fn new(seed: u64) -> Self {
-        Self(seed)
+/// The exact stream every quality lane below is generated from.
+///
+/// This file used to carry a private SplitMix64 whose core was
+/// character-identical to `src/numeric/rng.rs`'s and to
+/// `tests/artifact_hardening.rs`'s — three copies of one stream. It now draws
+/// from the one test-crate generator, and this test is what made that a
+/// refactor rather than a fixture change: the literals were captured from the
+/// private copy before it was deleted, so they are what the frozen reference
+/// outputs in `fixtures/reference_semantics_v1.rs` were recorded against.
+///
+/// The quality lanes themselves could not have proven this. They compare
+/// aggregate accuracy and Brier score against the reference within `0.02`, so a
+/// generator emitting a *different but similarly distributed* stream would pass
+/// them while silently changing every design matrix. That is exactly the shape
+/// of a fixture-moving change disguised as a refactor, and it is why the stream
+/// is pinned here by value.
+///
+/// `TestRng::from_state` is the raw-seed constructor for that reason:
+/// `TestRng::new` perturbs the seed and would have moved every fixture.
+#[test]
+fn the_generated_design_stream_is_frozen_bit_for_bit() {
+    let raw: [(u64, [u64; 6]); 2] = [
+        (
+            0,
+            [
+                16294208416658607535,
+                7960286522194355700,
+                487617019471545679,
+                17909611376780542444,
+                1961750202426094747,
+                6038094601263162090,
+            ],
+        ),
+        (
+            11,
+            [
+                5833679380957638813,
+                4839782808629744545,
+                11769803791402734189,
+                9308485889748266480,
+                3047264704176347588,
+                10181453352864339982,
+            ],
+        ),
+    ];
+    for (seed, stream) in raw {
+        let mut rng = TestRng::from_state(seed);
+        let actual: Vec<u64> = (0..stream.len()).map(|_| rng.next_u64()).collect();
+        assert_eq!(actual, stream, "raw stream changed for seed {seed}");
     }
 
-    fn next(&mut self) -> u64 {
-        self.0 = self.0.wrapping_add(0x9e37_79b9_7f4a_7c15);
-        let mut value = self.0;
-        value = (value ^ (value >> 30)).wrapping_mul(0xbf58_476d_1ce4_e5b9);
-        value = (value ^ (value >> 27)).wrapping_mul(0x94d0_49bb_1331_11eb);
-        value ^ (value >> 31)
-    }
+    // The `f32` draw, which is what a design matrix is made of. Compared with
+    // `assert_eq!` rather than a tolerance because every operation in it is
+    // exact and any difference at all would move a fixture.
+    let mut rng = TestRng::from_state(0);
+    let signed: Vec<f32> = (0..6).map(|_| rng.signed_unit()).collect();
+    assert_eq!(
+        signed,
+        vec![
+            0.7666216,
+            -0.13694406,
+            -0.94713247,
+            0.9417639,
+            -0.78730667,
+            -0.34534848
+        ]
+    );
 
-    fn signed_unit(&mut self) -> f32 {
-        let fraction = (self.next() >> 40) as f32 / (1_u32 << 24) as f32;
-        fraction * 2.0 - 1.0
-    }
+    // And the composition the lanes actually call, at the first quality seed.
+    let matrix = generated_matrix(&mut TestRng::from_state(11), 2, 3);
+    assert_eq!(
+        matrix.as_slice(),
+        [
+            -0.36751127,
+            -0.4752698,
+            0.27608466,
+            0.009227991,
+            -0.6696149,
+            0.10387528
+        ]
+    );
 }
 
-fn generated_matrix(rng: &mut SplitMix64, rows: usize, columns: usize) -> DenseMatrix {
+fn generated_matrix(rng: &mut TestRng, rows: usize, columns: usize) -> DenseMatrix {
     let values = (0..rows * columns).map(|_| rng.signed_unit()).collect();
     DenseMatrix::new(values, rows, columns).unwrap()
 }
@@ -1787,7 +1853,7 @@ fn classification_data(
     lane: &str,
     seed: u64,
 ) -> (DenseMatrix, BinaryTargets, DenseMatrix, BinaryTargets) {
-    let mut rng = SplitMix64::new(seed);
+    let mut rng = TestRng::from_state(seed);
     let train = generated_matrix(&mut rng, 768, 12);
     let test = generated_matrix(&mut rng, 384, 12);
     let train_targets = classification_labels(lane, &train, seed);
@@ -1819,7 +1885,7 @@ fn regression_data(
     DenseMatrix,
     RegressionTargets,
 ) {
-    let mut rng = SplitMix64::new(seed);
+    let mut rng = TestRng::from_state(seed);
     let train = generated_matrix(&mut rng, 768, 12);
     let test = generated_matrix(&mut rng, 384, 12);
     let train_targets = regression_targets(&train, seed);

@@ -78,6 +78,7 @@ use std::collections::HashSet;
 mod support;
 
 use support::api_profile::{self, PERSISTENCE_TRAITS};
+use support::rng::TestRng;
 
 // ---------------------------------------------------------------------------
 // Peak-allocation meter
@@ -178,24 +179,31 @@ fn measure_peak<R>(operation: impl FnOnce() -> R) -> (R, usize) {
 // Deterministic generator
 // ---------------------------------------------------------------------------
 
-/// SplitMix64, the same stream `src/numeric/rng.rs` defines for the crate.
+/// The campaign's draw sequence, over the one test-crate generator.
 ///
-/// It is restated rather than imported because the crate generator is
-/// `pub(crate)`; an integration test cannot reach it, and exposing it would
-/// enlarge the public API for a test's convenience.
-struct Rng(u64);
+/// The SplitMix64 core used to be restated here, character-identical to
+/// `src/numeric/rng.rs`'s and to `tests/reference_semantics.rs`'s — three copies
+/// of one stream, which is the shape `src/numeric/mod.rs` rule 6 forbids. It now
+/// comes from `tests/support/rng.rs`, and `rng-single-source` in
+/// `scripts/check_source_layout.py` covers `tests/` so it cannot come back.
+///
+/// `TestRng::from_state` rather than `TestRng::new`, and the biased `below`
+/// rather than the support generator's rejection-sampled one, because both
+/// choices are what keep this campaign's stream *unchanged*: the reach floors
+/// below are calibrated against the mutations this exact sequence produces, so
+/// substituting a differently-shaped draw would silently re-aim the fuzzer while
+/// looking like a refactor. The bias is irrelevant to what it is used for —
+/// `below` picks a mutation site or a strategy — and the stream is pinned by
+/// value in [`the_campaign_draw_sequence_is_frozen`].
+struct Rng(TestRng);
 
 impl Rng {
     const fn new(seed: u64) -> Self {
-        Self(seed)
+        Self(TestRng::from_state(seed))
     }
 
     fn next_u64(&mut self) -> u64 {
-        self.0 = self.0.wrapping_add(0x9e37_79b9_7f4a_7c15);
-        let mut value = self.0;
-        value = (value ^ (value >> 30)).wrapping_mul(0xbf58_476d_1ce4_e5b9);
-        value = (value ^ (value >> 27)).wrapping_mul(0x94d0_49bb_1331_11eb);
-        value ^ (value >> 31)
+        self.0.next_u64()
     }
 
     fn below(&mut self, upper: usize) -> usize {
@@ -210,6 +218,40 @@ impl Rng {
     fn pick<'a, T>(&mut self, values: &'a [T]) -> &'a T {
         &values[self.below(values.len())]
     }
+}
+
+/// The draw sequence the reach floors are calibrated against, by value.
+///
+/// Captured from the private copy this file carried before it was deleted. The
+/// floors themselves could not have proven the stream unchanged: they are
+/// inequalities over a whole campaign, so a different sequence that happened to
+/// reach as far would satisfy every one of them while testing different bytes.
+#[test]
+fn the_campaign_draw_sequence_is_frozen() {
+    let mut rng = Rng::new(FUZZ_SEED);
+    assert_eq!(
+        (0..6).map(|_| rng.next_u64()).collect::<Vec<_>>(),
+        vec![
+            8914142084118001171,
+            12254255926221854166,
+            2808264588722131936,
+            6858291291935140443,
+            6635311097510039988,
+            5950000538024547785,
+        ]
+    );
+
+    let mut rng = Rng::new(FUZZ_SEED);
+    assert_eq!(
+        (0..8).map(|_| rng.below(10)).collect::<Vec<_>>(),
+        vec![1, 6, 6, 3, 8, 5, 3, 5]
+    );
+
+    let mut rng = Rng::new(FUZZ_SEED);
+    assert_eq!(
+        (0..8).map(|_| rng.chance(3)).collect::<Vec<_>>(),
+        vec![false, true, false, true, true, false, false, false]
+    );
 }
 
 /// Values that sit on a bound, just past one, or exercise sign handling.

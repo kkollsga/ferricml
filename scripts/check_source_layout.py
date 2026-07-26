@@ -164,13 +164,18 @@ def rng_definition_lives_only_in_numeric(root: Path) -> list[str]:
     Both markers have to be present for this rule to mean anything, so their
     absence is itself a finding rather than a silently vacuous pass.
 
-    Two boundaries are deliberate. The scan covers `src/` and not `tests/`:
-    the integration crates cannot see a `pub(crate)` generator, and their
-    SplitMix64 copies drive fixture generation and artifact fuzzing rather than
-    a fitted model, so a seed there means one thing to one test. The markers are
-    textual, so a duplicate written as some *other* generator would pass — this
-    rule closes the copy-the-shared-one path, which is the one that produces two
-    streams claiming to be one, not every conceivable source of randomness.
+    One boundary is deliberate. The markers are textual, so a duplicate written
+    as some *other* generator would pass — this rule closes the
+    copy-the-shared-one path, which is the one that produces two streams claiming
+    to be one, not every conceivable source of randomness.
+
+    The `tests/` tree is covered by
+    [`rng_definition_in_tests_lives_only_in_shared_support`] rather than by this
+    rule, because its single source is a different file. It used not to be
+    covered at all, on the argument that an integration crate cannot see a
+    `pub(crate)` generator — true, and not a licence for duplication: two test
+    binaries each carried a copy of this exact core until 2026-07-26, so the
+    stream existed three times over.
     """
     source = root / "src"
     numeric = tree_text(source / "numeric")
@@ -183,6 +188,57 @@ def rng_definition_lives_only_in_numeric(root: Path) -> list[str]:
         text = path.read_text()
         findings.extend(
             f"generator definition re-derived outside numeric: "
+            f"{path.relative_to(root)} defines {marker!r}"
+            for marker in RNG_DEFINITION_MARKERS
+            if marker in text
+        )
+    return findings
+
+
+# The one generator the integration-test crates share. It is a different file
+# from the crate's because a `pub(crate)` item is unreachable from a test binary,
+# and it is *one* file for the same reason `src/numeric/rng.rs` is.
+SHARED_TEST_RNG = ("tests", "support", "rng.rs")
+
+
+def rng_definition_in_tests_lives_only_in_shared_support(root: Path) -> list[str]:
+    """One seeded generator for the test crates, in `tests/support/rng.rs`.
+
+    The sibling rule above covers `src/` and stopped there, on the argument that
+    an integration crate cannot reach a `pub(crate)` generator. That argument is
+    correct and it is not a licence for duplication. On 2026-07-26 the stream
+    existed **three** times: in `src/numeric/rng.rs`, in
+    `tests/reference_semantics.rs`, and in `tests/artifact_hardening.rs` — the
+    two test copies character-identical to the crate's core and to each other,
+    each documented as a local convenience.
+
+    Duplication is worse here than almost anywhere, because these two streams are
+    *frozen contracts*. The reference-parity fixtures are recorded against data
+    the first copy generated, and the artifact fuzz campaign's reach floors are
+    calibrated against mutations the second one chose. A second definition
+    drifting from the first does not announce itself by producing a wrong number;
+    it moves fixtures, or silently re-aims a fuzzer, while every test still
+    passes. Both files now draw from the shared generator and pin the stream they
+    depend on with literals, which is what made removing the copies a refactor
+    rather than a fixture change.
+
+    The marker has to be found for this rule to mean anything, so its absence is
+    itself a finding rather than a silently vacuous pass.
+    """
+    tests = root / "tests"
+    text = tree_text(tests)
+    if not text:
+        return ["tests tree is missing"]
+    if not all(marker in text for marker in RNG_DEFINITION_MARKERS):
+        return ["seeded generator is missing from the shared test support module"]
+    shared = root.joinpath(*SHARED_TEST_RNG)
+    findings = []
+    for path in sorted(tests.rglob("*.rs")):
+        if path == shared:
+            continue
+        text = path.read_text()
+        findings.extend(
+            f"generator definition re-derived outside the shared test support: "
             f"{path.relative_to(root)} defines {marker!r}"
             for marker in RNG_DEFINITION_MARKERS
             if marker in text
@@ -534,6 +590,7 @@ RULES: tuple[tuple[str, Callable[[Path], list[str]]], ...] = (
     ("numeric-below-estimators", numeric_depends_on_no_estimator),
     ("quantile-single-source", quantile_definition_lives_only_in_numeric),
     ("rng-single-source", rng_definition_lives_only_in_numeric),
+    ("test-rng-single-source", rng_definition_in_tests_lives_only_in_shared_support),
     ("preprocessing-below-composition", preprocessing_sits_below_composition),
     ("inspection-public-surfaces-only", inspection_uses_only_public_surfaces),
     ("loss-below-estimators", loss_depends_on_no_estimator),
@@ -640,6 +697,26 @@ def write_clean_tree(root: Path) -> Path:
         path = source / relative
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(text)
+
+    # The integration-test tree, with its own single generator. `support/` is a
+    # child module of `tests/`, which is what makes `test-rng-single-source`'s
+    # recursion provable: a facade-only reader of `tests/` sees the two
+    # top-level binaries and not the shared generator below them, so it reports
+    # the generator missing.
+    for relative, text in {
+        "reference_semantics.rs": "//! parity\nmod support;\n",
+        "artifact_hardening.rs": "//! hardening\nmod support;\n",
+        "support/mod.rs": "//! support\npub mod rng;\n",
+        "support/rng.rs": (
+            "//! shared test generator\npub struct TestRng { state: u64 }\n"
+            "const INCREMENT: u64 = 0x9e37_79b9_7f4a_7c15;\n"
+            "fn mix64(value: u64) -> u64 { value }\n"
+        ),
+        "support/conformance.rs": "//! conformance probe\n",
+    }.items():
+        path = root / "tests" / relative
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(text)
     return root
 
 
@@ -692,6 +769,17 @@ SYNTHETIC_VIOLATIONS: tuple[tuple[str, Callable[[Path], None], str], ...] = (
             "fn mix64(value: u64) -> u64 { value }\n",
         ),
         "generator definition re-derived outside numeric",
+    ),
+    (
+        # The real duplicate's own file: a fixture-generating parity binary at
+        # the top level of `tests/`, which is where the first of the two copies
+        # lived.
+        "test-rng-single-source",
+        lambda root: append(
+            root / "tests" / "reference_semantics.rs",
+            "fn mix64(value: u64) -> u64 { value }\n",
+        ),
+        "generator definition re-derived outside the shared test support",
     ),
     (
         "preprocessing-below-composition",
@@ -864,6 +952,17 @@ CHILD_MODULE_VIOLATIONS: tuple[tuple[str, Callable[[Path], None], str], ...] = (
         "generator definition re-derived outside numeric",
     ),
     (
+        # The other marker, in a *sibling* of the shared generator: a private
+        # copy hides beside the one true source as easily as in a test binary,
+        # and a facade-only reader of `tests/` sees neither.
+        "test-rng-single-source",
+        lambda root: append(
+            root / "tests" / "support" / "conformance.rs",
+            "const INCREMENT: u64 = 0x9e37_79b9_7f4a_7c15;\n",
+        ),
+        "generator definition re-derived outside the shared test support",
+    ),
+    (
         "preprocessing-below-composition",
         lambda root: append(
             root / "src" / "preprocessing" / "standard_scaler" / "mod.rs",
@@ -956,7 +1055,8 @@ CHILD_MODULE_VIOLATIONS: tuple[tuple[str, Callable[[Path], None], str], ...] = (
 # exemption cannot be claimed by a rule that has no absence case.
 CLEAN_TREE_PROVEN_RECURSION: dict[str, str] = {
     "quantile-single-source": "quantile primitive is missing",
-    "rng-single-source": "seeded generator is missing",
+    "rng-single-source": "seeded generator is missing from the shared numeric kernels",
+    "test-rng-single-source": "seeded generator is missing from the shared test support",
 }
 
 # Floor on the child-module proofs, so the count cannot shrink by attrition.
@@ -969,7 +1069,7 @@ CLEAN_TREE_PROVEN_RECURSION: dict[str, str] = {
 # an explicit edit to this number with a reason attached, which is the same
 # treatment the reach floors in `tests/artifact_hardening.rs` get. Raise it when
 # proofs are added; lower it only alongside the rule being retired.
-MINIMUM_CHILD_MODULE_PROOFS = 14
+MINIMUM_CHILD_MODULE_PROOFS = 15
 
 
 def rules_reading_a_module_directory() -> set[str]:
