@@ -24,14 +24,16 @@ estimator meaning follow the reference contract.
   becomes a second parameter system; it is carried by `HasCapabilities`, a
   generic trait rather than an associated constant on the object-safe
   categories, which must stay dyn-compatible. `decision_function` records
-  whether a fitted classifier exposes a raw, unsquashed score: producing
-  probabilities is required of every `Classifier` and is not what it records.
-  It exists because Rust has no runtime attribute lookup, so a meta-estimator
-  generic over a classifier cannot otherwise discover that the type it holds
-  has one. Note what a tag can and cannot do — it makes the capability
-  discoverable, not callable, because a decision function is an inherent method
-  rather than part of the object-safe contract, so a consumer that must *call*
-  one still needs a bound naming a trait that carries it.
+  whether a fitted classifier exposes a raw, unsquashed score. Producing
+  probabilities is a separate declared capability, carried by
+  `ProbabilisticClassifier` rather than required of every `Classifier`, and is
+  not what `decision_function` records. The tag exists because Rust has no
+  runtime attribute lookup, so a meta-estimator generic over a classifier
+  cannot otherwise discover that the type it holds has one. Note what a tag can
+  and cannot do — it makes the capability discoverable, not callable, because a
+  decision function is an inherent method rather than part of the object-safe
+  contract, so a consumer that must *call* one still needs a bound naming a
+  trait that carries it.
 - `data` owns validated row-major inputs, targets, and sample weights. Sample
   weights are the crate's only weighting concept: no estimator takes a
   `class_weight`, because a per-class weight is a function of the label and so
@@ -121,9 +123,10 @@ estimator meaning follow the reference contract.
   already-fitted calibrator and is itself an ordinary `Classifier`, so it
   reaches the scorer, cross-validation, and permutation-importance paths without
   any of them learning that calibration exists. The score it calibrates is the
-  wrapped model's positive-class probability, which is the one score every
-  classifier is required to produce; that is what lets the wrapper be generic
-  over the public contract rather than over the estimators FerricML ships. The
+  wrapped model's positive-class probability, which is the one score the
+  `ProbabilisticClassifier` contract requires; that is what lets the wrapper be
+  generic over that public contract rather than over the estimators FerricML
+  ships. The
   calibration rows are always a caller-supplied parameter, never the wrapped
   model's own training rows taken implicitly. Predicted labels are the argmax of
   the *calibrated* probabilities, so a row whose probability crosses the

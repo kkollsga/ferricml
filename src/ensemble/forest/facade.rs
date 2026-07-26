@@ -410,10 +410,10 @@ macro_rules! forest_classifier {
             }
         }
 
-        /// Declares weighted fitting, multiclass fitting, and persistence. The
-        /// artifact covers *both* leaf representations, so the declaration holds
-        /// for every fit this type offers rather than for one of its two entry
-        /// points.
+        /// Declares weighted fitting, multiclass fitting, persistence, and
+        /// probabilities. The artifact covers *both* leaf representations, so
+        /// the declaration holds for every fit this type offers rather than for
+        /// one of its two entry points.
         impl $crate::api::HasCapabilities for $name {
             const CAPABILITIES: $crate::api::Capabilities = $crate::api::Capabilities::NONE
                 .with_sample_weights(true)

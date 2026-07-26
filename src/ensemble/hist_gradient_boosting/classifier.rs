@@ -643,10 +643,10 @@ impl Estimator for HistGradientBoostingClassifier {
     }
 }
 
-/// Weighted fitting, persistence, and a raw decision score are all offered;
-/// multiclass fitting is not, because a multiclass boosted model needs the
-/// multinomial objective and one tree per class per iteration, which is a
-/// different model rather than a wider fit of this one.
+/// Weighted fitting, persistence, probabilities, and a raw decision score are
+/// all offered; multiclass fitting is not, because a multiclass boosted model
+/// needs the multinomial objective and one tree per class per iteration, which
+/// is a different model rather than a wider fit of this one.
 impl HasCapabilities for HistGradientBoostingClassifier {
     const CAPABILITIES: Capabilities = Capabilities::NONE
         .with_sample_weights(true)

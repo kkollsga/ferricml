@@ -149,12 +149,16 @@ impl Capabilities {
 
     /// Whether the fitted classifier produces a probability per class.
     ///
-    /// A type declaring this implements
-    /// [`ProbabilisticClassifier`](super::ProbabilisticClassifier), so the
-    /// declaration is normally a restatement of a bound a generic caller can
-    /// simply require. It exists as a tag for the one place that bound is
+    /// A type declaring this usually also implements
+    /// [`ProbabilisticClassifier`](super::ProbabilisticClassifier), and there
+    /// the declaration is a restatement of a bound a generic caller can simply
+    /// require. It exists as a tag for the one place that bound is
     /// unavailable: a runtime dispatch value, where the concrete type is erased
-    /// by construction and the question can only be asked, not proven.
+    /// by construction and the question can only be asked, not proven. Such a
+    /// type declares the capability without implementing the trait — see
+    /// [`AnyClassifier`](super::AnyClassifier), which answers the question
+    /// through [`as_probabilistic`](super::AnyClassifier::as_probabilistic)
+    /// instead.
     ///
     /// Producing probabilities used to be required of every
     /// [`Classifier`](super::Classifier), which is why this was not a field

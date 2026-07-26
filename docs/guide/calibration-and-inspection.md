@@ -156,9 +156,9 @@ Four things about that composition are decisions rather than accidents:
   training rows taken implicitly. Calibrating on the data the model was fitted
   on is a mistake FerricML will let you make, but not one it will make for you.
 - **The score being calibrated is the wrapped model's positive-class
-  probability**, which is the one score every classifier is required to produce.
-  That is what lets the wrapper be generic over the public contract rather than
-  over the estimators FerricML happens to ship.
+  probability**, which is the one score the `ProbabilisticClassifier` contract
+  requires. That is what lets the wrapper be generic over that public contract
+  rather than over the estimators FerricML happens to ship.
 - **Predicted labels are the argmax of the calibrated probabilities**, so a row
   whose probability crosses the decision point does change label. A classifier
   whose labels disagreed with its own probabilities would be a silent wrong
