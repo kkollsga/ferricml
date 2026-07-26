@@ -3,7 +3,12 @@
 SHELL := /bin/bash
 PYTHON ?= python3
 
-.PHONY: gate gate-full api-check api-refresh reference-check package-check semver-check bench-self bench-history bench-diagnostic
+# Documentation-site toolchain. DOCS_PYTHON matches the interpreter line pinned
+# in .readthedocs.yaml so the local build and the hosted build agree.
+DOCS_PYTHON ?= python3.12
+DOCS_VENV ?= .venv-docs
+
+.PHONY: gate gate-full api-check api-refresh reference-check package-check semver-check bench-self bench-history bench-diagnostic docs-env docs-build docs-serve
 
 ## Ordinary pre-push gate: formatting, default lint/tests, dependency isolation,
 ## and the extracted-package external-consumer contract.
@@ -64,3 +69,24 @@ bench-history:
 ## Capture dated registered-runner evidence without occupying a release slot.
 bench-diagnostic:
 	$(PYTHON) scripts/performance_history.py capture --diagnostic $(PERF_HISTORY_ARGS)
+
+## Install the exactly pinned documentation toolchain into a local virtualenv.
+## Nothing here enters the crate's dependency graph.
+docs-env:
+	$(DOCS_PYTHON) -m venv $(DOCS_VENV)
+	$(DOCS_VENV)/bin/pip install --quiet --disable-pip-version-check \
+		--requirement requirements/docs.txt
+
+## Build the narrative site the way Read the Docs does. `--strict` is the local
+## equivalent of that platform's fail_on_warning, so a dead internal link or a
+## page missing from the nav fails here too. Deliberately not a gate member: it
+## needs a Python toolchain the Rust gates must not require.
+docs-build: | $(DOCS_VENV)
+	$(DOCS_VENV)/bin/mkdocs build --strict
+
+## Serve the site locally with live reload.
+docs-serve: | $(DOCS_VENV)
+	$(DOCS_VENV)/bin/mkdocs serve
+
+$(DOCS_VENV):
+	$(MAKE) docs-env

@@ -1,0 +1,21 @@
+# Read the Docs build for the FerricML narrative documentation site.
+#
+# The site is the guide; the symbol-level API reference is rustdoc on
+# https://docs.rs/ferricml and is never duplicated here. See docs/index.md.
+version: 2
+
+build:
+  os: ubuntu-24.04
+  tools:
+    # Pinned interpreter line. `requirements/docs.txt` is frozen against it.
+    python: "3.12"
+
+mkdocs:
+  configuration: mkdocs.yml
+  # A dead internal link, a page missing from the nav, or an unreadable
+  # reference fails the build rather than shipping a broken site.
+  fail_on_warning: true
+
+python:
+  install:
+    - requirements: requirements/docs.txt
