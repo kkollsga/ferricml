@@ -14,10 +14,31 @@ import subprocess
 import sys
 from typing import Any
 
-ROOT = Path(__file__).resolve().parents[1]
+SELF_PATH = Path(__file__).resolve()
+ROOT = SELF_PATH.parents[1]
 MANIFEST_PATH = ROOT / "tests" / "api-baselines" / "rust-api-profiles.json"
 STAMP_PATH = ROOT / "target" / "rust-api-profiles.stamp"
 VALID_CLASSIFICATIONS = {"profile-root", "public-api", "implementation-only"}
+
+# Noise `cargo public-api` may omit. Blanket impls (`impl<T> Any for T`) and
+# auto-trait impls (`impl Send for …`) say nothing a reviewer can act on.
+#
+# `auto-derived-impls` is deliberately **not** among them. Omitting it (the
+# third `-s`, which this profile used until the derive blind spot was found)
+# hides every `#[derive(Clone)]`, `#[derive(Debug)]` and `#[derive(PartialEq)]`
+# in the crate, so dropping a derive from a public type is a semver-breaking
+# change the exact API check reports as clean.
+OMITTED_NOISE = ("blanket-impls", "auto-trait-impls")
+
+# Derived impls the profile must be able to see, as `cargo public-api` spells
+# them. Every public `Params` type in the crate is `Clone + Debug + PartialEq`
+# by derive, so a capture showing none of these is not a clean surface — it is
+# a blind one, and the exact comparison below would then pass vacuously.
+REQUIRED_DERIVED_TRAITS = (
+    "core::clone::Clone",
+    "core::cmp::PartialEq",
+    "core::fmt::Debug",
+)
 
 
 def load_manifest() -> dict[str, Any]:
@@ -86,7 +107,10 @@ def validate_manifest(manifest: dict[str, Any]) -> None:
 
 def source_digest(manifest: dict[str, Any]) -> str:
     digest = hashlib.sha256()
-    for path in [MANIFEST_PATH, ROOT / "Cargo.toml"]:
+    # This script is a content input too: it decides what the capture contains,
+    # so a changed capture command must invalidate the stamp exactly as a
+    # changed source file does.
+    for path in [SELF_PATH, MANIFEST_PATH, ROOT / "Cargo.toml"]:
         digest.update(str(path.relative_to(ROOT)).encode())
         digest.update(path.read_bytes())
     for path in sorted((ROOT / "src").rglob("*.rs")):
@@ -105,12 +129,50 @@ def public_api_command(manifest: dict[str, Any], profile: dict[str, Any]) -> lis
         "public-api",
         "-p",
         manifest["package"],
-        "-sss",
         "--no-default-features",
     ]
+    for omitted in OMITTED_NOISE:
+        command += ["--omit", omitted]
     if profile.get("all_features"):
         command.append("--all-features")
     return command
+
+
+def impl_traits(profile: str) -> set[str]:
+    """Every trait the profile records an `impl … for …` row for."""
+    traits: set[str] = set()
+    for line in profile.splitlines():
+        if not line.startswith("impl"):
+            continue
+        head, separator, _ = line.partition(" for ")
+        if not separator:
+            continue
+        traits.add(head.rsplit(" ", 1)[-1])
+    return traits
+
+
+def missing_derived_traits(profile: str) -> list[str]:
+    """Which required derived impls the capture failed to record.
+
+    A non-empty result means the profile went blind rather than that the crate
+    changed, so it is reported as a tool failure instead of an API diff.
+    """
+    recorded = impl_traits(profile)
+    return [trait for trait in REQUIRED_DERIVED_TRAITS if trait not in recorded]
+
+
+def differences(expected: str, current: str, *, fromfile: str, tofile: str) -> list[str]:
+    """The unified diff between a baseline and a capture; empty when equal."""
+    if expected == current:
+        return []
+    return list(
+        difflib.unified_diff(
+            expected.splitlines(keepends=True),
+            current.splitlines(keepends=True),
+            fromfile=fromfile,
+            tofile=tofile,
+        )
+    )
 
 
 def capture(manifest: dict[str, Any], profile: dict[str, Any]) -> str:
@@ -124,6 +186,13 @@ def capture(manifest: dict[str, Any], profile: dict[str, Any]) -> str:
     if result.returncode:
         details = result.stderr.strip() or result.stdout.strip() or "no diagnostic output"
         raise RuntimeError(f"{profile['name']} API capture failed:\n{details}")
+    missing = missing_derived_traits(result.stdout)
+    if missing:
+        raise RuntimeError(
+            f"{profile['name']} API capture records no impls for {missing}, so derived "
+            "impls are invisible to it and removing a derive from a public type would "
+            "compare clean. Restore derived impls to the capture before trusting it."
+        )
     return result.stdout
 
 
@@ -156,16 +225,15 @@ def run_profiles(manifest: dict[str, Any], *, check: bool) -> int:
         baseline = ROOT / profile["baseline"]
         if check:
             expected = baseline.read_text(encoding="utf-8") if baseline.exists() else ""
-            if expected != current:
+            diff = differences(
+                expected,
+                current,
+                fromfile=profile["baseline"],
+                tofile=f"current:{name}",
+            )
+            if diff:
                 failed = True
-                sys.stdout.writelines(
-                    difflib.unified_diff(
-                        expected.splitlines(keepends=True),
-                        current.splitlines(keepends=True),
-                        fromfile=profile["baseline"],
-                        tofile=f"current:{name}",
-                    )
-                )
+                sys.stdout.writelines(diff)
             else:
                 print(f"{name}: exact API match")
         else:
@@ -175,10 +243,110 @@ def run_profiles(manifest: dict[str, Any], *, check: bool) -> int:
     return 1 if failed else 0
 
 
+def frozen_profiles(manifest: dict[str, Any]) -> list[tuple[str, str]]:
+    """Every checked-in baseline, as `(relative path, text)`."""
+    frozen = []
+    for profile in manifest["profiles"]:
+        path = ROOT / profile["baseline"]
+        if not path.exists():
+            raise RuntimeError(f"{profile['baseline']} is absent; run `make api-refresh`")
+        frozen.append((profile["baseline"], path.read_text(encoding="utf-8")))
+    return frozen
+
+
+def strip_derived_rows(profile: str, trait: str) -> str:
+    """The profile with every `impl <trait> for …` row and its members removed.
+
+    `cargo public-api` prints an impl's members directly beneath it, so a
+    trailing `pub fn` run belongs to the impl above it. Anything else ends the
+    run; keeping a stray member row would only make the synthetic violation
+    smaller, never make it pass.
+    """
+    kept: list[str] = []
+    inside = False
+    for line in profile.splitlines(keepends=True):
+        if line.startswith("impl"):
+            head, separator, _ = line.partition(" for ")
+            inside = bool(separator) and head.rsplit(" ", 1)[-1] == trait
+        elif inside and not line.startswith("pub fn "):
+            inside = False
+        if not inside:
+            kept.append(line)
+    return "".join(kept)
+
+
+def self_test(manifest: dict[str, Any]) -> int:
+    """Prove the derive detector can fail, against synthetic violations.
+
+    An exact-comparison contract that has never been shown to fire proves only
+    that the tree is currently clean. These checks are cheap, need no pinned
+    tool, and run in the ordinary gate, so a capture command that silently went
+    blind again fails here rather than years later.
+    """
+    command = public_api_command(manifest, manifest["profiles"][0])
+    omitted = {value for flag, value in zip(command, command[1:]) if flag == "--omit"}
+    assert "auto-derived-impls" not in omitted, (
+        "the capture omits auto-derived impls, so removing a derive from a public "
+        "type would compare clean"
+    )
+    assert not any(
+        argument.startswith("-s") and set(argument[1:]) == {"s"} for argument in command
+    ), "`-sss` omits auto-derived impls; spell the omissions out instead"
+
+    parsed = impl_traits(
+        "impl core::clone::Clone for ferricml::linear_model::Ridge\n"
+        "impl<'a> core::marker::Copy for ferricml::api::AnyRegressorParams<'a>\n"
+        "impl<S, E> ferricml::api::HasCapabilities for ferricml::pipeline::Pipeline<S, E>\n"
+        "pub fn ferricml::linear_model::Ridge::clone(&self) -> ferricml::linear_model::Ridge\n"
+    )
+    assert parsed == {
+        "core::clone::Clone",
+        "core::marker::Copy",
+        "ferricml::api::HasCapabilities",
+    }, f"impl rows parsed as {sorted(parsed)}"
+
+    assert missing_derived_traits("") == list(REQUIRED_DERIVED_TRAITS), (
+        "an empty capture must report every required derived impl as missing"
+    )
+
+    for name, frozen in frozen_profiles(manifest):
+        missing = missing_derived_traits(frozen)
+        assert not missing, (
+            f"{name} records no impls for {missing}; the frozen baseline is blind to "
+            "derived impls, so nothing change-detects them"
+        )
+
+        assert not differences(frozen, frozen, fromfile=name, tofile=name), (
+            "identical profiles must compare equal, or the removal proof below is "
+            "true of everything"
+        )
+
+        for trait in REQUIRED_DERIVED_TRAITS:
+            stripped = strip_derived_rows(frozen, trait)
+            assert stripped != frozen, f"{name} has no `impl {trait} for …` row to remove"
+            assert missing_derived_traits(stripped) == [trait], (
+                f"stripping {trait} from {name} must leave exactly it missing"
+            )
+            # The synthetic violation this whole mechanism exists for: a public
+            # type that lost its derive. It must surface as an API diff.
+            diff = differences(stripped, frozen, fromfile=name, tofile="current")
+            assert diff, (
+                f"removing every `impl {trait} for …` row from {name} produced no "
+                "API diff, so dropping a derive from a public type is invisible"
+            )
+
+    print(
+        "Rust API profile self-test: derived impls are captured, and removing one "
+        f"fails the exact comparison ({len(REQUIRED_DERIVED_TRAITS)} traits proven)"
+    )
+    return 0
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     subparsers = parser.add_subparsers(dest="command", required=True)
     subparsers.add_parser("validate")
+    subparsers.add_parser("self-test")
     refresh = subparsers.add_parser("refresh")
     refresh.add_argument("--skip-if-unchanged", action="store_true")
     subparsers.add_parser("check")
@@ -195,6 +363,8 @@ def main() -> int:
         if args.command == "validate":
             print("Rust API profiles valid: default; 1 classified feature")
             return 0
+        if args.command == "self-test":
+            return self_test(manifest)
         if args.command == "refresh" and args.skip_if_unchanged:
             digest = source_digest(manifest)
             if STAMP_PATH.exists() and STAMP_PATH.read_text(encoding="utf-8").strip() == digest:
@@ -205,6 +375,9 @@ def main() -> int:
             STAMP_PATH.parent.mkdir(parents=True, exist_ok=True)
             STAMP_PATH.write_text(source_digest(manifest) + "\n", encoding="utf-8")
         return result
+    except AssertionError as error:
+        print(f"Rust API profile self-test failed: {error}", file=sys.stderr)
+        return 1
     except (OSError, RuntimeError, subprocess.CalledProcessError, ValueError) as error:
         print(f"Rust API profile error: {error}", file=sys.stderr)
         return 1

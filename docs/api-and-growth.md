@@ -185,6 +185,20 @@ a declaration and its estimator is a third, separate contract, proven
 generically by the conformance battery; a snapshot cannot substitute for it,
 and it cannot substitute for a snapshot.
 
+A const value is the profile's one remaining blind spot, and only because it is
+one. The profile used to have a second, larger one: it omitted *auto-derived*
+impls, so none of the crate's 159 `derive(…)` attributes reached the baseline
+and removing `#[derive(Clone)]` from a public parameter type was a breaking
+change the exact API check reported as clean. The capture now omits only
+blanket and auto-trait impls, so `impl core::clone::Clone for
+ferricml::linear_model::RidgeParams` is a baseline row like any other and
+losing it is a reviewable diff. Because a detector that has never been shown to
+fail proves only that today's tree is clean, `make gate` runs
+`scripts/rust_api_profiles.py self-test`, which strips every `Clone`, `Debug`
+and `PartialEq` impl row out of the frozen baseline in turn and asserts each
+removal is reported — and asserts the capture command has not quietly gone back
+to omitting them.
+
 Artifact support composes through a bound rather than a list. A
 `StagedPipeline` declares persistence exactly where every stage and its
 estimator really have a schema-bound artifact, so one declaration covers every

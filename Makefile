@@ -16,6 +16,7 @@ gate:
 	$(PYTHON) scripts/check_source_layout.py
 	$(PYTHON) scripts/check_source_layout.py --self-test
 	$(PYTHON) scripts/check_release_workflow.py
+	$(PYTHON) scripts/rust_api_profiles.py self-test
 	$(PYTHON) scripts/performance_history.py self-test
 	$(MAKE) package-check
 
@@ -26,9 +27,10 @@ gate-full: gate
 	cargo test --locked --all-features
 	RUSTDOCFLAGS="-D warnings" cargo doc --locked --no-deps --all-features
 
-## Compare the public Rust surface with its exact snapshot. The capability
-## snapshot is a separate mechanism because cargo-public-api cannot see const
-## values; both are part of the same public contract.
+## Compare the public Rust surface with its exact snapshot. The profile records
+## derived impls, so dropping a derive from a public type fails here; the
+## capability snapshot is a separate mechanism because cargo-public-api cannot
+## see const values. Both are part of the same public contract.
 api-check:
 	$(PYTHON) scripts/rust_api_profiles.py check
 	cargo test --locked --test capability_snapshot
