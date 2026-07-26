@@ -17,7 +17,7 @@ mv "$package_root/ferricml-${version}" "$package_root/ferricml"
 # These paths are development-only. Checking the extract, rather than
 # `cargo package --list`, makes the assertion cover the exact archive consumed
 # below.
-for source_only in .github .readthedocs.yaml .venv-docs CLAUDE.md Makefile mkdocs.yml RELEASING.md benches benchmarks dev-docs research requirements scripts site tests; do
+for source_only in .cargo .github .readthedocs.yaml .venv-docs CLAUDE.md Makefile mkdocs.yml RELEASING.md benches benchmarks dev-docs research requirements scripts site tests; do
   if [[ -e "$package_root/ferricml/$source_only" ]]; then
     echo "packaged crate unexpectedly contains source-only path: $source_only" >&2
     exit 1

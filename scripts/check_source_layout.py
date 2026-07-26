@@ -9,10 +9,12 @@ self-test.
 
 from __future__ import annotations
 
+import inspect
 import sys
 import tempfile
+from contextlib import contextmanager
 from pathlib import Path
-from typing import Callable
+from typing import Callable, Iterator
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -38,18 +40,33 @@ def read_if_present(path: Path) -> str:
     return path.read_text() if path.is_file() else ""
 
 
-def directory_text(directory: Path) -> str:
-    return "\n".join(path.read_text() for path in sorted(directory.glob("*.rs")))
-
-
 def tree_text(directory: Path) -> str:
     """Every source file under `directory`, including its child modules.
 
-    Facades that grew into directories of per-family child modules need the
-    recursive form: a rule reading only the facade would stop seeing the code
-    that actually holds the dependencies.
+    This is the *only* reader a dependency rule may use, and a non-recursive
+    twin is deliberately absent. A facade that grew into a directory of
+    per-family child modules would silently narrow every rule reading it: the
+    check would keep passing while the dependency it forbids sat one level down.
+    That is not hypothetical — `preprocessing`, `pipeline`, `metrics`,
+    `model_selection`, `linear_model`, `ensemble` and `ranking` each grew from
+    one file into a directory, and nine rules were still reading facades only
+    when the 2026-07-26 independent review found them. Every rule below is
+    proven against a synthetic violation placed in a *child* module, because a
+    violation in the facade cannot tell the two readers apart.
     """
     return "\n".join(path.read_text() for path in sorted(directory.rglob("*.rs")))
+
+
+def shallow_text(directory: Path) -> str:
+    """The facade-only reader, kept solely so `--self-test` can fail against it.
+
+    No rule calls this. `self_test` substitutes it for [`tree_text`] and asserts
+    that every child-module violation goes *unreported* — which is what makes
+    each of those violations a proof that its rule reads the tree rather than
+    the facade. Without this, a synthetic violation demonstrates only that the
+    rule matches a string somewhere.
+    """
+    return "\n".join(path.read_text() for path in sorted(directory.glob("*.rs")))
 
 
 def crate_root_is_lib_only(root: Path) -> list[str]:
@@ -69,7 +86,7 @@ def obsolete_root_implementations_are_gone(root: Path) -> list[str]:
 
 
 def artifact_is_runtime_neutral(root: Path) -> list[str]:
-    if "crate::ensemble" in directory_text(root / "src" / "artifact"):
+    if "crate::ensemble" in tree_text(root / "src" / "artifact"):
         return ["artifact foundation depends on a concrete ensemble runtime"]
     return []
 
@@ -82,7 +99,7 @@ def ensemble_families_stay_private(root: Path) -> list[str]:
 
 
 def numeric_depends_on_no_estimator(root: Path) -> list[str]:
-    text = directory_text(root / "src" / "numeric")
+    text = tree_text(root / "src" / "numeric")
     return [
         f"numeric kernels depend on estimator module {module}"
         for module in ESTIMATOR_MODULES
@@ -102,7 +119,7 @@ def quantile_definition_lives_only_in_numeric(root: Path) -> list[str]:
     absence is itself a finding rather than a silently vacuous pass.
     """
     source = root / "src"
-    numeric = directory_text(source / "numeric")
+    numeric = tree_text(source / "numeric")
     if not any(marker in numeric for marker in QUANTILE_DEFINITION_MARKERS):
         return ["quantile primitive is missing from the shared numeric kernels"]
     findings = []
@@ -149,7 +166,7 @@ def inspection_uses_only_public_surfaces(root: Path) -> list[str]:
     prediction and scoring contracts alone. Naming a concrete estimator or the
     artifact layer is the observable symptom of it reaching past them.
     """
-    text = directory_text(root / "src" / "inspection")
+    text = tree_text(root / "src" / "inspection")
     return [
         f"inspection depends on non-public-surface module {module}"
         for module in (*ESTIMATOR_MODULES, "artifact")
@@ -169,7 +186,7 @@ def calibration_uses_only_public_surfaces(root: Path) -> list[str]:
     to mean anything, so its absence is itself a finding rather than a silently
     vacuous pass.
     """
-    text = directory_text(root / "src" / "calibration")
+    text = tree_text(root / "src" / "calibration")
     if not text:
         return ["calibration module is missing"]
     return [
@@ -187,7 +204,7 @@ def loss_depends_on_no_estimator(root: Path) -> list[str]:
     invert that dependency and reintroduce the per-estimator fusion of
     objective and solver the contract was built to remove.
     """
-    text = directory_text(root / "src" / "loss")
+    text = tree_text(root / "src" / "loss")
     return [
         f"loss contract depends on estimator module {module}"
         for module in ESTIMATOR_MODULES
@@ -207,7 +224,7 @@ def optimize_depends_only_on_loss_and_numeric(root: Path) -> list[str]:
     the rule to mean anything, so its absence is itself a finding rather than a
     silently vacuous pass.
     """
-    text = directory_text(root / "src" / "optimize")
+    text = tree_text(root / "src" / "optimize")
     if not text:
         return ["optimize module is missing"]
     permitted = ("loss", "numeric")
@@ -241,7 +258,7 @@ def baselines_depend_on_no_estimator(root: Path) -> list[str]:
     Reusing a real estimator's machinery would make the floor move with the
     thing it is supposed to measure, so the baselines name no estimator module.
     """
-    text = directory_text(root / "src" / "dummy")
+    text = tree_text(root / "src" / "dummy")
     return [
         f"baseline estimators depend on estimator module {module}"
         for module in ESTIMATOR_MODULES
@@ -277,7 +294,7 @@ def metrics_depend_on_no_estimator(root: Path) -> list[str]:
     works for one kind of model, which is what keeps the evaluation vocabulary
     reusable by callers whose model FerricML does not ship.
     """
-    text = directory_text(root / "src" / "metrics")
+    text = tree_text(root / "src" / "metrics")
     return [
         f"metrics depend on estimator module {module}"
         for module in ESTIMATOR_MODULES
@@ -332,7 +349,7 @@ def search_consumes_the_scorer_seam(root: Path) -> list[str]:
     is itself a finding rather than a silently vacuous pass.
     """
     module = root / "src" / "model_selection" / "search.rs"
-    text = read_if_present(module) + directory_text(
+    text = read_if_present(module) + tree_text(
         root / "src" / "model_selection" / "search"
     )
     if not text:
@@ -355,7 +372,7 @@ def tree_sits_below_the_estimators_that_consume_it(root: Path) -> list[str]:
     again. The module has to exist for the rule to mean anything, so its
     absence is itself a finding rather than a silently vacuous pass.
     """
-    text = directory_text(root / "src" / "tree")
+    text = tree_text(root / "src" / "tree")
     if not text:
         return ["tree module is missing"]
     return [
@@ -398,7 +415,7 @@ def forest_core_sits_below_the_ensembles_that_consume_it(root: Path) -> list[str
     against, at the level above it. The module has to exist for the rule to
     mean anything, so its absence is itself a finding.
     """
-    text = directory_text(root / "src" / "ensemble" / "forest")
+    text = tree_text(root / "src" / "ensemble" / "forest")
     if not text:
         return ["ensemble forest core is missing"]
     return [
@@ -489,49 +506,75 @@ def violations(root: Path = ROOT) -> list[str]:
 
 
 def write_clean_tree(root: Path) -> Path:
-    """Write the smallest source tree that satisfies every rule."""
+    """Write the smallest source tree that satisfies every rule.
+
+    Every directory a dependency rule reads carries a **child module**, because
+    that is the shape the crate's modules keep growing into and the shape a
+    facade-only reader stops seeing. The child modules exist so each rule's
+    synthetic violation can be written below the facade rather than into it;
+    a violation in the facade passes under either reader and proves nothing
+    about which one the rule uses.
+
+    The quantile primitive lives in `numeric/quantile/mod.rs` rather than in a
+    flat `numeric/quantile.rs` for the same reason: `quantile-single-source`
+    is the one converted rule whose recursion protects a *non-firing* property
+    — the primitive being found — so the discriminating assertion is that this
+    clean tree passes at all. Under a facade-only reader it reports the missing
+    primitive, which `self_test` asserts directly.
+    """
     source = root / "src"
     for relative, text in {
         "lib.rs": "pub mod artifact;\npub mod ensemble;\nmod numeric;\n",
-        "artifact/mod.rs": "//! artifact\npub(crate) use self::inner::Thing;\nmod contract;\n",
+        "artifact/mod.rs": "//! artifact\npub(crate) use self::inner::Thing;\nmod contract;\nmod component;\n",
         "artifact/contract.rs": (
             "//! contract\npub trait ModelArtifact { fn to_artifact(&self); }\n"
             "pub trait StageArtifact { fn to_artifact(&self); }\n"
         ),
+        "artifact/component/mod.rs": "//! component encoding\n",
         "ensemble/mod.rs": "//! ensemble\nmod random_forest;\npub use random_forest::Forest;\n",
         "ensemble/random_forest/mod.rs": "//! forest\nuse crate::tree::grow_tree;\n",
-        "ensemble/forest/mod.rs": "//! forest core\nmod training;\n",
+        "ensemble/forest/mod.rs": "//! forest core\nmod training;\nmod seeding;\n",
         "ensemble/forest/training.rs": "//! training\nuse crate::tree::grow_tree;\n",
-        "tree/mod.rs": "//! tree\nmod grower;\npub use grower::DecisionTreeRegressor;\n",
+        "ensemble/forest/seeding/mod.rs": "//! seeding\nuse crate::numeric::kernel;\n",
+        "tree/mod.rs": "//! tree\nmod grower;\nmod split;\npub use grower::DecisionTreeRegressor;\n",
         "tree/grower.rs": "//! grower\nuse crate::numeric::kernel;\npub struct DecisionTreeRegressor;\n",
+        "tree/split/mod.rs": "//! split search\nuse crate::numeric::kernel;\n",
         "numeric/mod.rs": "//! numeric\npub(crate) fn kernel() {}\n",
         "numeric/rng.rs": "//! rng\n",
-        "numeric/quantile.rs": (
+        "numeric/stream/mod.rs": "//! stream\n",
+        "numeric/quantile/mod.rs": (
             "//! quantile\npub(crate) enum QuantileRule { Linear }\n"
             "pub(crate) fn quantile_sorted() {}\n"
         ),
-        "loss/mod.rs": "//! loss\nmod objective;\n",
+        "loss/mod.rs": "//! loss\nmod objective;\nmod boosting;\n",
         "loss/objective.rs": "//! objective\nuse crate::numeric::kernel;\n",
-        "optimize/mod.rs": "//! optimize\nmod lbfgs;\n",
+        "loss/boosting/mod.rs": "//! boosting objective\nuse crate::numeric::kernel;\n",
+        "optimize/mod.rs": "//! optimize\nmod lbfgs;\nmod newton;\n",
         "optimize/lbfgs.rs": "//! lbfgs\nuse crate::numeric::kernel;\nuse crate::loss::Objective;\n",
-        "inspection/mod.rs": "//! inspection\nmod permutation;\n",
+        "optimize/newton/mod.rs": "//! newton\nuse crate::loss::Objective;\n",
+        "inspection/mod.rs": "//! inspection\nmod permutation;\nmod scoring;\n",
         "inspection/permutation.rs": "//! permutation\nuse crate::api::Regressor;\n",
+        "inspection/scoring/mod.rs": "//! scoring\nuse crate::api::Regressor;\n",
         "api/mod.rs": "//! api\nmod capabilities;\n",
         "api/capabilities.rs": "//! capabilities\npub struct Capabilities;\n",
-        "dummy/mod.rs": "//! dummy\nmod classifier;\n",
+        "dummy/mod.rs": "//! dummy\nmod classifier;\nmod strategy;\n",
         "dummy/classifier.rs": "//! baseline\nuse crate::api::Classifier;\n",
+        "dummy/strategy/mod.rs": "//! strategy\nuse crate::api::Classifier;\n",
         "preprocessing/mod.rs": "//! preprocessing\nmod standard_scaler;\n",
         "preprocessing/standard_scaler/mod.rs": "//! scaler\n",
         "pipeline/mod.rs": "//! pipeline\nmod staged;\npub use staged::StagedPipeline;\n",
         "pipeline/staged.rs": "//! staged\npub struct StagedPipeline;\n",
-        "metrics/mod.rs": "//! metrics\nmod confusion;\npub use confusion::ConfusionMatrix;\n",
+        "metrics/mod.rs": "//! metrics\nmod confusion;\nmod curves;\npub use confusion::ConfusionMatrix;\n",
         "metrics/confusion.rs": "//! confusion\npub struct ConfusionMatrix;\n",
+        "metrics/curves/mod.rs": "//! curves\npub struct RocCurve;\n",
         "model_selection/mod.rs": "//! model selection\nmod split;\npub use split::Split;\n",
         "model_selection/search.rs": "//! search\nuse crate::api::Regressor;\n",
+        "model_selection/search/grid/mod.rs": "//! grid search\nuse crate::api::Regressor;\n",
         "model_selection/split/mod.rs": "//! split\nmod grouped;\npub use grouped::GroupKFold;\n",
         "model_selection/split/grouped.rs": "//! grouped\npub struct GroupKFold;\n",
-        "calibration/mod.rs": "//! calibration\nmod isotonic;\npub use isotonic::IsotonicRegression;\n",
+        "calibration/mod.rs": "//! calibration\nmod isotonic;\nmod platt;\npub use isotonic::IsotonicRegression;\n",
         "calibration/isotonic.rs": "//! isotonic\nuse crate::api::Regressor;\n",
+        "calibration/platt/mod.rs": "//! platt\nuse crate::api::Regressor;\n",
     }.items():
         path = source / relative
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -706,6 +749,155 @@ SYNTHETIC_VIOLATIONS: tuple[tuple[str, Callable[[Path], None], str], ...] = (
 )
 
 
+# One violation per dependency rule, written into a **child module** of the
+# directory the rule reads rather than into its facade.
+#
+# A violation in the facade is reported by a recursive reader and by a
+# facade-only one alike, so it cannot establish which reader the rule uses.
+# These can: `self_test` asserts each one fires under [`tree_text`] and stays
+# silent under [`shallow_text`]. That second half is the assertion the crate was
+# missing on 2026-07-26, when nine dependency rules read facades only and passed
+# their own self-test because no module they cover had grown a child yet.
+CHILD_MODULE_VIOLATIONS: tuple[tuple[str, Callable[[Path], None], str], ...] = (
+    (
+        "artifact-runtime-neutral",
+        lambda root: append(
+            root / "src" / "artifact" / "component" / "mod.rs",
+            "use crate::ensemble::Forest;\n",
+        ),
+        "artifact foundation depends on a concrete ensemble runtime",
+    ),
+    (
+        "numeric-below-estimators",
+        lambda root: append(
+            root / "src" / "numeric" / "stream" / "mod.rs",
+            "use crate::linear_model::Ridge;\n",
+        ),
+        "numeric kernels depend on estimator module linear_model",
+    ),
+    (
+        "quantile-single-source",
+        lambda root: append(
+            root / "src" / "metrics" / "curves" / "mod.rs",
+            "pub(crate) fn quantile_sorted() {}\n",
+        ),
+        "quantile definition re-derived outside numeric",
+    ),
+    (
+        "preprocessing-below-composition",
+        lambda root: append(
+            root / "src" / "preprocessing" / "standard_scaler" / "mod.rs",
+            "use crate::model_selection::GridSearch;\n",
+        ),
+        "preprocessing depends on its own consumer model_selection",
+    ),
+    (
+        "inspection-public-surfaces-only",
+        lambda root: append(
+            root / "src" / "inspection" / "scoring" / "mod.rs",
+            "use crate::artifact::ModelArtifact;\n",
+        ),
+        "inspection depends on non-public-surface module artifact",
+    ),
+    (
+        "calibration-public-surfaces-only",
+        lambda root: append(
+            root / "src" / "calibration" / "platt" / "mod.rs",
+            "use crate::linear_model::LogisticRegression;\n",
+        ),
+        "calibration depends on non-public-surface module linear_model",
+    ),
+    (
+        "loss-below-estimators",
+        lambda root: append(
+            root / "src" / "loss" / "boosting" / "mod.rs",
+            "use crate::ensemble::HistGradientBoostingRegressor;\n",
+        ),
+        "loss contract depends on estimator module ensemble",
+    ),
+    (
+        "optimize-below-estimators",
+        lambda root: append(
+            root / "src" / "optimize" / "newton" / "mod.rs",
+            "use crate::linear_model::LogisticRegression;\n",
+        ),
+        "optimize depends on module linear_model",
+    ),
+    (
+        "baselines-independent",
+        lambda root: append(
+            root / "src" / "dummy" / "strategy" / "mod.rs",
+            "use crate::ensemble::RandomForestClassifier;\n",
+        ),
+        "baseline estimators depend on estimator module ensemble",
+    ),
+    (
+        "metrics-below-estimators",
+        lambda root: append(
+            root / "src" / "metrics" / "curves" / "mod.rs",
+            "use crate::ensemble::RandomForestClassifier;\n",
+        ),
+        "metrics depend on estimator module ensemble",
+    ),
+    (
+        "search-consumes-the-scorer-seam",
+        lambda root: append(
+            root / "src" / "model_selection" / "search" / "grid" / "mod.rs",
+            "use crate::metrics::accuracy_score;\n",
+        ),
+        "search re-derives scoring instead of consuming the scorer contract",
+    ),
+    (
+        "tree-below-estimators",
+        lambda root: append(
+            root / "src" / "tree" / "split" / "mod.rs",
+            "use crate::ensemble::RandomForestRegressor;\n",
+        ),
+        "tree grower depends on estimator module ensemble",
+    ),
+    (
+        "forest-core-below-facades",
+        lambda root: append(
+            root / "src" / "ensemble" / "forest" / "seeding" / "mod.rs",
+            "use crate::ensemble::random_forest::RandomForestRegressor;\n",
+        ),
+        "forest core depends on ensemble facade random_forest",
+    ),
+)
+
+# `quantile-single-source` reads `src/numeric` recursively to decide whether the
+# quantile primitive exists at all, so its recursion protects a *non-firing*
+# property: the primitive being found one level down. There is no violation that
+# can demonstrate that by firing. It is proven instead by the clean tree, which
+# places the primitive in `numeric/quantile/mod.rs` and is asserted to report
+# the missing primitive under [`shallow_text`]. Its entry in
+# `CHILD_MODULE_VIOLATIONS` covers the rule's other half.
+CLEAN_TREE_PROVEN_RECURSION = ("quantile-single-source",)
+
+
+def rules_reading_recursively() -> set[str]:
+    """Rule names whose implementation calls [`tree_text`].
+
+    Derived from the source rather than listed, so a new dependency rule cannot
+    be added without also owing the child-module proof below.
+    """
+    return {
+        name for name, rule in RULES if "tree_text(" in inspect.getsource(rule)
+    }
+
+
+@contextmanager
+def facade_only_reader() -> Iterator[None]:
+    """Run the rules against [`shallow_text`], the reader they must not use."""
+    global tree_text  # noqa: PLW0603 - deliberate, and restored on exit
+    original = tree_text
+    tree_text = shallow_text
+    try:
+        yield
+    finally:
+        tree_text = original
+
+
 def self_test() -> None:
     live = violations()
     assert live == [], f"live tree violates its own layout rules: {live}"
@@ -717,19 +909,61 @@ def self_test() -> None:
         f"stale={sorted(covered - declared)}"
     )
 
+    recursive = rules_reading_recursively()
+    child_covered = {name for name, _, _ in CHILD_MODULE_VIOLATIONS}
+    assert child_covered <= declared, (
+        f"stale child-module violations: {sorted(child_covered - declared)}"
+    )
+    assert recursive <= child_covered, (
+        "every rule reading a module recursively needs a child-module violation: "
+        f"missing={sorted(recursive - child_covered)}"
+    )
+    assert set(CLEAN_TREE_PROVEN_RECURSION) <= recursive, (
+        "stale clean-tree recursion exemption: "
+        f"{sorted(set(CLEAN_TREE_PROVEN_RECURSION) - recursive)}"
+    )
+
     with tempfile.TemporaryDirectory() as workspace:
         base = Path(workspace)
         clean = write_clean_tree(base / "clean")
         found = violations(clean)
         assert found == [], f"synthetic clean tree reported violations: {found}"
 
-        for name, mutate, expected in SYNTHETIC_VIOLATIONS:
-            tree = write_clean_tree(base / name)
+        # The clean tree keeps the quantile primitive in a child module, so a
+        # facade-only reader cannot find it. This is the assertion that proves
+        # `quantile-single-source` reads the tree.
+        with facade_only_reader():
+            shallow_found = violations(clean)
+        assert any(
+            "quantile primitive is missing" in item for item in shallow_found
+        ), (
+            "the clean tree no longer distinguishes a recursive reader from a "
+            f"facade-only one for the quantile rule; reported {shallow_found}"
+        )
+
+        for index, (name, mutate, expected) in enumerate(SYNTHETIC_VIOLATIONS):
+            tree = write_clean_tree(base / f"facade-{index}-{name}")
             mutate(tree)
             found = violations(tree)
             assert any(expected in item for item in found), (
                 f"rule {name} did not fire against its synthetic violation; "
                 f"reported {found}"
+            )
+
+        for index, (name, mutate, expected) in enumerate(CHILD_MODULE_VIOLATIONS):
+            tree = write_clean_tree(base / f"child-{index}-{name}")
+            mutate(tree)
+            found = violations(tree)
+            assert any(expected in item for item in found), (
+                f"rule {name} did not fire against a violation in a child "
+                f"module; reported {found}"
+            )
+            with facade_only_reader():
+                shallow_found = violations(tree)
+            assert not any(expected in item for item in shallow_found), (
+                f"rule {name}'s child-module violation is also reported by a "
+                "facade-only reader, so it does not prove the rule reads the "
+                f"tree; reported {shallow_found}"
             )
 
 
@@ -738,7 +972,9 @@ def main() -> int:
         self_test()
         print(
             "source layout verifier self-test passed "
-            f"({len(RULES)} rules, each proven against a synthetic violation)"
+            f"({len(RULES)} rules, each proven against a synthetic violation; "
+            f"{len(CHILD_MODULE_VIOLATIONS)} of them proven again against a "
+            "violation in a child module that a facade-only reader misses)"
         )
         return 0
     if sys.argv[1:]:

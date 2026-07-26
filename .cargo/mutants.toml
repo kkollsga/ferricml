@@ -1,0 +1,19 @@
+# cargo-mutants configuration. Read only by `cargo mutants`; nothing here enters
+# the crate's dependency graph or its build.
+
+# Copy only what git would.
+#
+# cargo-mutants copies the source tree into a scratch directory once per build
+# job. As of cargo-mutants 27.1.0 that copy does *not* honour `.gitignore` by
+# default, so it also copies every gitignored path. In the primary checkout
+# `/research/` is hundreds of gigabytes of local experiment inputs, which fills
+# the disk and kills the run with `No space left on device` before the baseline
+# ever executes. Every mutation result this project has recorded was in fact
+# produced from a worktree, because a worktree carries no `research/` — an
+# accident of where the command happened to be run, not a documented procedure,
+# and therefore not one that reproduced.
+#
+# `gitignore = true` restricts the copy to tracked-and-untracked-but-not-ignored
+# files, which is the same input `cargo package` and the gate's own checkers
+# read. `make mutants` then works where the repository lives.
+gitignore = true

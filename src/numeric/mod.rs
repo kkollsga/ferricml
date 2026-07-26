@@ -37,6 +37,30 @@
 //!    boosting iteration, one per feature) and the result is validated finite
 //!    before it is returned. Such an accumulation is still strictly
 //!    sequential in model order, because the fitted model defines that order.
+//!
+//!    **Rule 3 outranks rule 1 where they overlap, which is a fit that
+//!    evaluates the model it is building.** Boosting is the only such site in
+//!    the crate today. Each iteration adds its new tree's scaled prediction
+//!    into a per-row running raw score in `f32` and derives the next
+//!    iteration's residuals or gradients from it —
+//!    `hist_gradient_boosting::predictor::CompactTree::add_predictions`,
+//!    driven from both boosting fitting loops. Read as a fitting accumulation
+//!    that would be rule 1 and would widen to `f64`. Widening it would be a
+//!    defect, not an improvement: the running total is the model's own
+//!    inference expression, `score + learning_rate * tree.predict_one(row)`,
+//!    term for term and width for width what the fitted model computes at
+//!    prediction time, so widening the fitting side alone would grow every
+//!    tree against residuals from a model no caller can evaluate, and widening
+//!    both would move every fitted artifact for accuracy the `f32` leaf values
+//!    cannot represent. Rule 3's conditions are met at the site: the term count
+//!    is `max_iter`, the running scores are asserted finite after every
+//!    iteration, and the order is tree order. Rule 1 still governs everything
+//!    boosting computes *about the data* — the baseline mean, the histogram
+//!    sums, every leaf value — which is where cancellation across rows lives.
+//!    This exemption is stated here rather than only at the site because it is
+//!    the precedence between two rules, not a local choice; a reader who found
+//!    the `f32` accumulation and not this paragraph could not tell an intended
+//!    exception from an oversight.
 //! 4. **Compensated summation is a documented exception, not a default.**
 //!    Kahan/Neumaier compensation is required only where a reduction runs over
 //!    an unbounded number of terms *and* widening to `f64` is unavailable —
