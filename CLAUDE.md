@@ -156,9 +156,19 @@ diff against the published crate carries changes Cargo would call breaking and
 the release step would not be a breaking one — below `1.0` the minor is the
 breaking component, so `0.1.2 → 0.1.3` cannot carry one. That failure stops the
 release for an explicit decision on the level; it is **never** resolved by
-editing a version to satisfy the gate. Recorded decision (2026-07-25): the next
-release is a minor bump to `0.2.0`, and `semver-check` is expected to fail
-until it is taken. The tag is the
+editing a version to satisfy the gate. Breaking there means *observable by a
+consumer*: `semver-check` exempts one lint, under conditions it reads out of the
+source rather than assumes. A variant discriminant that shifts on an enum which
+is `#[non_exhaustive]`, carries no `#[repr(...)]`, pins no explicit
+discriminant, and carries data in at least one variant can be reached through no
+`as` cast and no `mem::discriminant` comparison, so no consumer can write an
+expression that detects it. Every other lint still fails, as does that lint on
+an enum failing any of those conditions. An exemption is reported with its
+evidence in the release record, never applied silently, and is not a way to
+release an observable break as a patch. Recorded decision (2026-07-25): the
+release after published `0.1.2` was a minor bump to `0.2.0`. That decision has
+been taken and `0.2.0` is the published baseline, so a `semver-check` failure is
+a live finding again rather than an expected one. The tag is the
 crates.io publication boundary. The `release` skill must goal-check the active
 plan, run contracts and package checks, obtain explicit approval before remote
 ref updates, wait for green `main`, and only then push the matching tag. Never
