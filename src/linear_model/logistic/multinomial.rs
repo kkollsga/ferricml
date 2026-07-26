@@ -45,7 +45,7 @@ use super::{
 };
 use crate::api::ModelError;
 use crate::data::{ClassTargets, MatrixView, SampleWeights};
-use crate::loss::raw_score;
+use crate::loss::{newton_decrement, raw_score};
 use crate::numeric::softmax_in_place;
 
 /// Largest stacked Newton system the multinomial fit will build.
@@ -140,6 +140,11 @@ pub(super) fn fit(
     let mut update = vec![0.0_f64; parameters];
     let mut probabilities = vec![0.0_f64; classes];
     let mut iterations = 0;
+    let mut converged = false;
+    // Refuse by default, exactly as the binary path does: only a step the loop
+    // actually took can certify an exhausted budget, and `validate_fit` has
+    // already guaranteed the loop below runs at least once.
+    let mut decrement = f64::INFINITY;
     for iteration in 0..params.max_iter {
         gradient.fill(0.0);
         hessian.fill(0.0);
@@ -186,13 +191,24 @@ pub(super) fn fit(
         let max_update = update
             .iter()
             .fold(0.0_f64, |max, value| max.max(value.abs()));
+        decrement = newton_decrement(&gradient, &update);
         for (value, &update) in theta.iter_mut().zip(&update) {
             *value -= update;
         }
         iterations = iteration + 1;
         if max_update <= f64::from(params.tol) {
+            converged = true;
             break;
         }
+    }
+    // The same acceptance the binary path applies, over the stacked system.
+    // The centring curvature added above is part of the matrix the step was
+    // solved against, so the decrement is affine invariant here too; the
+    // gradient is orthogonal to the direction that curvature regularizes, so
+    // that direction contributes nothing to the product.
+    let certified = decrement <= f64::from(params.tol);
+    if !converged && !certified {
+        return Err(ModelError::SolverDidNotConverge { iterations });
     }
 
     LogisticRegression::from_standardized(
@@ -1141,5 +1157,245 @@ mod tests {
             model.n_iter() < model.get_params().max_iter(),
             "the bound-majorized iteration converged rather than exhausting max_iter"
         );
+    }
+
+    // ------------------------------------------------------- convergence rule
+
+    /// The multiclass twin of the binary ill-conditioned region.
+    ///
+    /// The stacked system carries the binary path's conditioning trouble plus
+    /// its own: the intercept block is singular in the direction that shifts
+    /// every class alike, and is regularized rather than identified. So this
+    /// region exhausts `max_iter` more readily, not less.
+    fn ill_conditioned_neighbourhood() -> Vec<(DenseMatrix, ClassTargets, LogisticRegressionParams)>
+    {
+        let mut state = 0x0517_2026_0726_2001_u64;
+        let mut next = move || {
+            state = state
+                .wrapping_mul(6_364_136_223_846_793_005)
+                .wrapping_add(1_442_695_040_888_963_407);
+            f64::from((state >> 33) as u32) / f64::from(1_u32 << 31) / 2.0
+        };
+        let mut normal = move || (0..12).map(|_| next()).sum::<f64>() - 6.0;
+        let mut cases = Vec::new();
+        for _ in 0..6 {
+            for &rows in &[12_usize, 30] {
+                for &columns in &[2_usize, 4] {
+                    for &classes in &[3_usize, 5] {
+                        for &column_scale in &[30.0_f64, 1.0e3] {
+                            for &separation in &[0.0_f64, 1.5] {
+                                let mut values = Vec::with_capacity(rows * columns);
+                                let mut labels = Vec::with_capacity(rows);
+                                for row in 0..rows {
+                                    let class = row % classes;
+                                    labels.push(class as u8);
+                                    for column in 0..columns {
+                                        let shift = if column == 0 {
+                                            separation
+                                                * (class as f64 - (classes as f64 - 1.0) / 2.0)
+                                        } else {
+                                            0.0
+                                        };
+                                        let base = normal() + shift;
+                                        values
+                                            .push((base * column_scale.powi(column as i32)) as f32);
+                                    }
+                                }
+                                let data = DenseMatrix::new(values, rows, columns).unwrap();
+                                let targets = ClassTargets::new(labels).unwrap();
+                                for &c in &[1.0e3_f32, 1.0e6, 1.0e9] {
+                                    cases.push((
+                                        data.clone(),
+                                        targets.clone(),
+                                        LogisticRegressionParams::default().with_c(c),
+                                    ));
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        cases
+    }
+
+    /// The multinomial objective, at `f64`, in the caller's own feature space.
+    fn penalized_objective(
+        data: &DenseMatrix,
+        class_of_row: &[usize],
+        classes: usize,
+        coefficients: &[f32],
+        intercepts: &[f32],
+        c: f64,
+    ) -> f64 {
+        let view = data.as_view();
+        let columns = view.columns();
+        let mut scores = vec![0.0_f64; classes];
+        let mut total = 0.0;
+        for (row_index, row) in view.iter_rows().enumerate() {
+            for (class, slot) in scores.iter_mut().enumerate() {
+                let mut raw = f64::from(intercepts[class]);
+                for (column, &value) in row.iter().enumerate() {
+                    raw += f64::from(coefficients[class * columns + column]) * f64::from(value);
+                }
+                *slot = raw;
+            }
+            total += crate::numeric::log_sum_exp(&scores) - scores[class_of_row[row_index]];
+        }
+        total
+            + 0.5 / c
+                * coefficients
+                    .iter()
+                    .map(|&value| f64::from(value) * f64::from(value))
+                    .sum::<f64>()
+    }
+
+    /// Every single-coordinate neighbour of the fit costs at least as much,
+    /// probed with a *relative* perturbation for the reason the binary twin
+    /// states: these coefficient vectors span many orders of magnitude and a
+    /// fixed absolute step measures the arithmetic rather than the fit.
+    fn is_a_local_minimum(
+        data: &DenseMatrix,
+        class_of_row: &[usize],
+        classes: usize,
+        coefficients: &[f32],
+        intercepts: &[f32],
+        c: f64,
+    ) -> bool {
+        let base = penalized_objective(data, class_of_row, classes, coefficients, intercepts, c);
+        let slack = 1.0e-7 * base.abs().max(1.0);
+        let mut probe = coefficients.to_vec();
+        for index in 0..coefficients.len() {
+            let value = coefficients[index];
+            if value == 0.0 {
+                continue;
+            }
+            for direction in [1.0_f32, -1.0] {
+                probe[index] = value * (1.0 + direction * 1.0e-3);
+                let neighbour =
+                    penalized_objective(data, class_of_row, classes, &probe, intercepts, c);
+                probe[index] = value;
+                if neighbour < base - slack {
+                    return false;
+                }
+            }
+        }
+        true
+    }
+
+    fn class_positions(targets: &ClassTargets) -> Vec<usize> {
+        targets
+            .as_slice()
+            .iter()
+            .map(|&label| targets.class_index(label).expect("observed class"))
+            .collect()
+    }
+
+    /// An exhausted multinomial budget that reached the minimum is returned.
+    ///
+    /// The multiclass half of the same pair of tests the binary path carries:
+    /// refusing on plain exhaustion would convert every fit counted here into
+    /// a spurious error.
+    #[test]
+    fn an_exhausted_multinomial_budget_that_reached_its_minimum_is_fitted_not_refused() {
+        let cases = ill_conditioned_neighbourhood();
+        let mut fitted = 0_usize;
+        let mut exhausted = 0_usize;
+        let mut refused = 0_usize;
+        let mut singular = 0_usize;
+        for (index, (data, targets, params)) in cases.iter().enumerate() {
+            match LogisticRegression::fit_multiclass(&data.as_view(), targets, params.clone()) {
+                Ok(model) => {
+                    fitted += 1;
+                    if model.n_iter() == params.max_iter() {
+                        exhausted += 1;
+                        assert!(
+                            is_a_local_minimum(
+                                data,
+                                &class_positions(targets),
+                                targets.classes().len(),
+                                model.coefficients(),
+                                model.intercepts(),
+                                f64::from(params.c()),
+                            ),
+                            "case {index} exhausted its budget away from the minimum"
+                        );
+                    }
+                }
+                Err(ModelError::SolverDidNotConverge { .. }) => refused += 1,
+                // The stacked curvature genuinely collapsed; that is the
+                // neighbouring contract and not what this test is about.
+                Err(ModelError::LinearSolveFailed) => singular += 1,
+                Err(other) => panic!("case {index} was refused with {other:?}"),
+            }
+        }
+        // As generated the region is 576 cases: 344 fits, 22 non-convergence
+        // refusals and 210 collapsed-curvature refusals, and 52 of the fits
+        // exhaust the budget and are returned on the certificate.
+        assert_eq!(fitted + refused + singular, cases.len());
+        assert!(
+            exhausted >= 40 && exhausted * 8 >= fitted,
+            "only {exhausted} of {fitted} multinomial fits exhausted max_iter, so this \
+             region no longer exercises the acceptance path at all"
+        );
+    }
+
+    /// And the same region is refused when the budget really is too short.
+    #[test]
+    fn the_same_multinomial_region_is_refused_when_the_budget_really_is_too_short() {
+        let cases = ill_conditioned_neighbourhood();
+        let mut reachable = 0_usize;
+        let mut refused = 0_usize;
+        for (data, targets, params) in &cases {
+            if LogisticRegression::fit_multiclass(&data.as_view(), targets, params.clone()).is_err()
+            {
+                continue;
+            }
+            reachable += 1;
+            if let Err(error) = LogisticRegression::fit_multiclass(
+                &data.as_view(),
+                targets,
+                params.clone().with_max_iter(1),
+            ) {
+                assert_eq!(error, ModelError::SolverDidNotConverge { iterations: 1 });
+                refused += 1;
+            }
+        }
+        // All 344 are refused, for the reason the binary twin records.
+        assert!(reachable > 0, "the region produced no fits to starve");
+        assert!(
+            refused * 10 >= reachable * 9,
+            "only {refused} of {reachable} single-iteration multinomial fits were \
+             refused; an acceptance rule this permissive would accept anything"
+        );
+    }
+
+    /// A weighted multinomial fit is held to the same rule.
+    #[test]
+    fn a_starved_weighted_multinomial_fit_is_refused() {
+        let (data, targets) = three_class_problem();
+        let weights = SampleWeights::new(vec![
+            0.5, 2.0, 1.0, 1.0, 3.0, 0.25, 1.0, 1.0, 2.0, 0.5, 1.0, 1.0,
+        ])
+        .unwrap();
+        assert_eq!(
+            LogisticRegression::fit_multiclass_weighted(
+                &data.as_view(),
+                &targets,
+                &weights,
+                LogisticRegressionParams::default()
+                    .with_max_iter(1)
+                    .with_tol(1.0e-12),
+            ),
+            Err(ModelError::SolverDidNotConverge { iterations: 1 })
+        );
+        let model = LogisticRegression::fit_multiclass_weighted(
+            &data.as_view(),
+            &targets,
+            &weights,
+            LogisticRegressionParams::default(),
+        )
+        .expect("the default budget fits");
+        assert!(model.n_iter() < 100);
     }
 }
