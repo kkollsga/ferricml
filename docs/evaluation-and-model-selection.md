@@ -176,8 +176,11 @@ column.
 holding the batch output. Reusing one workspace across calls of the same shape
 allocates on the first call only, which is what makes repeated scoring —
 cross-validation across folds, permutation importance across repeats — free of
-per-call allocation. Cross-validation and permutation importance both consume
-exactly these entry points, so there is one implementation of scoring.
+per-call allocation. Cross-validation and permutation importance score through
+the one implementation these entry points wrap: the public wrappers name a
+target container, and the paths that are generic over the target vocabulary
+carry it as a type parameter instead. Either way the prediction call, the class
+layouts, and the workspace reuse exist exactly once.
 
 Cross-validation consumes any iterator of validated `Split` values, fits one
 typed model per fold through a caller closure, and returns scores in iterator

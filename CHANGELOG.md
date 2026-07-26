@@ -67,6 +67,18 @@ and releases use [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Changed
 
+- **Breaking.** `inspection::permutation_importance_classifier` and
+  `inspection::permutation_importance_classifier_into` are generic over the
+  target vocabulary through the same sealed `data::ClassificationTargets`
+  trait, instead of taking `data::BinaryTargets` alone. A natively multiclass
+  classifier is now inspected through the crate's only classifier
+  permutation-importance entry point, with the orientation, workspace reuse and
+  caller-owned output the binary path already had. Nothing becomes more
+  permissive: a binary positive-probability metric asked for over a wider class
+  set is still `ScoringError::UnsupportedClasses`. Existing binary calls
+  compile unchanged unless they name the type parameter explicitly, which now
+  takes the target type first and the score second.
+
 - **Breaking.** `model_selection::cross_validate_classifier` and
   `model_selection::grid_search_classifier` are generic over the target
   vocabulary, through the new sealed

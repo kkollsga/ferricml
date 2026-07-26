@@ -25,3 +25,13 @@ pub use split::{
     SplitPartition, StratifiedKFold, StratifiedKFoldIter, TestGroupSize, TestSize, TimeSeriesSplit,
     TimeSeriesSplitIter, stratified_train_test_split, train_test_split,
 };
+
+/// The one classifier scoring implementation, for crate consumers that are
+/// generic over the target vocabulary.
+///
+/// `inspection` reaches it here for the same reason cross-validation does: it
+/// holds a `ClassificationTargets` value rather than a named container, so
+/// neither public wrapper is a vocabulary it could pick. This is not a wider
+/// contract than the public ones — it is the same one, minus the choice of
+/// which target type to name.
+pub(crate) use scoring::score_labelled;
