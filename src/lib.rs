@@ -59,6 +59,9 @@ mod doc_pages {
     #[doc = include_str!("../docs/guide/data.md")]
     mod guide_data {}
 
+    #[doc = include_str!("../docs/guide/linear-models.md")]
+    mod guide_linear_models {}
+
     #[doc = include_str!("../docs/api-and-growth.md")]
     mod api_and_growth {}
 

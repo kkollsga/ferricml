@@ -64,6 +64,54 @@ impl LinearRegressionParams {
 ///
 /// Fitting uses a deterministic SVD and returns the minimum-norm solution for
 /// rank-deficient or underdetermined inputs.
+///
+/// ```
+/// use ferricml::data::{DenseMatrix, RegressionTargets};
+/// use ferricml::linear_model::{LinearRegression, LinearRegressionParams};
+///
+/// // y = 2x + 1, exactly.
+/// let data = DenseMatrix::new(vec![0.0, 1.0, 2.0, 3.0], 4, 1)?;
+/// let targets = RegressionTargets::new(vec![1.0, 3.0, 5.0, 7.0])?;
+///
+/// let model = LinearRegression::fit(
+///     &data.as_view(),
+///     &targets,
+///     LinearRegressionParams::default(),
+/// )?;
+///
+/// // Unpenalized, so the fit recovers the slope rather than shrinking it.
+/// assert!((model.coefficients()[0] - 2.0).abs() < 1e-4);
+///
+/// let predictions = model.predict(&data.as_view())?;
+/// assert!((predictions[3] - 7.0).abs() < 1e-4);
+/// # Ok::<(), Box<dyn std::error::Error>>(())
+/// ```
+///
+/// # Rank deficiency is answered, not refused
+///
+/// Duplicate a column and the normal equations have no unique solution. Rather
+/// than failing, the SVD returns the *minimum-norm* one: the two identical
+/// features split the effect evenly instead of one absorbing it arbitrarily.
+///
+/// ```
+/// use ferricml::data::{DenseMatrix, RegressionTargets};
+/// use ferricml::linear_model::{LinearRegression, LinearRegressionParams};
+///
+/// // Column 1 is a copy of column 0, so the fit is underdetermined.
+/// let data = DenseMatrix::new(vec![0.0, 0.0, 1.0, 1.0, 2.0, 2.0], 3, 2)?;
+/// let targets = RegressionTargets::new(vec![1.0, 3.0, 5.0])?;
+///
+/// let model = LinearRegression::fit(
+///     &data.as_view(),
+///     &targets,
+///     LinearRegressionParams::default(),
+/// )?;
+///
+/// let coefficients = model.coefficients();
+/// assert!((coefficients[0] - coefficients[1]).abs() < 1e-5);
+/// assert!((coefficients[0] + coefficients[1] - 2.0).abs() < 1e-4);
+/// # Ok::<(), Box<dyn std::error::Error>>(())
+/// ```
 #[derive(Clone, Debug, PartialEq)]
 pub struct LinearRegression {
     n_features_in: usize,

@@ -190,6 +190,74 @@ impl LogisticRegressionParams {
 ///
 /// Probabilities are always `classes().len()` columns wide, so binary and
 /// multiclass agree there and only the raw scores differ.
+///
+/// # A binary fit
+///
+/// ```
+/// use ferricml::api::Classifier;
+/// use ferricml::data::{BinaryTargets, DenseMatrix};
+/// use ferricml::linear_model::{LogisticRegression, LogisticRegressionParams};
+///
+/// let data = DenseMatrix::new(vec![-2.0, -1.0, -0.5, 0.5, 1.0, 2.0], 6, 1)?;
+/// let labels = BinaryTargets::new(vec![0, 0, 0, 1, 1, 1])?;
+///
+/// let model = LogisticRegression::fit(
+///     &data.as_view(),
+///     &labels,
+///     LogisticRegressionParams::default(),
+/// )?;
+///
+/// assert_eq!(model.classes(), &[0, 1]);
+/// assert_eq!(model.predict(&data.as_view())?, vec![0, 0, 0, 1, 1, 1]);
+///
+/// // Two probability columns per row, ordered by `classes()`.
+/// let probabilities = model.predict_proba(&data.as_view())?;
+/// assert_eq!(probabilities.len(), 12);
+/// assert!(probabilities[1] < 0.5); // P(class 1) for the first, negative row
+/// assert!(probabilities[11] > 0.5); // P(class 1) for the last, positive row
+///
+/// // The raw score is the sigmoid's argument, so its sign is the label.
+/// let scores = model.decision_function(&data.as_view())?;
+/// assert!(scores[0] < 0.0 && scores[5] > 0.0);
+/// # Ok::<(), Box<dyn std::error::Error>>(())
+/// ```
+///
+/// # A multiclass fit
+///
+/// One joint multinomial optimization, over whatever class labels were
+/// observed. Nothing assumes they are contiguous or zero-based.
+///
+/// ```
+/// use ferricml::api::Classifier;
+/// use ferricml::data::{ClassTargets, DenseMatrix};
+/// use ferricml::linear_model::{LogisticRegression, LogisticRegressionParams};
+///
+/// let data = DenseMatrix::new(vec![-2.0, -1.5, 0.0, 0.1, 1.5, 2.0], 6, 1)?;
+/// // Labels 3, 7 and 10 — not a dense range, and never renumbered.
+/// let labels = ClassTargets::new(vec![3, 3, 7, 7, 10, 10])?;
+///
+/// let model = LogisticRegression::fit_multiclass(
+///     &data.as_view(),
+///     &labels,
+///     LogisticRegressionParams::default(),
+/// )?;
+///
+/// assert_eq!(model.classes(), &[3, 7, 10]);
+///
+/// let probabilities = model.predict_proba(&data.as_view())?;
+/// assert_eq!(probabilities.len(), 6 * 3);
+///
+/// // A row sums to one within the documented tolerance. It is never
+/// // renormalized, so the bound is real rather than enforced after the fact.
+/// let row: f32 = probabilities[0..3].iter().sum();
+/// assert!((row - 1.0).abs() < 3.0 * f32::EPSILON);
+///
+/// // The multiclass raw scores are centred: no class is a pinned reference.
+/// let scores = model.decision_function(&data.as_view())?;
+/// let centred: f32 = scores[0..model.n_decision_columns()].iter().sum();
+/// assert!(centred.abs() < 1e-4);
+/// # Ok::<(), Box<dyn std::error::Error>>(())
+/// ```
 #[derive(Clone, Debug, PartialEq)]
 pub struct LogisticRegression {
     n_features_in: usize,
