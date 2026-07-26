@@ -32,9 +32,19 @@ sample weight is the same fitted model as repeating that row *unconditionally* �
 under row counting the equivalence holds only while the constraint does not
 bind, because duplicating a row changes the row count the bound is compared
 against. Unweighted fitting is unaffected: a node's weight is its row count when
-every weight is one, so every frozen unweighted fixture is unchanged. The
-weighted tree fixtures pin the bound at one, where it cannot bind, so they
-compare the weighted impurity and leaf arithmetic — where the two agree exactly.
+every weight is one, so every frozen unweighted fixture is unchanged.
+
+The divergence is frozen in two pieces, because one fixture cannot state both
+halves. Most weighted tree fixtures hold the bound at one with every weight at
+least one, where the two rules are provably the same function, and so compare
+the weighted impurity and leaf arithmetic — where the two must agree exactly.
+One further fixture holds weights that straddle one against a split bound of
+three, which is the region where the rules genuinely differ, and it records the
+reference's outputs *and* FerricML's differing ones side by side. It separates
+them in both directions at once: a two-row child weighing less than one is a
+leaf the reference admits and FerricML refuses, and a two-row node weighing four
+is a leaf the reference refuses to split and FerricML splits. Adopting row
+counting would make that fixture fail, which is the property it exists for.
 
 **A penalized linear model's `alpha` is measured against a mean, and its zeros
 are positive.** `Lasso` and `ElasticNet` minimize the weighted squared error
