@@ -9,6 +9,32 @@ and releases use [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- `CalibratedClassifier` saturates its calibrated probabilities at the boundary
+  that produces them, instead of forwarding whatever the calibrator returned.
+  `Calibrator::calibrate` documents a result in `0.0..=1.0`, and the wrapper
+  promised probabilities on top of it, but neither promise was enforced
+  anywhere. The trait is open by design, and even the shipped
+  `IsotonicRegression` implements it for *both* of its constructors while only
+  `fit_calibration` averages `0`/`1` labels — one fitted through `Regressor`
+  over unbounded targets is a regression surface, and `CalibratedClassifier::new`
+  accepts it. Measured on such a composition, `predict_proba` returned rows like
+  `[38.71, -37.71]`: **every one of 12 probability slots outside `0.0..=1.0`**,
+  worst excess `37.7`, and `predict` reported class `0` for every row while the
+  class-`1` column read `-37.7`.
+
+  Nothing detected it because a row is written as `[1 - p, p]` and therefore
+  sums to exactly `1.0` for any `p` at all, so the conformance battery's
+  probability obligation — a row-sum check — passes on `[-48.0, 49.0]`. There
+  was no per-slot bound assertion anywhere, and `CalibratedClassifier::new` was
+  called by no test.
+
+  The clamp sits in the one routine every probability path on the wrapper
+  reaches, per rule 5 of the accumulation policy, so `predict_proba`,
+  `predict_class_proba` and `predict` now agree on a bounded value. **No fitted
+  value moves**: it is a no-op for `fit_isotonic` and `fit_platt`, which already
+  produce probabilities in range, and that is asserted bit-for-bit rather than
+  to a tolerance. `make reference-check` is green without regeneration.
+
 - **Breaking (fitted values).** The multinomial Newton path supplies curvature
   for the whole subspace the softmax cannot see, instead of for the one member
   of it that no penalty reaches. Adding the same vector to every class's

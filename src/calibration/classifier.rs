@@ -226,6 +226,35 @@ impl<C: ProbabilisticClassifier, K: Calibrator> CalibratedClassifier<C, K> {
     }
 
     /// Writes the calibrated positive-class probability of each row.
+    ///
+    /// # Why the clamp is here
+    ///
+    /// This is the one routine every probability path on the wrapper reaches —
+    /// [`predict_proba_into`](ProbabilisticClassifier::predict_proba_into),
+    /// [`predict_class_proba_into`](ProbabilisticClassifier::predict_class_proba_into),
+    /// and [`predict_into`](Classifier::predict_into) through
+    /// `predict_into_with` — so it is the boundary that produces the value, and
+    /// rule 5 of [the accumulation policy](crate::numeric) puts saturation
+    /// there rather than in a consumer.
+    ///
+    /// [`Calibrator::calibrate`] documents a result in `0.0..=1.0`, and that is
+    /// a promise the wrapper cannot delegate. The trait is deliberately open,
+    /// so a caller-supplied calibrator can return anything at all; and one
+    /// *shipped* calibrator can too, because [`IsotonicRegression`] implements
+    /// [`Calibrator`] for both of its constructors while only
+    /// `fit_calibration` averages `0`/`1` labels. An `IsotonicRegression`
+    /// fitted through [`Regressor`](crate::api::Regressor) over unbounded
+    /// targets composes here through [`Self::new`] and its map is then a
+    /// regression surface, not a probability.
+    ///
+    /// Nothing detected that, because a row is written as `[1 - p, p]` and so
+    /// sums to exactly one whatever `p` is: the battery's row-sum obligation
+    /// passes on `[-48.0, 49.0]`. Clamping first makes the row sum and the
+    /// per-slot bound describe the same value.
+    ///
+    /// The clamp is a no-op for both fitted compositions —
+    /// [`Self::fit_isotonic`] and [`Self::fit_platt`] already produce
+    /// probabilities in range — so no fitted value moves.
     fn positive_probabilities_into(
         &self,
         data: &MatrixView<'_>,
@@ -233,6 +262,9 @@ impl<C: ProbabilisticClassifier, K: Calibrator> CalibratedClassifier<C, K> {
     ) -> Result<(), ModelError> {
         self.inner.predict_class_proba_into(data, 1, output)?;
         self.calibrator.calibrate_in_place(output);
+        for slot in output.iter_mut() {
+            *slot = slot.clamp(0.0, 1.0);
+        }
         Ok(())
     }
 }
@@ -455,7 +487,7 @@ impl<C: ProbabilisticClassifier, K: Calibrator> ProbabilisticClassifier
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::data::DenseMatrix;
+    use crate::data::{DenseMatrix, RegressionTargets};
     use crate::dummy::{DummyClassifier, DummyClassifierParams};
 
     /// A classifier whose positive probability is a fixed function of column 0.
@@ -800,6 +832,133 @@ mod tests {
                 )
                 .unwrap()
             );
+        }
+    }
+
+    /// A composed calibrator cannot put a non-probability in a probability.
+    ///
+    /// [`Calibrator::calibrate`] documents a result in `0.0..=1.0`, and the
+    /// wrapper's own contract is that `predict_proba` returns probabilities.
+    /// Neither is something [`CalibratedClassifier`] can delegate: the trait is
+    /// open by design, and even the shipped [`IsotonicRegression`] implements
+    /// it for *both* its constructors, while only `fit_calibration` averages
+    /// `0`/`1` labels. Fitted as an ordinary regressor over unbounded targets
+    /// it is a regression surface, and [`Self::new`] accepts it.
+    ///
+    /// Measured before the clamp: `predict_proba` returned rows like
+    /// `[38.71, -37.71]` — every one of 12 slots outside `0.0..=1.0`, worst
+    /// excess `37.7`. The rows still summed to exactly `1.0`, which is the
+    /// whole reason nothing caught it: the conformance battery's probability
+    /// obligation checks the row sum, and `[1 - p, p]` sums to one for any `p`
+    /// at all. `predict` reported class `0` for every row while the class-`1`
+    /// column read `-37.7`.
+    ///
+    /// The three paths are asserted separately because each writes the row
+    /// differently, and the isotonic map here is deliberately anti-monotone in
+    /// its own second half so that both ends of the range are exercised rather
+    /// than only the top.
+    #[test]
+    fn a_calibrator_that_is_not_a_probability_map_is_saturated_not_forwarded() {
+        let (data, _) = sample();
+        // An isotonic fit over unbounded regression targets: a legitimate
+        // `Regressor`, and a `Calibrator` whose map leaves `0.0..=1.0` badly.
+        let knots = DenseMatrix::new(vec![0.0_f32, 0.25, 0.5, 0.75, 1.0], 5, 1).unwrap();
+        let unbounded = RegressionTargets::new(vec![-40.0_f32, -12.0, 0.5, 17.0, 49.0]).unwrap();
+        let calibrator =
+            IsotonicRegression::fit(&knots.as_view(), &unbounded, IsotonicRegressionParams)
+                .unwrap();
+        // Non-vacuity, stated rather than assumed: the map really does leave
+        // the range on the values this model will feed it.
+        assert!(calibrator.map(0.0) < 0.0 && calibrator.map(1.0) > 1.0);
+
+        let model = CalibratedClassifier::new(Overconfident::binary(), calibrator).unwrap();
+        let rows = data.rows();
+
+        let probabilities = model.predict_proba(&data.as_view()).unwrap();
+        assert_eq!(probabilities.len(), rows * 2);
+        for (row, slots) in probabilities.chunks_exact(2).enumerate() {
+            for (column, &value) in slots.iter().enumerate() {
+                assert!(
+                    (0.0..=1.0).contains(&value),
+                    "row {row} column {column} is {value}, which is not a probability"
+                );
+            }
+            // The row sum stays the obligation it always was — it is simply no
+            // longer the only one, because it holds for any `[1 - p, p]`.
+            assert!((slots.iter().sum::<f32>() - 1.0).abs() <= 2.0 * f32::EPSILON);
+        }
+
+        for class in [0_u8, 1] {
+            let column = model.predict_class_proba(&data.as_view(), class).unwrap();
+            for (row, &value) in column.iter().enumerate() {
+                assert!(
+                    (0.0..=1.0).contains(&value),
+                    "class {class} row {row} is {value}"
+                );
+            }
+            // The single-column path and the matrix path are the same numbers.
+            for (row, &value) in column.iter().enumerate() {
+                assert_eq!(value, probabilities[2 * row + usize::from(class)]);
+            }
+        }
+
+        // A label still agrees with the probability it was read from.
+        let labels = model.predict(&data.as_view()).unwrap();
+        for (row, &label) in labels.iter().enumerate() {
+            let positive = probabilities[2 * row + 1];
+            assert_eq!(label, u8::from(positive > 1.0 - positive), "row {row}");
+        }
+    }
+
+    /// Saturating the composition moves nothing that was already a probability.
+    ///
+    /// The clamp is only defensible if it is unobservable on the two fitted
+    /// constructors, which are the ones every existing artifact and fixture
+    /// came from. Asserted bit-for-bit against the calibrator's own map rather
+    /// than to a tolerance.
+    #[test]
+    fn saturation_does_not_move_a_calibrator_that_was_already_in_range() {
+        let (data, labels) = sample();
+        let isotonic = CalibratedClassifier::fit_isotonic(
+            Overconfident::binary(),
+            &data.as_view(),
+            &labels,
+            IsotonicRegressionParams,
+        )
+        .unwrap();
+        let platt = CalibratedClassifier::fit_platt(
+            Overconfident::binary(),
+            &data.as_view(),
+            &labels,
+            PlattParams::default(),
+        )
+        .unwrap();
+        for (name, positives) in [
+            (
+                "isotonic",
+                isotonic.predict_class_proba(&data.as_view(), 1).unwrap(),
+            ),
+            (
+                "platt",
+                platt.predict_class_proba(&data.as_view(), 1).unwrap(),
+            ),
+        ] {
+            let mut raw = vec![0.0_f32; data.rows()];
+            Overconfident::binary()
+                .predict_class_proba_into(&data.as_view(), 1, &mut raw)
+                .unwrap();
+            for (row, &value) in positives.iter().enumerate() {
+                let uncalibrated = if name == "isotonic" {
+                    isotonic.calibrator.calibrate(raw[row])
+                } else {
+                    platt.calibrator.calibrate(raw[row])
+                };
+                assert_eq!(
+                    value.to_bits(),
+                    uncalibrated.to_bits(),
+                    "{name} row {row}: saturation moved a value that was in range"
+                );
+            }
         }
     }
 
