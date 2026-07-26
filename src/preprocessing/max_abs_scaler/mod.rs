@@ -224,8 +224,12 @@ impl Estimator for MaxAbsScaler {
 }
 
 impl HasCapabilities for MaxAbsScaler {
+    /// The fitted divisors persist; weighted fitting is genuinely unavailable.
+    ///
     /// The largest magnitude is an order statistic: a per-sample weight cannot
-    /// move it, so there is no weighted entry point to declare.
+    /// move it, so there is no weighted entry point to declare. `StandardScaler`
+    /// is the one scaler that can, because a mean and a variance are weighted
+    /// sums.
     const CAPABILITIES: Capabilities = Capabilities::NONE.with_artifact(true);
 }
 

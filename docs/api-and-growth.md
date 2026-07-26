@@ -250,15 +250,29 @@ concrete compositions predate that scheme and keep their own artifact kinds.
 Documentation that contradicts behaviour has been this crate's most active
 defect class, so `make gate` runs `scripts/check_documentation_truth.py`. It
 reads prose — rustdoc comments in `src/` and the narrative pages in `docs/`,
-which rustdoc never sees at all — and reports four kinds of claim that stopped
+which rustdoc never sees at all — and reports five kinds of claim that stopped
 being true:
 
+- a capability declaration with no doc comment at all, which is the coverage
+  floor under the next rule;
 - a capability declaration whose doc comment does not name a capability the
   declaration turns on;
 - a `Type::member` reference to a type this crate declares, where the member
   does not exist;
 - a generic bound written in prose that the documented item does not carry;
 - a repository path cited in prose that is not there.
+
+The first rule exists because the second could only check a declaration someone
+had written a sentence about, and nothing required the sentence. Measured on
+2026-07-26, **21 of the crate's 29 capability declarations carried no prose the
+rule could read**, so it reported clean over a third of the surface. Ten of those
+did carry an explanation — on the associated `const` rather than above the
+`impl`, a position that renders identically in rustdoc and that the rule simply
+never looked at. Reading both positions and requiring one of them turned up four
+declarations whose prose omitted a capability they turn on, including a
+calibrated composition whose comment began "Nothing" above a declaration that
+produces probabilities: the same defect the rule was written for, hiding where
+it could not see.
 
 Each rule is proven twice by `--self-test`: once against a synthetic violation,
 and once against a tree with the rule's input removed, because a check that

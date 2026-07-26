@@ -776,6 +776,16 @@ and releases use [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- Every one of the crate's 29 capability declarations now carries a doc comment
+  saying what it claims and, where a capability is deliberately absent, why —
+  up from 8. Four of them contradicted the declaration they sat above and are
+  corrected: `CalibratedClassifier<_, IsotonicRegression>` read "Nothing" over a
+  declaration that produces probabilities, and `MaxAbsScaler`, `MinMaxScaler`
+  and `RobustScaler` each explained an absent capability without ever naming the
+  persistence they declare. `scripts/check_documentation_truth.py` gained a rule
+  requiring the doc comment, and now reads it from either position rustdoc
+  renders — above the `impl` or above the `const CAPABILITIES` — which is where
+  those four had been hiding.
 - `Pipeline<StandardScaler, LogisticRegression>` now declares the
   `decision_function` capability it has. It exposes `decision_function_into`,
   but computed its declaration by intersecting both parts — and a transformer

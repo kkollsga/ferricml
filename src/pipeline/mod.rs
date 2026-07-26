@@ -386,6 +386,16 @@ impl StageArtifact for Pipeline<StandardScaler, LogisticRegression> {
 
 macro_rules! impl_scaler_regression_pipeline {
     ($estimator:ty, $kind:expr) => {
+        /// A fitted composition persists exactly when both of its parts do.
+        ///
+        /// Weighted fitting is declared away structurally rather than
+        /// intersected, for the same reason it is on the logistic
+        /// composition: this type composes parts that are *already* fitted, so
+        /// accepting weights is a property of fitting each part rather than of
+        /// the composition. The remaining fields need no special case here —
+        /// neither a scaler nor a regressor declares probabilities, a class
+        /// set, or a decision function, so the intersection is already the
+        /// truth for all three.
         impl HasCapabilities for Pipeline<StandardScaler, $estimator> {
             const CAPABILITIES: Capabilities = StandardScaler::CAPABILITIES
                 .intersection(<$estimator>::CAPABILITIES)

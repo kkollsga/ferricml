@@ -287,14 +287,19 @@ impl<C: ProbabilisticClassifier, K: Calibrator> Estimator for CalibratedClassifi
 }
 
 impl<C: ProbabilisticClassifier> HasCapabilities for CalibratedClassifier<C, IsotonicRegression> {
-    /// Nothing, and deliberately not the wrapped model's declarations.
+    /// Calibrated probabilities, and deliberately not the wrapped model's
+    /// other declarations.
     ///
-    /// The composition owns already-fitted parts, so it has no weighted fitting
-    /// entry point whatever the wrapped model can do; it has no artifact kind;
-    /// and its own `fit` takes binary targets, so it offers no multiclass entry
-    /// point either. Each of those is declared away structurally rather than
-    /// intersected, because an intersection would have promised an entry point
-    /// that does not exist on the wrapper at all.
+    /// Producing a probability is the whole point of the wrapper, so
+    /// `probability` is declared here whatever the wrapped model declares.
+    /// Everything else is declared away structurally rather than intersected,
+    /// because an intersection would have promised an entry point that does not
+    /// exist on the wrapper at all: the composition owns already-fitted parts,
+    /// so it has no weighted fitting entry point whatever the wrapped model can
+    /// do; it has no artifact kind; and its own `fit` takes binary targets, so
+    /// it offers no multiclass entry point either. `decision_function` is the
+    /// one field that varies between the two calibrators, and it is absent here
+    /// — see the Platt composition below.
     const CAPABILITIES: Capabilities = Capabilities::NONE.with_probability(true);
 }
 

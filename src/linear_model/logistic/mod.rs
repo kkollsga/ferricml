@@ -1094,6 +1094,16 @@ impl Estimator for LogisticRegression {
     }
 }
 
+/// The only estimator in the crate that declares the whole vocabulary:
+/// weighted fitting, persistence, multiclass fitting, a raw decision score and
+/// probabilities.
+///
+/// Nothing here is a formality. The probabilities are the logistic squashing of
+/// a real linear score, which is exactly what makes `decision_function` a
+/// separate and honest claim — the score exists before the squashing and is
+/// what a threshold-based consumer wants. Multiclass fitting is one joint
+/// multinomial optimization rather than a binary fit repeated, and persistence
+/// covers both parametrizations rather than one of the two entry points.
 impl HasCapabilities for LogisticRegression {
     const CAPABILITIES: Capabilities = Capabilities::NONE
         .with_sample_weights(true)

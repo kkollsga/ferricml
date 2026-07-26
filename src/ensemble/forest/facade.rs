@@ -613,6 +613,14 @@ macro_rules! forest_regressor {
             }
         }
 
+        /// Declares weighted fitting and persistence, and no more.
+        ///
+        /// The two capabilities the classifier facade adds are genuinely
+        /// absent from a regression ensemble: `probability` and `multiclass`
+        /// are both statements about a class set, and a forest of regression
+        /// trees averages leaf means. `decision_function` records that a
+        /// *classifier* exposes a raw score whose squashing is its
+        /// probability, which a predicted value is not.
         impl $crate::api::HasCapabilities for $name {
             const CAPABILITIES: $crate::api::Capabilities = $crate::api::Capabilities::NONE
                 .with_sample_weights(true)

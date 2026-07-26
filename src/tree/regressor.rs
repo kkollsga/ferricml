@@ -321,6 +321,13 @@ impl HasParams for DecisionTreeRegressor {
     }
 }
 
+/// Weighted fitting and persistence.
+///
+/// A sample weight is a fractional row count here, so it multiplies every
+/// impurity, split-bound test and leaf mean — the same rule the forests use,
+/// which is what makes an integer weight identical to repeating the row. The
+/// classifier sibling declares `multiclass` and `probability` on top of these
+/// two; both name a class set, and a regression leaf holds a mean.
 impl HasCapabilities for DecisionTreeRegressor {
     const CAPABILITIES: Capabilities = Capabilities::NONE
         .with_sample_weights(true)
