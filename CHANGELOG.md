@@ -112,236 +112,6 @@ and releases use [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   no written reason, so the difference between a verified sample and an
   illustrative one is always visible to a reader.
 
-### Changed
-
-- **Breaking.** `MaxFeatures` has one public path again, and it is
-  `tree::MaxFeatures`. The `ensemble::MaxFeatures` re-export is removed; callers
-  importing it — including callers of a *forest's* `with_max_features`, which
-  takes this type — change the import path and nothing else, because it was
-  always the same type. Two paths to one type left rustdoc free to pick the
-  canonical one, and it picked `ensemble`, so
-  `tree::DecisionTreeClassifierParams::max_features` rendered as returning
-  `ferricml::ensemble::MaxFeatures` — a standalone tree's own parameter
-  documented as an ensemble type, reading as though `tree` depended on
-  `ensemble` when the `tree-below-estimators` layout rule enforces the
-  reverse. The type is defined beside the grower that consumes it and now
-  publishes from there alone.
-- `api::AnyClassifier` and `api::AnyRegressor` now document their variant lists
-  as a deliberate, curated set and say what decides membership. The API document
-  claimed the regressor variants "cover forests", which was never true of
-  `ensemble::ExtraTreesRegressor` and had drifted further as estimators shipped;
-  the enums cover 3 of 6 classifiers and 4 of 10 regressors. No variant was
-  added, because a dispatch enum declares the *intersection* of its variants'
-  capabilities: `AnyRegressor` declares persistence only because all four of its
-  variants persist, so admitting a variant that declares nothing — `DummyRegressor`
-  and `IsotonicRegression` both do — would silently withdraw that declaration
-  from every existing caller. An enum tracking every estimator would end up
-  declaring nothing at all. Both enums stay `#[non_exhaustive]`, so a variant can
-  still be admitted later without touching any existing estimator's bytes.
-- **Breaking.** `calibration::IsotonicRegression` is now fitted like every other
-  FerricML estimator. `calibration::IsotonicRegressionParams` is a new empty
-  parameter type — the same shape `dummy::DummyClassifierParams` and
-  `preprocessing::MaxAbsScalerParams` already ship — and it is a required final
-  argument of `IsotonicRegression::fit`, `IsotonicRegression::fit_calibration`
-  and `calibration::CalibratedClassifier::fit_isotonic`. The estimator also
-  implements `api::HasParams` and exposes inherent `get_params`,
-  `n_features_in`, `predict` and `predict_into`; the last two were previously
-  reachable only by importing `api::Regressor`, which inverted the crate's
-  preference for the caller-owned form being the easiest to reach. It was the
-  only concrete leaf estimator in the crate missing any of these. Nothing about
-  a fit changes: the parameter type carries no state, and the inherent
-  prediction methods forward to the same trait implementation. Adding an
-  out-of-range policy or a decreasing direction later is now an additive change
-  rather than a `fit` signature break, which is what the empty-params
-  convention exists to buy.
-- **Breaking.** `inspection::permutation_importance_classifier` and
-  `inspection::permutation_importance_classifier_into` are generic over the
-  target vocabulary through the same sealed `data::ClassificationTargets`
-  trait, instead of taking `data::BinaryTargets` alone. A natively multiclass
-  classifier is now inspected through the crate's only classifier
-  permutation-importance entry point, with the orientation, workspace reuse and
-  caller-owned output the binary path already had. Nothing becomes more
-  permissive: a binary positive-probability metric asked for over a wider class
-  set is still `ScoringError::UnsupportedClasses`. Existing binary calls
-  compile unchanged unless they name the type parameter explicitly, which now
-  takes the target type first and the score second.
-- **Breaking.** `predict_positive_proba` is now the allocating **batch**
-  method on every classifier that carries a positive class, and the
-  single-row form it used to name is `predict_positive_proba_one`. Callers
-  must rewrite `model.predict_positive_proba(row)` as
-  `model.predict_positive_proba_one(row)`; the argument type changes from
-  `&[f32]` to `&data::MatrixView` and the return from `f32` to `Vec<f32>`, so
-  a missed call site is a compile error rather than a silent reinterpretation.
-  Affects `ensemble::RandomForestClassifier`,
-  `ensemble::ExtraTreesClassifier`,
-  `ensemble::HistGradientBoostingClassifier`,
-  `tree::DecisionTreeClassifier` and `linear_model::LogisticRegression`.
-  The old pairing was the crate's only shape mismatch between an allocating
-  method and its `_into` partner: `predict_positive_proba` took one row while
-  `predict_positive_proba_into` took a matrix, which left the caller-owned
-  batch form with no allocating partner and put a single-row method under the
-  name the batch form owns. Renaming it also gives the batch form the
-  allocating partner it never had, on all five classifiers rather than the two
-  that happened to expose `_into`. Nothing about the fitted models changed and
-  no artifact byte moved.
-
-- **Added, and breaking.** `ranking::PairwiseLinearRanker::pair_margins`
-  returns raw margins for a slice of pairs, allocating the output;
-  `pair_margins_into` was the only caller-owned method in the crate with no
-  allocating partner at all. In the same family, `compare` is now the
-  allocating **batch** comparison over a slice of pairs and the single-pair
-  form is `compare_one`, so callers must rewrite
-  `ranker.compare(&items, pair)` as `ranker.compare_one(&items, pair)`. The
-  `compare` collision is the same defect as `predict_positive_proba` and was
-  missed by the API audit's original sweep, which compared only each method's
-  first argument — `&MatrixView` on both.
-
-- **Breaking.** `model_selection::cross_validate_classifier` and
-  `model_selection::grid_search_classifier` are generic over the target
-  vocabulary, through the new sealed
-  `data::ClassificationTargets` trait, instead of taking
-  `data::BinaryTargets` alone. `data::ClassTargets` now folds through exactly
-  the same entry point, so a natively multiclass estimator can be
-  cross-validated and tuned with the `CrossValidationError` fold attribution,
-  the `ScoringWorkspace` reuse, and the split and class-layout guards a
-  hand-rolled fold loop gives up. The loop branches on
-  classifier-versus-regressor and on nothing else: label arity is a property of
-  the metric — `ClassificationScorer::MulticlassLogLoss` and `MulticlassBrier`
-  already read a whole probability matrix over any observed class set — so
-  there is no multiclass entry point to add. Nothing becomes more permissive: a
-  binary positive-probability metric asked for on a wider class set is still
-  `CrossValidationError::UnsupportedClasses`. Existing binary calls compile
-  unchanged; the trait is sealed because `select` must preserve the
-  container's construction-time guarantees, so a new target shape arrives as a
-  new `data` container with its implementation.
-
-- **Breaking.** `model_selection::cross_validate_classifier` and
-  `model_selection::grid_search_classifier` take a final `view` argument, and
-  `model_selection::cross_validate_classifier_labels` and
-  `model_selection::grid_search_classifier_labels` are removed. `view` says how
-  each fold's fitted model presents itself to the scoring layer, exactly as the
-  scoring and permutation-importance entry points already asked:
-  `|model| ScorableClassifier::probabilistic(model)` for a model that produces
-  probabilities, `|model| ScorableClassifier::labels_only(model)` for one that
-  does not. `model_selection` was answering "does this classifier give
-  probabilities?" two ways — a `ScorableClassifier` value in one half, a
-  duplicated function pair in the other — and now answers it one way. The
-  constructor is passed rather than a `ScorableClassifier` value because the
-  fitting closure returns an owned model per fold and the view borrows it, so
-  the borrow has to be taken inside the fold loop. Neither entry point is
-  bounded on `api::ProbabilisticClassifier` any more; the view carries that
-  requirement, so a probability metric under a labels-only view is
-  `CrossValidationError::UnsupportedOutput` at run time rather than a compile
-  error the caller cannot work around.
-
-- **Breaking.** Persistence is now a trait. `to_artifact` and `from_artifact`
-  moved from inherent methods onto `artifact::ModelArtifact` (estimators, one
-  feature schema) and `artifact::StageArtifact` (transformers and compositions,
-  an input and an output schema), so calling either needs the trait in scope —
-  `use ferricml::artifact::ModelArtifact;` — exactly as calling `predict` needs
-  `api::Estimator`. No artifact's bytes change.
-
-  This closes a gap rather than moving a name. Persisting used to require two
-  independent declarations: writing the encoder, and separately listing the
-  type as composable. Seven estimators had the first and not the second, so
-  `ensemble::RandomForestClassifier`, both extra-trees models,
-  `ensemble::HistGradientBoostingClassifier`, both standalone trees and
-  `ranking::PairwiseLinearRanker` could be saved on their own but not inside a
-  `pipeline::StagedPipeline`. All seven now compose, as do `api::AnyRegressor`
-  and `api::AnyClassifier`. The traits are no longer re-exported from
-  `ferricml::pipeline`; `ferricml::artifact` is the one path.
-- A `pipeline::StagedPipeline` now declares capabilities whatever it holds,
-  computing `artifact` from its parts instead of requiring every part to
-  persist before it can declare anything. A composition that does not persist
-  previously had no capability declaration at all, which also kept it out of
-  the conformance battery. `pipeline::TransformerStack` gains
-  `STAGES_PERSIST`, and its tuple implementations now require each stage to
-  declare capabilities.
-- Histogram-boosting fits report four distinct failures where they previously
-  reported two. `api::ModelError::NumericalOverflow` used to stand for both a
-  non-finite residual and a residual-length mismatch, and
-  `api::ModelError::TreeTooLarge` for both an oversized tree and a structurally
-  invalid one. A residual-length mismatch is now
-  `api::ModelError::OutputLength` — it is a shape bug, not an overflow — and a
-  structurally invalid tree is the new `api::ModelError::InvalidTreeStructure`.
-  A caller matching on `NumericalOverflow` or `TreeTooLarge` from a
-  `HistGradientBoosting*` fit may now see the other variant instead. The
-  errors do not carry the residual's index: no public FerricML error names a
-  row or an observation, and this is not the place to start.
-
-- The allocating defaults on `api::Classifier`, `api::ProbabilisticClassifier`,
-  `api::Regressor`, and `api::Transformer` — `predict`, `predict_proba`,
-  `predict_class_proba`, and `transform` — now check the batch width against
-  `Estimator::n_features_in` *before* sizing their output buffer, rather than
-  allocating it and discovering the mismatch inside the `_into` primitive they
-  delegate to. The error is unchanged in kind and in values; what changes is
-  that a rejected call now allocates nothing at all. An implementor whose
-  `_into` method accepted a width other than its declared `n_features_in`
-  would see the default reject that call.
-
-- `RandomForestClassifier::predict` and `ExtraTreesClassifier::predict` check
-  the batch width on all three of their fitted-shape branches before
-  allocating, rather than on the single-class branch only. The error a
-  wrong-width batch receives is the same on every branch and is unchanged;
-  what changes is that the binary and multiclass branches no longer allocate
-  their output first.
-
-- `ranking::PairwiseLinearRanker::fit` checks every pair index and the total
-  pair weight before it copies and sorts the observation batch, rather than
-  after. A batch that will be refused no longer pays for a full copy and an
-  `O(n log n)` sort first. The errors and the fitted model are unchanged.
-
-- Six further entry points found by sweeping for the same shape check the batch
-  width before allocating rather than after: `LogisticRegression`,
-  `HistGradientBoostingClassifier` and `CalibratedClassifier`'s
-  `decision_function`, `StagedPipeline::transform`,
-  `PairwiseLinearRanker::score_items`, and `CalibratedClassifier`'s
-  `Classifier::predict_into` — which is an `_into` method, so the scratch
-  buffer it no longer allocates for a refused batch was its only allocation.
-  Every error is unchanged in kind and in values.
-
-- **Breaking.** Producing probabilities is no longer required of every
-  classifier. `predict_proba`, `predict_proba_into`, `predict_class_proba`, and
-  `predict_class_proba_into` move off `api::Classifier` onto a new
-  dyn-compatible sub-trait, `api::ProbabilisticClassifier`. **Callers that
-  invoke any of those four through a generic bound or a trait object must
-  require `ProbabilisticClassifier` instead of `Classifier`**; concrete calls
-  on a shipped estimator are unaffected, since every classifier FerricML ships
-  today implements the sub-trait. Trait upcasting means a
-  `&dyn ProbabilisticClassifier` is still accepted wherever a `&dyn Classifier`
-  is wanted.
-
-  The split exists because margin-based classifiers — ridge classification,
-  discriminant analysis, discrete boosting — have a natural output that is a
-  score rather than a distribution. A required probability method would have
-  forced each of them either to fabricate a number it never earned or to fail
-  at run time on a method the type system promised. A caller that needs
-  probabilities now says so in its bounds and gets a compile error rather than
-  a surprise.
-
-  Consequently `score_classifier`, `score_classifier_with`,
-  `score_multiclass_classifier`, `score_multiclass_classifier_with`,
-  `permutation_importance_classifier`,
-  `permutation_importance_classifier_into`, and the classifier
-  cross-validation and search entry points now take a probability-producing
-  classifier, and `CalibratedClassifier` requires one — a calibrator maps a
-  probability, so there is nothing to calibrate without one. The classifier
-  scoring and permutation-importance entry points take a
-  `ScorableClassifier` view rather than a bare reference, so a label-only
-  classifier remains scorable on a label metric.
-
-- **Breaking.** `AnyClassifier` no longer exposes `predict_proba`,
-  `predict_proba_into`, `predict_class_proba`, or `predict_class_proba_into`
-  directly, and deliberately does **not** implement
-  `api::ProbabilisticClassifier`. Reach probabilities through
-  `AnyClassifier::as_probabilistic`, which returns
-  `Option<&dyn ProbabilisticClassifier>`. Runtime dispatch is the one place the
-  concrete type is erased by construction, so it is the one place the question
-  can only be asked rather than proven in the bounds — and the fallible
-  accessor is what lets a future margin-based variant be added without
-  breaking this surface a second time.
-
-### Added
 
 - `preprocessing::RobustScaler` and `RobustScalerParams`: per-feature scaling by
   a median and a quantile spread. Both statistics are order statistics, so a
@@ -763,6 +533,234 @@ and releases use [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   as though it were a fitted model.
 
 ### Changed
+
+- **Breaking.** `MaxFeatures` has one public path again, and it is
+  `tree::MaxFeatures`. The `ensemble::MaxFeatures` re-export is removed; callers
+  importing it — including callers of a *forest's* `with_max_features`, which
+  takes this type — change the import path and nothing else, because it was
+  always the same type. Two paths to one type left rustdoc free to pick the
+  canonical one, and it picked `ensemble`, so
+  `tree::DecisionTreeClassifierParams::max_features` rendered as returning
+  `ferricml::ensemble::MaxFeatures` — a standalone tree's own parameter
+  documented as an ensemble type, reading as though `tree` depended on
+  `ensemble` when the `tree-below-estimators` layout rule enforces the
+  reverse. The type is defined beside the grower that consumes it and now
+  publishes from there alone.
+- `api::AnyClassifier` and `api::AnyRegressor` now document their variant lists
+  as a deliberate, curated set and say what decides membership. The API document
+  claimed the regressor variants "cover forests", which was never true of
+  `ensemble::ExtraTreesRegressor` and had drifted further as estimators shipped;
+  the enums cover 3 of 6 classifiers and 4 of 10 regressors. No variant was
+  added, because a dispatch enum declares the *intersection* of its variants'
+  capabilities: `AnyRegressor` declares persistence only because all four of its
+  variants persist, so admitting a variant that declares nothing — `DummyRegressor`
+  and `IsotonicRegression` both do — would silently withdraw that declaration
+  from every existing caller. An enum tracking every estimator would end up
+  declaring nothing at all. Both enums stay `#[non_exhaustive]`, so a variant can
+  still be admitted later without touching any existing estimator's bytes.
+- **Breaking.** `calibration::IsotonicRegression` is now fitted like every other
+  FerricML estimator. `calibration::IsotonicRegressionParams` is a new empty
+  parameter type — the same shape `dummy::DummyClassifierParams` and
+  `preprocessing::MaxAbsScalerParams` already ship — and it is a required final
+  argument of `IsotonicRegression::fit`, `IsotonicRegression::fit_calibration`
+  and `calibration::CalibratedClassifier::fit_isotonic`. The estimator also
+  implements `api::HasParams` and exposes inherent `get_params`,
+  `n_features_in`, `predict` and `predict_into`; the last two were previously
+  reachable only by importing `api::Regressor`, which inverted the crate's
+  preference for the caller-owned form being the easiest to reach. It was the
+  only concrete leaf estimator in the crate missing any of these. Nothing about
+  a fit changes: the parameter type carries no state, and the inherent
+  prediction methods forward to the same trait implementation. Adding an
+  out-of-range policy or a decreasing direction later is now an additive change
+  rather than a `fit` signature break, which is what the empty-params
+  convention exists to buy.
+- **Breaking.** `inspection::permutation_importance_classifier` and
+  `inspection::permutation_importance_classifier_into` are generic over the
+  target vocabulary through the same sealed `data::ClassificationTargets`
+  trait, instead of taking `data::BinaryTargets` alone. A natively multiclass
+  classifier is now inspected through the crate's only classifier
+  permutation-importance entry point, with the orientation, workspace reuse and
+  caller-owned output the binary path already had. Nothing becomes more
+  permissive: a binary positive-probability metric asked for over a wider class
+  set is still `ScoringError::UnsupportedClasses`. Existing binary calls
+  compile unchanged unless they name the type parameter explicitly, which now
+  takes the target type first and the score second.
+- **Breaking.** `predict_positive_proba` is now the allocating **batch**
+  method on every classifier that carries a positive class, and the
+  single-row form it used to name is `predict_positive_proba_one`. Callers
+  must rewrite `model.predict_positive_proba(row)` as
+  `model.predict_positive_proba_one(row)`; the argument type changes from
+  `&[f32]` to `&data::MatrixView` and the return from `f32` to `Vec<f32>`, so
+  a missed call site is a compile error rather than a silent reinterpretation.
+  Affects `ensemble::RandomForestClassifier`,
+  `ensemble::ExtraTreesClassifier`,
+  `ensemble::HistGradientBoostingClassifier`,
+  `tree::DecisionTreeClassifier` and `linear_model::LogisticRegression`.
+  The old pairing was the crate's only shape mismatch between an allocating
+  method and its `_into` partner: `predict_positive_proba` took one row while
+  `predict_positive_proba_into` took a matrix, which left the caller-owned
+  batch form with no allocating partner and put a single-row method under the
+  name the batch form owns. Renaming it also gives the batch form the
+  allocating partner it never had, on all five classifiers rather than the two
+  that happened to expose `_into`. Nothing about the fitted models changed and
+  no artifact byte moved.
+
+- **Added, and breaking.** `ranking::PairwiseLinearRanker::pair_margins`
+  returns raw margins for a slice of pairs, allocating the output;
+  `pair_margins_into` was the only caller-owned method in the crate with no
+  allocating partner at all. In the same family, `compare` is now the
+  allocating **batch** comparison over a slice of pairs and the single-pair
+  form is `compare_one`, so callers must rewrite
+  `ranker.compare(&items, pair)` as `ranker.compare_one(&items, pair)`. The
+  `compare` collision is the same defect as `predict_positive_proba` and was
+  missed by the API audit's original sweep, which compared only each method's
+  first argument — `&MatrixView` on both.
+
+- **Breaking.** `model_selection::cross_validate_classifier` and
+  `model_selection::grid_search_classifier` are generic over the target
+  vocabulary, through the new sealed
+  `data::ClassificationTargets` trait, instead of taking
+  `data::BinaryTargets` alone. `data::ClassTargets` now folds through exactly
+  the same entry point, so a natively multiclass estimator can be
+  cross-validated and tuned with the `CrossValidationError` fold attribution,
+  the `ScoringWorkspace` reuse, and the split and class-layout guards a
+  hand-rolled fold loop gives up. The loop branches on
+  classifier-versus-regressor and on nothing else: label arity is a property of
+  the metric — `ClassificationScorer::MulticlassLogLoss` and `MulticlassBrier`
+  already read a whole probability matrix over any observed class set — so
+  there is no multiclass entry point to add. Nothing becomes more permissive: a
+  binary positive-probability metric asked for on a wider class set is still
+  `CrossValidationError::UnsupportedClasses`. Existing binary calls compile
+  unchanged; the trait is sealed because `select` must preserve the
+  container's construction-time guarantees, so a new target shape arrives as a
+  new `data` container with its implementation.
+
+- **Breaking.** `model_selection::cross_validate_classifier` and
+  `model_selection::grid_search_classifier` take a final `view` argument, and
+  `model_selection::cross_validate_classifier_labels` and
+  `model_selection::grid_search_classifier_labels` are removed. `view` says how
+  each fold's fitted model presents itself to the scoring layer, exactly as the
+  scoring and permutation-importance entry points already asked:
+  `|model| ScorableClassifier::probabilistic(model)` for a model that produces
+  probabilities, `|model| ScorableClassifier::labels_only(model)` for one that
+  does not. `model_selection` was answering "does this classifier give
+  probabilities?" two ways — a `ScorableClassifier` value in one half, a
+  duplicated function pair in the other — and now answers it one way. The
+  constructor is passed rather than a `ScorableClassifier` value because the
+  fitting closure returns an owned model per fold and the view borrows it, so
+  the borrow has to be taken inside the fold loop. Neither entry point is
+  bounded on `api::ProbabilisticClassifier` any more; the view carries that
+  requirement, so a probability metric under a labels-only view is
+  `CrossValidationError::UnsupportedOutput` at run time rather than a compile
+  error the caller cannot work around.
+
+- **Breaking.** Persistence is now a trait. `to_artifact` and `from_artifact`
+  moved from inherent methods onto `artifact::ModelArtifact` (estimators, one
+  feature schema) and `artifact::StageArtifact` (transformers and compositions,
+  an input and an output schema), so calling either needs the trait in scope —
+  `use ferricml::artifact::ModelArtifact;` — exactly as calling `predict` needs
+  `api::Estimator`. No artifact's bytes change.
+
+  This closes a gap rather than moving a name. Persisting used to require two
+  independent declarations: writing the encoder, and separately listing the
+  type as composable. Seven estimators had the first and not the second, so
+  `ensemble::RandomForestClassifier`, both extra-trees models,
+  `ensemble::HistGradientBoostingClassifier`, both standalone trees and
+  `ranking::PairwiseLinearRanker` could be saved on their own but not inside a
+  `pipeline::StagedPipeline`. All seven now compose, as do `api::AnyRegressor`
+  and `api::AnyClassifier`. The traits are no longer re-exported from
+  `ferricml::pipeline`; `ferricml::artifact` is the one path.
+- A `pipeline::StagedPipeline` now declares capabilities whatever it holds,
+  computing `artifact` from its parts instead of requiring every part to
+  persist before it can declare anything. A composition that does not persist
+  previously had no capability declaration at all, which also kept it out of
+  the conformance battery. `pipeline::TransformerStack` gains
+  `STAGES_PERSIST`, and its tuple implementations now require each stage to
+  declare capabilities.
+- Histogram-boosting fits report four distinct failures where they previously
+  reported two. `api::ModelError::NumericalOverflow` used to stand for both a
+  non-finite residual and a residual-length mismatch, and
+  `api::ModelError::TreeTooLarge` for both an oversized tree and a structurally
+  invalid one. A residual-length mismatch is now
+  `api::ModelError::OutputLength` — it is a shape bug, not an overflow — and a
+  structurally invalid tree is the new `api::ModelError::InvalidTreeStructure`.
+  A caller matching on `NumericalOverflow` or `TreeTooLarge` from a
+  `HistGradientBoosting*` fit may now see the other variant instead. The
+  errors do not carry the residual's index: no public FerricML error names a
+  row or an observation, and this is not the place to start.
+
+- The allocating defaults on `api::Classifier`, `api::ProbabilisticClassifier`,
+  `api::Regressor`, and `api::Transformer` — `predict`, `predict_proba`,
+  `predict_class_proba`, and `transform` — now check the batch width against
+  `Estimator::n_features_in` *before* sizing their output buffer, rather than
+  allocating it and discovering the mismatch inside the `_into` primitive they
+  delegate to. The error is unchanged in kind and in values; what changes is
+  that a rejected call now allocates nothing at all. An implementor whose
+  `_into` method accepted a width other than its declared `n_features_in`
+  would see the default reject that call.
+
+- `RandomForestClassifier::predict` and `ExtraTreesClassifier::predict` check
+  the batch width on all three of their fitted-shape branches before
+  allocating, rather than on the single-class branch only. The error a
+  wrong-width batch receives is the same on every branch and is unchanged;
+  what changes is that the binary and multiclass branches no longer allocate
+  their output first.
+
+- `ranking::PairwiseLinearRanker::fit` checks every pair index and the total
+  pair weight before it copies and sorts the observation batch, rather than
+  after. A batch that will be refused no longer pays for a full copy and an
+  `O(n log n)` sort first. The errors and the fitted model are unchanged.
+
+- Six further entry points found by sweeping for the same shape check the batch
+  width before allocating rather than after: `LogisticRegression`,
+  `HistGradientBoostingClassifier` and `CalibratedClassifier`'s
+  `decision_function`, `StagedPipeline::transform`,
+  `PairwiseLinearRanker::score_items`, and `CalibratedClassifier`'s
+  `Classifier::predict_into` — which is an `_into` method, so the scratch
+  buffer it no longer allocates for a refused batch was its only allocation.
+  Every error is unchanged in kind and in values.
+
+- **Breaking.** Producing probabilities is no longer required of every
+  classifier. `predict_proba`, `predict_proba_into`, `predict_class_proba`, and
+  `predict_class_proba_into` move off `api::Classifier` onto a new
+  dyn-compatible sub-trait, `api::ProbabilisticClassifier`. **Callers that
+  invoke any of those four through a generic bound or a trait object must
+  require `ProbabilisticClassifier` instead of `Classifier`**; concrete calls
+  on a shipped estimator are unaffected, since every classifier FerricML ships
+  today implements the sub-trait. Trait upcasting means a
+  `&dyn ProbabilisticClassifier` is still accepted wherever a `&dyn Classifier`
+  is wanted.
+
+  The split exists because margin-based classifiers — ridge classification,
+  discriminant analysis, discrete boosting — have a natural output that is a
+  score rather than a distribution. A required probability method would have
+  forced each of them either to fabricate a number it never earned or to fail
+  at run time on a method the type system promised. A caller that needs
+  probabilities now says so in its bounds and gets a compile error rather than
+  a surprise.
+
+  Consequently `score_classifier`, `score_classifier_with`,
+  `score_multiclass_classifier`, `score_multiclass_classifier_with`,
+  `permutation_importance_classifier`,
+  `permutation_importance_classifier_into`, and the classifier
+  cross-validation and search entry points now take a probability-producing
+  classifier, and `CalibratedClassifier` requires one — a calibrator maps a
+  probability, so there is nothing to calibrate without one. The classifier
+  scoring and permutation-importance entry points take a
+  `ScorableClassifier` view rather than a bare reference, so a label-only
+  classifier remains scorable on a label metric.
+
+- **Breaking.** `AnyClassifier` no longer exposes `predict_proba`,
+  `predict_proba_into`, `predict_class_proba`, or `predict_class_proba_into`
+  directly, and deliberately does **not** implement
+  `api::ProbabilisticClassifier`. Reach probabilities through
+  `AnyClassifier::as_probabilistic`, which returns
+  `Option<&dyn ProbabilisticClassifier>`. Runtime dispatch is the one place the
+  concrete type is erased by construction, so it is the one place the question
+  can only be asked rather than proven in the bounds — and the fallible
+  accessor is what lets a future margin-based variant be added without
+  breaking this surface a second time.
+
 
 - Permutation importance takes any score implementing the new scorer traits and
   runs through the shared allocation-free scoring path, so it no longer carries
