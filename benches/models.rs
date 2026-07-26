@@ -21,9 +21,10 @@ use ferricml::metrics::{
 };
 use ferricml::model_selection::{
     ClassificationScorer, GroupKFold, GroupShuffleSplit, HoldoutParams, KFold, LeaveOneOut,
-    ParameterGrid, RegressionScorer, RepeatedKFold, ScoringWorkspace, TestGroupSize, TestSize,
-    TimeSeriesSplit, cross_validate_regressor, grid_search_classifier, grid_search_regressor,
-    score_regressor, score_regressor_with, stratified_train_test_split, train_test_split,
+    ParameterGrid, RegressionScorer, RepeatedKFold, ScorableClassifier, ScoringWorkspace,
+    TestGroupSize, TestSize, TimeSeriesSplit, cross_validate_regressor, grid_search_classifier,
+    grid_search_regressor, score_regressor, score_regressor_with, stratified_train_test_split,
+    train_test_split,
 };
 use ferricml::pipeline::{Pipeline, StagedPipeline};
 use ferricml::preprocessing::{
@@ -809,6 +810,7 @@ fn parameter_search(c: &mut Criterion) {
                         |train, train_targets, params| {
                             LogisticRegression::fit(train, train_targets, params.clone())
                         },
+                        |model| ScorableClassifier::probabilistic(model),
                     )
                     .unwrap(),
                 );

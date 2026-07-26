@@ -16,6 +16,13 @@
 //!   required and what was supplied — never a compile error the caller cannot
 //!   work around, and never a substituted value.
 //!
+//! All four reach that question through one mechanism, a
+//! [`ScorableClassifier`] view, rather than through a `*_labels` twin of each
+//! entry point. The last test in this file is what keeps that honest: it fits a
+//! model that *does* produce probabilities and cross-validates it under a
+//! labels-only view, so the refusal is provably a property of the view rather
+//! than of the model's traits.
+//!
 //! # Why this is not a conformance-battery obligation
 //!
 //! The battery states obligations an *estimator* owes. This is a property of
@@ -28,8 +35,8 @@ use ferricml::data::{BinaryTargets, DenseMatrix, MatrixView};
 use ferricml::inspection::{PermutationImportanceParams, permutation_importance_classifier};
 use ferricml::model_selection::{
     ClassificationScorer, ClassifierOutputKind, CrossValidationError, KFold, ParameterGrid,
-    ScorableClassifier, ScoringError, SearchError, cross_validate_classifier_labels,
-    grid_search_classifier_labels, score_classifier,
+    ScorableClassifier, ScoringError, SearchError, cross_validate_classifier,
+    grid_search_classifier, score_classifier,
 };
 
 /// A margin-based classifier: a threshold on one feature, and no probability.
@@ -154,22 +161,24 @@ fn a_label_only_classifier_cross_validates_on_a_label_metric() {
     let (data, targets) = fixture();
     let splits: Vec<_> = KFold::new(4).split(data.rows()).unwrap().collect();
 
-    let folds = cross_validate_classifier_labels(
+    let folds = cross_validate_classifier(
         &data.as_view(),
         &targets,
         splits.iter().cloned(),
         ClassificationScorer::Accuracy,
         |train, _| MarginClassifier::fit(train, 3.5),
+        |model| ScorableClassifier::labels_only(model),
     )
     .expect("a label metric cross-validates without probabilities");
     assert_eq!(folds.scores().len(), 4);
 
-    let error = cross_validate_classifier_labels(
+    let error = cross_validate_classifier(
         &data.as_view(),
         &targets,
         splits,
         ClassificationScorer::LogLoss,
         |train, _| MarginClassifier::fit(train, 3.5),
+        |model| ScorableClassifier::labels_only(model),
     )
     .expect_err("a probability metric cannot be served by labels alone");
     assert!(
@@ -191,24 +200,26 @@ fn a_label_only_classifier_is_grid_searchable_on_a_label_metric() {
     let grid = ParameterGrid::from_candidates(vec![1.5_f32, 3.5, 5.5]);
     let splits: Vec<_> = KFold::new(4).split(data.rows()).unwrap().collect();
 
-    let result = grid_search_classifier_labels(
+    let result = grid_search_classifier(
         &data.as_view(),
         &targets,
         splits.iter().cloned(),
         &grid,
         ClassificationScorer::Accuracy,
         |train, _, threshold| MarginClassifier::fit(train, *threshold),
+        |model| ScorableClassifier::labels_only(model),
     )
     .expect("a label metric searches without probabilities");
     assert_eq!(result.candidates().len(), 3);
 
-    let error = grid_search_classifier_labels(
+    let error = grid_search_classifier(
         &data.as_view(),
         &targets,
         splits,
         &grid,
         ClassificationScorer::Brier,
         |train, _, threshold| MarginClassifier::fit(train, *threshold),
+        |model| ScorableClassifier::labels_only(model),
     )
     .expect_err("a probability metric cannot be served by labels alone");
     assert!(
@@ -244,6 +255,125 @@ fn a_label_only_classifier_supports_permutation_importance_on_a_label_metric() {
     assert!(
         format!("{error:?}").contains("UnsupportedOutput"),
         "permutation importance returned {error:?} instead of naming the missing output"
+    );
+}
+
+/// The view decides, not the model's traits.
+///
+/// Cross-validation and search used to answer "does this classifier give
+/// probabilities?" by which of two functions the caller called, so the answer
+/// was fixed by the fitting closure's return type and nothing could be said
+/// about the view on its own. Now the answer is a value, and this is the test
+/// that the value is the one being read: one model, one entry point, one
+/// metric, two views, two outcomes.
+#[test]
+fn the_view_rather_than_the_model_decides_which_metrics_cross_validate() {
+    use ferricml::dummy::{DummyClassifier, DummyClassifierParams};
+
+    let (data, targets) = fixture();
+    let splits: Vec<_> = KFold::new(4).split(data.rows()).unwrap().collect();
+    let fit = |train: &MatrixView<'_>, train_targets: &BinaryTargets| {
+        DummyClassifier::fit(train, train_targets, DummyClassifierParams)
+    };
+
+    // The model produces probabilities, so the probabilistic view scores a
+    // probability metric.
+    let scored = cross_validate_classifier(
+        &data.as_view(),
+        &targets,
+        splits.iter().cloned(),
+        ClassificationScorer::LogLoss,
+        fit,
+        |model| ScorableClassifier::probabilistic(model),
+    )
+    .expect("a probabilistic view serves a probability metric");
+    assert_eq!(scored.len(), 4);
+
+    // The same model, the same metric, the same entry point — refused, because
+    // the view withheld the probabilities.
+    let error = cross_validate_classifier(
+        &data.as_view(),
+        &targets,
+        splits.iter().cloned(),
+        ClassificationScorer::LogLoss,
+        fit,
+        |model| ScorableClassifier::labels_only(model),
+    )
+    .expect_err("a labels-only view cannot serve a probability metric");
+    assert!(
+        matches!(
+            &error,
+            CrossValidationError::UnsupportedOutput {
+                required: ClassifierOutputKind::PositiveProbabilities,
+                supplied: ClassifierOutputKind::Labels,
+                ..
+            }
+        ),
+        "cross-validation returned {error:?} instead of naming the missing output"
+    );
+
+    // And a label metric is unaffected by the narrower view, so the refusal
+    // above is specific rather than a labels-only view being useless.
+    let by_labels = cross_validate_classifier(
+        &data.as_view(),
+        &targets,
+        splits,
+        ClassificationScorer::Accuracy,
+        fit,
+        |model| ScorableClassifier::labels_only(model),
+    )
+    .expect("a label metric needs no probabilities");
+    assert_eq!(by_labels.len(), 4);
+}
+
+/// The same, for search: one grid, one metric, two views, two outcomes.
+#[test]
+fn the_view_rather_than_the_model_decides_which_metrics_search() {
+    use ferricml::dummy::{DummyClassifier, DummyClassifierParams};
+
+    let (data, targets) = fixture();
+    let splits: Vec<_> = KFold::new(4).split(data.rows()).unwrap().collect();
+    let grid = ParameterGrid::from_candidates(vec![DummyClassifierParams]);
+    let fit =
+        |train: &MatrixView<'_>, train_targets: &BinaryTargets, params: &DummyClassifierParams| {
+            DummyClassifier::fit(train, train_targets, *params)
+        };
+
+    let searched = grid_search_classifier(
+        &data.as_view(),
+        &targets,
+        splits.iter().cloned(),
+        &grid,
+        ClassificationScorer::Brier,
+        fit,
+        |model| ScorableClassifier::probabilistic(model),
+    )
+    .expect("a probabilistic view serves a probability metric");
+    assert_eq!(searched.len(), 1);
+
+    let error = grid_search_classifier(
+        &data.as_view(),
+        &targets,
+        splits,
+        &grid,
+        ClassificationScorer::Brier,
+        fit,
+        |model| ScorableClassifier::labels_only(model),
+    )
+    .expect_err("a labels-only view cannot serve a probability metric");
+    assert!(
+        matches!(
+            &error,
+            SearchError::Candidate {
+                candidate: 0,
+                source: CrossValidationError::UnsupportedOutput {
+                    required: ClassifierOutputKind::PositiveProbabilities,
+                    supplied: ClassifierOutputKind::Labels,
+                    ..
+                },
+            }
+        ),
+        "search returned {error:?} instead of naming the missing output"
     );
 }
 

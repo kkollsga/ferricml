@@ -385,6 +385,7 @@ fn a_calibrated_model_scores_and_cross_validates_through_the_existing_paths() {
         splits.clone(),
         ClassificationScorer::LogLoss,
         fit_calibrated_fold,
+        |model| ScorableClassifier::probabilistic(model),
     )
     .unwrap();
     assert_eq!(result.len(), 3);

@@ -67,6 +67,25 @@ and releases use [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Changed
 
+- **Breaking.** `model_selection::cross_validate_classifier` and
+  `model_selection::grid_search_classifier` take a final `view` argument, and
+  `model_selection::cross_validate_classifier_labels` and
+  `model_selection::grid_search_classifier_labels` are removed. `view` says how
+  each fold's fitted model presents itself to the scoring layer, exactly as the
+  scoring and permutation-importance entry points already asked:
+  `|model| ScorableClassifier::probabilistic(model)` for a model that produces
+  probabilities, `|model| ScorableClassifier::labels_only(model)` for one that
+  does not. `model_selection` was answering "does this classifier give
+  probabilities?" two ways — a `ScorableClassifier` value in one half, a
+  duplicated function pair in the other — and now answers it one way. The
+  constructor is passed rather than a `ScorableClassifier` value because the
+  fitting closure returns an owned model per fold and the view borrows it, so
+  the borrow has to be taken inside the fold loop. Neither entry point is
+  bounded on `api::ProbabilisticClassifier` any more; the view carries that
+  requirement, so a probability metric under a labels-only view is
+  `CrossValidationError::UnsupportedOutput` at run time rather than a compile
+  error the caller cannot work around.
+
 - Histogram-boosting fits report four distinct failures where they previously
   reported two. `api::ModelError::NumericalOverflow` used to stand for both a
   non-finite residual and a residual-length mismatch, and

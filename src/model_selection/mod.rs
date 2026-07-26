@@ -7,7 +7,7 @@ mod split;
 
 pub use cross_validation::{
     CrossValidationError, CrossValidationResult, cross_validate_classifier,
-    cross_validate_classifier_labels, cross_validate_regressor,
+    cross_validate_regressor,
 };
 pub use scoring::{
     ClassificationScore, ClassificationScorer, ClassifierOutput, ClassifierOutputKind,
@@ -17,7 +17,7 @@ pub use scoring::{
 };
 pub use search::{
     CandidateScores, ParameterGrid, SearchError, SearchResult, grid_search_classifier,
-    grid_search_classifier_labels, grid_search_regressor,
+    grid_search_regressor,
 };
 pub use split::{
     GroupKFold, GroupKFoldIter, GroupShuffleSplit, GroupShuffleSplitIter, HoldoutParams, KFold,

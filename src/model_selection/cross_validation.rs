@@ -1,7 +1,7 @@
 use std::error::Error;
 use std::fmt;
 
-use crate::api::{Classifier, ModelError, ProbabilisticClassifier, Regressor};
+use crate::api::{ModelError, Regressor};
 use crate::data::{BinaryTargets, MatrixView, RegressionTargets};
 use crate::metrics::MetricError;
 
@@ -164,50 +164,46 @@ impl CrossValidationResult {
 }
 
 /// Fits and scores one classifier per supplied split, serially and in order.
-pub fn cross_validate_classifier<M, I, F, S>(
-    data: &MatrixView<'_>,
-    targets: &BinaryTargets,
-    splits: I,
-    scorer: S,
-    fit: F,
-) -> Result<CrossValidationResult, CrossValidationError>
-where
-    M: ProbabilisticClassifier,
-    I: IntoIterator<Item = Split>,
-    F: FnMut(&MatrixView<'_>, &BinaryTargets) -> Result<M, ModelError>,
-    S: ClassificationScore,
-{
-    cross_validate_folds(data, targets, splits, scorer, fit, |model| {
-        ScorableClassifier::probabilistic(model)
-    })
-}
-
-/// Fits and scores one label-producing classifier per supplied split.
 ///
-/// This is [`cross_validate_classifier`] for a classifier that produces no
-/// probabilities. Only label metrics apply: a probability metric returns
-/// [`ScoringError::UnsupportedOutput`] through
-/// [`CrossValidationError::UnsupportedOutput`] rather than a substituted value.
-pub fn cross_validate_classifier_labels<M, I, F, S>(
-    data: &MatrixView<'_>,
-    targets: &BinaryTargets,
-    splits: I,
-    scorer: S,
-    fit: F,
-) -> Result<CrossValidationResult, CrossValidationError>
-where
-    M: Classifier,
-    I: IntoIterator<Item = Split>,
-    F: FnMut(&MatrixView<'_>, &BinaryTargets) -> Result<M, ModelError>,
-    S: ClassificationScore,
-{
-    cross_validate_folds(data, targets, splits, scorer, fit, |model| {
-        ScorableClassifier::labels_only(model)
-    })
-}
-
-/// The one cross-validation loop, over whichever view the caller's model has.
-fn cross_validate_folds<M, I, F, S, V>(
+/// `view` says how each fold's fitted model presents itself to the scoring
+/// layer: [`ScorableClassifier::probabilistic`] for a model that produces
+/// probabilities, [`ScorableClassifier::labels_only`] for one that does not.
+/// That is the same mechanism [`score_classifier`](super::score_classifier) and
+/// permutation importance take, so `model_selection` answers "does this
+/// classifier give probabilities?" in exactly one way — with a value, rather
+/// than with a second entry point per answer. A probability metric applied to a
+/// labels-only view is [`CrossValidationError::UnsupportedOutput`], never a
+/// substituted value.
+///
+/// The view cannot simply be a `ScorableClassifier` argument: the fitting
+/// closure returns an owned model *per fold*, and a `ScorableClassifier`
+/// borrows the model it wraps, so the borrow has to be taken inside the loop.
+/// Passing the constructor is what lets it be taken there.
+///
+/// ```
+/// use ferricml::data::{BinaryTargets, DenseMatrix};
+/// use ferricml::dummy::{DummyClassifier, DummyClassifierParams};
+/// use ferricml::model_selection::{
+///     ClassificationScorer, KFold, ScorableClassifier, cross_validate_classifier,
+/// };
+///
+/// let data = DenseMatrix::new(vec![0.0, 1.0, 2.0, 3.0, 4.0, 5.0], 6, 1)?;
+/// let targets = BinaryTargets::new(vec![0, 0, 0, 1, 1, 1])?;
+///
+/// let folds = cross_validate_classifier(
+///     &data.as_view(),
+///     &targets,
+///     KFold::new(3).split(data.rows())?,
+///     ClassificationScorer::Accuracy,
+///     |train, train_targets| {
+///         DummyClassifier::fit(train, train_targets, DummyClassifierParams)
+///     },
+///     |model| ScorableClassifier::probabilistic(model),
+/// )?;
+/// assert_eq!(folds.len(), 3);
+/// # Ok::<(), Box<dyn std::error::Error>>(())
+/// ```
+pub fn cross_validate_classifier<M, I, F, S, V>(
     data: &MatrixView<'_>,
     targets: &BinaryTargets,
     splits: I,
@@ -395,6 +391,7 @@ mod tests {
             |train, targets| {
                 LogisticRegression::fit(train, targets, LogisticRegressionParams::default())
             },
+            |model| ScorableClassifier::probabilistic(model),
         )
         .unwrap();
         assert_eq!(classifier.len(), 3);
