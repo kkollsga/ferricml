@@ -330,9 +330,18 @@ impl PairwiseLinearRankerParams {
 /// let margin = ranker.pair_margin(&items.as_view(), PairIndex::new(3, 0)?)?;
 /// assert!((margin - (scores[3] - scores[0])).abs() < 1e-5);
 /// assert_eq!(
-///     ranker.compare(&items.as_view(), PairIndex::new(3, 0)?)?,
+///     ranker.compare_one(&items.as_view(), PairIndex::new(3, 0)?)?,
 ///     PairOutcome::LeftPreferred,
 /// );
+///
+/// // The batch forms take a slice of pairs and answer one value per pair.
+/// let pairs = [PairIndex::new(3, 0)?, PairIndex::new(0, 3)?];
+/// assert_eq!(
+///     ranker.compare(&items.as_view(), &pairs)?,
+///     vec![PairOutcome::LeftPreferred, PairOutcome::RightPreferred],
+/// );
+/// let margins = ranker.pair_margins(&items.as_view(), &pairs)?;
+/// assert!((margins[0] + margins[1]).abs() < 1e-5);
 /// # Ok::<(), Box<dyn std::error::Error>>(())
 /// ```
 #[derive(Clone, Debug, PartialEq)]
@@ -427,7 +436,7 @@ impl PairwiseLinearRanker {
     }
 
     /// Maps one raw pair margin to left, right, or tie.
-    pub fn compare(
+    pub fn compare_one(
         &self,
         items: &MatrixView<'_>,
         pair: PairIndex,
@@ -440,6 +449,20 @@ impl PairwiseLinearRanker {
         } else {
             Ok(PairOutcome::RightPreferred)
         }
+    }
+
+    /// Returns raw margins for checked pairs, allocating one value per pair.
+    pub fn pair_margins(
+        &self,
+        items: &MatrixView<'_>,
+        pairs: &[PairIndex],
+    ) -> Result<Vec<f32>, PairwiseError> {
+        // Before the buffer, not inside `_into` after it, so a pair naming a
+        // row that does not exist costs no allocation.
+        validate_pair_batch(items, pairs, pairs.len())?;
+        let mut output = vec![0.0; pairs.len()];
+        self.pair_margins_into(items, pairs, &mut output)?;
+        Ok(output)
     }
 
     /// Writes raw margins for checked pairs without allocating.
@@ -456,6 +479,21 @@ impl PairwiseLinearRanker {
         Ok(())
     }
 
+    /// Returns three-way comparisons for checked pairs, allocating one outcome
+    /// per pair.
+    pub fn compare(
+        &self,
+        items: &MatrixView<'_>,
+        pairs: &[PairIndex],
+    ) -> Result<Vec<PairOutcome>, PairwiseError> {
+        // Before the buffer, not inside `_into` after it, so a pair naming a
+        // row that does not exist costs no allocation.
+        validate_pair_batch(items, pairs, pairs.len())?;
+        let mut output = vec![PairOutcome::Tie; pairs.len()];
+        self.compare_into(items, pairs, &mut output)?;
+        Ok(output)
+    }
+
     /// Writes three-way comparisons for checked pairs without allocating.
     pub fn compare_into(
         &self,
@@ -465,7 +503,7 @@ impl PairwiseLinearRanker {
     ) -> Result<(), PairwiseError> {
         validate_pair_batch(items, pairs, output.len())?;
         for (&pair, slot) in pairs.iter().zip(output) {
-            *slot = self.compare(items, pair)?;
+            *slot = self.compare_one(items, pair)?;
         }
         Ok(())
     }
@@ -993,7 +1031,7 @@ mod tests {
         )
         .unwrap();
         assert_eq!(
-            thresholded.compare(&items().as_view(), pair),
+            thresholded.compare_one(&items().as_view(), pair),
             Ok(PairOutcome::Tie)
         );
         assert_eq!(base.coefficients().len(), 2);
@@ -1019,6 +1057,56 @@ mod tests {
             })
         );
         assert_eq!(output, [77.0; 2]);
+    }
+
+    #[test]
+    fn the_pair_batch_families_agree_across_their_three_shapes() {
+        // `pair_margins_into` had no allocating partner and `compare` was a
+        // single-pair method wearing the batch name, so before this there was
+        // no batch shape to compare a per-pair answer against.
+        let model = PairwiseLinearRanker::fit(
+            &items().as_view(),
+            &training_pairs(),
+            PairwiseLinearRankerParams::default(),
+        )
+        .unwrap();
+        let view = items();
+        let view = view.as_view();
+        let pairs = [
+            PairIndex::new(0, 1).unwrap(),
+            PairIndex::new(3, 0).unwrap(),
+            PairIndex::new(1, 3).unwrap(),
+        ];
+
+        let margins = model.pair_margins(&view, &pairs).unwrap();
+        let mut owned_margins = [f32::NAN; 3];
+        model
+            .pair_margins_into(&view, &pairs, &mut owned_margins)
+            .unwrap();
+        assert_eq!(margins, owned_margins);
+
+        let outcomes = model.compare(&view, &pairs).unwrap();
+        let mut owned_outcomes = [PairOutcome::Tie; 3];
+        model
+            .compare_into(&view, &pairs, &mut owned_outcomes)
+            .unwrap();
+        assert_eq!(outcomes, owned_outcomes);
+
+        for (index, &pair) in pairs.iter().enumerate() {
+            assert_eq!(model.pair_margin(&view, pair).unwrap(), margins[index]);
+            assert_eq!(model.compare_one(&view, pair).unwrap(), outcomes[index]);
+        }
+
+        // The allocating forms reject an out-of-range pair rather than sizing a
+        // buffer from the request first.
+        let bad = [PairIndex::new(0, 1).unwrap(), PairIndex::new(1, 9).unwrap()];
+        let expected = PairwiseError::PairIndexOutOfBounds {
+            pair: 1,
+            item: 9,
+            items: 4,
+        };
+        assert_eq!(model.pair_margins(&view, &bad), Err(expected.clone()));
+        assert_eq!(model.compare(&view, &bad), Err(expected));
     }
 
     #[test]

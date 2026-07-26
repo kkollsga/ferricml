@@ -96,6 +96,17 @@ and releases use [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   that happened to expose `_into`. Nothing about the fitted models changed and
   no artifact byte moved.
 
+- **Added, and breaking.** `ranking::PairwiseLinearRanker::pair_margins`
+  returns raw margins for a slice of pairs, allocating the output;
+  `pair_margins_into` was the only caller-owned method in the crate with no
+  allocating partner at all. In the same family, `compare` is now the
+  allocating **batch** comparison over a slice of pairs and the single-pair
+  form is `compare_one`, so callers must rewrite
+  `ranker.compare(&items, pair)` as `ranker.compare_one(&items, pair)`. The
+  `compare` collision is the same defect as `predict_positive_proba` and was
+  missed by the API audit's original sweep, which compared only each method's
+  first argument — `&MatrixView` on both.
+
 - **Breaking.** `model_selection::cross_validate_classifier` and
   `model_selection::grid_search_classifier` are generic over the target
   vocabulary, through the new sealed

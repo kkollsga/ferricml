@@ -3201,13 +3201,15 @@ impl core::marker::StructuralPartialEq for ferricml::ranking::PairIndex
 pub struct ferricml::ranking::PairwiseLinearRanker
 impl ferricml::ranking::PairwiseLinearRanker
 pub fn ferricml::ranking::PairwiseLinearRanker::coefficients(&self) -> &[f32]
-pub fn ferricml::ranking::PairwiseLinearRanker::compare(&self, &ferricml::data::MatrixView<'_>, ferricml::ranking::PairIndex) -> core::result::Result<ferricml::ranking::PairOutcome, ferricml::ranking::PairwiseError>
+pub fn ferricml::ranking::PairwiseLinearRanker::compare(&self, &ferricml::data::MatrixView<'_>, &[ferricml::ranking::PairIndex]) -> core::result::Result<alloc::vec::Vec<ferricml::ranking::PairOutcome>, ferricml::ranking::PairwiseError>
 pub fn ferricml::ranking::PairwiseLinearRanker::compare_into(&self, &ferricml::data::MatrixView<'_>, &[ferricml::ranking::PairIndex], &mut [ferricml::ranking::PairOutcome]) -> core::result::Result<(), ferricml::ranking::PairwiseError>
+pub fn ferricml::ranking::PairwiseLinearRanker::compare_one(&self, &ferricml::data::MatrixView<'_>, ferricml::ranking::PairIndex) -> core::result::Result<ferricml::ranking::PairOutcome, ferricml::ranking::PairwiseError>
 pub fn ferricml::ranking::PairwiseLinearRanker::fit(&ferricml::data::MatrixView<'_>, &[ferricml::ranking::PairwiseObservation], ferricml::ranking::PairwiseLinearRankerParams) -> core::result::Result<Self, ferricml::ranking::PairwiseError>
 pub const fn ferricml::ranking::PairwiseLinearRanker::get_params(&self) -> &ferricml::ranking::PairwiseLinearRankerParams
 pub fn ferricml::ranking::PairwiseLinearRanker::n_features_in(&self) -> usize
 pub fn ferricml::ranking::PairwiseLinearRanker::n_iter(&self) -> usize
 pub fn ferricml::ranking::PairwiseLinearRanker::pair_margin(&self, &ferricml::data::MatrixView<'_>, ferricml::ranking::PairIndex) -> core::result::Result<f32, ferricml::ranking::PairwiseError>
+pub fn ferricml::ranking::PairwiseLinearRanker::pair_margins(&self, &ferricml::data::MatrixView<'_>, &[ferricml::ranking::PairIndex]) -> core::result::Result<alloc::vec::Vec<f32>, ferricml::ranking::PairwiseError>
 pub fn ferricml::ranking::PairwiseLinearRanker::pair_margins_into(&self, &ferricml::data::MatrixView<'_>, &[ferricml::ranking::PairIndex], &mut [f32]) -> core::result::Result<(), ferricml::ranking::PairwiseError>
 pub fn ferricml::ranking::PairwiseLinearRanker::score_items(&self, &ferricml::data::MatrixView<'_>) -> core::result::Result<alloc::vec::Vec<f32>, ferricml::ranking::PairwiseError>
 pub fn ferricml::ranking::PairwiseLinearRanker::score_items_into(&self, &ferricml::data::MatrixView<'_>, &mut [f32]) -> core::result::Result<(), ferricml::ranking::PairwiseError>
