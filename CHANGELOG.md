@@ -9,6 +9,25 @@ and releases use [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- `scripts/check_accessor_pairing.py`, run by `make gate`, which enforces that
+  an `X_into` method and its allocating `X` partner are actually a pair: the
+  caller-owned form takes exactly the allocating form's arguments plus its
+  output buffers, every inherent `_into` has an inherent allocating partner,
+  and a type forwarding one form inherently forwards the other too. The
+  contract was written down and unenforced, which is how a single-row method
+  came to hold a batch method's name on five classifiers and get copied into a
+  sixth. Its `--self-test` proves each rule against a synthetic violation,
+  proves that losing its input is reported rather than passed, and reconstructs
+  the four defects it was written for from the baseline rows they occupied.
+
+- `linear_model::LogisticRegression::predict_class_proba_into` is now reachable
+  as an inherent method, matching the allocating `predict_class_proba` forwarder
+  it already had and the pair every other probabilistic classifier ships.
+  Reaching the allocation-free form previously required importing
+  `api::ProbabilisticClassifier` while the allocating one did not, which
+  inverted the crate's stated preference on hot paths. Behaviour is unchanged:
+  the inherent method delegates to the same trait implementation.
+
 - `linear_model::Lasso` and `linear_model::ElasticNet` now persist, under their
   own artifact kinds. They were the last tunable regressors that could be fitted
   but not saved, which is backwards for an L1 model: a sparse coefficient vector
@@ -87,6 +106,36 @@ and releases use [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   set is still `ScoringError::UnsupportedClasses`. Existing binary calls
   compile unchanged unless they name the type parameter explicitly, which now
   takes the target type first and the score second.
+- **Breaking.** `predict_positive_proba` is now the allocating **batch**
+  method on every classifier that carries a positive class, and the
+  single-row form it used to name is `predict_positive_proba_one`. Callers
+  must rewrite `model.predict_positive_proba(row)` as
+  `model.predict_positive_proba_one(row)`; the argument type changes from
+  `&[f32]` to `&data::MatrixView` and the return from `f32` to `Vec<f32>`, so
+  a missed call site is a compile error rather than a silent reinterpretation.
+  Affects `ensemble::RandomForestClassifier`,
+  `ensemble::ExtraTreesClassifier`,
+  `ensemble::HistGradientBoostingClassifier`,
+  `tree::DecisionTreeClassifier` and `linear_model::LogisticRegression`.
+  The old pairing was the crate's only shape mismatch between an allocating
+  method and its `_into` partner: `predict_positive_proba` took one row while
+  `predict_positive_proba_into` took a matrix, which left the caller-owned
+  batch form with no allocating partner and put a single-row method under the
+  name the batch form owns. Renaming it also gives the batch form the
+  allocating partner it never had, on all five classifiers rather than the two
+  that happened to expose `_into`. Nothing about the fitted models changed and
+  no artifact byte moved.
+
+- **Added, and breaking.** `ranking::PairwiseLinearRanker::pair_margins`
+  returns raw margins for a slice of pairs, allocating the output;
+  `pair_margins_into` was the only caller-owned method in the crate with no
+  allocating partner at all. In the same family, `compare` is now the
+  allocating **batch** comparison over a slice of pairs and the single-pair
+  form is `compare_one`, so callers must rewrite
+  `ranker.compare(&items, pair)` as `ranker.compare_one(&items, pair)`. The
+  `compare` collision is the same defect as `predict_positive_proba` and was
+  missed by the API audit's original sweep, which compared only each method's
+  first argument — `&MatrixView` on both.
 
 - **Breaking.** `model_selection::cross_validate_classifier` and
   `model_selection::grid_search_classifier` are generic over the target

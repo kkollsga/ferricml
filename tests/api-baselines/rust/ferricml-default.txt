@@ -1132,8 +1132,9 @@ pub fn ferricml::ensemble::ExtraTreesClassifier::predict_class_proba_into(&self,
 pub fn ferricml::ensemble::ExtraTreesClassifier::predict_class_proba_one(&self, &[f32], u8) -> core::result::Result<f32, ferricml::api::ModelError>
 pub fn ferricml::ensemble::ExtraTreesClassifier::predict_into(&self, &ferricml::data::MatrixView<'_>, &mut [u8]) -> core::result::Result<(), ferricml::api::ModelError>
 pub fn ferricml::ensemble::ExtraTreesClassifier::predict_one(&self, &[f32]) -> core::result::Result<u8, ferricml::api::ModelError>
-pub fn ferricml::ensemble::ExtraTreesClassifier::predict_positive_proba(&self, &[f32]) -> core::result::Result<f32, ferricml::api::ModelError>
+pub fn ferricml::ensemble::ExtraTreesClassifier::predict_positive_proba(&self, &ferricml::data::MatrixView<'_>) -> core::result::Result<alloc::vec::Vec<f32>, ferricml::api::ModelError>
 pub fn ferricml::ensemble::ExtraTreesClassifier::predict_positive_proba_into(&self, &ferricml::data::MatrixView<'_>, &mut [f32]) -> core::result::Result<(), ferricml::api::ModelError>
+pub fn ferricml::ensemble::ExtraTreesClassifier::predict_positive_proba_one(&self, &[f32]) -> core::result::Result<f32, ferricml::api::ModelError>
 pub fn ferricml::ensemble::ExtraTreesClassifier::predict_proba(&self, &ferricml::data::MatrixView<'_>) -> core::result::Result<alloc::vec::Vec<f32>, ferricml::api::ModelError>
 pub fn ferricml::ensemble::ExtraTreesClassifier::predict_proba_into(&self, &ferricml::data::MatrixView<'_>, &mut [f32]) -> core::result::Result<(), ferricml::api::ModelError>
 pub fn ferricml::ensemble::ExtraTreesClassifier::predict_proba_one(&self, &[f32]) -> core::result::Result<alloc::vec::Vec<f32>, ferricml::api::ModelError>
@@ -1270,7 +1271,9 @@ pub fn ferricml::ensemble::HistGradientBoostingClassifier::predict_class_proba(&
 pub fn ferricml::ensemble::HistGradientBoostingClassifier::predict_class_proba_into(&self, &ferricml::data::MatrixView<'_>, u8, &mut [f32]) -> core::result::Result<(), ferricml::api::ModelError>
 pub fn ferricml::ensemble::HistGradientBoostingClassifier::predict_into(&self, &ferricml::data::MatrixView<'_>, &mut [u8]) -> core::result::Result<(), ferricml::api::ModelError>
 pub fn ferricml::ensemble::HistGradientBoostingClassifier::predict_one(&self, &[f32]) -> core::result::Result<u8, ferricml::api::ModelError>
-pub fn ferricml::ensemble::HistGradientBoostingClassifier::predict_positive_proba(&self, &[f32]) -> core::result::Result<f32, ferricml::api::ModelError>
+pub fn ferricml::ensemble::HistGradientBoostingClassifier::predict_positive_proba(&self, &ferricml::data::MatrixView<'_>) -> core::result::Result<alloc::vec::Vec<f32>, ferricml::api::ModelError>
+pub fn ferricml::ensemble::HistGradientBoostingClassifier::predict_positive_proba_into(&self, &ferricml::data::MatrixView<'_>, &mut [f32]) -> core::result::Result<(), ferricml::api::ModelError>
+pub fn ferricml::ensemble::HistGradientBoostingClassifier::predict_positive_proba_one(&self, &[f32]) -> core::result::Result<f32, ferricml::api::ModelError>
 pub fn ferricml::ensemble::HistGradientBoostingClassifier::predict_proba(&self, &ferricml::data::MatrixView<'_>) -> core::result::Result<alloc::vec::Vec<f32>, ferricml::api::ModelError>
 pub fn ferricml::ensemble::HistGradientBoostingClassifier::predict_proba_into(&self, &ferricml::data::MatrixView<'_>, &mut [f32]) -> core::result::Result<(), ferricml::api::ModelError>
 impl core::clone::Clone for ferricml::ensemble::HistGradientBoostingClassifier
@@ -1403,8 +1406,9 @@ pub fn ferricml::ensemble::RandomForestClassifier::predict_class_proba_into(&sel
 pub fn ferricml::ensemble::RandomForestClassifier::predict_class_proba_one(&self, &[f32], u8) -> core::result::Result<f32, ferricml::api::ModelError>
 pub fn ferricml::ensemble::RandomForestClassifier::predict_into(&self, &ferricml::data::MatrixView<'_>, &mut [u8]) -> core::result::Result<(), ferricml::api::ModelError>
 pub fn ferricml::ensemble::RandomForestClassifier::predict_one(&self, &[f32]) -> core::result::Result<u8, ferricml::api::ModelError>
-pub fn ferricml::ensemble::RandomForestClassifier::predict_positive_proba(&self, &[f32]) -> core::result::Result<f32, ferricml::api::ModelError>
+pub fn ferricml::ensemble::RandomForestClassifier::predict_positive_proba(&self, &ferricml::data::MatrixView<'_>) -> core::result::Result<alloc::vec::Vec<f32>, ferricml::api::ModelError>
 pub fn ferricml::ensemble::RandomForestClassifier::predict_positive_proba_into(&self, &ferricml::data::MatrixView<'_>, &mut [f32]) -> core::result::Result<(), ferricml::api::ModelError>
+pub fn ferricml::ensemble::RandomForestClassifier::predict_positive_proba_one(&self, &[f32]) -> core::result::Result<f32, ferricml::api::ModelError>
 pub fn ferricml::ensemble::RandomForestClassifier::predict_proba(&self, &ferricml::data::MatrixView<'_>) -> core::result::Result<alloc::vec::Vec<f32>, ferricml::api::ModelError>
 pub fn ferricml::ensemble::RandomForestClassifier::predict_proba_into(&self, &ferricml::data::MatrixView<'_>, &mut [f32]) -> core::result::Result<(), ferricml::api::ModelError>
 pub fn ferricml::ensemble::RandomForestClassifier::predict_proba_one(&self, &[f32]) -> core::result::Result<alloc::vec::Vec<f32>, ferricml::api::ModelError>
@@ -1777,9 +1781,12 @@ pub const fn ferricml::linear_model::LogisticRegression::n_features_in(&self) ->
 pub const fn ferricml::linear_model::LogisticRegression::n_iter(&self) -> usize
 pub fn ferricml::linear_model::LogisticRegression::predict(&self, &ferricml::data::MatrixView<'_>) -> core::result::Result<alloc::vec::Vec<u8>, ferricml::api::ModelError>
 pub fn ferricml::linear_model::LogisticRegression::predict_class_proba(&self, &ferricml::data::MatrixView<'_>, u8) -> core::result::Result<alloc::vec::Vec<f32>, ferricml::api::ModelError>
+pub fn ferricml::linear_model::LogisticRegression::predict_class_proba_into(&self, &ferricml::data::MatrixView<'_>, u8, &mut [f32]) -> core::result::Result<(), ferricml::api::ModelError>
 pub fn ferricml::linear_model::LogisticRegression::predict_into(&self, &ferricml::data::MatrixView<'_>, &mut [u8]) -> core::result::Result<(), ferricml::api::ModelError>
 pub fn ferricml::linear_model::LogisticRegression::predict_one(&self, &[f32]) -> core::result::Result<u8, ferricml::api::ModelError>
-pub fn ferricml::linear_model::LogisticRegression::predict_positive_proba(&self, &[f32]) -> core::result::Result<f32, ferricml::api::ModelError>
+pub fn ferricml::linear_model::LogisticRegression::predict_positive_proba(&self, &ferricml::data::MatrixView<'_>) -> core::result::Result<alloc::vec::Vec<f32>, ferricml::api::ModelError>
+pub fn ferricml::linear_model::LogisticRegression::predict_positive_proba_into(&self, &ferricml::data::MatrixView<'_>, &mut [f32]) -> core::result::Result<(), ferricml::api::ModelError>
+pub fn ferricml::linear_model::LogisticRegression::predict_positive_proba_one(&self, &[f32]) -> core::result::Result<f32, ferricml::api::ModelError>
 pub fn ferricml::linear_model::LogisticRegression::predict_proba(&self, &ferricml::data::MatrixView<'_>) -> core::result::Result<alloc::vec::Vec<f32>, ferricml::api::ModelError>
 pub fn ferricml::linear_model::LogisticRegression::predict_proba_into(&self, &ferricml::data::MatrixView<'_>, &mut [f32]) -> core::result::Result<(), ferricml::api::ModelError>
 impl core::clone::Clone for ferricml::linear_model::LogisticRegression
@@ -3195,13 +3202,15 @@ impl core::marker::StructuralPartialEq for ferricml::ranking::PairIndex
 pub struct ferricml::ranking::PairwiseLinearRanker
 impl ferricml::ranking::PairwiseLinearRanker
 pub fn ferricml::ranking::PairwiseLinearRanker::coefficients(&self) -> &[f32]
-pub fn ferricml::ranking::PairwiseLinearRanker::compare(&self, &ferricml::data::MatrixView<'_>, ferricml::ranking::PairIndex) -> core::result::Result<ferricml::ranking::PairOutcome, ferricml::ranking::PairwiseError>
+pub fn ferricml::ranking::PairwiseLinearRanker::compare(&self, &ferricml::data::MatrixView<'_>, &[ferricml::ranking::PairIndex]) -> core::result::Result<alloc::vec::Vec<ferricml::ranking::PairOutcome>, ferricml::ranking::PairwiseError>
 pub fn ferricml::ranking::PairwiseLinearRanker::compare_into(&self, &ferricml::data::MatrixView<'_>, &[ferricml::ranking::PairIndex], &mut [ferricml::ranking::PairOutcome]) -> core::result::Result<(), ferricml::ranking::PairwiseError>
+pub fn ferricml::ranking::PairwiseLinearRanker::compare_one(&self, &ferricml::data::MatrixView<'_>, ferricml::ranking::PairIndex) -> core::result::Result<ferricml::ranking::PairOutcome, ferricml::ranking::PairwiseError>
 pub fn ferricml::ranking::PairwiseLinearRanker::fit(&ferricml::data::MatrixView<'_>, &[ferricml::ranking::PairwiseObservation], ferricml::ranking::PairwiseLinearRankerParams) -> core::result::Result<Self, ferricml::ranking::PairwiseError>
 pub const fn ferricml::ranking::PairwiseLinearRanker::get_params(&self) -> &ferricml::ranking::PairwiseLinearRankerParams
 pub fn ferricml::ranking::PairwiseLinearRanker::n_features_in(&self) -> usize
 pub fn ferricml::ranking::PairwiseLinearRanker::n_iter(&self) -> usize
 pub fn ferricml::ranking::PairwiseLinearRanker::pair_margin(&self, &ferricml::data::MatrixView<'_>, ferricml::ranking::PairIndex) -> core::result::Result<f32, ferricml::ranking::PairwiseError>
+pub fn ferricml::ranking::PairwiseLinearRanker::pair_margins(&self, &ferricml::data::MatrixView<'_>, &[ferricml::ranking::PairIndex]) -> core::result::Result<alloc::vec::Vec<f32>, ferricml::ranking::PairwiseError>
 pub fn ferricml::ranking::PairwiseLinearRanker::pair_margins_into(&self, &ferricml::data::MatrixView<'_>, &[ferricml::ranking::PairIndex], &mut [f32]) -> core::result::Result<(), ferricml::ranking::PairwiseError>
 pub fn ferricml::ranking::PairwiseLinearRanker::score_items(&self, &ferricml::data::MatrixView<'_>) -> core::result::Result<alloc::vec::Vec<f32>, ferricml::ranking::PairwiseError>
 pub fn ferricml::ranking::PairwiseLinearRanker::score_items_into(&self, &ferricml::data::MatrixView<'_>, &mut [f32]) -> core::result::Result<(), ferricml::ranking::PairwiseError>
@@ -3305,8 +3314,9 @@ pub fn ferricml::tree::DecisionTreeClassifier::predict_class_proba_into(&self, &
 pub fn ferricml::tree::DecisionTreeClassifier::predict_class_proba_one(&self, &[f32], u8) -> core::result::Result<f32, ferricml::api::ModelError>
 pub fn ferricml::tree::DecisionTreeClassifier::predict_into(&self, &ferricml::data::MatrixView<'_>, &mut [u8]) -> core::result::Result<(), ferricml::api::ModelError>
 pub fn ferricml::tree::DecisionTreeClassifier::predict_one(&self, &[f32]) -> core::result::Result<u8, ferricml::api::ModelError>
-pub fn ferricml::tree::DecisionTreeClassifier::predict_positive_proba(&self, &[f32]) -> core::result::Result<f32, ferricml::api::ModelError>
+pub fn ferricml::tree::DecisionTreeClassifier::predict_positive_proba(&self, &ferricml::data::MatrixView<'_>) -> core::result::Result<alloc::vec::Vec<f32>, ferricml::api::ModelError>
 pub fn ferricml::tree::DecisionTreeClassifier::predict_positive_proba_into(&self, &ferricml::data::MatrixView<'_>, &mut [f32]) -> core::result::Result<(), ferricml::api::ModelError>
+pub fn ferricml::tree::DecisionTreeClassifier::predict_positive_proba_one(&self, &[f32]) -> core::result::Result<f32, ferricml::api::ModelError>
 pub fn ferricml::tree::DecisionTreeClassifier::predict_proba(&self, &ferricml::data::MatrixView<'_>) -> core::result::Result<alloc::vec::Vec<f32>, ferricml::api::ModelError>
 pub fn ferricml::tree::DecisionTreeClassifier::predict_proba_into(&self, &ferricml::data::MatrixView<'_>, &mut [f32]) -> core::result::Result<(), ferricml::api::ModelError>
 pub fn ferricml::tree::DecisionTreeClassifier::predict_proba_one(&self, &[f32]) -> core::result::Result<alloc::vec::Vec<f32>, ferricml::api::ModelError>

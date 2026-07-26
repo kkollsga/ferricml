@@ -547,6 +547,18 @@ fn logistic_paths_builders_traits_and_retained_params_are_stable() {
     assert_eq!(model.predict(&matrix.as_view()).unwrap().len(), 4);
     assert_eq!(model.predict_proba(&matrix.as_view()).unwrap().len(), 8);
 
+    // This file deliberately does not import `ProbabilisticClassifier`, so
+    // both of these resolve only through inherent forwarders. The allocating
+    // one existed and the caller-owned one did not, which made the
+    // allocation-free path the one that needed a trait import — the exact
+    // inversion of the crate's preference on hot paths.
+    let column = model.predict_class_proba(&matrix.as_view(), 1).unwrap();
+    let mut owned_column = [0.0; 4];
+    model
+        .predict_class_proba_into(&matrix.as_view(), 1, &mut owned_column)
+        .unwrap();
+    assert_eq!(column, owned_column);
+
     let weights = SampleWeights::new(vec![1.0, 2.0, 1.0, 2.0]).unwrap();
     assert_eq!(weights.len(), matrix.rows());
     assert_eq!(weights.total(), 6.0);
@@ -894,7 +906,7 @@ fn boosted_classifier_paths_builders_and_traits_are_stable() {
     );
     let row = matrix.row(0).unwrap();
     assert!(model.decision_function_one(row).unwrap().is_finite());
-    assert!((0.0..=1.0).contains(&model.predict_positive_proba(row).unwrap()));
+    assert!((0.0..=1.0).contains(&model.predict_positive_proba_one(row).unwrap()));
     assert!(model.predict_one(row).unwrap() <= 1);
     assert!(model.baseline().is_finite());
 

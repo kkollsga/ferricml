@@ -653,14 +653,45 @@ impl LogisticRegression {
     /// Predicts one positive-class probability.
     ///
     /// Defined only for a binary fit; see [`Self::decision_function_one`].
-    pub fn predict_positive_proba(&self, row: &[f32]) -> Result<f32, ModelError> {
+    pub fn predict_positive_proba_one(&self, row: &[f32]) -> Result<f32, ModelError> {
         Ok(sigmoid_f32(self.decision_function_one(row)?))
+    }
+
+    /// Predicts one positive-class probability per row, allocating the output.
+    ///
+    /// Defined only for a binary fit; a multiclass fit reports
+    /// [`ModelError::MulticlassOutput`].
+    pub fn predict_positive_proba(&self, data: &MatrixView<'_>) -> Result<Vec<f32>, ModelError> {
+        // Before the buffer, not inside `_into` after it, so an unusable
+        // request costs no allocation.
+        self.require_scalar_output()?;
+        validate_predict(data, data.rows(), self.n_features_in)?;
+        let mut output = vec![0.0; data.rows()];
+        self.predict_positive_proba_into(data, &mut output)?;
+        Ok(output)
+    }
+
+    /// Writes one positive-class probability per row into caller-owned storage.
+    ///
+    /// Defined only for a binary fit; a multiclass fit reports
+    /// [`ModelError::MulticlassOutput`].
+    pub fn predict_positive_proba_into(
+        &self,
+        data: &MatrixView<'_>,
+        output: &mut [f32],
+    ) -> Result<(), ModelError> {
+        self.require_scalar_output()?;
+        self.decision_function_into(data, output)?;
+        for slot in output {
+            *slot = sigmoid_f32(*slot);
+        }
+        Ok(())
     }
 
     /// Predicts one label.
     pub fn predict_one(&self, row: &[f32]) -> Result<u8, ModelError> {
         if self.is_binary() {
-            return Ok(u8::from(self.predict_positive_proba(row)? > 0.5));
+            return Ok(u8::from(self.predict_positive_proba_one(row)? > 0.5));
         }
         validate_scalar_row(row, self.n_features_in)?;
         let mut storage = [0.0_f32; MAX_CLASSES];
@@ -704,6 +735,16 @@ impl LogisticRegression {
         class: u8,
     ) -> Result<Vec<f32>, ModelError> {
         <Self as ProbabilisticClassifier>::predict_class_proba(self, data, class)
+    }
+
+    /// Predicts one requested class probability column without allocating.
+    pub fn predict_class_proba_into(
+        &self,
+        data: &MatrixView<'_>,
+        class: u8,
+        output: &mut [f32],
+    ) -> Result<(), ModelError> {
+        <Self as ProbabilisticClassifier>::predict_class_proba_into(self, data, class, output)
     }
 
     fn to_binary_artifact(
@@ -1634,8 +1675,8 @@ mod tests {
 
         assert_eq!(model.intercept().to_bits(), 0.0_f32.to_bits());
         for rows in data.as_slice().chunks_exact(4) {
-            let positive = model.predict_positive_proba(&rows[..2]).unwrap();
-            let mirrored = model.predict_positive_proba(&rows[2..]).unwrap();
+            let positive = model.predict_positive_proba_one(&rows[..2]).unwrap();
+            let mirrored = model.predict_positive_proba_one(&rows[2..]).unwrap();
             assert!((positive + mirrored - 1.0).abs() <= 1.0e-6);
         }
     }

@@ -78,7 +78,9 @@ fn nonlinear_forest_learns_repeated_xor() {
     let cfg = classifier_params(99).with_n_estimators(101);
     let forest = RandomForestClassifier::fit(&x.as_view(), &y, cfg).unwrap();
     for (row, &expected) in y.as_slice().iter().take(4).enumerate() {
-        let p = forest.predict_positive_proba(x.row(row).unwrap()).unwrap();
+        let p = forest
+            .predict_positive_proba_one(x.row(row).unwrap())
+            .unwrap();
         assert_eq!(p >= 0.5, expected == 1, "row {row}: {p}");
     }
 }
@@ -145,7 +147,7 @@ fn exact_classifier_split_and_leaf_probabilities_match_the_oracle() {
         .with_bootstrap(false)
         .with_min_samples_split(5);
     let leaf = RandomForestClassifier::fit(&x.as_view(), &y, leaf_cfg).unwrap();
-    assert_eq!(leaf.predict_positive_proba(&[100.0]).unwrap(), 0.5);
+    assert_eq!(leaf.predict_positive_proba_one(&[100.0]).unwrap(), 0.5);
 }
 
 #[test]
@@ -829,7 +831,7 @@ fn checks_prediction_dimensions_and_output_size() {
     let y = BinaryTargets::new(vec![0, 1]).unwrap();
     let forest = RandomForestClassifier::fit(&x.as_view(), &y, classifier_params(2)).unwrap();
     assert!(matches!(
-        forest.predict_positive_proba(&[0.0, 1.0]),
+        forest.predict_positive_proba_one(&[0.0, 1.0]),
         Err(ModelError::FeatureDimension { .. })
     ));
     let mut too_short = [0.0];
@@ -1476,7 +1478,9 @@ fn a_multiclass_fit_has_no_positive_class_and_validates_before_writing() {
         RandomForestClassifier::fit_multiclass(&x.as_view(), &y, multiclass_params(2)).unwrap();
     let expected = ModelError::MulticlassOutput { columns: 3 };
     assert_eq!(
-        model.predict_positive_proba(x.row(0).unwrap()).unwrap_err(),
+        model
+            .predict_positive_proba_one(x.row(0).unwrap())
+            .unwrap_err(),
         expected
     );
     let mut sentinel = vec![9.0_f32; x.rows()];

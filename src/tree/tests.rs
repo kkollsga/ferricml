@@ -641,7 +641,7 @@ fn a_multiclass_fit_has_no_positive_class_to_report() {
     )
     .unwrap();
     assert_eq!(
-        model.predict_positive_proba(&[0.0, 0.0]),
+        model.predict_positive_proba_one(&[0.0, 0.0]),
         Err(ModelError::MulticlassOutput { columns: 3 })
     );
     assert_eq!(

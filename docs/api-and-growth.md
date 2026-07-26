@@ -264,3 +264,60 @@ what that evidence established. A rule demanding pointers would have passed
 both while flagging hundreds of sound sentences, and a checker that cries wolf
 gets disabled. Those claims are caught by review, and the honest position is
 that they are written down as unchecked rather than presumed safe.
+
+## What the accessor-pairing checker does not check
+
+"Allocating convenience methods delegate to caller-owned `_into` primitives" is
+the first paragraph of this page, and until 2026-07-26 nothing enforced the
+shape half of it. The gap produced a defect that then spread:
+`predict_positive_proba` took one row while `predict_positive_proba_into` took
+a matrix, so the caller-owned batch method had no allocating partner at all and
+a single-row method held the name the batch form owns — and the pair was copied
+verbatim into a new estimator family a sprint later. `make gate` now runs
+`scripts/check_accessor_pairing.py`, which reads the frozen public-API
+baselines and enforces three things:
+
+- every inherent `X_into` has an inherent allocating `X` on the same type;
+- `X_into` takes exactly `X`'s arguments plus caller-owned output buffers;
+- a type that forwards `X` inherently forwards `X_into` inherently too,
+  wherever the caller-owned form exists at all.
+
+The second rule is deliberately the whole argument list. The audit's own sweep
+compared only each method's *first* argument and therefore recorded
+`PairwiseLinearRanker::compare` — `&MatrixView` first on both halves, one
+`PairIndex` against a slice of them second — as correctly paired when it was
+the same defect as `predict_positive_proba`. A rule that reads one argument
+finds three of the four instances.
+
+The input is the API baselines rather than `src/`, because
+`cargo-public-api` renders macro-generated estimator facades, trait impls and
+monomorphised compositions in one normalized spelling that a regex over Rust
+source would not see alike. The cost is real: a surface change reaches this
+checker only after `make api-refresh`, which the commit that moved the surface
+owes anyway.
+
+**The blind spots.** It does not require an `_into` form to exist: an estimator
+carrying only the allocating method is a gap, not an asymmetry, and this file
+has no opinion about gaps. It does not read trait *declarations* for a missing
+allocating partner, because `pipeline::TransformerStack::transform_into`
+correctly has none — the stack is an internal composition contract reached only
+through `StagedPipeline`, which does provide `transform`. It does not check
+return types, documentation, or whether the allocating form actually delegates
+to the caller-owned one rather than duplicating it; those are review and test
+obligations. And it says nothing about a *single-row* method's name: nothing
+mechanical distinguishes `predict_one` from a batch method that happens to take
+a slice, so `_one` naming is enforced only where a mismatched `_into` partner
+exposes it.
+
+Caller-owned methods whose allocating partner is genuinely absent are recorded
+in the checker's `EXPECTED_UNPAIRED` with a dated reason, and that list is
+closed in both directions: a gap that gets fixed and left recorded is reported
+as stale. Today it holds the six fitted-`Pipeline` prediction methods, which
+carry a transform workspace as well as an output buffer and so raise a question
+about pipeline shape rather than a missing forwarder.
+
+All four rules read the one input, so they cannot go vacuous independently.
+`--self-test` proves each rule fires against a synthetic violation, proves that
+losing the input is reported rather than passed — the baseline file missing,
+emptied of methods, or renamed out from under the parser — and reconstructs the
+four real defects from the baseline rows they occupied before they were fixed.

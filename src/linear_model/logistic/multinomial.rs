@@ -694,7 +694,7 @@ mod tests {
             expected
         );
         assert_eq!(
-            model.predict_positive_proba(&[0.2, 0.3]).unwrap_err(),
+            model.predict_positive_proba_one(&[0.2, 0.3]).unwrap_err(),
             expected
         );
     }
