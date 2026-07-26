@@ -149,7 +149,16 @@ not sensitive strategy.
 FerricML has one crate, one Cargo version, one changelog, and version-matching
 `vX.Y.Z` tags. Unless the user explicitly requests another level, every
 release increments only the patch component. Semver analysis remains required
-evidence but does not override that patch-default policy. The tag is the
+evidence but does not override that patch-default policy.
+
+The one exception is a **breaking** diff. `make semver-check` fails when the
+diff against the published crate carries changes Cargo would call breaking and
+the release step would not be a breaking one — below `1.0` the minor is the
+breaking component, so `0.1.2 → 0.1.3` cannot carry one. That failure stops the
+release for an explicit decision on the level; it is **never** resolved by
+editing a version to satisfy the gate. Recorded decision (2026-07-25): the next
+release is a minor bump to `0.2.0`, and `semver-check` is expected to fail
+until it is taken. The tag is the
 crates.io publication boundary. The `release` skill must goal-check the active
 plan, run contracts and package checks, obtain explicit approval before remote
 ref updates, wait for green `main`, and only then push the matching tag. Never
