@@ -82,10 +82,14 @@ impl ClassifierCore {
 
     /// Predicts one label per row, allocating the output vector.
     pub(crate) fn predict(&self, data: &MatrixView<'_>) -> Result<Vec<u8>, ModelError> {
+        // Hoisted above the match so all three branches agree: the batch is
+        // refused before any of them sizes an output buffer. Each branch's own
+        // `_into` primitive repeats the check for callers that reach it
+        // directly, and reports the same error from the same two numbers.
+        check_prediction_data(data, data.rows(), data.rows(), self.n_features_in)?;
         match &self.forest {
             Forest::Binary(_) => {
                 if self.classes.len() == 1 {
-                    check_prediction_data(data, data.rows(), data.rows(), self.n_features_in)?;
                     return Ok(vec![self.classes[0]; data.rows()]);
                 }
                 // The allocating API may use a temporary score buffer. Processing one

@@ -151,6 +151,23 @@ impl<C: ProbabilisticClassifier, K: Calibrator> CalibratedClassifier<C, K> {
         Ok(())
     }
 
+    /// Rejects a batch whose width differs from the wrapped model's.
+    ///
+    /// The wrapper's own entry points run this before allocating any scratch or
+    /// output storage. The wrapped model repeats the check when it is reached,
+    /// and reports the same error from the same two numbers, so this changes
+    /// when a mismatch is noticed rather than what is reported.
+    fn check_batch_width(&self, data: &MatrixView<'_>) -> Result<(), ModelError> {
+        let expected = self.inner.n_features_in();
+        if data.columns() != expected {
+            return Err(ModelError::FeatureDimension {
+                expected,
+                actual: data.columns(),
+            });
+        }
+        Ok(())
+    }
+
     /// Writes the calibrated positive-class probability of each row.
     fn positive_probabilities_into(
         &self,
@@ -209,6 +226,7 @@ impl<C: ProbabilisticClassifier> CalibratedClassifier<C, PlattCalibrator> {
 
     /// Returns one raw calibrated decision score per row.
     pub fn decision_function(&self, data: &MatrixView<'_>) -> Result<Vec<f32>, ModelError> {
+        self.check_batch_width(data)?;
         let mut output = vec![0.0; data.rows()];
         self.decision_function_into(data, &mut output)?;
         Ok(output)
@@ -305,6 +323,10 @@ impl<C: ProbabilisticClassifier, K: Calibrator> Classifier for CalibratedClassif
                 actual: output.len(),
             });
         }
+        // This is an `_into` method, so the scratch buffer below is the only
+        // allocation it makes at all. A batch it will refuse must not pay for
+        // it.
+        self.check_batch_width(data)?;
         let mut scores = vec![0.0; data.rows()];
         self.predict_into_with(data, &mut scores, output)
     }

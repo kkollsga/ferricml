@@ -391,6 +391,15 @@ impl PairwiseLinearRanker {
 
     /// Scores every item, allocating one raw score per row.
     pub fn score_items(&self, items: &MatrixView<'_>) -> Result<Vec<f32>, PairwiseError> {
+        // Before the buffer, not inside the fitted model's `_into` form after
+        // it, which repeats the check against the same fitted width.
+        if items.columns() != self.n_features_in() {
+            return Err(ModelError::FeatureDimension {
+                expected: self.n_features_in(),
+                actual: items.columns(),
+            }
+            .into());
+        }
         let mut output = vec![0.0; items.rows()];
         self.score_items_into(items, &mut output)?;
         Ok(output)
@@ -635,19 +644,9 @@ fn expand_observations(
     if observations.is_empty() {
         return Err(PairwiseError::EmptyPairs);
     }
-    let mut canonical = observations
-        .iter()
-        .copied()
-        .enumerate()
-        .map(|(index, observation)| (index, observation.canonical()))
-        .collect::<Vec<_>>();
-    canonical.sort_by_key(|(_, observation)| {
-        (
-            observation.pair,
-            observation.outcome,
-            observation.weight.to_bits(),
-        )
-    });
+    // Every check below is one pass over the caller's own slice and needs
+    // nothing the canonicalized copy provides, so it runs first: a batch that
+    // will be refused costs neither the copy nor the sort that follows it.
     let mut row_count = 0_usize;
     let mut total_weight = 0.0_f64;
     for (index, observation) in observations.iter().enumerate() {
@@ -664,6 +663,19 @@ fn expand_observations(
     if total_weight <= 0.0 {
         return Err(PairwiseError::ZeroTotalPairWeight);
     }
+    let mut canonical = observations
+        .iter()
+        .copied()
+        .enumerate()
+        .map(|(index, observation)| (index, observation.canonical()))
+        .collect::<Vec<_>>();
+    canonical.sort_by_key(|(_, observation)| {
+        (
+            observation.pair,
+            observation.outcome,
+            observation.weight.to_bits(),
+        )
+    });
     let value_count = row_count
         .checked_mul(items.columns())
         .ok_or(PairwiseError::PairMatrixOverflow)?;

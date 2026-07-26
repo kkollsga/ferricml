@@ -9,6 +9,10 @@ and releases use [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- `api::ModelError::InvalidTreeStructure`, for a fitted tree whose topology or
+  values the packed node format cannot represent at any size. It is separate
+  from `TreeTooLarge`, which is a size bound; see the note under Changed for
+  what now reports it.
 - `tree::DecisionTreeClassifier` and `tree::DecisionTreeRegressor`, standalone
   decision trees over the same grower a random forest uses. Both support
   weighted fitting and persist under new artifact kinds; the classifier fits
@@ -62,6 +66,49 @@ and releases use [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   illustrative one is always visible to a reader.
 
 ### Changed
+
+- Histogram-boosting fits report four distinct failures where they previously
+  reported two. `api::ModelError::NumericalOverflow` used to stand for both a
+  non-finite residual and a residual-length mismatch, and
+  `api::ModelError::TreeTooLarge` for both an oversized tree and a structurally
+  invalid one. A residual-length mismatch is now
+  `api::ModelError::OutputLength` — it is a shape bug, not an overflow — and a
+  structurally invalid tree is the new `api::ModelError::InvalidTreeStructure`.
+  A caller matching on `NumericalOverflow` or `TreeTooLarge` from a
+  `HistGradientBoosting*` fit may now see the other variant instead. The
+  errors do not carry the residual's index: no public FerricML error names a
+  row or an observation, and this is not the place to start.
+
+- The allocating defaults on `api::Classifier`, `api::ProbabilisticClassifier`,
+  `api::Regressor`, and `api::Transformer` — `predict`, `predict_proba`,
+  `predict_class_proba`, and `transform` — now check the batch width against
+  `Estimator::n_features_in` *before* sizing their output buffer, rather than
+  allocating it and discovering the mismatch inside the `_into` primitive they
+  delegate to. The error is unchanged in kind and in values; what changes is
+  that a rejected call now allocates nothing at all. An implementor whose
+  `_into` method accepted a width other than its declared `n_features_in`
+  would see the default reject that call.
+
+- `RandomForestClassifier::predict` and `ExtraTreesClassifier::predict` check
+  the batch width on all three of their fitted-shape branches before
+  allocating, rather than on the single-class branch only. The error a
+  wrong-width batch receives is the same on every branch and is unchanged;
+  what changes is that the binary and multiclass branches no longer allocate
+  their output first.
+
+- `ranking::PairwiseLinearRanker::fit` checks every pair index and the total
+  pair weight before it copies and sorts the observation batch, rather than
+  after. A batch that will be refused no longer pays for a full copy and an
+  `O(n log n)` sort first. The errors and the fitted model are unchanged.
+
+- Six further entry points found by sweeping for the same shape check the batch
+  width before allocating rather than after: `LogisticRegression`,
+  `HistGradientBoostingClassifier` and `CalibratedClassifier`'s
+  `decision_function`, `StagedPipeline::transform`,
+  `PairwiseLinearRanker::score_items`, and `CalibratedClassifier`'s
+  `Classifier::predict_into` — which is an `_into` method, so the scratch
+  buffer it no longer allocates for a refused batch was its only allocation.
+  Every error is unchanged in kind and in values.
 
 - **Breaking.** Producing probabilities is no longer required of every
   classifier. `predict_proba`, `predict_proba_into`, `predict_class_proba`, and

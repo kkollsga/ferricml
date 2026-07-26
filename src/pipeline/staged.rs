@@ -135,6 +135,15 @@ where
 
     /// Runs every stage into a newly allocated dense matrix.
     pub fn transform(&self, data: &MatrixView<'_>) -> Result<DenseMatrix, ModelError> {
+        // Before the workspace, not inside the first stage after it. The stack
+        // repeats the check for callers that own their own workspace.
+        let expected = self.stages.n_features_in();
+        if data.columns() != expected {
+            return Err(ModelError::FeatureDimension {
+                expected,
+                actual: data.columns(),
+            });
+        }
         let mut workspace = vec![0.0; self.workspace_len(data.rows())?];
         let transformed = self.stages.transform_into(data, &mut workspace)?;
         let (rows, columns) = (transformed.rows(), transformed.columns());
