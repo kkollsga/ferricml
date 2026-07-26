@@ -203,6 +203,18 @@ and releases use [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   `stratified_folds_balance_every_class_and_global_size`,
   `no_group_appears_on_both_sides_of_any_split` and
   `folds_are_as_even_as_whole_groups_allow` already assert.
+- `ExtraTreesClassifier` and the trees guide now record that an extra-trees
+  member is a **higher-variance estimator, so a narrow `MaxFeatures` needs more
+  members**. Measured on 2,000 training and 1,000 held-out rows over 10 columns
+  with a nonlinear binary target, five data seeds, accuracy as the five-seed
+  mean: at 50 members and `MaxFeatures::Sqrt`, ten values of `random_state`
+  give mean 0.7716, sd 0.0036, range 0.7650–0.7782, against 0.7787 for
+  `MaxFeatures::All` and 0.7790 for `RandomForestClassifier` at `Sqrt`. Holding
+  `random_state` at its default `0`, the `Sqrt` lane climbs 0.7650 → 0.7704 →
+  0.7764 → 0.7784 at 50, 100, 200 and 800 members. So the shortfall at 50
+  members is under-averaging plus one seed draw — the default `random_state = 0`
+  is the lowest of the ten measured — and not a biased split rule. Nothing in
+  the fitted model changed.
 
 ## [0.2.0] - 2026-07-26
 
