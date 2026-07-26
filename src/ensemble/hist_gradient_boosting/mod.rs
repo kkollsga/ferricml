@@ -175,6 +175,52 @@ impl HistGradientBoostingRegressorParams {
 }
 
 /// Serial squared-error histogram gradient-boosted regressor.
+///
+/// Where a forest averages many independent trees, boosting grows them in
+/// sequence: each iteration fits a tree to what the previous ones got wrong and
+/// adds a shrunk share of it. More iterations means a closer fit, which is why
+/// `learning_rate` and `max_iter` trade against each other.
+///
+/// Note the row count below. `min_samples_leaf` defaults to `20`, so a node
+/// cannot split unless both sides keep at least that many rows — on a dataset
+/// smaller than twice that, no split is ever admissible and the fit succeeds
+/// with the baseline alone. That is the intended meaning of the parameter, not
+/// a failure, but it is why a toy-sized boosting example predicts a constant.
+///
+/// ```
+/// use ferricml::data::{DenseMatrix, RegressionTargets};
+/// use ferricml::ensemble::{HistGradientBoostingRegressor, HistGradientBoostingRegressorParams};
+/// use ferricml::metrics::mean_squared_error;
+///
+/// // 64 rows, so the default `min_samples_leaf` of 20 admits a split.
+/// let values: Vec<f32> = (0..64).map(|index| index as f32).collect();
+/// let squares: Vec<f32> = values.iter().map(|value| value * value).collect();
+/// let data = DenseMatrix::new(values, 64, 1)?;
+/// let targets = RegressionTargets::new(squares)?;
+///
+/// let brief = HistGradientBoostingRegressor::fit(
+///     &data.as_view(),
+///     &targets,
+///     HistGradientBoostingRegressorParams::default().with_max_iter(2),
+/// )?;
+/// let longer = HistGradientBoostingRegressor::fit(
+///     &data.as_view(),
+///     &targets,
+///     HistGradientBoostingRegressorParams::default().with_max_iter(60),
+/// )?;
+///
+/// // More boosting iterations fit the training data more closely.
+/// let brief_error = mean_squared_error(
+///     targets.as_slice(),
+///     &brief.predict(&data.as_view())?,
+/// )?;
+/// let longer_error = mean_squared_error(
+///     targets.as_slice(),
+///     &longer.predict(&data.as_view())?,
+/// )?;
+/// assert!(longer_error < brief_error);
+/// # Ok::<(), Box<dyn std::error::Error>>(())
+/// ```
 #[derive(Clone, Debug, PartialEq)]
 pub struct HistGradientBoostingRegressor {
     n_features_in: usize,
@@ -724,6 +770,56 @@ mod tests {
         assert_eq!(model.baseline(), 2.0);
         assert_eq!(model.n_iter(), 1);
         assert_eq!(model.predict(&data.as_view()).unwrap(), targets.as_slice());
+    }
+
+    #[test]
+    fn a_dataset_too_small_for_the_leaf_bound_fits_the_baseline_alone() {
+        // `min_samples_leaf` defaults to 20, so a node can only split when both
+        // sides keep at least that many rows. Below twice that, no split is
+        // admissible: fitting succeeds and returns a model that is its baseline
+        // and nothing else, however many iterations were requested.
+        //
+        // This is the parameter working, not failing — but it is worth pinning,
+        // because the surprising part is that it is silent. There is no error
+        // and no warning distinguishing "boosting had nothing to add" from
+        // "boosting was never able to start", and someone trying the estimator
+        // on a small dataset sees a constant prediction with no explanation.
+        let data = DenseMatrix::new((0..8).map(|value| value as f32).collect(), 8, 1).unwrap();
+        let targets =
+            RegressionTargets::new(vec![0.0, 1.0, 4.0, 9.0, 16.0, 25.0, 36.0, 49.0]).unwrap();
+
+        let brief = HistGradientBoostingRegressor::fit(
+            &data.as_view(),
+            &targets,
+            HistGradientBoostingRegressorParams::default().with_max_iter(2),
+        )
+        .unwrap();
+        let longer = HistGradientBoostingRegressor::fit(
+            &data.as_view(),
+            &targets,
+            HistGradientBoostingRegressorParams::default().with_max_iter(200),
+        )
+        .unwrap();
+
+        let baseline = brief.baseline();
+        assert_eq!(brief.predict(&data.as_view()).unwrap(), vec![baseline; 8]);
+        // A hundred times the iteration budget buys exactly nothing, because
+        // every iteration produced a root-only tree.
+        assert_eq!(
+            longer.predict(&data.as_view()).unwrap(),
+            brief.predict(&data.as_view()).unwrap()
+        );
+
+        // Lowering the bound is what unblocks it, and is the fix a caller wants.
+        let split = HistGradientBoostingRegressor::fit(
+            &data.as_view(),
+            &targets,
+            HistGradientBoostingRegressorParams::default()
+                .with_max_iter(2)
+                .with_min_samples_leaf(1),
+        )
+        .unwrap();
+        assert_ne!(split.predict(&data.as_view()).unwrap(), vec![baseline; 8]);
     }
 
     #[test]

@@ -280,5 +280,6 @@ targets](data.md#sample-weights-are-the-only-weighting-concept).
 
 ## Next
 
+- [Trees and forests](trees-and-forests.md) for the non-linear estimators.
 - [Evaluation and model selection](../evaluation-and-model-selection.md) to
   choose `alpha` by cross-validated search rather than by eye.

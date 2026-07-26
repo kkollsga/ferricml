@@ -33,6 +33,47 @@ const METADATA_BYTES: usize = 9 * 4 + 8;
 /// The forest is deliberately not named as a rustdoc link here: `tree` sits
 /// below every estimator family that consumes it, and the layout ratchet reads
 /// a link to one as the dependency it forbids.
+///
+/// ```
+/// use ferricml::data::{DenseMatrix, RegressionTargets};
+/// use ferricml::tree::{DecisionTreeRegressor, DecisionTreeRegressorParams};
+///
+/// // A step: everything below 2.5 is worth 0, everything above is worth 10.
+/// let data = DenseMatrix::new(vec![0.0, 1.0, 2.0, 3.0, 4.0, 5.0], 6, 1)?;
+/// let targets = RegressionTargets::new(vec![0.0, 0.0, 0.0, 10.0, 10.0, 10.0])?;
+///
+/// let model = DecisionTreeRegressor::fit(
+///     &data.as_view(),
+///     &targets,
+///     DecisionTreeRegressorParams::default(),
+/// )?;
+///
+/// // A tree can represent a step exactly, which is what a linear fit cannot.
+/// assert_eq!(model.predict(&data.as_view())?, vec![0.0, 0.0, 0.0, 10.0, 10.0, 10.0]);
+/// # Ok::<(), Box<dyn std::error::Error>>(())
+/// ```
+///
+/// Depth bounds the fit. A depth-one tree is one split, so it can produce at
+/// most two distinct predictions however much structure the data has:
+///
+/// ```
+/// use ferricml::data::{DenseMatrix, RegressionTargets};
+/// use ferricml::tree::{DecisionTreeRegressor, DecisionTreeRegressorParams};
+///
+/// let data = DenseMatrix::new(vec![0.0, 1.0, 2.0, 3.0], 4, 1)?;
+/// let targets = RegressionTargets::new(vec![0.0, 1.0, 2.0, 3.0])?;
+///
+/// let stump = DecisionTreeRegressor::fit(
+///     &data.as_view(),
+///     &targets,
+///     DecisionTreeRegressorParams::default().with_max_depth(Some(1)),
+/// )?;
+///
+/// let mut distinct = stump.predict(&data.as_view())?;
+/// distinct.dedup();
+/// assert_eq!(distinct.len(), 2);
+/// # Ok::<(), Box<dyn std::error::Error>>(())
+/// ```
 #[derive(Clone, Debug, PartialEq)]
 pub struct DecisionTreeRegressor {
     n_features_in: usize,
