@@ -188,7 +188,7 @@ failures.
 
 `cross_validate_classifier` is the only classifier entry point, and the two
 choices a caller makes are carried rather than duplicated into more functions.
-The target vocabulary is a type parameter: any `ClassificationTargets` —
+The target vocabulary is a type parameter: any `data::ClassificationTargets` —
 `BinaryTargets` or `ClassTargets` — folds through the same loop, because label
 arity is a property of the metric and not of the loop, and `MulticlassLogLoss`
 and `MulticlassBrier` already read a whole probability matrix over any observed

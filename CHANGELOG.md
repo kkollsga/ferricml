@@ -70,7 +70,7 @@ and releases use [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - **Breaking.** `model_selection::cross_validate_classifier` and
   `model_selection::grid_search_classifier` are generic over the target
   vocabulary, through the new sealed
-  `model_selection::ClassificationTargets` trait, instead of taking
+  `data::ClassificationTargets` trait, instead of taking
   `data::BinaryTargets` alone. `data::ClassTargets` now folds through exactly
   the same entry point, so a natively multiclass estimator can be
   cross-validated and tuned with the `CrossValidationError` fold attribution,

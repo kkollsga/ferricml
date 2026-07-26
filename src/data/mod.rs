@@ -12,7 +12,7 @@ mod weights;
 
 pub use error::{DataError, SelectionError};
 pub use matrix::{DenseMatrix, MatrixView};
-pub use targets::{BinaryTargets, ClassTargets, RegressionTargets};
+pub use targets::{BinaryTargets, ClassTargets, ClassificationTargets, RegressionTargets};
 pub use weights::SampleWeights;
 
 #[cfg(test)]
