@@ -20,10 +20,11 @@
 //! count can only come from the rejected call itself.
 
 use ferricml::api::{Classifier, ProbabilisticClassifier, Regressor, Transformer};
-use ferricml::data::{BinaryTargets, DenseMatrix, RegressionTargets};
+use ferricml::data::{BinaryTargets, ClassTargets, DenseMatrix, RegressionTargets};
 use ferricml::dummy::{
     DummyClassifier, DummyClassifierParams, DummyRegressor, DummyRegressorParams,
 };
+use ferricml::ensemble::{MaxFeatures, RandomForestClassifier, RandomForestClassifierParams};
 use ferricml::preprocessing::{StandardScaler, StandardScalerParams};
 use std::alloc::{GlobalAlloc, Layout, System};
 use std::cell::Cell;
@@ -284,4 +285,92 @@ fn the_hoisted_width_check_reports_the_same_error_the_into_form_reports() {
         Transformer::transform(&standard_scaler(), &wrong.as_view()).err(),
         Some(expected)
     );
+}
+
+// ---------------------------------------------------------------------------
+// Audit finding E4 — the forest classifier's three prediction branches
+// ---------------------------------------------------------------------------
+//
+// `RandomForestClassifier::predict` (and `ExtraTreesClassifier::predict`, the
+// same macro-generated body) branches on the fitted forest shape. The
+// single-class branch validated before allocating; the binary and multiclass
+// branches allocated first. All three must now agree.
+
+fn forest_params() -> RandomForestClassifierParams {
+    RandomForestClassifierParams::default()
+        .with_n_estimators(4)
+        .with_max_features(MaxFeatures::All)
+        .with_random_state(7)
+}
+
+/// A binary fit, which is the only shape that reaches the two scalar branches.
+fn binary_fit(labels: Vec<u8>) -> RandomForestClassifier {
+    let targets = BinaryTargets::new(labels).unwrap();
+    RandomForestClassifier::fit(&fitted_width_data().as_view(), &targets, forest_params()).unwrap()
+}
+
+/// One observed label, so `classes().len() == 1` and the constant branch runs.
+fn single_class_forest() -> RandomForestClassifier {
+    let model = binary_fit(vec![0; 12]);
+    assert_eq!(model.classes().len(), 1);
+    model
+}
+
+/// Both labels observed, so the averaged-score branch runs.
+fn binary_forest() -> RandomForestClassifier {
+    let model = binary_fit((0..12).map(|row| u8::from(row >= 6)).collect());
+    assert_eq!(model.classes().len(), 2);
+    model
+}
+
+/// Three labels through the multiclass entry point, so the last branch runs.
+fn multiclass_forest() -> RandomForestClassifier {
+    let targets = ClassTargets::new((0..12).map(|row| (row % 3) as u8).collect()).unwrap();
+    let model = RandomForestClassifier::fit_multiclass(
+        &fitted_width_data().as_view(),
+        &targets,
+        forest_params(),
+    )
+    .unwrap();
+    assert_eq!(model.classes().len(), 3);
+    model
+}
+
+#[test]
+fn every_forest_predict_branch_validates_before_allocating() {
+    let fitted = fitted_width_data();
+    let wrong = wrong_width_data();
+    for (branch, model) in [
+        ("single-class", single_class_forest()),
+        ("binary", binary_forest()),
+        ("multiclass", multiclass_forest()),
+    ] {
+        model.predict(&fitted.as_view()).unwrap();
+        let calls = allocations(|| {
+            assert!(
+                model.predict(&wrong.as_view()).is_err(),
+                "{branch} branch accepted a wrong-width batch"
+            );
+        });
+        assert_eq!(
+            calls, 0,
+            "the {branch} branch allocated {calls} time(s) before reporting its error"
+        );
+    }
+}
+
+/// All three branches must also report the *same* error, which is the part of
+/// E4 that "they now agree" actually means.
+#[test]
+fn every_forest_predict_branch_reports_the_same_width_error() {
+    use ferricml::api::ModelError;
+
+    let wrong = wrong_width_data();
+    let expected = ModelError::FeatureDimension {
+        expected: 2,
+        actual: 3,
+    };
+    for model in [single_class_forest(), binary_forest(), multiclass_forest()] {
+        assert_eq!(model.predict(&wrong.as_view()), Err(expected.clone()));
+    }
 }

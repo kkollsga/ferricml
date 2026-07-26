@@ -73,6 +73,13 @@ and releases use [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   `_into` method accepted a width other than its declared `n_features_in`
   would see the default reject that call.
 
+- `RandomForestClassifier::predict` and `ExtraTreesClassifier::predict` check
+  the batch width on all three of their fitted-shape branches before
+  allocating, rather than on the single-class branch only. The error a
+  wrong-width batch receives is the same on every branch and is unchanged;
+  what changes is that the binary and multiclass branches no longer allocate
+  their output first.
+
 - **Breaking.** Producing probabilities is no longer required of every
   classifier. `predict_proba`, `predict_proba_into`, `predict_class_proba`, and
   `predict_class_proba_into` move off `api::Classifier` onto a new
