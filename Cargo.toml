@@ -37,6 +37,24 @@ exclude = [
     "/tests",
 ]
 
+# Pinned so `bench-history` compares code rather than codegen placement.
+# `[profile.bench]` inherits from this, so both measured profiles agree.
+#
+# Decided on a four-run sweep (16 and 1 codegen units, two cycles each, 111
+# lanes, 2026-07-26). Cycle-to-cycle reproducibility on identical code improves
+# from p50 2.50% / p90 13.08% to p50 0.66% / p90 4.16%; lanes reproducing within
+# 1% go from 32 to 68 of 111. That is the whole reason: at 16 units a tenth of
+# the suite cannot reproduce itself inside the 1.10 ratio limit it is judged
+# against, so the gate could not tell a measurement artifact from a regression.
+#
+# It buys comparability, not speed, and the cost is recorded rather than hidden:
+# the median lane is 0.9% faster but 37 of 111 are slower, worst being boosted
+# `predict_proba` at +16.3% and the calibration paths at +8.5-10.9%. Build time
+# was not measurably different across the sweep. Profiles apply only to the
+# crate being built, so a downstream consumer's build is unaffected.
+[profile.release]
+codegen-units = 1
+
 [features]
 default = []
 
