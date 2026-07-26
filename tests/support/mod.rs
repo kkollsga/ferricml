@@ -4,4 +4,5 @@
 //! different part of it.
 #![allow(dead_code)]
 
+pub mod api_profile;
 pub mod conformance;

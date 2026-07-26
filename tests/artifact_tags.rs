@@ -22,6 +22,10 @@
 //! such and asserted to differ — an entry that quietly became equal to its kind
 //! would mean the legacy table stopped being consulted.
 
+mod support;
+
+use support::api_profile::{self, MODEL_ARTIFACT, STAGE_ARTIFACT};
+
 use ferricml::api::{AnyClassifier, AnyRegressor, HasCapabilities};
 use ferricml::artifact::{ModelArtifact, StageArtifact};
 use ferricml::ensemble::{
@@ -38,6 +42,9 @@ use ferricml::tree::{DecisionTreeClassifier, DecisionTreeRegressor};
 
 /// One frozen row: the type, its envelope kind, and its composition tag.
 struct Row {
+    /// The type, spelled as `tests/api-baselines/rust/ferricml-default.txt`
+    /// spells it. The long form is what lets these rows be closed against the
+    /// frozen API profile rather than against someone's memory.
     name: &'static str,
     kind: u16,
     tag: u16,
@@ -70,86 +77,121 @@ fn model_rows() -> Vec<(Row, u16, u16, bool)> {
     // (row, expected kind, expected tag, tag predates the derivation)
     vec![
         (
-            model_row::<LogisticRegression>("LogisticRegression"),
+            model_row::<LogisticRegression>("ferricml::linear_model::LogisticRegression"),
             1,
             1,
             !LEGACY,
         ),
         (
-            model_row::<LinearRegression>("LinearRegression"),
+            model_row::<LinearRegression>("ferricml::linear_model::LinearRegression"),
             2,
             2,
             !LEGACY,
         ),
-        (model_row::<Ridge>("Ridge"), 3, 3, !LEGACY),
         (
-            model_row::<PairwiseLinearRanker>("PairwiseLinearRanker"),
+            model_row::<Ridge>("ferricml::linear_model::Ridge"),
+            3,
+            3,
+            !LEGACY,
+        ),
+        (
+            model_row::<PairwiseLinearRanker>("ferricml::ranking::PairwiseLinearRanker"),
             8,
             8,
             !LEGACY,
         ),
         (
-            model_row::<HistGradientBoostingRegressor>("HistGradientBoostingRegressor"),
+            model_row::<HistGradientBoostingRegressor>(
+                "ferricml::ensemble::HistGradientBoostingRegressor",
+            ),
             9,
             5,
             LEGACY,
         ),
         (
-            model_row::<RandomForestRegressor>("RandomForestRegressor"),
+            model_row::<RandomForestRegressor>("ferricml::ensemble::RandomForestRegressor"),
             10,
             4,
             LEGACY,
         ),
         (
-            model_row::<RandomForestClassifier>("RandomForestClassifier"),
+            model_row::<RandomForestClassifier>("ferricml::ensemble::RandomForestClassifier"),
             11,
             11,
             !LEGACY,
         ),
-        (model_row::<AnyRegressor>("AnyRegressor"), 12, 12, !LEGACY),
-        (model_row::<AnyClassifier>("AnyClassifier"), 13, 13, !LEGACY),
         (
-            model_row::<HistGradientBoostingClassifier>("HistGradientBoostingClassifier"),
+            model_row::<AnyRegressor>("ferricml::api::AnyRegressor"),
+            12,
+            12,
+            !LEGACY,
+        ),
+        (
+            model_row::<AnyClassifier>("ferricml::api::AnyClassifier"),
+            13,
+            13,
+            !LEGACY,
+        ),
+        (
+            model_row::<HistGradientBoostingClassifier>(
+                "ferricml::ensemble::HistGradientBoostingClassifier",
+            ),
             20,
             20,
             !LEGACY,
         ),
         (
-            model_row::<DecisionTreeRegressor>("DecisionTreeRegressor"),
+            model_row::<DecisionTreeRegressor>("ferricml::tree::DecisionTreeRegressor"),
             21,
             21,
             !LEGACY,
         ),
         (
-            model_row::<DecisionTreeClassifier>("DecisionTreeClassifier"),
+            model_row::<DecisionTreeClassifier>("ferricml::tree::DecisionTreeClassifier"),
             22,
             22,
             !LEGACY,
         ),
         (
-            model_row::<ExtraTreesRegressor>("ExtraTreesRegressor"),
+            model_row::<ExtraTreesRegressor>("ferricml::ensemble::ExtraTreesRegressor"),
             23,
             23,
             !LEGACY,
         ),
         (
-            model_row::<ExtraTreesClassifier>("ExtraTreesClassifier"),
+            model_row::<ExtraTreesClassifier>("ferricml::ensemble::ExtraTreesClassifier"),
             24,
             24,
             !LEGACY,
         ),
-        (model_row::<Lasso>("Lasso"), 69, 69, !LEGACY),
-        (model_row::<ElasticNet>("ElasticNet"), 70, 70, !LEGACY),
+        (
+            model_row::<Lasso>("ferricml::linear_model::Lasso"),
+            69,
+            69,
+            !LEGACY,
+        ),
+        (
+            model_row::<ElasticNet>("ferricml::linear_model::ElasticNet"),
+            70,
+            70,
+            !LEGACY,
+        ),
     ]
 }
 
 /// Every schema-spanning type that persists, with its frozen numbers.
 fn stage_rows() -> Vec<(Row, u16, u16, bool)> {
     vec![
-        (stage_row::<StandardScaler>("StandardScaler"), 4, 1, LEGACY),
+        (
+            stage_row::<StandardScaler>("ferricml::preprocessing::StandardScaler"),
+            4,
+            1,
+            LEGACY,
+        ),
         (
             stage_row::<Pipeline<StandardScaler, LogisticRegression>>(
-                "Pipeline<StandardScaler, LogisticRegression>",
+                "ferricml::pipeline::Pipeline<ferricml::preprocessing::StandardScaler, \
+                 ferricml::linear_model::LogisticRegression>",
             ),
             5,
             5,
@@ -157,22 +199,49 @@ fn stage_rows() -> Vec<(Row, u16, u16, bool)> {
         ),
         (
             stage_row::<Pipeline<StandardScaler, LinearRegression>>(
-                "Pipeline<StandardScaler, LinearRegression>",
+                "ferricml::pipeline::Pipeline<ferricml::preprocessing::StandardScaler, \
+                 ferricml::linear_model::LinearRegression>",
             ),
             6,
             6,
             !LEGACY,
         ),
         (
-            stage_row::<Pipeline<StandardScaler, Ridge>>("Pipeline<StandardScaler, Ridge>"),
+            stage_row::<Pipeline<StandardScaler, Ridge>>(
+                "ferricml::pipeline::Pipeline<ferricml::preprocessing::StandardScaler, \
+             ferricml::linear_model::Ridge>",
+            ),
             7,
             7,
             !LEGACY,
         ),
-        (stage_row::<MinMaxScaler>("MinMaxScaler"), 14, 2, LEGACY),
-        (stage_row::<MaxAbsScaler>("MaxAbsScaler"), 15, 3, LEGACY),
-        (stage_row::<StagedTwo>("StagedPipeline"), 16, 16, !LEGACY),
-        (stage_row::<RobustScaler>("RobustScaler"), 44, 4, LEGACY),
+        (
+            stage_row::<MinMaxScaler>("ferricml::preprocessing::MinMaxScaler"),
+            14,
+            2,
+            LEGACY,
+        ),
+        (
+            stage_row::<MaxAbsScaler>("ferricml::preprocessing::MaxAbsScaler"),
+            15,
+            3,
+            LEGACY,
+        ),
+        (
+            stage_row::<StagedTwo>(
+                "ferricml::pipeline::StagedPipeline<(ferricml::preprocessing::MinMaxScaler, \
+             ferricml::preprocessing::StandardScaler), ferricml::linear_model::Ridge>",
+            ),
+            16,
+            16,
+            !LEGACY,
+        ),
+        (
+            stage_row::<RobustScaler>("ferricml::preprocessing::RobustScaler"),
+            44,
+            4,
+            LEGACY,
+        ),
     ]
 }
 
@@ -262,6 +331,98 @@ fn the_reserved_kinds_are_claimed_by_nothing() {
             "kind {reserved} is reserved and was recycled"
         );
     }
+}
+
+// ---------------------------------------------------------------------------
+// The two tables, closed against the frozen API profile
+// ---------------------------------------------------------------------------
+
+/// Every `ModelArtifact` implementation has a frozen kind and tag, and no row
+/// outlives its impl.
+///
+/// The table above is hand-maintained. Until this test nothing closed it: a
+/// seventeenth persisting estimator that correctly declared
+/// `Capabilities::artifact` *and* implemented `ModelArtifact` would pass
+/// `tests/capability_snapshot.rs` while its two permanent on-disk numbers were
+/// frozen by nothing — free to move under it, silently reinterpreting every
+/// composed artifact that already names them. That is the seven-estimator
+/// defect's shape in a new place: a list someone has to remember to extend.
+#[test]
+fn every_model_artifact_impl_has_a_frozen_row_and_no_row_is_stale() {
+    assert_closed(MODEL_ARTIFACT, &row_names(model_rows()), "artifact kinds");
+}
+
+/// The same, for the schema-spanning half of the persistence surface.
+#[test]
+fn every_stage_artifact_impl_has_a_frozen_row_and_no_row_is_stale() {
+    assert_closed(STAGE_ARTIFACT, &row_names(stage_rows()), "stage kinds");
+}
+
+fn row_names(rows: Vec<(Row, u16, u16, bool)>) -> Vec<&'static str> {
+    rows.iter().map(|(row, ..)| row.name).collect()
+}
+
+/// Both directions, because an impl with no frozen numbers and a frozen number
+/// for a type that no longer persists are different defects.
+fn assert_closed(trait_path: &str, names: &[&str], namespace: &str) {
+    let closure = api_profile::close_against_persistence(&[trait_path], names);
+    assert!(
+        closure.unlisted.is_empty(),
+        "{namespace}: these types implement {trait_path} and no row here \
+         freezes their kind and composition tag: {:#?}",
+        closure.unlisted
+    );
+    assert!(
+        closure.stale.is_empty(),
+        "{namespace}: these rows match no {trait_path} implementation, so they \
+         freeze numbers nothing writes: {:#?}",
+        closure.stale
+    );
+}
+
+/// The closure must be able to fail, in both of its directions.
+///
+/// Driven through the same function the two tests above use, over a table
+/// doctored the two ways it can go wrong. Without this the closure would prove
+/// the tables are currently complete, not that incompleteness would be seen.
+#[test]
+fn the_kind_and_tag_closure_detects_a_missing_row_and_a_stale_one() {
+    let complete = row_names(model_rows());
+    assert!(
+        complete.contains(&"ferricml::linear_model::Ridge"),
+        "the row the missing-row half removes has to be there to remove"
+    );
+
+    let without_ridge: Vec<&str> = complete
+        .iter()
+        .copied()
+        .filter(|name| *name != "ferricml::linear_model::Ridge")
+        .collect();
+    let missing = api_profile::close_against_persistence(&[MODEL_ARTIFACT], &without_ridge);
+    assert_eq!(missing.unlisted, vec!["ferricml::linear_model::Ridge"]);
+    assert!(missing.stale.is_empty(), "removing a row is not staleness");
+
+    // `DummyRegressor` is the anchor for the other direction because its lack
+    // of persistence is a documented decision rather than a gap: a baseline is
+    // refitted, never restored. It can never own an artifact kind.
+    let mut with_a_ghost = complete.clone();
+    with_a_ghost.push("ferricml::dummy::DummyRegressor");
+    let stale = api_profile::close_against_persistence(&[MODEL_ARTIFACT], &with_a_ghost);
+    assert_eq!(stale.stale, vec!["ferricml::dummy::DummyRegressor"]);
+    assert!(stale.unlisted.is_empty(), "adding a row hides nothing");
+
+    // A stage row is not a model row: the two traits are closed separately, so
+    // the model table cannot be satisfied by a `StageArtifact` implementation.
+    let scaler = api_profile::close_against_persistence(
+        &[MODEL_ARTIFACT],
+        &["ferricml::preprocessing::StandardScaler"],
+    );
+    assert_eq!(
+        scaler.stale,
+        vec!["ferricml::preprocessing::StandardScaler"]
+    );
+
+    assert!(api_profile::close_against_persistence(&[MODEL_ARTIFACT], &complete).is_closed());
 }
 
 // ---------------------------------------------------------------------------
