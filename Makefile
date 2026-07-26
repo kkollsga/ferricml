@@ -91,7 +91,15 @@ reference-check:
 	cargo test --locked --test reference_semantics
 
 ## Build the crates.io archive and run a public-API consumer against its extract.
+##
+## The self-test runs first and needs no packaging: three of the script's
+## assertions are ordinary rules over a directory tree, and it builds synthetic
+## extracts that violate each one. Writing it found two assertions that could not
+## fail — a glob in `package.exclude`, and a docs/ scan that read nothing — plus
+## one that was unfalsifiable as written. The end-to-end half stays unproven by
+## construction, because it fails by not working.
 package-check:
+	bash scripts/check_packaged_crate.sh --self-test
 	bash scripts/check_packaged_crate.sh
 
 ## Gate the release level against the latest published crate: a diff
