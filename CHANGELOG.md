@@ -80,6 +80,11 @@ and releases use [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   what changes is that the binary and multiclass branches no longer allocate
   their output first.
 
+- `ranking::PairwiseLinearRanker::fit` checks every pair index and the total
+  pair weight before it copies and sorts the observation batch, rather than
+  after. A batch that will be refused no longer pays for a full copy and an
+  `O(n log n)` sort first. The errors and the fitted model are unchanged.
+
 - **Breaking.** Producing probabilities is no longer required of every
   classifier. `predict_proba`, `predict_proba_into`, `predict_class_proba`, and
   `predict_class_proba_into` move off `api::Classifier` onto a new

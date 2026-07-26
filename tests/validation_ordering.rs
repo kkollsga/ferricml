@@ -26,6 +26,10 @@ use ferricml::dummy::{
 };
 use ferricml::ensemble::{MaxFeatures, RandomForestClassifier, RandomForestClassifierParams};
 use ferricml::preprocessing::{StandardScaler, StandardScalerParams};
+use ferricml::ranking::{
+    PairIndex, PairOutcome, PairwiseError, PairwiseLinearRanker, PairwiseLinearRankerParams,
+    PairwiseObservation,
+};
 use std::alloc::{GlobalAlloc, Layout, System};
 use std::cell::Cell;
 
@@ -373,4 +377,119 @@ fn every_forest_predict_branch_reports_the_same_width_error() {
     for model in [single_class_forest(), binary_forest(), multiclass_forest()] {
         assert_eq!(model.predict(&wrong.as_view()), Err(expected.clone()));
     }
+}
+
+// ---------------------------------------------------------------------------
+// Audit finding E3 — the pairwise ranker copies and sorts before validating
+// ---------------------------------------------------------------------------
+//
+// `expand_observations` allocated a full canonicalized copy of the batch and
+// sorted it, and only then checked each pair index against the item count and
+// the total pair weight. A sort is training work by any reading. Because the
+// sort runs on the copy, an assertion that the copy never happens also
+// establishes that the sort never runs.
+
+/// Large enough that the sort allocates too, not only the copy.
+const PAIR_BATCH: usize = 64;
+
+fn ranker_items() -> DenseMatrix {
+    DenseMatrix::new((0..32).map(|value| value as f32).collect(), 32, 1).unwrap()
+}
+
+/// A batch every one of whose pairs is in bounds and carries positive weight.
+fn valid_observations() -> Vec<PairwiseObservation> {
+    (0..PAIR_BATCH)
+        .map(|index| {
+            PairwiseObservation::new(
+                PairIndex::new((index % 31) + 1, 0).unwrap(),
+                PairOutcome::LeftPreferred,
+                1.0,
+            )
+            .unwrap()
+        })
+        .collect()
+}
+
+#[test]
+fn the_pairwise_ranker_validates_pair_indices_before_copying_the_batch() {
+    let items = ranker_items();
+    let accepted = valid_observations();
+
+    // One index past the last item, in the middle of an otherwise valid batch,
+    // so nothing about its position makes it cheap to notice.
+    let mut rejected = valid_observations();
+    rejected[PAIR_BATCH / 2] = PairwiseObservation::new(
+        PairIndex::new(items.rows(), 0).unwrap(),
+        PairOutcome::Tie,
+        1.0,
+    )
+    .unwrap();
+
+    PairwiseLinearRanker::fit(
+        &items.as_view(),
+        &accepted,
+        PairwiseLinearRankerParams::default(),
+    )
+    .unwrap();
+
+    let calls = allocations(|| {
+        assert_eq!(
+            PairwiseLinearRanker::fit(
+                &items.as_view(),
+                &rejected,
+                PairwiseLinearRankerParams::default(),
+            )
+            .err(),
+            Some(PairwiseError::PairIndexOutOfBounds {
+                pair: PAIR_BATCH / 2,
+                item: 32,
+                items: 32,
+            })
+        );
+    });
+    assert_eq!(
+        calls, 0,
+        "an out-of-bounds pair index cost {calls} allocation(s) before being reported"
+    );
+}
+
+#[test]
+fn the_pairwise_ranker_validates_the_total_weight_before_copying_the_batch() {
+    let items = ranker_items();
+    let accepted = valid_observations();
+
+    // Every pair in bounds, so this reaches the weight check specifically.
+    let rejected = (0..PAIR_BATCH)
+        .map(|index| {
+            PairwiseObservation::new(
+                PairIndex::new((index % 31) + 1, 0).unwrap(),
+                PairOutcome::LeftPreferred,
+                0.0,
+            )
+            .unwrap()
+        })
+        .collect::<Vec<_>>();
+
+    PairwiseLinearRanker::fit(
+        &items.as_view(),
+        &accepted,
+        PairwiseLinearRankerParams::default(),
+    )
+    .unwrap();
+
+    let calls = allocations(|| {
+        assert_eq!(
+            PairwiseLinearRanker::fit(
+                &items.as_view(),
+                &rejected,
+                PairwiseLinearRankerParams::default(),
+            )
+            .err(),
+            Some(PairwiseError::ZeroTotalPairWeight)
+        );
+    });
+    assert_eq!(
+        calls, 0,
+        "a zero-weight batch cost {calls} allocation(s) before being reported"
+    );
 }
