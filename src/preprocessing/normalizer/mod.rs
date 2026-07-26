@@ -173,7 +173,10 @@ impl Transformer for Normalizer {
 
         // Row scaling is not the per-column map `transform_preflighted`
         // screens, so finiteness is proven the way that helper proves it in its
-        // fallback: every value first, then every write. Dividing a finite
+        // fallback: every value first, then every write. That makes this method
+        // itself one of the three checkers allowed to reach
+        // `MatrixView::from_validated_parts`, at the bottom of the loop below.
+        // Dividing a finite
         // value by a norm that is at least as large as its magnitude cannot
         // overflow, but the norm is a `f64` narrowing to `f32` on the way out,
         // so the check is real rather than ceremonial.

@@ -45,9 +45,6 @@ pub(super) fn validate_fit(
     if data.rows() == 0 || data.columns() == 0 {
         return Err(ModelError::EmptyData);
     }
-    if target_len == 0 {
-        return Err(ModelError::EmptyTargets);
-    }
     if target_len != data.rows() {
         return Err(ModelError::TargetLength {
             rows: data.rows(),
@@ -85,18 +82,10 @@ pub(super) fn validate_fit(
             available: data.columns(),
         });
     }
-    for row in 0..data.rows() {
-        for (column, value) in data
-            .row(row)
-            .expect("validated row index")
-            .iter()
-            .enumerate()
-        {
-            if !value.is_finite() {
-                return Err(ModelError::NonFiniteFeature { row, column });
-            }
-        }
-    }
+    // No finiteness scan of `data`. Every value in a `MatrixView` is finite by
+    // construction, and that is now true of the crate-internal constructor as
+    // well as the public one, so a rescan here could only ever re-derive the
+    // container's own invariant at O(rows × columns) on every fit.
     Ok(())
 }
 

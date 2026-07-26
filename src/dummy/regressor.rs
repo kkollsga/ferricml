@@ -58,9 +58,6 @@ impl DummyRegressor {
         if data.rows() == 0 || data.columns() == 0 {
             return Err(ModelError::EmptyData);
         }
-        if targets.is_empty() {
-            return Err(ModelError::EmptyTargets);
-        }
         if targets.len() != data.rows() {
             return Err(ModelError::TargetLength {
                 rows: data.rows(),

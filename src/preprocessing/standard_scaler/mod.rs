@@ -247,22 +247,17 @@ impl StandardScaler {
     ) -> Result<MatrixView<'output>, ModelError> {
         validate_inverse_request(self.n_features_in, data, output)?;
         match (self.params.with_mean, self.params.with_std) {
-            (false, false) => transform_preflighted(data, output, |value, _| value)?,
+            (false, false) => transform_preflighted(data, output, |value, _| value),
             (true, false) => transform_preflighted(data, output, |value, column| {
                 (f64::from(value) + self.means[column]) as f32
-            })?,
+            }),
             (false, true) => transform_preflighted(data, output, |value, column| {
                 (f64::from(value) * self.scales[column]) as f32
-            })?,
+            }),
             (true, true) => transform_preflighted(data, output, |value, column| {
                 (f64::from(value) * self.scales[column] + self.means[column]) as f32
-            })?,
+            }),
         }
-        Ok(MatrixView::from_validated_parts(
-            output,
-            data.rows(),
-            self.n_features_in,
-        ))
     }
 
     /// Undoes [`StandardScaler::transform`], allocating the output matrix.
@@ -414,22 +409,17 @@ impl Transformer for StandardScaler {
         validate_transform_request(self.n_features_in, data, output)?;
 
         match (self.params.with_mean, self.params.with_std) {
-            (false, false) => transform_preflighted(data, output, |value, _| value)?,
+            (false, false) => transform_preflighted(data, output, |value, _| value),
             (true, false) => transform_preflighted(data, output, |value, column| {
                 (f64::from(value) - self.means[column]) as f32
-            })?,
+            }),
             (false, true) => transform_preflighted(data, output, |value, column| {
                 (f64::from(value) / self.scales[column]) as f32
-            })?,
+            }),
             (true, true) => transform_preflighted(data, output, |value, column| {
                 ((f64::from(value) - self.means[column]) / self.scales[column]) as f32
-            })?,
+            }),
         }
-        Ok(MatrixView::from_validated_parts(
-            output,
-            data.rows(),
-            self.n_features_in,
-        ))
     }
 }
 

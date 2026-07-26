@@ -273,22 +273,17 @@ impl RobustScaler {
     ) -> Result<MatrixView<'output>, ModelError> {
         validate_inverse_request(self.n_features_in, data, output)?;
         match (self.params.with_centering, self.params.with_scaling) {
-            (false, false) => transform_preflighted(data, output, |value, _| value)?,
+            (false, false) => transform_preflighted(data, output, |value, _| value),
             (true, false) => transform_preflighted(data, output, |value, column| {
                 (f64::from(value) + self.centers[column]) as f32
-            })?,
+            }),
             (false, true) => transform_preflighted(data, output, |value, column| {
                 (f64::from(value) * self.scales[column]) as f32
-            })?,
+            }),
             (true, true) => transform_preflighted(data, output, |value, column| {
                 (f64::from(value) * self.scales[column] + self.centers[column]) as f32
-            })?,
+            }),
         }
-        Ok(MatrixView::from_validated_parts(
-            output,
-            data.rows(),
-            self.n_features_in,
-        ))
     }
 
     /// Undoes [`RobustScaler::transform`], allocating the output matrix.
@@ -440,22 +435,17 @@ impl Transformer for RobustScaler {
         // so the map stays monotone per column and screening each column's
         // extrema is sufficient to prove the whole batch finite.
         match (self.params.with_centering, self.params.with_scaling) {
-            (false, false) => transform_preflighted(data, output, |value, _| value)?,
+            (false, false) => transform_preflighted(data, output, |value, _| value),
             (true, false) => transform_preflighted(data, output, |value, column| {
                 (f64::from(value) - self.centers[column]) as f32
-            })?,
+            }),
             (false, true) => transform_preflighted(data, output, |value, column| {
                 (f64::from(value) / self.scales[column]) as f32
-            })?,
+            }),
             (true, true) => transform_preflighted(data, output, |value, column| {
                 ((f64::from(value) - self.centers[column]) / self.scales[column]) as f32
-            })?,
+            }),
         }
-        Ok(MatrixView::from_validated_parts(
-            output,
-            data.rows(),
-            self.n_features_in,
-        ))
     }
 }
 

@@ -138,6 +138,13 @@ pub trait Transformer: Estimator {
     ) -> Result<MatrixView<'output>, ModelError>;
 
     /// Transforms a batch, allocating one dense output matrix.
+    ///
+    /// The owned matrix is built from the [`MatrixView`] the implementation
+    /// returned, not from the buffer it was lent. This trait is public and
+    /// unsealed, so the buffer's contents are whatever an arbitrary
+    /// implementation put there, while the returned view carries the
+    /// container's own construction-time guarantee — which is the guarantee
+    /// every estimator downstream of this call relies on.
     fn transform(&self, data: &MatrixView<'_>) -> Result<DenseMatrix, ModelError> {
         check_batch_width(self.n_features_in(), data)?;
         let columns = self.n_features_out();
@@ -151,11 +158,7 @@ pub trait Transformer: Estimator {
         let mut output = vec![0.0; output_len];
         let transformed = self.transform_into(data, &mut output)?;
         validate_transformed_shape(data.rows(), columns, &transformed)?;
-        Ok(DenseMatrix::from_validated_parts(
-            output,
-            data.rows(),
-            columns,
-        ))
+        Ok(transformed.to_dense())
     }
 }
 

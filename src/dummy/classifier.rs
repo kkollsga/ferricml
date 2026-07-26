@@ -64,9 +64,6 @@ impl DummyClassifier {
         if data.rows() == 0 || data.columns() == 0 {
             return Err(ModelError::EmptyData);
         }
-        if targets.is_empty() {
-            return Err(ModelError::EmptyTargets);
-        }
         if targets.len() != data.rows() {
             return Err(ModelError::TargetLength {
                 rows: data.rows(),
@@ -74,11 +71,10 @@ impl DummyClassifier {
             });
         }
 
+        // `BinaryTargets` admits only `0` and `1`, so the label is the counter
+        // index and there is no third case to reject first.
         let mut counts = [0_usize; 2];
-        for (index, &value) in targets.as_slice().iter().enumerate() {
-            if value > 1 {
-                return Err(ModelError::InvalidBinaryTarget { index, value });
-            }
+        for &value in targets.as_slice() {
             counts[usize::from(value)] += 1;
         }
 

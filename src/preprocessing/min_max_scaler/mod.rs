@@ -234,12 +234,7 @@ impl MinMaxScaler {
         validate_inverse_request(self.n_features_in, data, output)?;
         transform_preflighted(data, output, |value, column| {
             ((f64::from(value) - self.offsets[column]) / self.scales[column]) as f32
-        })?;
-        Ok(MatrixView::from_validated_parts(
-            output,
-            data.rows(),
-            self.n_features_in,
-        ))
+        })
     }
 
     /// Undoes [`MinMaxScaler::transform`], allocating the output matrix.
@@ -422,17 +417,12 @@ impl Transformer for MinMaxScaler {
             transform_preflighted(data, output, |value, column| {
                 ((f64::from(value) * self.scales[column] + self.offsets[column]) as f32)
                     .clamp(low, high)
-            })?;
+            })
         } else {
             transform_preflighted(data, output, |value, column| {
                 (f64::from(value) * self.scales[column] + self.offsets[column]) as f32
-            })?;
+            })
         }
-        Ok(MatrixView::from_validated_parts(
-            output,
-            data.rows(),
-            self.n_features_in,
-        ))
     }
 }
 
