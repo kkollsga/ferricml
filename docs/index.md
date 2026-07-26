@@ -75,6 +75,18 @@ stops producing the result it claims — fails FerricML's ordinary `make gate`
 alongside everything else. A sample that has silently rotted is worse than no
 sample, so none of them can.
 
+## Start here
+
+| Page | What it covers |
+| --- | --- |
+| [Install and quickstart](guide/quickstart.md) | Add the dependency, fit a model, predict, score |
+| [Data and targets](guide/data.md) | The validated containers every estimator takes |
+| [Linear models](guide/linear-models.md) | Least squares, ridge, lasso, elastic net, logistic |
+| [Trees and forests](guide/trees-and-forests.md) | Decision trees, forests, extra-trees, boosting |
+| [Preprocessing and pipelines](guide/preprocessing-and-pipelines.md) | Scalers, and composing them with a model |
+| [Calibration and inspection](guide/calibration-and-inspection.md) | Baselines, calibrated probabilities, feature importance |
+| [Saving and loading models](guide/persistence.md) | Versioned, checksummed, schema-bound artifacts |
+
 ## The contracts
 
 These are the deep documents. They are reference material rather than an

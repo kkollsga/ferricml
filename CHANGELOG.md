@@ -38,6 +38,28 @@ and releases use [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   classifier fits binary or natively multiclass targets. An ensemble of one
   member is bit-identical to the corresponding standalone tree at the same
   seed, which is asserted rather than assumed.
+- A narrative documentation site, built with MkDocs from the markdown already
+  under `docs/` and configured for Read the Docs. Seven new guide pages — a
+  quickstart, data and targets, linear models, trees and forests, preprocessing
+  and pipelines, calibration and inspection, and saving and loading models —
+  sit in front of the existing contract documents rather than replacing them.
+  The site is the narrative guide and deliberately reproduces no API listings:
+  the symbol-level reference is rustdoc on docs.rs, which regenerates from the
+  code and cannot drift from it. Site machinery lives outside `docs/` and is
+  excluded from the published crate, so the archive gains only markdown.
+- Rustdoc usage examples on every public estimator that lacked one, covering
+  the data containers, all five linear models, all eight tree-based estimators,
+  all seven transformers, both pipelines, both dummies, the calibrators, the
+  pairwise ranker, permutation importance and the runtime dispatch layer. These
+  are doctests, so each is a compiled and executing test of the exact call a
+  caller reaches for; the suite goes from 13 to 97.
+- Every Rust sample in the narrative documentation is also a doctest. The pages
+  under `docs/` are compiled into the test suite under `cfg(doctest)`, so a
+  sample that stops compiling — or stops producing the value it claims — fails
+  the ordinary gate. `tests/doc_examples.rs` fails if a page is left out of
+  that mechanism, and rejects a sample marked `ignore` or `no_run` that carries
+  no written reason, so the difference between a verified sample and an
+  illustrative one is always visible to a reader.
 
 ### Changed
 

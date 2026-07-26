@@ -12,6 +12,22 @@ FerricML is MIT licensed. The crate is prepared for crates.io publication;
 releases are built from version-matching Git tags after the repository's full
 validation gate passes.
 
+## Documentation
+
+FerricML has two documentation surfaces, and they do different jobs.
+
+- **The narrative guide** is built from [`docs/`](docs/index.md) with MkDocs and
+  is configured for Read the Docs. Start at [`docs/guide/quickstart.md`](docs/guide/quickstart.md),
+  then the guided tour, then the contract documents. Build it locally with
+  `make docs-build`, which runs the same `--strict` build the hosted one does.
+- **The API reference** is rustdoc, published per release at
+  [docs.rs/ferricml](https://docs.rs/ferricml). The guide links to it and never
+  reproduces a signature list, so there is no second copy of the API to rot.
+
+Every Rust sample in the guide is a doctest: the markdown under `docs/` is
+compiled into the test suite, so a sample that stops compiling or stops
+producing the value it claims fails `make gate`.
+
 ## Current foundation
 
 The core crate provides validated dense data and sample weights, weighted

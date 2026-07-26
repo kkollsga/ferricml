@@ -121,6 +121,16 @@ disagree — as the last line asserts.
 
 - [Data and targets](data.md) — the validated containers every estimator takes,
   and why validation happens where it does.
+- [Linear models](linear-models.md) — ordinary least squares, ridge, the
+  penalized fits, and logistic regression.
+- [Trees and forests](trees-and-forests.md) — one tree, many trees, and boosted
+  trees.
+- [Preprocessing and pipelines](preprocessing-and-pipelines.md) — scalers, and
+  composing them with a model into one fitted object.
+- [Calibration and inspection](calibration-and-inspection.md) — baselines,
+  trustworthy probabilities, and which features a model actually uses.
+- [Saving and loading models](persistence.md) — versioned, checksummed,
+  schema-bound binary artifacts.
 - [Evaluation and model selection](../evaluation-and-model-selection.md) —
   metrics, splitters, cross-validation and typed parameter search.
 
