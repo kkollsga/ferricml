@@ -22,7 +22,12 @@
 //!   [`ALLOC_BASE_BYTES`] + [`ALLOC_INPUT_FACTOR`] × input length; and
 //! * anything accepted re-encodes to exactly the bytes it was decoded from, so
 //!   an artifact cannot be malleable — two distinct byte strings decoding to
-//!   one model would mean the reader accepts a non-canonical encoding.
+//!   one model would mean the reader accepts a non-canonical encoding; and
+//! * anything accepted is then *run*. The crate's only `unsafe` is two
+//!   `get_unchecked` reads on the prediction path, licensed by a validator that
+//!   runs at decode, so the safety argument is a composition that only a
+//!   harness which both decodes and predicts can execute. This one did not
+//!   until it counted its rows of hostile inference.
 //!
 //! Oracles only fire on inputs that reach them, so the sweep also measures
 //! itself. It measures the mutator directly — every strategy has to change the
@@ -38,9 +43,9 @@
 //! No fuzzing dependency is involved: the generator is the crate's own
 //! SplitMix64 stream, restated here because `src/numeric/rng.rs` is private.
 
-use ferricml::api::{AnyClassifier, AnyRegressor};
+use ferricml::api::{AnyClassifier, AnyRegressor, Classifier, Estimator, Regressor, Transformer};
 use ferricml::artifact::{ArtifactError, ModelArtifact, StageArtifact};
-use ferricml::data::{BinaryTargets, ClassTargets, DenseMatrix, RegressionTargets};
+use ferricml::data::{BinaryTargets, ClassTargets, DenseMatrix, MatrixView, RegressionTargets};
 use ferricml::ensemble::{
     ExtraTreesClassifier, ExtraTreesClassifierParams, ExtraTreesRegressor,
     ExtraTreesRegressorParams, HistGradientBoostingClassifier,
@@ -52,7 +57,7 @@ use ferricml::linear_model::{
     ElasticNet, ElasticNetParams, Lasso, LassoParams, LinearRegression, LinearRegressionParams,
     LogisticRegression, LogisticRegressionParams, Ridge, RidgeParams,
 };
-use ferricml::pipeline::{Pipeline, StagedPipeline};
+use ferricml::pipeline::{Pipeline, StagedPipeline, TransformerStack};
 use ferricml::preprocessing::{
     MaxAbsScaler, MaxAbsScalerParams, MinMaxScaler, MinMaxScalerParams, RobustScaler,
     RobustScalerParams, StandardScaler, StandardScalerParams,
@@ -374,15 +379,116 @@ fn accepted<T>(
     }
 }
 
+// ---------------------------------------------------------------------------
+// Running inference on what a decoder accepts
+// ---------------------------------------------------------------------------
+//
+// Every oracle above stops at the decoder, and until this section so did the
+// whole file: it decoded hostile bytes and re-encoded them, and contained no
+// call to `predict` at all. That left the crate's only `unsafe` — the two
+// `get_unchecked` reads in `src/tree/packed.rs` — outside everything measured
+// here, because their safety argument is a *composition*: `validate_build_
+// topology` runs at decode, so anything a decoder accepted is safe to traverse.
+// A harness that never traverses never composes the argument. An independent
+// reviewer had to build the missing half by hand, which is a property held by
+// somebody's afternoon rather than by the suite.
+//
+// So every acceptance is now also run. This is the half that was missing:
+// `get_unchecked` already carries a debug-mode precondition check, so a debug
+// build aborts on an out-of-range index whether or not anything asserts beside
+// it — but only if something executes the read. The named `debug_assert!`s the
+// two sites now carry say which invariant broke and with what values; they are
+// diagnosis, and this file is detection.
+
+/// What running one decoded model produced.
+enum Inference {
+    /// The decoder rejected the bytes, so there was no model to run.
+    NotDecoded,
+    /// A model was decoded, and this many rows went through its inference path.
+    Ran(usize),
+}
+
+/// Feature values a decoded model is exercised on.
+///
+/// Finite by necessity: `MatrixView::new` refuses anything else. That refusal
+/// is part of the safety chain rather than a hole in this batch — a row the
+/// public boundary rejects never reaches traversal at all — so what matters
+/// here is spread instead, wide enough that both children of a branch are taken
+/// by some row whatever finite threshold an `f32` artifact managed to carry.
+const PROBE_VALUES: [f32; 8] = [f32::MIN, -1.0e30, -1.0, -0.0, 0.0, 1.0, 1.0e30, f32::MAX];
+
+/// Rows in one probe batch: the number of distinct probe values, so every
+/// column takes each of them exactly once across the batch.
+const PROBE_ROWS: usize = PROBE_VALUES.len();
+
+/// Ceiling on one probe batch, in `f32` values.
+///
+/// A hostile artifact can declare a fitted width far past anything fitting
+/// would produce, bounded only by the envelope's 32 MiB. The batch narrows to
+/// fewer rows rather than being skipped, because a model exercised on one row
+/// still traverses, and a model that is not exercised is the gap this section
+/// exists to close.
+const PROBE_CELLS: usize = 1 << 16;
+
+/// The batch a model of the given fitted width is exercised on.
+///
+/// `None` only for a zero width, which no matrix can describe.
+fn probe_batch(width: usize) -> Option<DenseMatrix> {
+    if width == 0 {
+        return None;
+    }
+    let rows = (PROBE_CELLS / width).clamp(1, PROBE_ROWS);
+    let mut values = Vec::with_capacity(rows * width);
+    for row in 0..rows {
+        for column in 0..width {
+            values.push(PROBE_VALUES[(row + column * 3) % PROBE_VALUES.len()]);
+        }
+    }
+    DenseMatrix::new(values, rows, width).ok()
+}
+
+/// Decodes, then runs the model on the inference path it exposes.
+///
+/// The result of inference is discarded on purpose. The oracle is not the
+/// number a hostile model predicts — there is no correct answer for bytes an
+/// attacker wrote — it is that traversing the model reads nothing it does not
+/// own, which the `debug_assert!`s at the unchecked sites and the harness's
+/// abort-on-panic behaviour report for themselves.
+fn exercised<M: Estimator>(
+    decoded: Result<M, ArtifactError>,
+    run: impl FnOnce(&M, &MatrixView<'_>),
+) -> Inference {
+    let Ok(model) = decoded else {
+        return Inference::NotDecoded;
+    };
+    // A zero-width model cannot be handed a row at all. It still decoded, so it
+    // is reported as a run of no rows rather than as a rejection.
+    let Some(batch) = probe_batch(model.n_features_in()) else {
+        return Inference::Ran(0);
+    };
+    run(&model, &batch.as_view());
+    Inference::Ran(batch.rows())
+}
+
 /// One decoder under fuzz: the short name the corpus fixtures refer to, the
 /// implementing type as `tests/api-baselines/rust/ferricml-default.txt` spells
-/// it, and the decode-and-re-encode entry point.
+/// it, the decode-and-re-encode entry point, and the decode-and-predict one.
 ///
-/// The middle field is not decoration. It is what closes this table against the
+/// The second field is not decoration. It is what closes this table against the
 /// frozen API profile in
 /// [`every_persistence_impl_receives_hostile_bytes_and_no_entry_is_stale`], so
 /// a persistable estimator cannot be added without one line here.
-type Decoder = (&'static str, &'static str, fn(&[u8]) -> Outcome);
+///
+/// The fourth field is separate from the third rather than folded into it
+/// because the third runs inside the peak-allocation meter. Inference allocates
+/// — an output vector at minimum — and charging that to the decode would turn
+/// the allocation oracle into a measurement of this test's probe batch.
+type Decoder = (
+    &'static str,
+    &'static str,
+    fn(&[u8]) -> Outcome,
+    fn(&[u8]) -> Inference,
+);
 
 type StagedTwo = StagedPipeline<(MinMaxScaler, StandardScaler), Ridge>;
 type StagedThree = StagedPipeline<(MinMaxScaler, StandardScaler, MaxAbsScaler), Ridge>;
@@ -395,6 +501,34 @@ type StagedThree = StagedPipeline<(MinMaxScaler, StandardScaler, MaxAbsScaler), 
 type StagedForest = StagedPipeline<(MinMaxScaler, StandardScaler), RandomForestRegressor>;
 type StagedBoosting = StagedPipeline<(MinMaxScaler, StandardScaler), HistGradientBoostingRegressor>;
 
+/// A staged composition exposes `transform` and `estimator()` but no `predict`
+/// of its own, so the caller composes the two — exactly the two lines a
+/// documented consumer writes.
+fn staged_predict_rows<S, E>(model: &StagedPipeline<S, E>, batch: &MatrixView<'_>)
+where
+    S: TransformerStack,
+    E: Regressor,
+{
+    if let Ok(transformed) = model.transform(batch) {
+        let _ = model.estimator().predict(&transformed.as_view());
+    }
+}
+
+/// The inference entry point of a regressor, run and discarded.
+fn predict_rows<M: Regressor>(model: &M, batch: &MatrixView<'_>) {
+    let _ = model.predict(batch);
+}
+
+/// The same, for a classifier.
+fn classify_rows<M: Classifier>(model: &M, batch: &MatrixView<'_>) {
+    let _ = model.predict(batch);
+}
+
+/// The same, for a transformer, whose inference path is `transform`.
+fn transform_rows<M: Transformer>(model: &M, batch: &MatrixView<'_>) {
+    let _ = model.transform(batch);
+}
+
 fn decoders() -> Vec<Decoder> {
     let table: Vec<Decoder> = vec![
         (
@@ -406,6 +540,12 @@ fn decoders() -> Vec<Decoder> {
                     |m| m.to_artifact(INPUT_SCHEMA),
                 )
             },
+            |bytes| {
+                exercised(
+                    LogisticRegression::from_artifact(bytes, INPUT_SCHEMA),
+                    classify_rows,
+                )
+            },
         ),
         (
             "linear",
@@ -415,17 +555,33 @@ fn decoders() -> Vec<Decoder> {
                     m.to_artifact(INPUT_SCHEMA)
                 })
             },
+            |bytes| {
+                exercised(
+                    LinearRegression::from_artifact(bytes, INPUT_SCHEMA),
+                    predict_rows,
+                )
+            },
         ),
-        ("ridge", "ferricml::linear_model::Ridge", |bytes| {
-            accepted(Ridge::from_artifact(bytes, INPUT_SCHEMA), |m| {
-                m.to_artifact(INPUT_SCHEMA)
-            })
-        }),
-        ("lasso", "ferricml::linear_model::Lasso", |bytes| {
-            accepted(Lasso::from_artifact(bytes, INPUT_SCHEMA), |m| {
-                m.to_artifact(INPUT_SCHEMA)
-            })
-        }),
+        (
+            "ridge",
+            "ferricml::linear_model::Ridge",
+            |bytes| {
+                accepted(Ridge::from_artifact(bytes, INPUT_SCHEMA), |m| {
+                    m.to_artifact(INPUT_SCHEMA)
+                })
+            },
+            |bytes| exercised(Ridge::from_artifact(bytes, INPUT_SCHEMA), predict_rows),
+        ),
+        (
+            "lasso",
+            "ferricml::linear_model::Lasso",
+            |bytes| {
+                accepted(Lasso::from_artifact(bytes, INPUT_SCHEMA), |m| {
+                    m.to_artifact(INPUT_SCHEMA)
+                })
+            },
+            |bytes| exercised(Lasso::from_artifact(bytes, INPUT_SCHEMA), predict_rows),
+        ),
         (
             "elastic-net",
             "ferricml::linear_model::ElasticNet",
@@ -434,6 +590,7 @@ fn decoders() -> Vec<Decoder> {
                     m.to_artifact(INPUT_SCHEMA)
                 })
             },
+            |bytes| exercised(ElasticNet::from_artifact(bytes, INPUT_SCHEMA), predict_rows),
         ),
         (
             "standard-scaler",
@@ -442,6 +599,12 @@ fn decoders() -> Vec<Decoder> {
                 accepted(
                     StandardScaler::from_artifact(bytes, INPUT_SCHEMA, TRANSFORMED_SCHEMA),
                     |m| m.to_artifact(INPUT_SCHEMA, TRANSFORMED_SCHEMA),
+                )
+            },
+            |bytes| {
+                exercised(
+                    StandardScaler::from_artifact(bytes, INPUT_SCHEMA, TRANSFORMED_SCHEMA),
+                    transform_rows,
                 )
             },
         ),
@@ -454,6 +617,12 @@ fn decoders() -> Vec<Decoder> {
                     |m| m.to_artifact(INPUT_SCHEMA, TRANSFORMED_SCHEMA),
                 )
             },
+            |bytes| {
+                exercised(
+                    MinMaxScaler::from_artifact(bytes, INPUT_SCHEMA, TRANSFORMED_SCHEMA),
+                    transform_rows,
+                )
+            },
         ),
         (
             "max-abs-scaler",
@@ -464,6 +633,12 @@ fn decoders() -> Vec<Decoder> {
                     |m| m.to_artifact(INPUT_SCHEMA, TRANSFORMED_SCHEMA),
                 )
             },
+            |bytes| {
+                exercised(
+                    MaxAbsScaler::from_artifact(bytes, INPUT_SCHEMA, TRANSFORMED_SCHEMA),
+                    transform_rows,
+                )
+            },
         ),
         (
             "robust-scaler",
@@ -472,6 +647,12 @@ fn decoders() -> Vec<Decoder> {
                 accepted(
                     RobustScaler::from_artifact(bytes, INPUT_SCHEMA, TRANSFORMED_SCHEMA),
                     |m| m.to_artifact(INPUT_SCHEMA, TRANSFORMED_SCHEMA),
+                )
+            },
+            |bytes| {
+                exercised(
+                    RobustScaler::from_artifact(bytes, INPUT_SCHEMA, TRANSFORMED_SCHEMA),
+                    transform_rows,
                 )
             },
         ),
@@ -488,6 +669,23 @@ fn decoders() -> Vec<Decoder> {
                     |m| m.to_artifact(INPUT_SCHEMA, TRANSFORMED_SCHEMA),
                 )
             },
+            |bytes| {
+                exercised(
+                    Pipeline::<StandardScaler, LogisticRegression>::from_artifact(
+                        bytes,
+                        INPUT_SCHEMA,
+                        TRANSFORMED_SCHEMA,
+                    ),
+                    |m, batch| {
+                        let Ok(len) = m.workspace_len(batch.rows()) else {
+                            return;
+                        };
+                        let mut workspace = vec![0.0; len];
+                        let mut labels = vec![0_u8; batch.rows()];
+                        let _ = m.predict_into(batch, &mut workspace, &mut labels);
+                    },
+                )
+            },
         ),
         (
             "pipeline-linear",
@@ -500,6 +698,23 @@ fn decoders() -> Vec<Decoder> {
                         TRANSFORMED_SCHEMA,
                     ),
                     |m| m.to_artifact(INPUT_SCHEMA, TRANSFORMED_SCHEMA),
+                )
+            },
+            |bytes| {
+                exercised(
+                    Pipeline::<StandardScaler, LinearRegression>::from_artifact(
+                        bytes,
+                        INPUT_SCHEMA,
+                        TRANSFORMED_SCHEMA,
+                    ),
+                    |m, batch| {
+                        let Ok(len) = m.workspace_len(batch.rows()) else {
+                            return;
+                        };
+                        let mut workspace = vec![0.0; len];
+                        let mut output = vec![0.0; batch.rows()];
+                        let _ = m.predict_into(batch, &mut workspace, &mut output);
+                    },
                 )
             },
         ),
@@ -516,6 +731,23 @@ fn decoders() -> Vec<Decoder> {
                     |m| m.to_artifact(INPUT_SCHEMA, TRANSFORMED_SCHEMA),
                 )
             },
+            |bytes| {
+                exercised(
+                    Pipeline::<StandardScaler, Ridge>::from_artifact(
+                        bytes,
+                        INPUT_SCHEMA,
+                        TRANSFORMED_SCHEMA,
+                    ),
+                    |m, batch| {
+                        let Ok(len) = m.workspace_len(batch.rows()) else {
+                            return;
+                        };
+                        let mut workspace = vec![0.0; len];
+                        let mut output = vec![0.0; batch.rows()];
+                        let _ = m.predict_into(batch, &mut workspace, &mut output);
+                    },
+                )
+            },
         ),
         (
             "pairwise-ranker",
@@ -524,6 +756,17 @@ fn decoders() -> Vec<Decoder> {
                 accepted(
                     PairwiseLinearRanker::from_artifact(bytes, INPUT_SCHEMA),
                     |m| m.to_artifact(INPUT_SCHEMA),
+                )
+            },
+            // A ranker's inference path is `score_items` rather than `predict`,
+            // so it is spelled out here instead of reusing one of the three
+            // shared runners.
+            |bytes| {
+                exercised(
+                    PairwiseLinearRanker::from_artifact(bytes, INPUT_SCHEMA),
+                    |m, batch| {
+                        let _ = m.score_items(batch);
+                    },
                 )
             },
         ),
@@ -536,6 +779,12 @@ fn decoders() -> Vec<Decoder> {
                     |m| m.to_artifact(INPUT_SCHEMA),
                 )
             },
+            |bytes| {
+                exercised(
+                    HistGradientBoostingRegressor::from_artifact(bytes, INPUT_SCHEMA),
+                    predict_rows,
+                )
+            },
         ),
         (
             "hist-gradient-boosting-classifier",
@@ -544,6 +793,12 @@ fn decoders() -> Vec<Decoder> {
                 accepted(
                     HistGradientBoostingClassifier::from_artifact(bytes, INPUT_SCHEMA),
                     |m| m.to_artifact(INPUT_SCHEMA),
+                )
+            },
+            |bytes| {
+                exercised(
+                    HistGradientBoostingClassifier::from_artifact(bytes, INPUT_SCHEMA),
+                    classify_rows,
                 )
             },
         ),
@@ -556,6 +811,12 @@ fn decoders() -> Vec<Decoder> {
                     |m| m.to_artifact(INPUT_SCHEMA),
                 )
             },
+            |bytes| {
+                exercised(
+                    RandomForestRegressor::from_artifact(bytes, INPUT_SCHEMA),
+                    predict_rows,
+                )
+            },
         ),
         (
             "random-forest-classifier",
@@ -564,6 +825,12 @@ fn decoders() -> Vec<Decoder> {
                 accepted(
                     RandomForestClassifier::from_artifact(bytes, INPUT_SCHEMA),
                     |m| m.to_artifact(INPUT_SCHEMA),
+                )
+            },
+            |bytes| {
+                exercised(
+                    RandomForestClassifier::from_artifact(bytes, INPUT_SCHEMA),
+                    classify_rows,
                 )
             },
         ),
@@ -576,6 +843,12 @@ fn decoders() -> Vec<Decoder> {
                     |m| m.to_artifact(INPUT_SCHEMA),
                 )
             },
+            |bytes| {
+                exercised(
+                    ExtraTreesRegressor::from_artifact(bytes, INPUT_SCHEMA),
+                    predict_rows,
+                )
+            },
         ),
         (
             "extra-trees-classifier",
@@ -584,6 +857,12 @@ fn decoders() -> Vec<Decoder> {
                 accepted(
                     ExtraTreesClassifier::from_artifact(bytes, INPUT_SCHEMA),
                     |m| m.to_artifact(INPUT_SCHEMA),
+                )
+            },
+            |bytes| {
+                exercised(
+                    ExtraTreesClassifier::from_artifact(bytes, INPUT_SCHEMA),
+                    classify_rows,
                 )
             },
         ),
@@ -596,6 +875,12 @@ fn decoders() -> Vec<Decoder> {
                     |m| m.to_artifact(INPUT_SCHEMA),
                 )
             },
+            |bytes| {
+                exercised(
+                    DecisionTreeRegressor::from_artifact(bytes, INPUT_SCHEMA),
+                    predict_rows,
+                )
+            },
         ),
         (
             "decision-tree-classifier",
@@ -606,17 +891,43 @@ fn decoders() -> Vec<Decoder> {
                     |m| m.to_artifact(INPUT_SCHEMA),
                 )
             },
+            |bytes| {
+                exercised(
+                    DecisionTreeClassifier::from_artifact(bytes, INPUT_SCHEMA),
+                    classify_rows,
+                )
+            },
         ),
-        ("any-regressor", "ferricml::api::AnyRegressor", |bytes| {
-            accepted(AnyRegressor::from_artifact(bytes, INPUT_SCHEMA), |m| {
-                m.to_artifact(INPUT_SCHEMA)
-            })
-        }),
-        ("any-classifier", "ferricml::api::AnyClassifier", |bytes| {
-            accepted(AnyClassifier::from_artifact(bytes, INPUT_SCHEMA), |m| {
-                m.to_artifact(INPUT_SCHEMA)
-            })
-        }),
+        (
+            "any-regressor",
+            "ferricml::api::AnyRegressor",
+            |bytes| {
+                accepted(AnyRegressor::from_artifact(bytes, INPUT_SCHEMA), |m| {
+                    m.to_artifact(INPUT_SCHEMA)
+                })
+            },
+            |bytes| {
+                exercised(
+                    AnyRegressor::from_artifact(bytes, INPUT_SCHEMA),
+                    predict_rows,
+                )
+            },
+        ),
+        (
+            "any-classifier",
+            "ferricml::api::AnyClassifier",
+            |bytes| {
+                accepted(AnyClassifier::from_artifact(bytes, INPUT_SCHEMA), |m| {
+                    m.to_artifact(INPUT_SCHEMA)
+                })
+            },
+            |bytes| {
+                exercised(
+                    AnyClassifier::from_artifact(bytes, INPUT_SCHEMA),
+                    classify_rows,
+                )
+            },
+        ),
         (
             "staged-two",
             "ferricml::pipeline::StagedPipeline<(ferricml::preprocessing::MinMaxScaler, ferricml::preprocessing::StandardScaler), ferricml::linear_model::Ridge>",
@@ -624,6 +935,12 @@ fn decoders() -> Vec<Decoder> {
                 accepted(
                     StagedTwo::from_artifact(bytes, INPUT_SCHEMA, TRANSFORMED_SCHEMA),
                     |m| m.to_artifact(INPUT_SCHEMA, TRANSFORMED_SCHEMA),
+                )
+            },
+            |bytes| {
+                exercised(
+                    StagedTwo::from_artifact(bytes, INPUT_SCHEMA, TRANSFORMED_SCHEMA),
+                    staged_predict_rows,
                 )
             },
         ),
@@ -636,6 +953,12 @@ fn decoders() -> Vec<Decoder> {
                     |m| m.to_artifact(INPUT_SCHEMA, TRANSFORMED_SCHEMA),
                 )
             },
+            |bytes| {
+                exercised(
+                    StagedThree::from_artifact(bytes, INPUT_SCHEMA, TRANSFORMED_SCHEMA),
+                    staged_predict_rows,
+                )
+            },
         ),
         (
             "staged-forest",
@@ -646,6 +969,12 @@ fn decoders() -> Vec<Decoder> {
                     |m| m.to_artifact(INPUT_SCHEMA, TRANSFORMED_SCHEMA),
                 )
             },
+            |bytes| {
+                exercised(
+                    StagedForest::from_artifact(bytes, INPUT_SCHEMA, TRANSFORMED_SCHEMA),
+                    staged_predict_rows,
+                )
+            },
         ),
         (
             "staged-boosting",
@@ -654,6 +983,12 @@ fn decoders() -> Vec<Decoder> {
                 accepted(
                     StagedBoosting::from_artifact(bytes, INPUT_SCHEMA, TRANSFORMED_SCHEMA),
                     |m| m.to_artifact(INPUT_SCHEMA, TRANSFORMED_SCHEMA),
+                )
+            },
+            |bytes| {
+                exercised(
+                    StagedBoosting::from_artifact(bytes, INPUT_SCHEMA, TRANSFORMED_SCHEMA),
+                    staged_predict_rows,
                 )
             },
         ),
@@ -699,7 +1034,7 @@ fn every_persistence_impl_receives_hostile_bytes_and_no_entry_is_stale() {
 
 /// The implementing type of every decoder in the table.
 fn decoder_targets() -> Vec<&'static str> {
-    decoders().iter().map(|(_, target, _)| *target).collect()
+    decoders().iter().map(|(_, target, ..)| *target).collect()
 }
 
 /// The closure must be able to fail, in both of its directions.
@@ -1839,7 +2174,7 @@ fn the_envelope_model_agrees_with_the_real_decoder() {
             .find(|(seed_name, _)| *seed_name == name)
             .unwrap_or_else(|| panic!("no {name} seed"))
             .1;
-        let (_, _, decode) = *table
+        let (_, _, decode, _) = *table
             .iter()
             .find(|(decoder_name, ..)| *decoder_name == name)
             .unwrap_or_else(|| panic!("no {name} decoder"));
@@ -2002,14 +2337,22 @@ fn the_envelope_model_agrees_with_the_real_decoder() {
 /// One decode, as the floors see it.
 struct Probe {
     accepted: bool,
+    /// Rows the accepted model then pushed through its inference path.
+    exercised_rows: usize,
     /// The envelope handed these bytes to the payload parser underneath it.
     reached_payload: bool,
 }
 
-/// Runs one decoder over one candidate under both always-on oracles, and
-/// reports only whether it was accepted.
-fn decode_under_oracles(label: &str, decoder: &Decoder, bytes: &[u8]) -> bool {
-    let (name, _, decode) = *decoder;
+/// Runs one decoder over one candidate under every always-on oracle, and
+/// reports how much inference the result was then put through.
+///
+/// `None` is a rejection. `Some(rows)` is an acceptance that was decoded a
+/// second time and run: the re-decode is what keeps inference out of the
+/// allocation meter, and its agreeing with the first decode is checked here
+/// rather than assumed, because a decoder that accepted bytes once and rejected
+/// them the second time would leave nothing to run and would do it silently.
+fn decode_under_oracles(label: &str, decoder: &Decoder, bytes: &[u8]) -> Option<usize> {
+    let (name, _, decode, exercise) = *decoder;
     let (outcome, peak) = measure_peak(|| decode(bytes));
     let budget = ALLOC_BASE_BYTES + ALLOC_INPUT_FACTOR * bytes.len();
     let length = bytes.len();
@@ -2018,7 +2361,7 @@ fn decode_under_oracles(label: &str, decoder: &Decoder, bytes: &[u8]) -> bool {
         "{label}/{name}: decoding {length} bytes allocated {peak} bytes, budget {budget}"
     );
     match outcome {
-        Outcome::Rejected(_) => false,
+        Outcome::Rejected(_) => None,
         Outcome::Accepted(reencoded) => {
             // A version-1 logistic artifact is deliberately re-encoded as
             // version 2, so only current-format acceptances owe canonicity.
@@ -2033,7 +2376,13 @@ fn decode_under_oracles(label: &str, decoder: &Decoder, bytes: &[u8]) -> bool {
                     ),
                 }
             }
-            true
+            match exercise(bytes) {
+                Inference::NotDecoded => panic!(
+                    "{label}/{name}: accepted {length} bytes once and rejected the same \
+                     bytes on the next decode, so nothing can be run on what it accepts"
+                ),
+                Inference::Ran(rows) => Some(rows),
+            }
         }
     }
 }
@@ -2045,8 +2394,10 @@ fn probe(
     identity: &EnvelopeIdentity,
     candidate: &Candidate<'_>,
 ) -> Probe {
+    let exercised = decode_under_oracles(label, decoder, candidate.bytes);
     Probe {
-        accepted: decode_under_oracles(label, decoder, candidate.bytes),
+        accepted: exercised.is_some(),
+        exercised_rows: exercised.unwrap_or(0),
         reached_payload: candidate.hands_over_payload_to(identity),
     }
 }
@@ -2078,6 +2429,21 @@ struct Reach {
     /// Changed bytes a payload parser accepted as a complete, valid, different
     /// model, which is what puts the malleability oracle to work.
     payload_accepted: usize,
+    /// Rows those hostile models then pushed through their inference paths.
+    ///
+    /// Counted on the *hostile* subset rather than on every acceptance for the
+    /// same reason `accepted` is never floored: a dead mutator raises total
+    /// acceptance, so a floor there rewards failure. `payload_accepted` moves
+    /// the right way, and this rides on it.
+    hostile_inference_rows: usize,
+    /// ... and the part of that which traversed a scalar packed tree.
+    ///
+    /// This is the number that makes the crate's `unsafe` a tested thing rather
+    /// than an argued one. The total above is not enough on its own: it is
+    /// satisfied by hostile scalers and linear models, neither of which
+    /// traverses anything, so a run in which no tree survived mutation would
+    /// look identical.
+    hostile_unchecked_rows: usize,
     /// Every acceptance, of anything, by anything.
     ///
     /// Reported and never floored. This is the number that rises as the mutator
@@ -2099,6 +2465,8 @@ impl Reach {
             decoder_reach: vec![0; decoders],
             payload_rejected: 0,
             payload_accepted: 0,
+            hostile_inference_rows: 0,
+            hostile_unchecked_rows: 0,
             accepted: 0,
         }
     }
@@ -2140,6 +2508,43 @@ const MIN_PAYLOAD_REJECTIONS: usize = 100;
 /// Mutated byte strings that became a complete, valid, different model, which
 /// is what puts the malleability oracle to work. Measured 37.
 const MIN_PAYLOAD_ACCEPTANCES: usize = 5;
+/// Rows those hostile models must push through their own inference paths.
+///
+/// Before this floor existed the whole file contained no call to `predict` at
+/// all. Measured 296 — eight rows for each of the 37 hostile acceptances — and
+/// floored well below that, because the job is to catch inference stopping
+/// rather than to pin a count a fixed seed happens to produce.
+const MIN_HOSTILE_INFERENCE_ROWS: usize = 40;
+/// The decoders whose accepted models traverse a scalar packed tree.
+///
+/// Named rather than inferred, because nothing observable from outside
+/// distinguishes them: indexing a node buffer and a feature row without bounds
+/// checks is a private choice made by the *regression* tree and the regression
+/// forests built over it, while the class tree beside it indexes checked on
+/// purpose. Every name here owns that traversal unconditionally, which is why
+/// `any-regressor` is absent — it can hold a forest or a ridge, so its
+/// acceptances would let this floor be satisfied without a tree being walked.
+///
+/// The list is closed against the decoder table in [`floor_violations`], so it
+/// cannot rot into naming nothing — which is the failure that would make the
+/// floor below pass by measuring the empty set.
+const UNCHECKED_TRAVERSAL_DECODERS: [&str; 4] = [
+    "decision-tree",
+    "random-forest",
+    "extra-trees",
+    "staged-forest",
+];
+/// Rows of that traversal a hostile model must actually reach.
+///
+/// The crate's only `unsafe` sits behind a validator that runs at decode, so
+/// "a decoded model is safe to traverse" is a claim only traversing a decoded
+/// model can test. An independent reviewer established it by hand over 400,000
+/// resealed mutations and found no violation; this is the number that keeps the
+/// suite saying so. Measured 40: five hostile models — three extra-trees, one
+/// random forest, one decision tree — at eight rows each. Floored at two
+/// models' worth, because a smaller number is still coverage and a fixed floor
+/// on a fuzz seed's exact yield is a maintenance tax, not an oracle.
+const MIN_UNCHECKED_TRAVERSAL_ROWS: usize = 16;
 
 /// The strategies whose products cannot survive the envelope, with the reason.
 ///
@@ -2187,7 +2592,7 @@ fn floor_violations(reach: &Reach, decoders: &[Decoder]) -> Vec<String> {
             ));
         }
     }
-    for (index, (name, _, _)) in decoders.iter().enumerate() {
+    for (index, (name, ..)) in decoders.iter().enumerate() {
         if reach.decoder_reach[index] < MIN_DECODER_PAYLOAD_REACH {
             violations.push(format!(
                 "the {name} payload parser received mutated bytes only {} times",
@@ -2206,6 +2611,29 @@ fn floor_violations(reach: &Reach, decoders: &[Decoder]) -> Vec<String> {
             "only {} mutants built a complete model no seed already encodes; the \
              malleability oracle is barely running",
             reach.payload_accepted
+        ));
+    }
+    if reach.hostile_inference_rows < MIN_HOSTILE_INFERENCE_ROWS {
+        violations.push(format!(
+            "hostile models ran inference on only {} rows; what a decoder accepts \
+             is no longer being run",
+            reach.hostile_inference_rows
+        ));
+    }
+    for name in UNCHECKED_TRAVERSAL_DECODERS {
+        if !decoders.iter().any(|(decoder, ..)| *decoder == name) {
+            violations.push(format!(
+                "{name} is named as a decoder whose models traverse without bounds \
+                 checks, and no such decoder exists, so the floor below measures \
+                 the empty set"
+            ));
+        }
+    }
+    if reach.hostile_unchecked_rows < MIN_UNCHECKED_TRAVERSAL_ROWS {
+        violations.push(format!(
+            "only {} rows of hostile inference reached a scalar packed tree; the \
+             crate's only unsafe is that traversal and nothing is walking it",
+            reach.hostile_unchecked_rows
         ));
     }
     violations
@@ -2230,7 +2658,7 @@ impl Campaign {
         let identities = decoders
             .iter()
             .map(|decoder| {
-                let (name, _, decode) = *decoder;
+                let (name, _, decode, _) = *decoder;
                 let accepted = corpus
                     .iter()
                     .map(|(_, bytes)| bytes)
@@ -2293,6 +2721,10 @@ impl Campaign {
                         reach.decoder_reach[index] += 1;
                         if probe.accepted {
                             reach.payload_accepted += 1;
+                            reach.hostile_inference_rows += probe.exercised_rows;
+                            if UNCHECKED_TRAVERSAL_DECODERS.contains(&decoder.0) {
+                                reach.hostile_unchecked_rows += probe.exercised_rows;
+                            }
                         } else {
                             reach.payload_rejected += 1;
                         }
@@ -2317,9 +2749,15 @@ fn rounds() -> usize {
 fn report(reach: &Reach, decoders: &[Decoder]) -> String {
     let mut lines = vec![format!(
         "fuzz sweep: {} candidates, {} payload-parser rejections of mutated bytes, \
-         {} mutated bytes accepted as a different model, {} acceptances in total \
+         {} mutated bytes accepted as a different model over {} rows of inference \
+         ({} of them through a scalar packed tree), {} acceptances in total \
          (uncounted: a dead mutator raises this one)",
-        reach.candidates, reach.payload_rejected, reach.payload_accepted, reach.accepted
+        reach.candidates,
+        reach.payload_rejected,
+        reach.payload_accepted,
+        reach.hostile_inference_rows,
+        reach.hostile_unchecked_rows,
+        reach.accepted
     )];
     for (strategy, name) in STRATEGIES.iter().enumerate() {
         lines.push(format!(
@@ -2330,7 +2768,7 @@ fn report(reach: &Reach, decoders: &[Decoder]) -> String {
             reach.strategy_reach[strategy]
         ));
     }
-    for (index, (name, _, _)) in decoders.iter().enumerate() {
+    for (index, (name, ..)) in decoders.iter().enumerate() {
         lines.push(format!(
             "  decoder {name:34} payload reach {:5}",
             reach.decoder_reach[index]
@@ -2415,7 +2853,7 @@ fn valid_artifacts_decode_within_the_allocation_budget() {
     let mut accepted = 0;
     for (name, bytes) in &campaign.corpus {
         for decoder in &campaign.decoders {
-            accepted += usize::from(decode_under_oracles(name, decoder, bytes));
+            accepted += usize::from(decode_under_oracles(name, decoder, bytes).is_some());
         }
     }
     assert!(accepted >= 20, "only {accepted} valid artifacts decoded");
@@ -4099,6 +4537,13 @@ fn refresh_the_adversarial_corpus() {
 fn the_frozen_adversarial_corpus_decodes_exactly_as_recorded() {
     let decoders = decoders();
     let cases = corpus();
+    // Rows of inference the corpus put through models decoded from adversarial
+    // bytes. Counted rather than assumed: four of the eleven control fixtures
+    // are a scalar tree, a forest, an extra-trees forest, or a composition over
+    // one, which is exactly the set whose traversal indexes without bounds
+    // checks. This is the corpus half of the coverage the mutation sweep floors
+    // — the half that does not move when the fuzz seed does.
+    let mut exercised_rows = 0;
 
     for case in &cases {
         let frozen = std::fs::read(corpus_path(case.name)).unwrap_or_else(|error| {
@@ -4117,10 +4562,10 @@ fn the_frozen_adversarial_corpus_decodes_exactly_as_recorded() {
         // The allocation bound is checked for every decoder, because a hostile
         // artifact aimed at one reader can still be handed to another.
         for decoder in &decoders {
-            decode_under_oracles(case.name, decoder, &frozen);
+            exercised_rows += decode_under_oracles(case.name, decoder, &frozen).unwrap_or(0);
         }
 
-        let (_, _, decode) = *decoders
+        let (_, _, decode, _) = *decoders
             .iter()
             .find(|(name, ..)| *name == case.decoder)
             .unwrap_or_else(|| panic!("{}: no decoder named {}", case.name, case.decoder));
@@ -4168,6 +4613,15 @@ fn the_frozen_adversarial_corpus_decodes_exactly_as_recorded() {
         cases.len() >= 75,
         "the corpus shrank to {} cases",
         cases.len()
+    );
+    // The corpus is the harness's memory, and until inference ran on what it
+    // accepts that memory stopped at the decoder. The floor is far under the
+    // measured 104 for the same reason every other floor here is: it exists to
+    // notice traversal stopping, not to pin a number.
+    assert!(
+        exercised_rows >= 40,
+        "the frozen corpus put only {exercised_rows} rows through a decoded \
+         model's inference path"
     );
 }
 
