@@ -23,6 +23,13 @@
 //! from it, is frozen. Changing the mixing constants or the rejection bound
 //! would change fitted models, so those bytes are covered by a frozen-stream
 //! test below as well as by the forests' packed fingerprints.
+//!
+//! Frozen streams do not cover the *rejection* itself, and it took measuring to
+//! say so: at every bound a caller passes, and at every bound the tests used
+//! until 2026-07-26, a draw is rejected with probability between `5e-20` and
+//! `3e-17`. Deleting the rejection loop outright left the whole suite green,
+//! frozen fixtures included. The branch is therefore covered by its own test, at
+//! a bound where a third of the stream is rejected.
 
 /// SplitMix64 with rejection-sampled bounded integers.
 pub(crate) struct OwnedRng {
@@ -55,8 +62,28 @@ impl OwnedRng {
         (self.next_u64() >> 11) as f64 * (1.0 / (1_u64 << 53) as f64)
     }
 
+    /// A uniform draw in `[0, upper)`, by rejection sampling.
+    ///
+    /// `2^64` is not a multiple of `upper` in general, so the `2^64 mod upper`
+    /// lowest values of the stream have one residue more than the rest. Drawing
+    /// them again instead of reducing them is what makes the result uniform;
+    /// without it the low residues are over-represented by up to a factor of
+    /// two. The rejected region is exactly `reject_below` values wide, so the
+    /// accepted region is a whole number of periods of `bound`.
+    ///
+    /// # Panics
+    ///
+    /// If `upper` is zero. The check is `assert!` rather than `debug_assert!`
+    /// because it costs one comparison next to a division and holds in every
+    /// build: without it a release build reaches `% 0` and panics from inside
+    /// the generator with a message naming arithmetic rather than the caller's
+    /// empty candidate set. A typed refusal would be the wrong shape here —
+    /// every caller has already established that its node, feature set or
+    /// sample is non-empty, so an empty `upper` is a defect in this crate and
+    /// not an input to reject, and returning a `Result` would thread one
+    /// through the innermost loop of forest training to say so.
     pub(crate) fn index(&mut self, upper: usize) -> usize {
-        debug_assert!(upper > 0);
+        assert!(upper > 0, "a bounded draw needs at least one candidate");
         let bound = upper as u64;
         let reject_below = bound.wrapping_neg() % bound;
         loop {
@@ -317,5 +344,97 @@ mod tests {
             }
             assert!(seen.iter().all(|&hit| hit), "unreachable index for {upper}");
         }
+    }
+
+    /// The bound above at which rejection is *likely*, so the branch that makes
+    /// the draw uniform is actually covered.
+    ///
+    /// `2^64 mod bound` is what decides how often a draw is rejected, and for
+    /// every bound a caller in this crate passes it is minute: at the bounds the
+    /// test above uses — `3`, `7`, `10`, `1000` — the rejection probability runs
+    /// from `5e-20` to `3e-17`, so no run of that test has ever taken the
+    /// branch. Measured by deleting the rejection loop outright: the whole test
+    /// suite, including every frozen-stream fixture above and
+    /// `tests/reference_semantics.rs`, stayed green.
+    ///
+    /// A bound near `(2/3) · 2^64` is where the bias is largest. Rejection then
+    /// happens on a third of the draws, and the residues below `2^64 mod bound`
+    /// — the lower *half* of the range at this bound — would otherwise be drawn
+    /// twice as often as the upper half. That is the difference between one half
+    /// and two thirds of the draws, which no amount of stream is needed to see.
+    ///
+    /// A 64-bit `usize` is what makes such a bound expressible; on a narrower
+    /// target `index` cannot be handed one, and the branch is unreachable rather
+    /// than untested.
+    #[cfg(target_pointer_width = "64")]
+    #[test]
+    fn a_bound_that_rejects_a_third_of_the_stream_is_still_drawn_uniformly() {
+        const BOUND: usize = 0xAAAA_AAAA_AAAA_AAAA;
+        // The mathematical definition, so this is not the implementation's
+        // `wrapping_neg` idiom restated — it also checks that idiom.
+        let reject_below = ((1_u128 << 64) % BOUND as u128) as u64;
+
+        // The premise, asserted rather than described: a third of the stream is
+        // rejected, and the doubled residues are half of the bound.
+        assert_eq!(reject_below, 6_148_914_691_236_517_206);
+        assert_eq!(reject_below as u128 * 3, (1_u128 << 64) + 2);
+        assert_eq!(reject_below as u128 * 2, BOUND as u128 + 2);
+
+        // One call, modelled against the specification: a rejection-sampled
+        // draw skips every value below `reject_below` and reduces the first one
+        // that is not, leaving the stream one value past it.
+        let mut rng = OwnedRng::new(11);
+        let drawn = rng.index(BOUND);
+
+        let mut oracle = OwnedRng::new(11);
+        let mut skipped = 0_usize;
+        let accepted = loop {
+            let value = oracle.next_u64();
+            if value >= reject_below {
+                break value;
+            }
+            skipped += 1;
+        };
+        assert_eq!(
+            skipped, 2,
+            "seed 11 was chosen because its first two draws are rejected"
+        );
+        assert_eq!(drawn as u64, accepted % BOUND as u64);
+        assert_eq!(
+            rng.next_u64(),
+            oracle.next_u64(),
+            "the draw consumed a different number of values than rejection sampling does"
+        );
+
+        // And the distribution the branch exists for. Deleting the rejection
+        // loop leaves `value % bound`, under which the lower half of the range
+        // has two preimages and the upper half one, so this fraction becomes
+        // two thirds. Every seed is fixed, so the numbers below are exact and
+        // the band is a statement about bias rather than a flake budget.
+        for seed in [0_u64, 1, 7, 42, u64::MAX] {
+            let mut rng = OwnedRng::new(seed);
+            let draws = 4_000;
+            let low = (0..draws)
+                .filter(|_| (rng.index(BOUND) as u64) < reject_below)
+                .count();
+            let fraction = low as f64 / draws as f64;
+            assert!(
+                (0.45..=0.55).contains(&fraction),
+                "seed {seed}: {fraction} of the draws fell in the lower half, \
+                 which a uniform draw puts at one half and a modulo reduction \
+                 of the raw stream at two thirds"
+            );
+        }
+    }
+
+    /// An empty candidate set is a caller defect, and it says so in every build.
+    ///
+    /// Without the release assertion this reaches `% 0` and panics from inside
+    /// the generator with a message about arithmetic, which names neither the
+    /// invariant nor the caller that broke it.
+    #[test]
+    #[should_panic(expected = "a bounded draw needs at least one candidate")]
+    fn a_zero_bound_is_refused_by_name() {
+        OwnedRng::new(0).index(0);
     }
 }
