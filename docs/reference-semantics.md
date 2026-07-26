@@ -32,9 +32,19 @@ sample weight is the same fitted model as repeating that row *unconditionally* �
 under row counting the equivalence holds only while the constraint does not
 bind, because duplicating a row changes the row count the bound is compared
 against. Unweighted fitting is unaffected: a node's weight is its row count when
-every weight is one, so every frozen unweighted fixture is unchanged. The
-weighted tree fixtures pin the bound at one, where it cannot bind, so they
-compare the weighted impurity and leaf arithmetic — where the two agree exactly.
+every weight is one, so every frozen unweighted fixture is unchanged.
+
+The divergence is frozen in two pieces, because one fixture cannot state both
+halves. Most weighted tree fixtures hold the bound at one with every weight at
+least one, where the two rules are provably the same function, and so compare
+the weighted impurity and leaf arithmetic — where the two must agree exactly.
+One further fixture holds weights that straddle one against a split bound of
+three, which is the region where the rules genuinely differ, and it records the
+reference's outputs *and* FerricML's differing ones side by side. It separates
+them in both directions at once: a two-row child weighing less than one is a
+leaf the reference admits and FerricML refuses, and a two-row node weighing four
+is a leaf the reference refuses to split and FerricML splits. Adopting row
+counting would make that fixture fail, which is the property it exists for.
 
 **A penalized linear model's `alpha` is measured against a mean, and its zeros
 are positive.** `Lasso` and `ElasticNet` minimize the weighted squared error
@@ -103,6 +113,31 @@ interpolation rule is a documented semantic choice rather than an
 implementation detail, and it is carried as a typed parameter at every internal
 call site so a second rule can be added without silently repointing the first
 consumer at it.
+
+**A missing inverse is refused rather than silently applied as the identity.**
+`preprocessing::FunctionTransformer` takes an optional inverse function, and
+asking a transformer that was not given one to invert is
+`api::ModelError::NoInverseFunction`. The reference keeps `inverse_transform`
+present on such a transformer — it answers to both `hasattr` and `dir()` — and
+returns its input unchanged; its `check_inverse` option warns about a *wrong*
+inverse and says nothing about a missing one. Returning the input is
+indistinguishable from a successful recovery of the originals, which is a worse
+failure than a refusal, so this is a deliberate divergence.
+
+Invertibility is deliberately **not** a declared capability, and that is not an
+oversight left over from the probability split. A `Capabilities` field is an
+associated constant, so a declaration is a statement about a fitted *type*.
+Whether a `FunctionTransformer` inverts is a property of the fitted *instance* —
+it is decided by whether `with_inverse_func` was called — so neither `true` nor
+`false` would be true of the type, and a bit would have to be wrong for half of
+them in whichever direction it was set. The instance-level question is already
+answerable exactly, through `get_params().inverse_func()`, which is an `Option`
+rather than a claim. Nor is there anywhere the answer gets erased: the
+probability tag exists for runtime dispatch, where the concrete type is gone by
+construction, and FerricML has no runtime-dispatch transformer type. A consumer
+that *requires* an inverse states that as a bound on a trait, which is a proof
+rather than a tag; the trait is owed to the first such consumer and to nothing
+before it.
 
 **Parameters FerricML does not claim** are recorded as non-claims rather than
 left as gaps, because an unclaimed parameter and a divergent one are different

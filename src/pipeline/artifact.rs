@@ -44,71 +44,63 @@ pub trait PersistedStack: Sized {
     ) -> Result<Self, ArtifactError>;
 }
 
-impl<A, B> PersistedStack for (A, B)
-where
-    A: StageArtifact,
-    B: StageArtifact,
-{
-    const STAGE_TAGS: &'static [u16] = &[A::STAGE_TAG, B::STAGE_TAG];
+/// Implements the persisted-stack contract for one flat tuple arity.
+///
+/// Decoding walks the component list in order rather than destructuring a
+/// fixed-length pattern, because tuple expressions evaluate left to right and
+/// that is the same order the tags were written in. The length is checked
+/// first, so a payload carrying the wrong number of stages is refused before
+/// any stage decodes.
+macro_rules! impl_persisted_stack {
+    ($($stage:ident $index:tt),+) => {
+        impl<$($stage),+> PersistedStack for ($($stage,)+)
+        where
+            $($stage: StageArtifact,)+
+        {
+            const STAGE_TAGS: &'static [u16] = &[$($stage::STAGE_TAG),+];
 
-    fn encode_stages(
-        &self,
-        input_schema: [u8; 32],
-        transformed_schema: [u8; 32],
-    ) -> Result<Vec<Vec<u8>>, ArtifactError> {
-        Ok(vec![
-            self.0.to_artifact(input_schema, transformed_schema)?,
-            self.1.to_artifact(input_schema, transformed_schema)?,
-        ])
-    }
+            fn encode_stages(
+                &self,
+                input_schema: [u8; 32],
+                transformed_schema: [u8; 32],
+            ) -> Result<Vec<Vec<u8>>, ArtifactError> {
+                Ok(vec![
+                    $(self.$index.to_artifact(input_schema, transformed_schema)?,)+
+                ])
+            }
 
-    fn decode_stages(
-        components: &[&[u8]],
-        input_schema: [u8; 32],
-        transformed_schema: [u8; 32],
-    ) -> Result<Self, ArtifactError> {
-        let [first, second] = components else {
-            return Err(ArtifactError::InvalidPayload);
-        };
-        Ok((
-            A::from_artifact(first, input_schema, transformed_schema)?,
-            B::from_artifact(second, input_schema, transformed_schema)?,
-        ))
-    }
+            fn decode_stages(
+                components: &[&[u8]],
+                input_schema: [u8; 32],
+                transformed_schema: [u8; 32],
+            ) -> Result<Self, ArtifactError> {
+                if components.len() != Self::STAGE_TAGS.len() {
+                    return Err(ArtifactError::InvalidPayload);
+                }
+                let mut remaining = components.iter();
+                Ok((
+                    $(
+                        $stage::from_artifact(
+                            remaining.next().ok_or(ArtifactError::InvalidPayload)?,
+                            input_schema,
+                            transformed_schema,
+                        )?,
+                    )+
+                ))
+            }
+        }
+    };
 }
 
-impl<A, B, C> PersistedStack for (A, B, C)
-where
-    A: StageArtifact,
-    B: StageArtifact,
-    C: StageArtifact,
-{
-    const STAGE_TAGS: &'static [u16] = &[A::STAGE_TAG, B::STAGE_TAG, C::STAGE_TAG];
-
-    fn encode_stages(
-        &self,
-        input_schema: [u8; 32],
-        transformed_schema: [u8; 32],
-    ) -> Result<Vec<Vec<u8>>, ArtifactError> {
-        Ok(vec![
-            self.0.to_artifact(input_schema, transformed_schema)?,
-            self.1.to_artifact(input_schema, transformed_schema)?,
-            self.2.to_artifact(input_schema, transformed_schema)?,
-        ])
-    }
-
-    fn decode_stages(
-        components: &[&[u8]],
-        input_schema: [u8; 32],
-        transformed_schema: [u8; 32],
-    ) -> Result<Self, ArtifactError> {
-        let [first, second, third] = components else {
-            return Err(ArtifactError::InvalidPayload);
-        };
-        Ok((
-            A::from_artifact(first, input_schema, transformed_schema)?,
-            B::from_artifact(second, input_schema, transformed_schema)?,
-            C::from_artifact(third, input_schema, transformed_schema)?,
-        ))
-    }
-}
+impl_persisted_stack!(A 0);
+impl_persisted_stack!(A 0, B 1);
+impl_persisted_stack!(A 0, B 1, C 2);
+impl_persisted_stack!(A 0, B 1, C 2, D 3);
+impl_persisted_stack!(A 0, B 1, C 2, D 3, E 4);
+impl_persisted_stack!(A 0, B 1, C 2, D 3, E 4, F 5);
+impl_persisted_stack!(A 0, B 1, C 2, D 3, E 4, F 5, G 6);
+impl_persisted_stack!(A 0, B 1, C 2, D 3, E 4, F 5, G 6, H 7);
+impl_persisted_stack!(A 0, B 1, C 2, D 3, E 4, F 5, G 6, H 7, I 8);
+impl_persisted_stack!(A 0, B 1, C 2, D 3, E 4, F 5, G 6, H 7, I 8, J 9);
+impl_persisted_stack!(A 0, B 1, C 2, D 3, E 4, F 5, G 6, H 7, I 8, J 9, K 10);
+impl_persisted_stack!(A 0, B 1, C 2, D 3, E 4, F 5, G 6, H 7, I 8, J 9, K 10, L 11);

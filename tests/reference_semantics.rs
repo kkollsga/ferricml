@@ -1361,6 +1361,108 @@ fn weighted_forests_match_frozen_reference_outputs() {
     );
 }
 
+/// The recorded node-size divergence, in the one region where it is visible.
+///
+/// Every other weighted tree fixture holds `min_samples_split` at two and
+/// `min_samples_leaf` at one with every weight at least one. In that region the
+/// summed-weight rule and the reference's row-count rule are provably the same
+/// function — a non-empty node weighs at least one, and a one-row node cannot
+/// split under either bound whatever it weighs — so those fixtures pin the
+/// weighted impurity arithmetic and say nothing about the bounds. This one pins
+/// the bounds, and it is the fixture that fails if FerricML ever adopts row
+/// counting.
+///
+/// The weights straddle one and the split bound is three, so one fitted tree
+/// separates the rules in **both** directions:
+///
+/// * **FerricML is stricter.** The classifier's best second split puts two rows
+///   weighing `0.25` each into one child. The reference admits it — two rows is
+///   at least one row — and FerricML refuses it, because `0.5` is below a
+///   `min_samples_leaf` of one. FerricML takes the next admissible split
+///   instead, so the whole left subtree differs. The regressor shows the same
+///   direction on the split bound: a four-row node weighing `1.0` is a leaf in
+///   FerricML and splits twice more in the reference.
+/// * **FerricML is looser.** Two-row nodes weighing `4.0` are leaves in the
+///   reference, which sees two rows against a bound of three, and FerricML
+///   splits them, because four is not below three.
+///
+/// Both sets of values are asserted exactly. The reference's come from the
+/// frozen fixture, whose generator asserts that both node shapes really occur;
+/// FerricML's are written here, because no reference run can produce them.
+#[test]
+fn fractional_weights_separate_the_weight_bound_from_the_reference_row_bound() {
+    let train = matrix(reference::EXACT_TRAIN_X, 8, 2);
+    let test = matrix(reference::EXACT_TEST_X, 5, 2);
+    let weights = SampleWeights::new(reference::FRACTIONAL_WEIGHTS.to_vec()).unwrap();
+
+    // The straddle is a property of the frozen weights, not of this test.
+    assert!(
+        reference::FRACTIONAL_WEIGHTS.iter().any(|&w| w < 1.0)
+            && reference::FRACTIONAL_WEIGHTS.iter().any(|&w| w > 1.0),
+        "the fixture weights must fall on both sides of one, or neither bound diverges"
+    );
+
+    let classifier = DecisionTreeClassifier::fit_weighted(
+        &train.as_view(),
+        &BinaryTargets::new(reference::EXACT_CLASSIFIER_Y.to_vec()).unwrap(),
+        &weights,
+        DecisionTreeClassifierParams::default()
+            .with_max_depth(None)
+            .with_min_samples_split(3)
+            .with_min_samples_leaf(1)
+            .with_max_features(MaxFeatures::All)
+            .with_random_state(0),
+    )
+    .unwrap();
+    let labels = classifier.predict(&test.as_view()).unwrap();
+    let probabilities = classifier.predict_proba(&test.as_view()).unwrap();
+    assert_eq!(labels, [1, 1, 1, 1, 1]);
+    assert_close(
+        &probabilities,
+        &[0.2, 0.8, 0.2, 0.8, 0.2, 0.8, 0.2, 0.8, 0.0, 1.0],
+    );
+    assert_ne!(
+        labels.as_slice(),
+        reference::FRACTIONAL_ROW_BOUND_LABELS,
+        "the row-count rule and the weight rule must disagree here, or this \
+         fixture pins nothing the unweighted fixtures do not"
+    );
+    assert_ne!(
+        probabilities.as_slice(),
+        reference::FRACTIONAL_ROW_BOUND_PROBABILITIES
+    );
+
+    let regressor = DecisionTreeRegressor::fit_weighted(
+        &train.as_view(),
+        &RegressionTargets::new(reference::EXACT_REGRESSION_Y.to_vec()).unwrap(),
+        &weights,
+        DecisionTreeRegressorParams::default()
+            .with_max_depth(None)
+            .with_min_samples_split(3)
+            .with_min_samples_leaf(1)
+            .with_max_features(MaxFeatures::All)
+            .with_random_state(0),
+    )
+    .unwrap();
+    let predictions = regressor.predict(&test.as_view()).unwrap();
+    // Index 0..3 is the stricter direction: a four-row node weighing 1.0 stays a
+    // leaf, so all three rows read its weighted mean of 0.5 rather than the
+    // reference's -0.5, -0.5 and 1.5. Indices 3 and 4 are the looser direction:
+    // two-row nodes weighing 4.0 split, so each test row reaches a single
+    // training target instead of a two-row mean.
+    assert_close(&predictions, &[0.5, 0.5, 0.5, 4.0, 7.0]);
+    for (index, (&actual, &row_bound)) in predictions
+        .iter()
+        .zip(reference::FRACTIONAL_ROW_BOUND_REGRESSION)
+        .enumerate()
+    {
+        assert_ne!(
+            actual, row_bound,
+            "row {index} must separate the two bound rules"
+        );
+    }
+}
+
 #[test]
 fn histogram_boosting_matches_frozen_reference_one_step_outputs() {
     let train = matrix(reference::HGB_TRAIN_X, 8, 1);

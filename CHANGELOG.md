@@ -28,6 +28,25 @@ and releases use [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   inverted the crate's stated preference on hot paths. Behaviour is unchanged:
   the inherent method delegates to the same trait implementation.
 
+- `pipeline::Pipeline::fit`, which fits the transformer and then the estimator
+  on what the transformer produced. The two pipeline types disagreed on this:
+  `StagedPipeline` could compose *and* fit, `Pipeline` could only compose. The
+  one-transformer case is not a special case — it is the shortest composition —
+  and fitting the estimator on untransformed rows is the one handoff error that
+  yields a silently wrong model rather than a width mismatch.
+- `pipeline::TransformerStack` and `pipeline::PersistedStack` are now
+  implemented for every flat tuple of fitted transformers from one stage to
+  twelve, published as `pipeline::MAX_STAGES`; they previously stopped at two
+  and three. `StagedPipeline::new`, width-handoff validation, the single split
+  workspace, the capability declaration, and the tagged artifact therefore all
+  work at any of those lengths. Nothing about a shipped composition changes:
+  the impls are additive and `StagedPipeline<(A, B), E>` is the same type it
+  was. A right-nested `(A, (B, (C,)))` stack was considered and rejected — it
+  conflicts (`E0119`) with a flat impl rather than joining it, it would rewrite
+  the type parameters of every shipped composition, and its nesting carries no
+  meaning; a fixed ceiling over flat tuples is what the standard library does.
+  One-call fitting stays bounded at two stages, with the two measured attempts
+  to lift it recorded on `StagedPipeline::fit`.
 - `linear_model::Lasso` and `linear_model::ElasticNet` now persist, under their
   own artifact kinds. They were the last tunable regressors that could be fitted
   but not saved, which is backwards for an L1 model: a sparse coefficient vector

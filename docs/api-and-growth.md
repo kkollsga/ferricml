@@ -52,12 +52,14 @@ estimator meaning follow the reference contract.
   bootstrap draw rather than consuming one of it.
 - `pipeline` composes fitted transformers and an estimator generically. Its
   `with_transformed` path uses caller-owned workspace and static dispatch.
-  `Pipeline` holds one transformer; concrete standard-scaler pipelines provide
-  allocation-free prediction and explicit persistence for logistic, linear, and
-  ridge estimators. `StagedPipeline` holds two or more stages as a
-  `TransformerStack` tuple and can fit the whole composition in one pass, each
-  stage on the previous stage's output. Every handoff is validated before the
-  composition exists, and one caller-owned workspace is split into a disjoint
+  `Pipeline` holds one transformer, fits both parts in one pass, and its
+  concrete standard-scaler forms provide allocation-free prediction and explicit
+  persistence for logistic, linear, and ridge estimators. `StagedPipeline` holds
+  one to `pipeline::MAX_STAGES` stages as a flat `TransformerStack` tuple, and
+  composes and persists at every one of those lengths. One-call fitting covers
+  one and two stages; longer chains fit each stage and compose with
+  `StagedPipeline::new`, for the reason recorded on `StagedPipeline::fit`. Every
+  handoff is validated before the composition exists, and one caller-owned workspace is split into a disjoint
   segment per stage, so multi-stage inference allocates nothing. Prediction
   stays on the generic callback rather than per-category convenience methods,
   which cannot coexist as inherent methods of one name.

@@ -131,7 +131,7 @@ fn every_into_method_agrees_with_its_allocating_twin() {
 
 #[test]
 fn unit_weights_reproduce_the_unweighted_fit_and_an_integer_weight_repeats_a_row() {
-    let (x, y, labels) = separable();
+    let (x, _, labels) = separable();
     let view = x.as_view();
     let targets = BinaryTargets::new(labels.clone()).unwrap();
     let unit = SampleWeights::new(vec![1.0; view.rows()]).unwrap();
@@ -143,24 +143,50 @@ fn unit_weights_reproduce_the_unweighted_fit_and_an_integer_weight_repeats_a_row
     // A weight of three is the same fit as three copies of the row. This holds
     // unconditionally only because the node-size bounds count summed weight
     // rather than rows — the recorded divergence from the reference.
+    //
+    // The claim needs data where the bound *binds*, which is what this test
+    // previously lacked: on `separable()` the optimal tree already has
+    // three-row leaves, so `min_samples_leaf(2)` refused nothing and the
+    // equality below would have held under row counting too. Here the weighted
+    // row is the only one carrying its target, so reproducing that target
+    // requires a leaf holding one row and weight three — admissible under the
+    // weight bound and inadmissible under a row bound of two.
+    let bound_x = matrix(&[&[0.0], &[1.0], &[2.0], &[3.0], &[4.0]]);
+    let bound_view = bound_x.as_view();
+    let bound_y = vec![0.0, 0.0, 9.0, 1.0, 1.0];
     let params = regressor_params().with_min_samples_leaf(2);
-    let mut weights = vec![1.0_f32; view.rows()];
-    weights[0] = 3.0;
     let weighted = DecisionTreeRegressor::fit_weighted(
-        &view,
-        &RegressionTargets::new(y.clone()).unwrap(),
-        &SampleWeights::new(weights).unwrap(),
+        &bound_view,
+        &RegressionTargets::new(bound_y.clone()).unwrap(),
+        &SampleWeights::new(vec![1.0, 1.0, 3.0, 1.0, 1.0]).unwrap(),
         params.clone(),
     )
     .unwrap();
 
+    // Non-vacuity: the one-row, weight-three leaf really is formed. Under a row
+    // bound it is inadmissible, its parent stays whole, and every row in that
+    // parent reads one shared weighted mean instead of its own target.
+    assert_eq!(weighted.predict(&bound_view).unwrap(), bound_y);
+
+    // And the guard above is a guard: raise the bound past the row's weight and
+    // the same fit loses that leaf, so the assertion is testing the bound
+    // rather than restating that a tree can fit five points.
+    let blocked = DecisionTreeRegressor::fit_weighted(
+        &bound_view,
+        &RegressionTargets::new(bound_y.clone()).unwrap(),
+        &SampleWeights::new(vec![1.0, 1.0, 3.0, 1.0, 1.0]).unwrap(),
+        regressor_params().with_min_samples_leaf(4),
+    )
+    .unwrap();
+    assert_ne!(blocked.predict(&bound_view).unwrap(), bound_y);
+
     let mut repeated_rows: Vec<Vec<f32>> = Vec::new();
     let mut repeated_targets = Vec::new();
-    for (index, row) in view.iter_rows().enumerate() {
-        let copies = if index == 0 { 3 } else { 1 };
+    for (index, row) in bound_view.iter_rows().enumerate() {
+        let copies = if index == 2 { 3 } else { 1 };
         for _ in 0..copies {
             repeated_rows.push(row.to_vec());
-            repeated_targets.push(y[index]);
+            repeated_targets.push(bound_y[index]);
         }
     }
     let borrowed: Vec<&[f32]> = repeated_rows.iter().map(Vec::as_slice).collect();
@@ -172,8 +198,8 @@ fn unit_weights_reproduce_the_unweighted_fit_and_an_integer_weight_repeats_a_row
     )
     .unwrap();
     assert_eq!(
-        weighted.predict(&view).unwrap(),
-        expanded.predict(&view).unwrap()
+        weighted.predict(&bound_view).unwrap(),
+        expanded.predict(&bound_view).unwrap()
     );
 }
 
