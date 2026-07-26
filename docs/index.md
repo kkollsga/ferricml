@@ -57,12 +57,11 @@ release. It cannot drift from the crate, because it *is* the crate.
 **This site is the narrative guide**: concepts, contracts, and how to accomplish
 a task. The boundary between the two is a stated rule, not a habit:
 
-!!! note "The docs.rs boundary"
-
-    A page here may **name** a type or function and link it to docs.rs. A page
-    here may **not** reproduce its signature list, its parameter table, or its
-    method inventory. Where you need the exact surface, this site sends you to
-    docs.rs, which regenerates from the code and cannot rot.
+> **The docs.rs boundary.** A page here may **name** a type or function and link
+> it to docs.rs. A page here may **not** reproduce its signature list, its
+> parameter table, or its method inventory. Where you need the exact surface,
+> this site sends you to docs.rs, which regenerates from the code and cannot
+> rot.
 
 The reason is specific rather than stylistic. FerricML's public API is held by
 an exact snapshot contract *because* the surface moves; a hand-maintained second
