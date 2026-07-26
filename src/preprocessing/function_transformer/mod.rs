@@ -249,12 +249,7 @@ impl FunctionTransformer {
             .inverse_func
             .ok_or(ModelError::NoInverseFunction)?;
         validate_transform_request(self.n_features_in, data, output)?;
-        self.apply(inverse, data, output)?;
-        Ok(MatrixView::from_validated_parts(
-            output,
-            data.rows(),
-            self.n_features_in,
-        ))
+        self.apply(inverse, data, output)
     }
 
     /// Undoes [`FunctionTransformer::transform`], allocating the output matrix.
@@ -271,18 +266,22 @@ impl FunctionTransformer {
     }
 
     /// Applies every value in fixed row-major order, after proving the whole
-    /// batch stays finite.
+    /// batch stays finite, and returns a validated view over what it wrote.
     ///
     /// A caller-supplied function is not necessarily monotone, so the extrema
     /// screen the per-column scalers use would not be sound here: a map can be
     /// perfectly finite at both ends of a column and infinite in between. Every
     /// value is therefore checked before any value is written.
-    fn apply(
+    ///
+    /// This is the code that proves finiteness for this transformer, so it is
+    /// also the only place in it that may reach
+    /// [`MatrixView::from_validated_parts`].
+    fn apply<'output>(
         &self,
         map: ElementwiseFn,
         data: &MatrixView<'_>,
-        output: &mut [f32],
-    ) -> Result<(), ModelError> {
+        output: &'output mut [f32],
+    ) -> Result<MatrixView<'output>, ModelError> {
         for (row_index, row) in data.iter_rows().enumerate() {
             for (column, value) in row.iter().enumerate() {
                 if !map(*value).is_finite() {
@@ -301,7 +300,11 @@ impl FunctionTransformer {
                 *slot = map(*value);
             }
         }
-        Ok(())
+        Ok(MatrixView::from_validated_parts(
+            output,
+            data.rows(),
+            self.n_features_in,
+        ))
     }
 }
 
@@ -336,12 +339,7 @@ impl Transformer for FunctionTransformer {
         output: &'output mut [f32],
     ) -> Result<MatrixView<'output>, ModelError> {
         validate_transform_request(self.n_features_in, data, output)?;
-        self.apply(self.params.func, data, output)?;
-        Ok(MatrixView::from_validated_parts(
-            output,
-            data.rows(),
-            self.n_features_in,
-        ))
+        self.apply(self.params.func, data, output)
     }
 }
 

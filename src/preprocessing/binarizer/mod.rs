@@ -153,12 +153,7 @@ impl Transformer for Binarizer {
         // belongs to the seam rather than to each scaler's own reasoning.
         transform_preflighted(data, output, |value, _| {
             f32::from(u8::from(value > threshold))
-        })?;
-        Ok(MatrixView::from_validated_parts(
-            output,
-            data.rows(),
-            self.n_features_in,
-        ))
+        })
     }
 }
 

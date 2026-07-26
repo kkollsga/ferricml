@@ -120,12 +120,7 @@ impl MaxAbsScaler {
         validate_inverse_request(self.n_features_in, data, output)?;
         transform_preflighted(data, output, |value, column| {
             (f64::from(value) * self.scales[column]) as f32
-        })?;
-        Ok(MatrixView::from_validated_parts(
-            output,
-            data.rows(),
-            self.n_features_in,
-        ))
+        })
     }
 
     /// Undoes [`MaxAbsScaler::transform`], allocating the output matrix.
@@ -250,12 +245,7 @@ impl Transformer for MaxAbsScaler {
         validate_transform_request(self.n_features_in, data, output)?;
         transform_preflighted(data, output, |value, column| {
             (f64::from(value) / self.scales[column]) as f32
-        })?;
-        Ok(MatrixView::from_validated_parts(
-            output,
-            data.rows(),
-            self.n_features_in,
-        ))
+        })
     }
 }
 

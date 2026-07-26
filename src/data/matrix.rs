@@ -85,6 +85,13 @@ impl<'a> MatrixView<'a> {
     /// believes some earlier code established it — the difference is what
     /// makes the invariant structural rather than conventional.
     ///
+    /// Three functions satisfy that, and they are the complete caller set:
+    /// `preprocessing::scaling::transform_preflighted`,
+    /// `preprocessing::FunctionTransformer::apply`, and
+    /// `preprocessing::Normalizer::transform_into`. Each checks every value it
+    /// is about to write, writes all of them, and then returns the view. Add a
+    /// caller only by adding a function of that shape.
+    ///
     /// The shape half of the invariant is asserted in every build: it is O(1),
     /// and a view whose declared shape disagrees with its buffer hands out
     /// wrong rows silently rather than failing. The finiteness half stays a

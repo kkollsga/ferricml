@@ -63,6 +63,13 @@ pub(super) fn validate_inverse_request(
 /// The width-preserving scalers all owe the same allocating convenience beside
 /// their caller-owned path, and the overflow check on the output length is the
 /// part worth stating once rather than four times.
+///
+/// `inverse` is a crate-private closure and the four call sites are the four
+/// scalers' own `inverse_transform_into`, each of which reaches
+/// [`transform_preflighted`] and therefore proves every value it writes. That
+/// closed set is what makes the [`DenseMatrix`] built here validated; unlike
+/// [`crate::api::Transformer::transform`], no external implementation can
+/// supply this callback.
 pub(super) fn inverse_transform_allocating(
     n_features_in: usize,
     data: &MatrixView<'_>,
@@ -84,18 +91,25 @@ pub(super) fn inverse_transform_allocating(
     ))
 }
 
-/// Applies `transform` to every value after proving the batch cannot overflow.
+/// Applies `transform` to every value after proving the batch cannot overflow,
+/// and returns a validated view over exactly the values written.
 ///
 /// The cheap screen transforms only each column's extrema. When it cannot
 /// prove safety — because the column count exceeds the stack screen, or an
 /// extremum does overflow — every value is checked in row-major order first,
 /// so the reported location is the first offending one and `output` is left
 /// untouched.
-pub(super) fn transform_preflighted<F>(
+///
+/// Returning the view rather than `()` is what keeps the finiteness guarantee
+/// structural. This function is the code that proves it, so this is the only
+/// place among the per-column scalers that may reach
+/// [`MatrixView::from_validated_parts`]; a caller wrapping `output` itself
+/// would be restating a claim rather than making one.
+pub(super) fn transform_preflighted<'output, F>(
     data: &MatrixView<'_>,
-    output: &mut [f32],
+    output: &'output mut [f32],
     transform: F,
-) -> Result<(), ModelError>
+) -> Result<MatrixView<'output>, ModelError>
 where
     F: Fn(f32, usize) -> f32 + Copy,
 {
@@ -119,7 +133,11 @@ where
             *slot = transform(value, column);
         }
     }
-    Ok(())
+    Ok(MatrixView::from_validated_parts(
+        output,
+        data.rows(),
+        data.columns(),
+    ))
 }
 
 /// Whether transforming each column's extrema stays finite.
