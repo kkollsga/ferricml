@@ -114,6 +114,18 @@ and releases use [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Changed
 
+- `api::AnyClassifier` and `api::AnyRegressor` now document their variant lists
+  as a deliberate, curated set and say what decides membership. The API document
+  claimed the regressor variants "cover forests", which was never true of
+  `ensemble::ExtraTreesRegressor` and had drifted further as estimators shipped;
+  the enums cover 3 of 6 classifiers and 4 of 10 regressors. No variant was
+  added, because a dispatch enum declares the *intersection* of its variants'
+  capabilities: `AnyRegressor` declares persistence only because all four of its
+  variants persist, so admitting a variant that declares nothing — `DummyRegressor`
+  and `IsotonicRegression` both do — would silently withdraw that declaration
+  from every existing caller. An enum tracking every estimator would end up
+  declaring nothing at all. Both enums stay `#[non_exhaustive]`, so a variant can
+  still be admitted later without touching any existing estimator's bytes.
 - **Breaking.** `calibration::IsotonicRegression` is now fitted like every other
   FerricML estimator. `calibration::IsotonicRegressionParams` is a new empty
   parameter type — the same shape `dummy::DummyClassifierParams` and

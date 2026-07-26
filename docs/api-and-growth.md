@@ -163,11 +163,30 @@ renormalized: they sum to one only within `n_classes` `f32` ulps, which is a
 frozen part of the contract rather than a tolerance to tighten later.
 
 `AnyClassifier` and `AnyRegressor` remain the owned runtime-swap layer. They
-match once per batch; the regressor variants cover forests, linear regression,
-ridge, and histogram gradient boosting. Both persist through a dispatch envelope
+match once per batch. Both persist through a dispatch envelope
 that nests the selected estimator's own artifact whole, so restoring one
 restores the runtime variant and the payload schema that variant chose. Generic estimators and pipelines
 remain the primary zero-overhead layer.
+
+**They are a curated set, not a census of the estimators.** `AnyClassifier`
+covers `RandomForestClassifier`, `LogisticRegression` and
+`HistGradientBoostingClassifier`; `AnyRegressor` covers `RandomForestRegressor`,
+`LinearRegression`, `Ridge` and `HistGradientBoostingRegressor`. Every other
+shipped estimator — the standalone trees, the extremely randomized ensembles,
+the L1 linear models, the baselines, isotonic regression — is deliberately not a
+variant, and the enums are `#[non_exhaustive]` so one can be added later without
+touching any existing estimator's bytes.
+
+Membership is a decision rather than a backlog, because a dispatch enum declares
+the **intersection** of its variants' capabilities. `AnyRegressor` declares
+persistence today because all four of its variants persist; admitting a variant
+that does not — `DummyRegressor` and `IsotonicRegression` both declare nothing —
+would silently withdraw that declaration from every caller who already has one.
+An enum that tracked every estimator would therefore end up declaring nothing at
+all, which is a different and much weaker product than a curated set whose floor
+is worth relying on. `tests/prediction_semantics.rs` records the omission beside
+the conformance registrations, where the estimators themselves *are* covered: it
+is a dispatch gap, not a contract gap.
 
 Meta-layers compose capabilities rather than restating them. A dispatch enum
 and a fitted pipeline declare the intersection of their variants' or parts'

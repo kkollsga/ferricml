@@ -40,6 +40,18 @@ pub enum AnyClassifierParams<'a> {
 ///
 /// Matching happens once for each batch call; traversal remains statically
 /// dispatched inside the concrete model.
+///
+/// # A curated set, not every classifier
+///
+/// The variants below are chosen, not accumulated: `DummyClassifier`,
+/// `DecisionTreeClassifier`, `ExtraTreesClassifier` and `CalibratedClassifier`
+/// are deliberately absent. The enum is `#[non_exhaustive]`, so one can be
+/// admitted later without touching any existing estimator's bytes — but
+/// [`CAPABILITIES`](HasCapabilities::CAPABILITIES) is the *intersection* over
+/// the variants, so admitting one that declares less silently withdraws a
+/// declaration every current caller already relies on. That is what makes
+/// membership a decision. `docs/api-and-growth.md` states the same list for
+/// readers and must be updated with it.
 #[derive(Clone, Debug, PartialEq)]
 #[non_exhaustive]
 pub enum AnyClassifier {
