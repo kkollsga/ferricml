@@ -564,17 +564,9 @@ pub(crate) fn validate_common(
             available: data.columns(),
         });
     }
-    for row in 0..data.rows() {
-        for (column, value) in data
-            .row(row)
-            .expect("validated row index")
-            .iter()
-            .enumerate()
-        {
-            if !value.is_finite() {
-                return Err(ModelError::NonFiniteFeature { row, column });
-            }
-        }
-    }
+    // No finiteness scan of `data`, for the reason given in
+    // `tree::validation::validate_fit`: a `MatrixView` is finite by
+    // construction, so this could only re-derive the container's own invariant
+    // at O(rows × columns) on every member's training matrix.
     Ok(())
 }
