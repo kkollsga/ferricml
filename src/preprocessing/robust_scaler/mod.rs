@@ -404,6 +404,9 @@ impl Estimator for RobustScaler {
 }
 
 impl HasCapabilities for RobustScaler {
+    /// The fitted centre and spread persist; weighted fitting is genuinely
+    /// unavailable.
+    ///
     /// A median and a quantile spread are order statistics: a per-sample weight
     /// cannot move them without a weighted quantile rule, and the linear rule
     /// this scaler is frozen against has no weighted form. There is therefore

@@ -20,7 +20,8 @@ use ferricml::api::{
 };
 use ferricml::artifact::{ArtifactError, ModelArtifact, StageArtifact};
 use ferricml::calibration::{
-    CalibratedClassifier, IsotonicRegression, PlattCalibrator, PlattParams,
+    CalibratedClassifier, IsotonicRegression, IsotonicRegressionParams, PlattCalibrator,
+    PlattParams,
 };
 use ferricml::data::{BinaryTargets, DenseMatrix, MatrixView, RegressionTargets};
 use ferricml::dummy::{
@@ -30,10 +31,11 @@ use ferricml::ensemble::{
     ExtraTreesClassifier, ExtraTreesClassifierParams, ExtraTreesRegressor,
     ExtraTreesRegressorParams, HistGradientBoostingClassifier,
     HistGradientBoostingClassifierParams, HistGradientBoostingRegressor,
-    HistGradientBoostingRegressorParams, MaxFeatures, NJobs, RandomForestClassifier,
+    HistGradientBoostingRegressorParams, NJobs, RandomForestClassifier,
     RandomForestClassifierParams, RandomForestRegressor, RandomForestRegressorParams,
 };
 use ferricml::pipeline::{Pipeline, StagedPipeline};
+use ferricml::tree::MaxFeatures;
 use ferricml::tree::{
     DecisionTreeClassifier, DecisionTreeClassifierParams, DecisionTreeRegressor,
     DecisionTreeRegressorParams,
@@ -501,6 +503,7 @@ impl ClassifierCase for IsotonicCalibratedForestCase {
             RandomForestClassifierCase::fit(train, holdout)?,
             &holdout.view(),
             &holdout.labels,
+            IsotonicRegressionParams,
         )
     }
 }
@@ -1024,7 +1027,7 @@ impl RegressorCase for IsotonicRegressionCase {
     const FIXTURE: FixtureShape = FixtureShape::Univariate;
 
     fn fit(train: &Sample, _holdout: &Sample) -> Result<Self::Model, ModelError> {
-        IsotonicRegression::fit(&train.view(), &train.values)
+        IsotonicRegression::fit(&train.view(), &train.values, IsotonicRegressionParams)
     }
 }
 
@@ -1755,13 +1758,19 @@ fn a_composition_takes_its_persistence_from_the_parts_that_have_it() {
 //   one score, with no fitted input width, no batch surface, and no capability
 //   declaration to check against behavior. Its obligations are in
 //   `tests/calibration.rs`.
-// - The standalone trees and the randomized ensembles are **not** `AnyClassifier` /
-//   `AnyRegressor`
-//   variants. Adding a variant is a public-enum change to a shared file with no
-//   consumer in this sprint, and the nested-payload dispatch design means it can
-//   be added later without touching any existing estimator's bytes. The
-//   estimators themselves are registered above, so the omission is a dispatch
-//   gap rather than a contract gap.
+// - Most estimators are **not** `AnyClassifier` / `AnyRegressor` variants: the
+//   standalone trees, the randomized ensembles, the baselines, the L1 linear
+//   models and `IsotonicRegression` are all absent, and the dispatch enums
+//   cover 3 of 6 classifiers and 4 of 10 regressors. That is a curated set
+//   rather than a backlog. A dispatch enum declares the *intersection* of its
+//   variants' capabilities, so admitting one that declares less withdraws a
+//   declaration current callers already have — `AnyRegressor` declares
+//   persistence only because all four of its variants persist, and both
+//   `DummyRegressor` and `IsotonicRegression` declare nothing. The
+//   nested-payload design means a variant can still be admitted later without
+//   touching any existing estimator's bytes. The estimators themselves are
+//   registered above, so the omission is a dispatch gap rather than a contract
+//   gap. `docs/api-and-growth.md` states the same list for readers.
 // - `TransformerStack` tuples are not `Estimator`s either. A stack is reached
 //   only through `StagedPipeline`, which is registered above at both arities,
 //   so its handoff validation and its disjoint workspace segments are covered

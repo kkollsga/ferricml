@@ -279,6 +279,9 @@ mod tests {
             }
         }
 
+        /// Declares nothing, and says so by declaring nothing at all: the
+        /// trait's default value is `Capabilities::NONE`, which is what makes
+        /// a new estimator's declaration an opt-in rather than an accident.
         impl HasCapabilities for Undeclared {}
 
         assert_eq!(Undeclared::CAPABILITIES, Capabilities::NONE);

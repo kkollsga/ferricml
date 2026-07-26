@@ -26,8 +26,8 @@ use ferricml::dummy::{
     DummyClassifier, DummyClassifierParams, DummyRegressor, DummyRegressorParams,
 };
 use ferricml::ensemble::{
-    HistGradientBoostingClassifier, HistGradientBoostingClassifierParams, MaxFeatures,
-    RandomForestClassifier, RandomForestClassifierParams,
+    HistGradientBoostingClassifier, HistGradientBoostingClassifierParams, RandomForestClassifier,
+    RandomForestClassifierParams,
 };
 use ferricml::linear_model::{LogisticRegression, LogisticRegressionParams};
 use ferricml::pipeline::StagedPipeline;
@@ -36,6 +36,7 @@ use ferricml::ranking::{
     PairIndex, PairOutcome, PairwiseError, PairwiseLinearRanker, PairwiseLinearRankerParams,
     PairwiseObservation,
 };
+use ferricml::tree::MaxFeatures;
 use std::alloc::{GlobalAlloc, Layout, System};
 use std::cell::Cell;
 

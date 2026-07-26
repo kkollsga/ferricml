@@ -163,11 +163,30 @@ renormalized: they sum to one only within `n_classes` `f32` ulps, which is a
 frozen part of the contract rather than a tolerance to tighten later.
 
 `AnyClassifier` and `AnyRegressor` remain the owned runtime-swap layer. They
-match once per batch; the regressor variants cover forests, linear regression,
-ridge, and histogram gradient boosting. Both persist through a dispatch envelope
+match once per batch. Both persist through a dispatch envelope
 that nests the selected estimator's own artifact whole, so restoring one
 restores the runtime variant and the payload schema that variant chose. Generic estimators and pipelines
 remain the primary zero-overhead layer.
+
+**They are a curated set, not a census of the estimators.** `AnyClassifier`
+covers `RandomForestClassifier`, `LogisticRegression` and
+`HistGradientBoostingClassifier`; `AnyRegressor` covers `RandomForestRegressor`,
+`LinearRegression`, `Ridge` and `HistGradientBoostingRegressor`. Every other
+shipped estimator — the standalone trees, the extremely randomized ensembles,
+the L1 linear models, the baselines, isotonic regression — is deliberately not a
+variant, and the enums are `#[non_exhaustive]` so one can be added later without
+touching any existing estimator's bytes.
+
+Membership is a decision rather than a backlog, because a dispatch enum declares
+the **intersection** of its variants' capabilities. `AnyRegressor` declares
+persistence today because all four of its variants persist; admitting a variant
+that does not — `DummyRegressor` and `IsotonicRegression` both declare nothing —
+would silently withdraw that declaration from every caller who already has one.
+An enum that tracked every estimator would therefore end up declaring nothing at
+all, which is a different and much weaker product than a curated set whose floor
+is worth relying on. `tests/prediction_semantics.rs` records the omission beside
+the conformance registrations, where the estimators themselves *are* covered: it
+is a dispatch gap, not a contract gap.
 
 Meta-layers compose capabilities rather than restating them. A dispatch enum
 and a fitted pipeline declare the intersection of their variants' or parts'
@@ -231,15 +250,29 @@ concrete compositions predate that scheme and keep their own artifact kinds.
 Documentation that contradicts behaviour has been this crate's most active
 defect class, so `make gate` runs `scripts/check_documentation_truth.py`. It
 reads prose — rustdoc comments in `src/` and the narrative pages in `docs/`,
-which rustdoc never sees at all — and reports four kinds of claim that stopped
+which rustdoc never sees at all — and reports five kinds of claim that stopped
 being true:
 
+- a capability declaration with no doc comment at all, which is the coverage
+  floor under the next rule;
 - a capability declaration whose doc comment does not name a capability the
   declaration turns on;
 - a `Type::member` reference to a type this crate declares, where the member
   does not exist;
 - a generic bound written in prose that the documented item does not carry;
 - a repository path cited in prose that is not there.
+
+The first rule exists because the second could only check a declaration someone
+had written a sentence about, and nothing required the sentence. Measured on
+2026-07-26, **21 of the crate's 29 capability declarations carried no prose the
+rule could read**, so it reported clean over a third of the surface. Ten of those
+did carry an explanation — on the associated `const` rather than above the
+`impl`, a position that renders identically in rustdoc and that the rule simply
+never looked at. Reading both positions and requiring one of them turned up four
+declarations whose prose omitted a capability they turn on, including a
+calibrated composition whose comment began "Nothing" above a declaration that
+produces probabilities: the same defect the rule was written for, hiding where
+it could not see.
 
 Each rule is proven twice by `--self-test`: once against a synthetic violation,
 and once against a tree with the rule's input removed, because a check that

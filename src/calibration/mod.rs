@@ -40,7 +40,7 @@ mod isotonic;
 mod platt;
 
 pub use classifier::CalibratedClassifier;
-pub use isotonic::IsotonicRegression;
+pub use isotonic::{IsotonicRegression, IsotonicRegressionParams};
 pub use platt::{PlattCalibrator, PlattParams};
 
 use crate::api::ModelError;

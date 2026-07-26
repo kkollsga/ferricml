@@ -607,10 +607,11 @@ mod tests {
     use crate::api::{AnyClassifier, AnyRegressor};
     use crate::data::{ClassTargets, DenseMatrix};
     use crate::ensemble::{
-        MaxFeatures, RandomForestClassifier, RandomForestClassifierParams, RandomForestRegressor,
+        RandomForestClassifier, RandomForestClassifierParams, RandomForestRegressor,
         RandomForestRegressorParams,
     };
     use crate::metrics::{Average, ConfusionMatrix};
+    use crate::tree::MaxFeatures;
 
     fn matrix() -> DenseMatrix {
         DenseMatrix::new(vec![0.0, 1.0, 2.0, 3.0], 4, 1).unwrap()

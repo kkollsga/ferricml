@@ -67,6 +67,20 @@ pub enum AnyRegressorParams<'a> {
 /// assert_eq!(restored.predict(&data.as_view())?, expected);
 /// # Ok::<(), Box<dyn std::error::Error>>(())
 /// ```
+///
+/// # A curated set, not every regressor
+///
+/// The variants below are chosen, not accumulated: `DummyRegressor`,
+/// `DecisionTreeRegressor`, `ExtraTreesRegressor`, `Lasso`, `ElasticNet` and
+/// `IsotonicRegression` are deliberately absent. The enum is
+/// `#[non_exhaustive]`, so one can be admitted later without touching any
+/// existing estimator's bytes — but
+/// [`CAPABILITIES`](HasCapabilities::CAPABILITIES) is the *intersection* over
+/// the variants, and this enum declares persistence only because all four of
+/// its variants persist. Admitting one that declares nothing would withdraw
+/// that from every caller who already has it, so membership is a decision
+/// rather than a backlog. `docs/api-and-growth.md` states the same list for
+/// readers and must be updated with it.
 #[derive(Clone, Debug, PartialEq)]
 #[non_exhaustive]
 pub enum AnyRegressor {
@@ -278,7 +292,7 @@ impl Regressor for AnyRegressor {
 mod tests {
     use super::*;
     use crate::data::{DenseMatrix, RegressionTargets};
-    use crate::ensemble::MaxFeatures;
+    use crate::tree::MaxFeatures;
     use sha2::{Digest, Sha256};
 
     const PAYLOAD_START: usize = 24 + 36;

@@ -330,6 +330,12 @@ impl Estimator for Ridge {
     }
 }
 
+/// Weighted fitting and persistence — the same pair ordinary least squares
+/// declares, because the penalty changes the system being solved and not what
+/// the estimator can be asked for.
+///
+/// `probability`, `multiclass` and `decision_function` are classifier
+/// vocabulary and have no meaning for a predicted value.
 impl HasCapabilities for Ridge {
     const CAPABILITIES: Capabilities = Capabilities::NONE
         .with_sample_weights(true)

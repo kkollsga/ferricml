@@ -287,12 +287,13 @@ mod compositions {
     use ferricml::data::{BinaryTargets, DenseMatrix, RegressionTargets};
     use ferricml::ensemble::{
         ExtraTreesClassifierParams, ExtraTreesRegressorParams,
-        HistGradientBoostingClassifierParams, MaxFeatures, RandomForestClassifierParams,
+        HistGradientBoostingClassifierParams, RandomForestClassifierParams,
     };
     use ferricml::preprocessing::{MinMaxScalerParams, StandardScalerParams};
     use ferricml::ranking::{
         PairIndex, PairOutcome, PairwiseLinearRankerParams, PairwiseObservation,
     };
+    use ferricml::tree::MaxFeatures;
     use ferricml::tree::{DecisionTreeClassifierParams, DecisionTreeRegressorParams};
 
     const INPUT: [u8; 32] = [3; 32];

@@ -386,6 +386,8 @@ impl Estimator for MinMaxScaler {
 }
 
 impl HasCapabilities for MinMaxScaler {
+    /// The fitted range persists; weighted fitting is genuinely unavailable.
+    ///
     /// Minima and maxima are order statistics: a per-sample weight cannot move
     /// them, so there is no weighted entry point to declare.
     const CAPABILITIES: Capabilities = Capabilities::NONE.with_artifact(true);

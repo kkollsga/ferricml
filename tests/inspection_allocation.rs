@@ -6,9 +6,10 @@
 //! of times. This file holds one test because the counter is process-global.
 
 use ferricml::data::{DenseMatrix, RegressionTargets};
-use ferricml::ensemble::{MaxFeatures, RandomForestRegressor, RandomForestRegressorParams};
+use ferricml::ensemble::{RandomForestRegressor, RandomForestRegressorParams};
 use ferricml::inspection::{PermutationImportanceParams, permutation_importance_regressor_into};
 use ferricml::model_selection::RegressionScorer;
+use ferricml::tree::MaxFeatures;
 use std::alloc::{GlobalAlloc, Layout, System};
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 

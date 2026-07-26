@@ -9,8 +9,9 @@
 //!
 //! Nothing in this module is public. `Forest`, `ClassifierCore` and
 //! `RegressorCore` are crate-private, so "callers must not be able to depend on
-//! forest tree layout" stays true; only [`NJobs`] and the re-exported
-//! `MaxFeatures` cross the facade, and both are already public vocabulary.
+//! forest tree layout" stays true; only [`NJobs`] crosses the facade, and it is
+//! already public vocabulary. The shared `MaxFeatures` is *consumed* here and
+//! published from `crate::tree`, which owns it.
 
 pub(super) mod codec;
 pub(super) mod facade;
@@ -19,5 +20,5 @@ pub(super) mod parameters;
 pub(super) mod training;
 
 pub(crate) use facade::{forest_classifier, forest_regressor};
+pub use parameters::NJobs;
 pub(crate) use parameters::forest_params;
-pub use parameters::{MaxFeatures, NJobs};

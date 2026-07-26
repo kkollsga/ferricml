@@ -1,9 +1,18 @@
 //! Deterministic pool-adjacent-violators isotonic regression.
 
-use crate::api::{Capabilities, Estimator, HasCapabilities, ModelError, Regressor};
+use crate::api::{Capabilities, Estimator, HasCapabilities, HasParams, ModelError, Regressor};
 use crate::data::{BinaryTargets, MatrixView, RegressionTargets};
 
 use super::Calibrator;
+
+/// Parameters for [`IsotonicRegression`].
+///
+/// Pool-adjacent-violators has nothing to tune. This type exists so the
+/// estimator is fitted exactly like every other FerricML estimator, and so a
+/// later option — an out-of-range policy, or a decreasing direction — can be
+/// added without changing the `fit` signature.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct IsotonicRegressionParams;
 
 /// A fitted non-decreasing step-and-interpolate map of one input.
 ///
@@ -31,13 +40,17 @@ use super::Calibrator;
 /// is IEEE equality, so `-0.0` and `0.0` are the same input.
 ///
 /// ```
-/// use ferricml::calibration::IsotonicRegression;
+/// use ferricml::calibration::{IsotonicRegression, IsotonicRegressionParams};
 /// use ferricml::data::{DenseMatrix, RegressionTargets};
 ///
 /// // Three observations at x = 1 disagree; they pool to their mean.
 /// let x = DenseMatrix::new(vec![0.0, 1.0, 1.0, 1.0, 2.0], 5, 1)?;
 /// let y = RegressionTargets::new(vec![0.0, 1.0, 0.0, 0.0, 1.0])?;
-/// let fitted = IsotonicRegression::fit(&x.as_view(), &y)?;
+/// let fitted = IsotonicRegression::fit(
+///     &x.as_view(),
+///     &y,
+///     IsotonicRegressionParams::default(),
+/// )?;
 /// assert_eq!(fitted.thresholds(), &[0.0, 1.0, 2.0]);
 /// assert_eq!(fitted.values(), &[0.0, 1.0 / 3.0, 1.0]);
 /// // Outside the fitted range the end values are held, never extrapolated.
@@ -51,6 +64,8 @@ pub struct IsotonicRegression {
     thresholds: Vec<f32>,
     /// Non-decreasing fitted values, one per threshold.
     values: Vec<f32>,
+    /// The parameters this fit was given.
+    params: IsotonicRegressionParams,
 }
 
 impl IsotonicRegression {
@@ -59,10 +74,14 @@ impl IsotonicRegression {
     /// The matrix must have exactly one column: this is a univariate estimator,
     /// and a wider input is [`ModelError::FeatureDimension`] rather than a
     /// silently ignored remainder.
-    pub fn fit(data: &MatrixView<'_>, targets: &RegressionTargets) -> Result<Self, ModelError> {
+    pub fn fit(
+        data: &MatrixView<'_>,
+        targets: &RegressionTargets,
+        params: IsotonicRegressionParams,
+    ) -> Result<Self, ModelError> {
         validate_univariate(data, targets.len())?;
         let scores: Vec<f32> = data.iter_rows().map(|row| row[0]).collect();
-        Ok(Self::fit_pairs(&scores, targets.as_slice()))
+        Ok(Self::fit_pairs(&scores, targets.as_slice(), params))
     }
 
     /// Fits a calibration map of raw model scores onto observed labels.
@@ -71,16 +90,24 @@ impl IsotonicRegression {
     /// output lies in `0.0..=1.0` by construction rather than by clamping.
     /// Both labels must be observed: a single-class calibration set determines
     /// no map and is [`ModelError::RequiresTwoClasses`].
-    pub fn fit_calibration(scores: &[f32], targets: &BinaryTargets) -> Result<Self, ModelError> {
+    pub fn fit_calibration(
+        scores: &[f32],
+        targets: &BinaryTargets,
+        params: IsotonicRegressionParams,
+    ) -> Result<Self, ModelError> {
         super::validate_calibration_sample(scores, targets)?;
-        Ok(Self::fit_pairs(scores, targets.as_slice()))
+        Ok(Self::fit_pairs(scores, targets.as_slice(), params))
     }
 
     /// Pool, run pool-adjacent-violators, and keep one pair per distinct input.
     ///
     /// Inputs are already validated non-empty, equal in length, and finite by
     /// the public boundary that called this.
-    fn fit_pairs<T: Copy + Into<f64>>(scores: &[f32], targets: &[T]) -> Self {
+    fn fit_pairs<T: Copy + Into<f64>>(
+        scores: &[f32],
+        targets: &[T],
+        params: IsotonicRegressionParams,
+    ) -> Self {
         // A stable sort on the total order makes the visit order a function of
         // the input values alone. Equal inputs land adjacent, which is what
         // lets the pooling below be one linear pass.
@@ -139,7 +166,23 @@ impl IsotonicRegression {
             values.extend(std::iter::repeat_n(value, span));
         }
         debug_assert_eq!(values.len(), thresholds.len());
-        Self { thresholds, values }
+        Self {
+            thresholds,
+            values,
+            params,
+        }
+    }
+
+    /// Returns the feature width required by this model.
+    ///
+    /// Always one: this is a univariate estimator by construction.
+    pub const fn n_features_in(&self) -> usize {
+        1
+    }
+
+    /// Returns the exact fitted parameters.
+    pub const fn get_params(&self) -> &IsotonicRegressionParams {
+        &self.params
     }
 
     /// Returns the strictly increasing fitted input thresholds.
@@ -194,6 +237,20 @@ impl IsotonicRegression {
         }
         Ok(self.map(row[0]))
     }
+
+    /// Predicts one value per row, allocating the output.
+    pub fn predict(&self, data: &MatrixView<'_>) -> Result<Vec<f32>, ModelError> {
+        <Self as Regressor>::predict(self, data)
+    }
+
+    /// Writes one predicted value per row into a caller-owned buffer.
+    pub fn predict_into(
+        &self,
+        data: &MatrixView<'_>,
+        output: &mut [f32],
+    ) -> Result<(), ModelError> {
+        <Self as Regressor>::predict_into(self, data, output)
+    }
 }
 
 /// One pooled group of observations sharing an input value.
@@ -231,10 +288,34 @@ fn validate_univariate(data: &MatrixView<'_>, targets: usize) -> Result<(), Mode
 
 impl Estimator for IsotonicRegression {
     fn n_features_in(&self) -> usize {
-        1
+        self.n_features_in()
     }
 }
 
+impl HasParams for IsotonicRegression {
+    type Params = IsotonicRegressionParams;
+
+    fn get_params(&self) -> &Self::Params {
+        &self.params
+    }
+}
+
+/// Declares nothing, and every absence is genuine rather than unfinished.
+///
+/// Pool-adjacent-violators pools by *input value*, so a per-sample weight would
+/// have to enter the pooled mean — but the fitted map is frozen against an
+/// unweighted rule and there is no `SampleWeights` entry point for a caller to
+/// reach, so `sample_weights` would promise an argument that does not exist.
+/// A monotone map of one input onto a scalar has no class set, so `multiclass`
+/// and `probability` have no meaning here; `fit_calibration` happens to produce
+/// values in `0.0..=1.0`, but that is a property of averaging `0`/`1` labels
+/// rather than a probability contract this type offers through
+/// [`ProbabilisticClassifier`](crate::api::ProbabilisticClassifier).
+/// `decision_function` records that a *classifier* exposes a raw score whose
+/// squashing is its probability, which a regressor does not have. `artifact` is
+/// the one absence that is a gap rather than a meaning: the fitted map is two
+/// parallel `f32` vectors and would encode cleanly, but it owns no artifact
+/// kind, so nothing may claim it persists.
 impl HasCapabilities for IsotonicRegression {
     const CAPABILITIES: Capabilities = Capabilities::NONE;
 }
@@ -274,7 +355,7 @@ mod tests {
     fn fit(x: &[f32], y: &[f32]) -> IsotonicRegression {
         let data = DenseMatrix::new(x.to_vec(), x.len(), 1).unwrap();
         let targets = RegressionTargets::new(y.to_vec()).unwrap();
-        IsotonicRegression::fit(&data.as_view(), &targets).unwrap()
+        IsotonicRegression::fit(&data.as_view(), &targets, IsotonicRegressionParams).unwrap()
     }
 
     #[test]
@@ -374,25 +455,35 @@ mod tests {
         assert_eq!(
             IsotonicRegression::fit_calibration(
                 &scores,
-                &BinaryTargets::new(vec![0, 0, 0]).unwrap()
+                &BinaryTargets::new(vec![0, 0, 0]).unwrap(),
+                IsotonicRegressionParams,
             ),
             Err(ModelError::RequiresTwoClasses)
         );
         assert_eq!(
-            IsotonicRegression::fit_calibration(&scores, &BinaryTargets::new(vec![0, 1]).unwrap()),
+            IsotonicRegression::fit_calibration(
+                &scores,
+                &BinaryTargets::new(vec![0, 1]).unwrap(),
+                IsotonicRegressionParams,
+            ),
             Err(ModelError::TargetLength {
                 rows: 3,
                 targets: 2,
             })
         );
         assert_eq!(
-            IsotonicRegression::fit_calibration(&[], &BinaryTargets::new(vec![0, 1]).unwrap()),
+            IsotonicRegression::fit_calibration(
+                &[],
+                &BinaryTargets::new(vec![0, 1]).unwrap(),
+                IsotonicRegressionParams,
+            ),
             Err(ModelError::EmptyData)
         );
         assert_eq!(
             IsotonicRegression::fit_calibration(
                 &[0.1, f32::NAN, 0.8],
-                &BinaryTargets::new(vec![0, 1, 1]).unwrap()
+                &BinaryTargets::new(vec![0, 1, 1]).unwrap(),
+                IsotonicRegressionParams,
             ),
             Err(ModelError::NonFiniteFeature { row: 1, column: 0 })
         );
@@ -402,7 +493,9 @@ mod tests {
     fn calibration_values_stay_inside_the_probability_range() {
         let scores = [0.9_f32, 0.1, 0.5, 0.3, 0.7];
         let targets = BinaryTargets::new(vec![0, 1, 0, 1, 1]).unwrap();
-        let fitted = IsotonicRegression::fit_calibration(&scores, &targets).unwrap();
+        let fitted =
+            IsotonicRegression::fit_calibration(&scores, &targets, IsotonicRegressionParams)
+                .unwrap();
         assert!(
             fitted
                 .values()
@@ -452,7 +545,7 @@ mod tests {
         let wide = DenseMatrix::new(vec![0.0; 6], 3, 2).unwrap();
         let targets = RegressionTargets::new(vec![0.0, 1.0, 2.0]).unwrap();
         assert_eq!(
-            IsotonicRegression::fit(&wide.as_view(), &targets),
+            IsotonicRegression::fit(&wide.as_view(), &targets, IsotonicRegressionParams),
             Err(ModelError::FeatureDimension {
                 expected: 1,
                 actual: 2,
@@ -462,13 +555,60 @@ mod tests {
         assert_eq!(
             IsotonicRegression::fit(
                 &narrow.as_view(),
-                &RegressionTargets::new(vec![0.0, 1.0]).unwrap()
+                &RegressionTargets::new(vec![0.0, 1.0]).unwrap(),
+                IsotonicRegressionParams,
             ),
             Err(ModelError::TargetLength {
                 rows: 3,
                 targets: 2,
             })
         );
+    }
+
+    /// The four conventions this estimator used to be the sole exception to.
+    ///
+    /// Each half is asserted through the surface a caller actually reaches: the
+    /// params type exists and round-trips through both the inherent accessor
+    /// and [`HasParams`], and the batch prediction pair is reachable without
+    /// importing [`Regressor`] — which is what "inherent" means here and what a
+    /// trait-only surface silently failed to provide.
+    #[test]
+    fn the_crate_wide_estimator_conventions_hold_here_too() {
+        let data = DenseMatrix::new(vec![0.0, 1.0, 2.0, 3.0], 4, 1).unwrap();
+        let targets = RegressionTargets::new(vec![0.0, 0.0, 1.0, 1.0]).unwrap();
+        let fitted =
+            IsotonicRegression::fit(&data.as_view(), &targets, IsotonicRegressionParams).unwrap();
+
+        assert_eq!(fitted.get_params(), &IsotonicRegressionParams);
+        assert_eq!(
+            <IsotonicRegression as HasParams>::get_params(&fitted),
+            &IsotonicRegressionParams
+        );
+        assert_eq!(fitted.n_features_in(), 1);
+
+        let allocated = fitted.predict(&data.as_view()).unwrap();
+        let mut buffer = vec![f32::NAN; data.rows()];
+        fitted.predict_into(&data.as_view(), &mut buffer).unwrap();
+        assert_eq!(allocated, buffer);
+        assert_eq!(allocated, vec![0.0, 0.0, 1.0, 1.0]);
+
+        // The inherent forms are forwarders, not a second implementation.
+        assert_eq!(
+            allocated,
+            <IsotonicRegression as Regressor>::predict(&fitted, &data.as_view()).unwrap()
+        );
+    }
+
+    /// The calibration entry points take parameters for the same reason the
+    /// regression one does: an option added later must not break either.
+    #[test]
+    fn every_fitting_entry_point_takes_the_params_type() {
+        let scores = [0.1_f32, 0.4, 0.6, 0.9];
+        let labels = BinaryTargets::new(vec![0, 0, 1, 1]).unwrap();
+        let calibrator =
+            IsotonicRegression::fit_calibration(&scores, &labels, IsotonicRegressionParams)
+                .unwrap();
+        assert_eq!(calibrator.get_params(), &IsotonicRegressionParams);
     }
 
     #[test]

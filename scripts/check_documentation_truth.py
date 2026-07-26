@@ -98,6 +98,7 @@ CAPABILITY_IMPL = re.compile(
     r"^\s*impl(?:<[^>]*>)?\s+(?:\$crate::api::)?HasCapabilities\s+for\s+(.+?)\s*\{"
 )
 CAPABILITY_SETTER = re.compile(r"\.with_([a-z_]+)\(\s*(true|false)\s*\)")
+CAPABILITY_CONST = re.compile(r"^\s*const CAPABILITIES\s*:")
 
 # A path mention in prose. Only the last two segments matter, because that is
 # what has to resolve: `crate::api::ModelError::EmptyData` and `ModelError::EmptyData`
@@ -314,6 +315,63 @@ class RustIndex:
         return self.generic_bounds.get(target, {}).get(parameter, set())
 
 
+def capability_declarations(root: Path) -> Iterable[tuple[Path, int, str, list[str], str]]:
+    """Every `HasCapabilities` impl, with its prose and its declaration body.
+
+    Prose is read from **both** positions Rust makes available, because both are
+    in use and both render: above the `impl` line, where rustdoc attaches it to
+    the impl block, and above the `const CAPABILITIES` line inside it, where
+    rustdoc attaches it to the associated const. Reading only the first is what
+    made this rule look like it covered the crate when it did not — 20 of 29
+    declarations sat outside it, and half of those carried a written explanation
+    the rule simply never looked at, including one saying "Nothing" above a
+    declaration that turns probabilities on.
+    """
+    for path in rust_sources(root):
+        lines = path.read_text().splitlines()
+        for index, line in enumerate(lines):
+            match = CAPABILITY_IMPL.match(line)
+            if not match:
+                continue
+            end = block_end(lines, index)
+            block = list(doc_block_above(lines, index))
+            for cursor in range(index + 1, end + 1):
+                if CAPABILITY_CONST.match(lines[cursor]):
+                    block.extend(doc_block_above(lines, cursor))
+                    break
+            body = "\n".join(lines[index + 1 : end + 1])
+            yield path, index + 1, match.group(1), block, body
+
+
+def capability_declarations_are_documented(root: Path) -> list[str]:
+    """Every capability declaration carries prose, so the completeness rule can read it.
+
+    This is the coverage floor under the rule below, and it exists because that
+    rule can only check a declaration a human has written a sentence about. With
+    nothing enforcing the sentence, 21 of the crate's 29 declarations were
+    outside it while it reported clean — which is the same failure this codebase
+    keeps producing: a check that runs and proves less than it appears to.
+
+    What the sentence has to say is not enforced here, because it cannot be. The
+    rule below enforces that it names every capability turned *on*; the value of
+    the rest is in explaining why a capability is deliberately absent, which no
+    regex can grade.
+    """
+    findings = [
+        f"capability declaration carries no doc comment: "
+        f"{path.relative_to(root)}:{line} declares for {target} and nothing "
+        f"explains what it claims"
+        for path, line, target, block, _ in capability_declarations(root)
+        if not block
+    ]
+    if not any(True for _ in capability_declarations(root)):
+        findings.append(
+            "no capability declaration was found at all; the capability "
+            "documentation rules can no longer prove anything"
+        )
+    return findings
+
+
 def capability_documentation_matches_declaration(root: Path) -> list[str]:
     """A documented capability declaration must name every capability it turns on.
 
@@ -329,34 +387,28 @@ def capability_documentation_matches_declaration(root: Path) -> list[str]:
     *absent* and explain why — several usefully do — so a mention with no
     corresponding `true` is not a finding; a `true` with no mention is. The
     declarations have to exist for the rule to mean anything, so their absence
-    is itself a finding rather than a silently vacuous pass.
+    is itself a finding rather than a silently vacuous pass; that a declaration
+    is documented at all is the separate rule above.
     """
     findings: list[str] = []
     documented = 0
-    for path in rust_sources(root):
-        lines = path.read_text().splitlines()
-        for index, line in enumerate(lines):
-            match = CAPABILITY_IMPL.match(line)
-            if not match:
-                continue
-            block = doc_block_above(lines, index)
-            if not block:
-                continue
-            documented += 1
-            prose = " ".join(block).lower()
-            body = "\n".join(lines[index + 1 : block_end(lines, index) + 1])
-            declared = {
-                capability
-                for capability, value in CAPABILITY_SETTER.findall(body)
-                if value == "true"
-            }
-            findings.extend(
-                f"capability documentation omits a declared capability: "
-                f"{path.relative_to(root)}:{index + 1} declares {capability!r} "
-                f"for {match.group(1)} and its doc comment never names it"
-                for capability in sorted(declared)
-                if not any(word in prose for word in CAPABILITY_WORDS[capability])
-            )
+    for path, line, target, block, body in capability_declarations(root):
+        if not block:
+            continue
+        documented += 1
+        prose = " ".join(block).lower()
+        declared = {
+            capability
+            for capability, value in CAPABILITY_SETTER.findall(body)
+            if value == "true"
+        }
+        findings.extend(
+            f"capability documentation omits a declared capability: "
+            f"{path.relative_to(root)}:{line} declares {capability!r} "
+            f"for {target} and its doc comment never names it"
+            for capability in sorted(declared)
+            if not any(word in prose for word in CAPABILITY_WORDS[capability])
+        )
     if not documented:
         findings.append(
             "no documented capability declaration was found; the "
@@ -487,6 +539,7 @@ def documented_repository_paths_exist(root: Path) -> list[str]:
 
 
 RULES: tuple[tuple[str, Callable[[Path], list[str]]], ...] = (
+    ("capability-declarations-documented", capability_declarations_are_documented),
     ("capability-documentation-complete", capability_documentation_matches_declaration),
     ("documented-paths-resolve", documented_paths_resolve),
     ("documented-bounds-are-real", documented_bounds_are_real_bounds),
@@ -584,6 +637,13 @@ CLEAN_TREE: dict[str, str] = {
         "        .with_sample_weights(true)\n"
         "        .with_probability(true);\n"
         "}\n"
+        "/// A fitted baseline.\n"
+        "pub struct Baseline;\n"
+        "impl HasCapabilities for Baseline {\n"
+        "    /// Declares probabilities and nothing else: nothing is persisted.\n"
+        "    const CAPABILITIES: Capabilities = Capabilities::NONE\n"
+        "        .with_probability(true);\n"
+        "}\n"
     ),
     "tests/reference_semantics.rs": "// frozen behavior\n",
     "docs/index.md": (
@@ -620,11 +680,33 @@ def drop_files(root: Path, *relatives: str) -> None:
 
 SYNTHETIC_VIOLATIONS: tuple[tuple[str, Callable[[Path], None], str], ...] = (
     (
+        "capability-declarations-documented",
+        lambda root: rewrite(
+            root / "src" / "linear_model" / "ridge.rs",
+            "    /// Declares probabilities and nothing else: nothing is persisted.\n",
+            "",
+        ),
+        "capability declaration carries no doc comment",
+    ),
+    (
         "capability-documentation-complete",
         lambda root: rewrite(
             root / "src" / "linear_model" / "ridge.rs",
             "/// Declares weighted fitting and genuine probabilities.",
             "/// Declares weighted fitting.",
+        ),
+        "capability documentation omits a declared capability",
+    ),
+    (
+        # The same rule, against prose in the *other* legitimate position. A
+        # doc comment on the associated const renders exactly as one on the
+        # impl block does, and reading only the latter is what left two thirds
+        # of the crate's declarations outside this rule.
+        "capability-documentation-complete",
+        lambda root: rewrite(
+            root / "src" / "linear_model" / "ridge.rs",
+            "    /// Declares probabilities and nothing else: nothing is persisted.",
+            "    /// Declares nothing at all.",
         ),
         "capability documentation omits a declared capability",
     ),
@@ -658,12 +740,37 @@ SYNTHETIC_VIOLATIONS: tuple[tuple[str, Callable[[Path], None], str], ...] = (
 # against it would be a check that had stopped looking.
 SYNTHETIC_VACUITIES: tuple[tuple[str, Callable[[Path], None], str], ...] = (
     (
+        "capability-declarations-documented",
+        lambda root: (
+            rewrite(
+                root / "src" / "linear_model" / "ridge.rs",
+                "impl<C> HasCapabilities for Ridge<C> {",
+                "impl<C> Unrelated for Ridge<C> {",
+            ),
+            rewrite(
+                root / "src" / "linear_model" / "ridge.rs",
+                "impl HasCapabilities for Baseline {",
+                "impl Unrelated for Baseline {",
+            ),
+        )
+        and None,
+        "no capability declaration was found at all",
+    ),
+    (
         "capability-documentation-complete",
-        lambda root: rewrite(
-            root / "src" / "linear_model" / "ridge.rs",
-            "/// Declares weighted fitting and genuine probabilities.\n",
-            "",
-        ),
+        lambda root: (
+            rewrite(
+                root / "src" / "linear_model" / "ridge.rs",
+                "/// Declares weighted fitting and genuine probabilities.\n",
+                "",
+            ),
+            rewrite(
+                root / "src" / "linear_model" / "ridge.rs",
+                "    /// Declares probabilities and nothing else: nothing is persisted.\n",
+                "",
+            ),
+        )
+        and None,
         "no documented capability declaration was found",
     ),
     (

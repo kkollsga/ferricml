@@ -521,6 +521,14 @@ impl Estimator for HistGradientBoostingRegressor {
     }
 }
 
+/// Weighted fitting and persistence; every remaining capability names a class
+/// set this estimator does not have.
+///
+/// `probability`, `multiclass` and `decision_function` are all classifier
+/// vocabulary. The boosted classifier beside this one declares the first and
+/// the third and withholds the second for a stated reason; here all three are
+/// absent because the model predicts a value, and there is nothing to squash a
+/// raw score into.
 impl HasCapabilities for HistGradientBoostingRegressor {
     const CAPABILITIES: Capabilities = Capabilities::NONE
         .with_sample_weights(true)

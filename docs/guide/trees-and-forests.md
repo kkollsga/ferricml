@@ -160,6 +160,10 @@ the thread count. See [determinism](../determinism.md) for the full tiering.
 exact `Count`. Fewer columns per split means more decorrelated trees and a
 faster fit; `Sqrt` is the conventional choice for classification.
 
+It is one type shared by every tree-shaped estimator, and it is imported from
+`ferricml::tree` even when the estimator taking it is an ensemble — a forest is
+built from trees, and this is a property of growing one.
+
 ## Extra-trees: randomize the threshold too
 
 `ExtraTreesClassifier` and `ExtraTreesRegressor` draw the candidate columns

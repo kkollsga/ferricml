@@ -337,6 +337,14 @@ impl Estimator for LinearRegression {
     }
 }
 
+/// Weighted fitting and persistence, which is everything an ordinary
+/// least-squares fit has to offer.
+///
+/// A per-row weight enters the normal equations directly, so the weighted fit
+/// is the same closed form on a reweighted problem rather than a second
+/// algorithm. The three classifier fields are absent because they describe a
+/// class set: this model predicts a value, so there is no probability, no class
+/// set to widen, and no raw score whose squashing would be one.
 impl HasCapabilities for LinearRegression {
     const CAPABILITIES: Capabilities = Capabilities::NONE
         .with_sample_weights(true)

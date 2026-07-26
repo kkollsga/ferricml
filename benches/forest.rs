@@ -3,9 +3,10 @@ use ferricml::artifact::ModelArtifact;
 use ferricml::data::{BinaryTargets, ClassTargets, DenseMatrix, RegressionTargets, SampleWeights};
 use ferricml::ensemble::{
     ExtraTreesClassifier, ExtraTreesClassifierParams, ExtraTreesRegressor,
-    ExtraTreesRegressorParams, MaxFeatures, RandomForestClassifier, RandomForestClassifierParams,
+    ExtraTreesRegressorParams, RandomForestClassifier, RandomForestClassifierParams,
     RandomForestRegressor, RandomForestRegressorParams,
 };
+use ferricml::tree::MaxFeatures;
 use ferricml::tree::{
     DecisionTreeClassifier, DecisionTreeClassifierParams, DecisionTreeRegressor,
     DecisionTreeRegressorParams,

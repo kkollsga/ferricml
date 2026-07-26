@@ -382,6 +382,15 @@ impl Estimator for StandardScaler {
     }
 }
 
+/// Weighted fitting and persistence, and it is the *only* scaler that declares
+/// the first.
+///
+/// A mean and a variance are weighted sums, so a per-sample weight has a
+/// well-defined effect on both and the weighted fit is the same formula on
+/// reweighted moments. Its order-statistic siblings — `MaxAbsScaler`,
+/// `MinMaxScaler`, `RobustScaler` — cannot say that, which is why the field
+/// differs across otherwise identically shaped transformers. The classifier
+/// fields have no meaning for a transformer at all.
 impl HasCapabilities for StandardScaler {
     const CAPABILITIES: Capabilities = Capabilities::NONE
         .with_sample_weights(true)

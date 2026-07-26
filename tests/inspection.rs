@@ -3,9 +3,8 @@ use ferricml::data::{
     BinaryTargets, ClassTargets, ClassificationTargets, DenseMatrix, RegressionTargets,
 };
 use ferricml::ensemble::{
-    HistGradientBoostingRegressor, HistGradientBoostingRegressorParams, MaxFeatures,
-    RandomForestClassifier, RandomForestClassifierParams, RandomForestRegressor,
-    RandomForestRegressorParams,
+    HistGradientBoostingRegressor, HistGradientBoostingRegressorParams, RandomForestClassifier,
+    RandomForestClassifierParams, RandomForestRegressor, RandomForestRegressorParams,
 };
 use ferricml::inspection::{
     InspectionError, PermutationImportance, PermutationImportanceParams,
@@ -17,6 +16,7 @@ use ferricml::metrics::mean_squared_error;
 use ferricml::model_selection::{
     ClassificationScorer, RegressionScore, RegressionScorer, ScorableClassifier, ScoringError,
 };
+use ferricml::tree::MaxFeatures;
 
 /// Four columns: a dominant signal, a weak signal, a constant, and a copy of
 /// the constant. Only the first two can carry information.

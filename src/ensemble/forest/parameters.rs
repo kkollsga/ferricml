@@ -7,11 +7,11 @@
 //! their trees use, which is fixed by the type rather than exposed as a knob an
 //! ensemble has no meaning for.
 
-/// Re-exported so `ferricml::ensemble::MaxFeatures` keeps naming the one type
-/// every tree-shaped estimator shares. It is defined beside the grower that
-/// consumes it, in [`crate::tree`], because the ensembles are consumers of it
-/// rather than its owner.
-pub use crate::tree::MaxFeatures;
+// Imported, not re-exported. `MaxFeatures` is defined beside the grower that
+// consumes it, in `crate::tree`, and `ferricml::tree::MaxFeatures` is its one
+// public path: the ensembles are consumers of the type rather than its owner,
+// which is the same direction the `tree-below-estimators` layout rule enforces.
+use crate::tree::MaxFeatures;
 
 use crate::artifact::ArtifactError;
 
@@ -90,7 +90,7 @@ macro_rules! forest_params {
             max_depth: Option<usize>,
             min_samples_split: usize,
             min_samples_leaf: usize,
-            max_features: $crate::ensemble::MaxFeatures,
+            max_features: $crate::tree::MaxFeatures,
             bootstrap: bool,
             random_state: u64,
             n_jobs: $crate::ensemble::NJobs,
@@ -142,10 +142,7 @@ macro_rules! forest_params {
 
             /// Sets how many features are considered at each split.
             #[must_use]
-            pub fn with_max_features(
-                mut self,
-                max_features: $crate::ensemble::MaxFeatures,
-            ) -> Self {
+            pub fn with_max_features(mut self, max_features: $crate::tree::MaxFeatures) -> Self {
                 self.max_features = max_features;
                 self
             }
@@ -192,7 +189,7 @@ macro_rules! forest_params {
             }
 
             /// Returns the feature-selection policy.
-            pub const fn max_features(&self) -> $crate::ensemble::MaxFeatures {
+            pub const fn max_features(&self) -> $crate::tree::MaxFeatures {
                 self.max_features
             }
 

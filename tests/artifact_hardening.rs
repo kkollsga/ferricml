@@ -34,8 +34,8 @@ use ferricml::ensemble::{
     ExtraTreesClassifier, ExtraTreesClassifierParams, ExtraTreesRegressor,
     ExtraTreesRegressorParams, HistGradientBoostingClassifier,
     HistGradientBoostingClassifierParams, HistGradientBoostingRegressor,
-    HistGradientBoostingRegressorParams, MaxFeatures, RandomForestClassifier,
-    RandomForestClassifierParams, RandomForestRegressor, RandomForestRegressorParams,
+    HistGradientBoostingRegressorParams, RandomForestClassifier, RandomForestClassifierParams,
+    RandomForestRegressor, RandomForestRegressorParams,
 };
 use ferricml::linear_model::{
     ElasticNet, ElasticNetParams, Lasso, LassoParams, LinearRegression, LinearRegressionParams,
@@ -49,6 +49,7 @@ use ferricml::preprocessing::{
 use ferricml::ranking::{
     PairIndex, PairOutcome, PairwiseLinearRanker, PairwiseLinearRankerParams, PairwiseObservation,
 };
+use ferricml::tree::MaxFeatures;
 use ferricml::tree::{
     DecisionTreeClassifier, DecisionTreeClassifierParams, DecisionTreeRegressor,
     DecisionTreeRegressorParams,

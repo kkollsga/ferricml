@@ -114,6 +114,46 @@ and releases use [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Changed
 
+- **Breaking.** `MaxFeatures` has one public path again, and it is
+  `tree::MaxFeatures`. The `ensemble::MaxFeatures` re-export is removed; callers
+  importing it — including callers of a *forest's* `with_max_features`, which
+  takes this type — change the import path and nothing else, because it was
+  always the same type. Two paths to one type left rustdoc free to pick the
+  canonical one, and it picked `ensemble`, so
+  `tree::DecisionTreeClassifierParams::max_features` rendered as returning
+  `ferricml::ensemble::MaxFeatures` — a standalone tree's own parameter
+  documented as an ensemble type, reading as though `tree` depended on
+  `ensemble` when the `tree-below-estimators` layout rule enforces the
+  reverse. The type is defined beside the grower that consumes it and now
+  publishes from there alone.
+- `api::AnyClassifier` and `api::AnyRegressor` now document their variant lists
+  as a deliberate, curated set and say what decides membership. The API document
+  claimed the regressor variants "cover forests", which was never true of
+  `ensemble::ExtraTreesRegressor` and had drifted further as estimators shipped;
+  the enums cover 3 of 6 classifiers and 4 of 10 regressors. No variant was
+  added, because a dispatch enum declares the *intersection* of its variants'
+  capabilities: `AnyRegressor` declares persistence only because all four of its
+  variants persist, so admitting a variant that declares nothing — `DummyRegressor`
+  and `IsotonicRegression` both do — would silently withdraw that declaration
+  from every existing caller. An enum tracking every estimator would end up
+  declaring nothing at all. Both enums stay `#[non_exhaustive]`, so a variant can
+  still be admitted later without touching any existing estimator's bytes.
+- **Breaking.** `calibration::IsotonicRegression` is now fitted like every other
+  FerricML estimator. `calibration::IsotonicRegressionParams` is a new empty
+  parameter type — the same shape `dummy::DummyClassifierParams` and
+  `preprocessing::MaxAbsScalerParams` already ship — and it is a required final
+  argument of `IsotonicRegression::fit`, `IsotonicRegression::fit_calibration`
+  and `calibration::CalibratedClassifier::fit_isotonic`. The estimator also
+  implements `api::HasParams` and exposes inherent `get_params`,
+  `n_features_in`, `predict` and `predict_into`; the last two were previously
+  reachable only by importing `api::Regressor`, which inverted the crate's
+  preference for the caller-owned form being the easiest to reach. It was the
+  only concrete leaf estimator in the crate missing any of these. Nothing about
+  a fit changes: the parameter type carries no state, and the inherent
+  prediction methods forward to the same trait implementation. Adding an
+  out-of-range policy or a decreasing direction later is now an additive change
+  rather than a `fit` signature break, which is what the empty-params
+  convention exists to buy.
 - **Breaking.** `inspection::permutation_importance_classifier` and
   `inspection::permutation_importance_classifier_into` are generic over the
   target vocabulary through the same sealed `data::ClassificationTargets`
@@ -755,6 +795,16 @@ and releases use [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- Every one of the crate's 29 capability declarations now carries a doc comment
+  saying what it claims and, where a capability is deliberately absent, why —
+  up from 8. Four of them contradicted the declaration they sat above and are
+  corrected: `CalibratedClassifier<_, IsotonicRegression>` read "Nothing" over a
+  declaration that produces probabilities, and `MaxAbsScaler`, `MinMaxScaler`
+  and `RobustScaler` each explained an absent capability without ever naming the
+  persistence they declare. `scripts/check_documentation_truth.py` gained a rule
+  requiring the doc comment, and now reads it from either position rustdoc
+  renders — above the `impl` or above the `const CAPABILITIES` — which is where
+  those four had been hiding.
 - `Pipeline<StandardScaler, LogisticRegression>` now declares the
   `decision_function` capability it has. It exposes `decision_function_into`,
   but computed its declaration by intersecting both parts — and a transformer
