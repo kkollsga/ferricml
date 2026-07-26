@@ -362,6 +362,14 @@ type Decoder = (&'static str, fn(&[u8]) -> Outcome);
 type StagedTwo = StagedPipeline<(MinMaxScaler, StandardScaler), Ridge>;
 type StagedThree = StagedPipeline<(MinMaxScaler, StandardScaler, MaxAbsScaler), Ridge>;
 
+// The two compositions whose estimator tag is *not* that estimator's artifact
+// kind. Every other composable estimator happens to agree on the two numbers,
+// so a reader that confused the composition tag with the artifact kind would be
+// caught nowhere else: the corpus covered compositions over `Ridge` alone, whose
+// tag and kind are both 3.
+type StagedForest = StagedPipeline<(MinMaxScaler, StandardScaler), RandomForestRegressor>;
+type StagedBoosting = StagedPipeline<(MinMaxScaler, StandardScaler), HistGradientBoostingRegressor>;
+
 fn decoders() -> Vec<Decoder> {
     let table: Vec<Decoder> = vec![
         ("logistic", |bytes| {
@@ -507,6 +515,18 @@ fn decoders() -> Vec<Decoder> {
         ("staged-three", |bytes| {
             accepted(
                 StagedThree::from_artifact(bytes, INPUT_SCHEMA, TRANSFORMED_SCHEMA),
+                |m| m.to_artifact(INPUT_SCHEMA, TRANSFORMED_SCHEMA),
+            )
+        }),
+        ("staged-forest", |bytes| {
+            accepted(
+                StagedForest::from_artifact(bytes, INPUT_SCHEMA, TRANSFORMED_SCHEMA),
+                |m| m.to_artifact(INPUT_SCHEMA, TRANSFORMED_SCHEMA),
+            )
+        }),
+        ("staged-boosting", |bytes| {
+            accepted(
+                StagedBoosting::from_artifact(bytes, INPUT_SCHEMA, TRANSFORMED_SCHEMA),
                 |m| m.to_artifact(INPUT_SCHEMA, TRANSFORMED_SCHEMA),
             )
         }),
@@ -751,6 +771,46 @@ fn seed_corpus() -> Vec<(&'static str, Vec<u8>)> {
     )
     .unwrap();
 
+    // Compositions over the two estimators whose frozen composition tag differs
+    // from their artifact kind: the forest regressor is tag 4 / kind 10, and the
+    // boosted regressor is tag 5 / kind 9. Those four numbers are the whole
+    // reason a composed payload's estimator tag is a namespace of its own, and
+    // until these seeds existed nothing wrote them down.
+    let staged_forest: StagedForest = StagedPipeline::fit(
+        &data.as_view(),
+        |batch| MinMaxScaler::fit(batch, MinMaxScalerParams::default()),
+        |batch| StandardScaler::fit(batch, StandardScalerParams::default()),
+        |batch| {
+            RandomForestRegressor::fit(
+                batch,
+                &regression,
+                RandomForestRegressorParams::default()
+                    .with_n_estimators(2)
+                    .with_max_depth(Some(3))
+                    .with_max_features(MaxFeatures::All)
+                    .with_random_state(11),
+            )
+        },
+    )
+    .unwrap();
+    let staged_boosting: StagedBoosting = StagedPipeline::fit(
+        &boosting_data.as_view(),
+        |batch| MinMaxScaler::fit(batch, MinMaxScalerParams::default()),
+        |batch| StandardScaler::fit(batch, StandardScalerParams::default()),
+        |batch| {
+            HistGradientBoostingRegressor::fit(
+                batch,
+                &boosting_targets,
+                HistGradientBoostingRegressorParams::default()
+                    .with_max_iter(2)
+                    .with_max_leaf_nodes(4)
+                    .with_min_samples_leaf(1)
+                    .with_max_bins(8),
+            )
+        },
+    )
+    .unwrap();
+
     vec![
         ("logistic", logistic.to_artifact(INPUT_SCHEMA).unwrap()),
         (
@@ -886,6 +946,18 @@ fn seed_corpus() -> Vec<(&'static str, Vec<u8>)> {
         (
             "staged-three",
             staged_three
+                .to_artifact(INPUT_SCHEMA, TRANSFORMED_SCHEMA)
+                .unwrap(),
+        ),
+        (
+            "staged-forest",
+            staged_forest
+                .to_artifact(INPUT_SCHEMA, TRANSFORMED_SCHEMA)
+                .unwrap(),
+        ),
+        (
+            "staged-boosting",
+            staged_boosting
                 .to_artifact(INPUT_SCHEMA, TRANSFORMED_SCHEMA)
                 .unwrap(),
         ),
@@ -1735,12 +1807,17 @@ fn corpus() -> Vec<Case> {
     let scaler = seed("standard-scaler");
     let forest = seed("forest");
     let staged = seed("staged-two");
+    let staged_forest = seed("staged-forest");
+    let staged_boosting = seed("staged-boosting");
     let ranker = seed("pairwise-ranker");
     let any_ridge = seed("any-ridge");
     let (scaler_payload, _) = payload_span(&scaler).expect("scaler payload");
     let (logistic_payload, _) = payload_span(&logistic).expect("logistic payload");
     let (any_payload, _) = payload_span(&any_ridge).expect("dispatch payload");
     let (staged_payload, _) = payload_span(&staged).expect("staged payload");
+    let (staged_forest_payload, _) = payload_span(&staged_forest).expect("staged forest payload");
+    let (staged_boosting_payload, _) =
+        payload_span(&staged_boosting).expect("staged boosting payload");
     let (ranker_payload, _) = payload_span(&ranker).expect("ranker payload");
     // The multiclass state component sits one component header past the
     // payload; its fixed fields are eight words, then the class list.
@@ -2501,6 +2578,37 @@ fn corpus() -> Vec<Case> {
             expected: ArtifactError::InvalidPayload,
             bytes: overwrite(&staged, staged_payload + 8, &3_u32.to_le_bytes()),
         },
+        // The composition tag and the artifact kind are two independent
+        // namespaces, and these two cases are the only place that fact is
+        // falsifiable. A forest regressor is composition tag 4 and artifact kind
+        // 10; a boosted regressor is tag 5 and kind 9. Writing the *kind* where
+        // the tag belongs must be refused — so an implementation that derived
+        // one from the other would turn these two rejections into acceptances
+        // and fail here rather than silently rewriting what existing artifacts
+        // mean. Every other composable estimator agrees on both numbers, which
+        // is exactly why no other case can state this.
+        Case {
+            name: "staged-forest-estimator-tag-is-its-artifact-kind",
+            provenance: "a forest composition tagged with kind 10 instead of composition tag 4",
+            decoder: "staged-forest",
+            expected: ArtifactError::InvalidPayload,
+            bytes: overwrite(
+                &staged_forest,
+                staged_forest_payload + 12,
+                &10_u32.to_le_bytes(),
+            ),
+        },
+        Case {
+            name: "staged-boosting-estimator-tag-is-its-artifact-kind",
+            provenance: "a boosted composition tagged with kind 9 instead of composition tag 5",
+            decoder: "staged-boosting",
+            expected: ArtifactError::InvalidPayload,
+            bytes: overwrite(
+                &staged_boosting,
+                staged_boosting_payload + 12,
+                &9_u32.to_le_bytes(),
+            ),
+        },
         Case {
             name: "pairwise-objective-version-unknown",
             provenance: "a ranker declaring an objective version this reader does not implement",
@@ -2993,6 +3101,24 @@ fn corpus() -> Vec<Case> {
             expected: ArtifactError::InvalidPayload,
             bytes: multiclass_decision_tree,
         },
+        // The positive halves of the two tag cases above. A rejection case
+        // proves the wrong tag is refused; only these prove the *right* tag is
+        // the one the writer actually wrote, which is what makes them the
+        // byte-level record of composition tags 4 and 5.
+        Case {
+            name: "control-fitted-staged-forest",
+            provenance: "an unmodified forest composition carrying estimator tag 4",
+            decoder: "staged-forest",
+            expected: ArtifactError::InvalidPayload,
+            bytes: staged_forest,
+        },
+        Case {
+            name: "control-fitted-staged-boosting",
+            provenance: "an unmodified boosted composition carrying estimator tag 5",
+            decoder: "staged-boosting",
+            expected: ArtifactError::InvalidPayload,
+            bytes: staged_boosting,
+        },
     ]);
     cases
 }
@@ -3016,6 +3142,8 @@ const CONTROL_CASES: &[&str] = &[
     "control-fitted-decision-tree",
     "control-fitted-decision-tree-classifier",
     "control-fitted-multiclass-decision-tree",
+    "control-fitted-staged-forest",
+    "control-fitted-staged-boosting",
 ];
 
 fn corpus_path(name: &str) -> std::path::PathBuf {
