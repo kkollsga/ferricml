@@ -534,6 +534,25 @@ and releases use [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Changed
 
+- A `predict_class_proba_into` call that is invalid in *both* its batch width
+  and its requested class now reports `ModelError::FeatureDimension` on every
+  classifier. `tree::DecisionTreeClassifier`, the forests,
+  `linear_model::LogisticRegression`,
+  `ensemble::HistGradientBoostingClassifier` and
+  `calibration::CalibratedClassifier` previously reported
+  `ModelError::UnknownClass` for that call while their own allocating
+  `predict_class_proba` — and `dummy::DummyClassifier` — reported the width.
+  **A caller matching on the error of a doubly-invalid call gets a different
+  variant than before**; a call that is invalid in only one way is unaffected,
+  and no valid call changes at all. The rule is now stated once and uniformly:
+  validation checks the shape of the input before the content of the request,
+  because the width must hold before the matrix can be indexed at all. The
+  divergence appeared when the batch-width check was hoisted into the
+  allocating trait defaults without the caller-owned primitives underneath
+  being aligned, and it survived because no test in the suite made a call that
+  was invalid twice. The conformance battery now carries a
+  `width_precedes_class` obligation driven by exactly that call, proven to fire
+  by a probe that swaps the two checks.
 - **Breaking.** `MaxFeatures` has one public path again, and it is
   `tree::MaxFeatures`. The `ensemble::MaxFeatures` re-export is removed; callers
   importing it — including callers of a *forest's* `with_max_features`, which

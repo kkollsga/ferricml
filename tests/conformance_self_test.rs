@@ -70,6 +70,17 @@ const DECISION_FUNCTION_CONTRADICTS_PROBABILITY: u8 = 27;
 const PROBABILITY_DECLARED_WITHOUT_HOOK: u8 = 28;
 const PROBABILITY_HOOK_WITHOUT_DECLARATION: u8 = 29;
 
+/// The fault of an estimator that checks *what* was asked for before *whether
+/// the matrix can be indexed at all*.
+///
+/// Every other fault here makes one thing wrong. This one makes nothing wrong
+/// on its own: both errors it can return are true statements about a call that
+/// is invalid twice over. It is a fault only against the crate's ruling that
+/// the shape of the input is validated before the content of the request —
+/// which is why the obligation it trips has to be stated, and why five
+/// estimators once disagreed with a sixth without any test noticing.
+const CLASS_PRECEDES_WIDTH: u8 = 30;
+
 const BASE_THRESHOLD: f32 = 3.5;
 const BASE_OFFSET: f32 = 0.0;
 const BASE_SCALE: f32 = 2.0;
@@ -306,9 +317,17 @@ impl<const FAULT: u8> ProbabilisticClassifier for ClassifierProbe<FAULT> {
         class: u8,
         output: &mut [f32],
     ) -> Result<(), ModelError> {
-        self.check_width(data.columns())?;
+        // Width first, then the requested class, then the buffer length. The
+        // `CLASS_PRECEDES_WIDTH` fault swaps the first two, which is invisible
+        // to every call that is invalid only once.
+        if FAULT != CLASS_PRECEDES_WIDTH {
+            self.check_width(data.columns())?;
+        }
         if FAULT != UNKNOWN_CLASS_ACCEPTED && !self.classes.contains(&class) {
             return Err(ModelError::UnknownClass { class });
+        }
+        if FAULT == CLASS_PRECEDES_WIDTH {
+            self.check_width(data.columns())?;
         }
         self.check_len(output.len(), data.rows())?;
         let column = self.classes.iter().position(|&known| known == class);
@@ -944,10 +963,21 @@ violates!(
     classifier_report::<ClassifierProbeCase<LABEL_IGNORES_PROBABILITY>>(),
     ["label_matches_probability_argmax"]
 );
+// Two obligations, from one lie, and the second one is not noise. A probe that
+// never checks the width cannot report the width error first, so a call that is
+// wrong in both width and class gets the class error — which is precisely what
+// `width_precedes_class` forbids. Narrowing the precedence obligation to fire
+// only when a width check exists would make it silent on the estimator that has
+// none, so the two are left overlapping in this one direction. `width_unchecked`
+// implies `class_precedes_width`; the converse does not hold, which is what
+// `CLASS_PRECEDES_WIDTH` below proves.
 violates!(
     classifier_width_unchecked,
     classifier_report::<ClassifierProbeCase<WIDTH_UNCHECKED>>(),
-    ["feature_width_validated_before_write"]
+    [
+        "feature_width_validated_before_write",
+        "width_precedes_class"
+    ]
 );
 violates!(
     classifier_length_unchecked,
@@ -958,6 +988,17 @@ violates!(
     classifier_unknown_class_accepted,
     classifier_report::<ClassifierProbeCase<UNKNOWN_CLASS_ACCEPTED>>(),
     ["unknown_class_rejected"]
+);
+// The allocating half of this obligation is enforced above the probe, by the
+// `ProbabilisticClassifier::predict_class_proba` default the probe does not
+// override: it checks the batch width before delegating, so it reports the
+// width error whatever the primitive underneath would have said. The fault
+// therefore shows on the caller-owned form alone — which is exactly where the
+// five estimators diverged from their own allocating partners.
+violates!(
+    classifier_class_precedes_width,
+    classifier_report::<ClassifierProbeCase<CLASS_PRECEDES_WIDTH>>(),
+    ["width_precedes_class"]
 );
 violates!(
     classifier_nondeterministic_fit,
@@ -1242,6 +1283,9 @@ fn every_declared_obligation_has_a_probe_that_trips_it() {
         sorted(&classifier_report::<ClassifierProbeCase<LENGTH_UNCHECKED>>()),
         sorted(&classifier_report::<
             ClassifierProbeCase<UNKNOWN_CLASS_ACCEPTED>,
+        >()),
+        sorted(&classifier_report::<
+            ClassifierProbeCase<CLASS_PRECEDES_WIDTH>,
         >()),
         sorted(&nondeterministic(
             classifier_report::<ClassifierProbeCase<NONDETERMINISTIC_FIT>>,

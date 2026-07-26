@@ -259,8 +259,14 @@ impl ClassifierCore {
         class: u8,
         output: &mut [f32],
     ) -> Result<(), ModelError> {
+        // Width before class: the shape of the input is a precondition for
+        // indexing the matrix at all, so it is validated before the content of
+        // the request. The single-row and allocating forms of this method
+        // already report the width error first; this keeps the caller-owned
+        // primitive agreeing with them.
+        check_feature_width(data, self.n_features_in)?;
         let class_index = self.class_index(class)?;
-        check_prediction_data(data, output.len(), data.rows(), self.n_features_in)?;
+        check_output_len(output.len(), data.rows())?;
         match &self.forest {
             Forest::Binary(_) => {
                 if self.classes.len() == 1 {
@@ -478,10 +484,13 @@ pub(crate) fn check_row(row: &[f32], expected: usize) -> Result<(), ModelError> 
     Ok(())
 }
 
-pub(crate) fn check_prediction_data(
+/// Rejects a batch whose feature width is not the fitted one.
+///
+/// Split out of [`check_prediction_data`] so an entry point that also resolves
+/// a requested class can validate the shape of the input before the content of
+/// the request, which is the crate's uniform precedence.
+pub(crate) fn check_feature_width(
     data: &MatrixView<'_>,
-    output_len: usize,
-    expected_output_len: usize,
     expected_features: usize,
 ) -> Result<(), ModelError> {
     if data.columns() != expected_features {
@@ -490,6 +499,16 @@ pub(crate) fn check_prediction_data(
             actual: data.columns(),
         });
     }
+    Ok(())
+}
+
+pub(crate) fn check_prediction_data(
+    data: &MatrixView<'_>,
+    output_len: usize,
+    expected_output_len: usize,
+    expected_features: usize,
+) -> Result<(), ModelError> {
+    check_feature_width(data, expected_features)?;
     check_output_len(output_len, expected_output_len)
 }
 

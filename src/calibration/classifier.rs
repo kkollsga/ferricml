@@ -378,6 +378,12 @@ impl<C: ProbabilisticClassifier, K: Calibrator> ProbabilisticClassifier
         class: u8,
         output: &mut [f32],
     ) -> Result<(), ModelError> {
+        // Width before class: the shape of the input is validated before the
+        // content of the request. The wrapped model repeats the check when it
+        // is reached, so this changes when a mismatch is noticed rather than
+        // what is reported — but it is what makes this primitive report the
+        // same error its allocating partner does.
+        self.check_batch_width(data)?;
         if class > 1 {
             return Err(ModelError::UnknownClass { class });
         }

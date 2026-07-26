@@ -1193,11 +1193,17 @@ impl ProbabilisticClassifier for LogisticRegression {
         class: u8,
         output: &mut [f32],
     ) -> Result<(), ModelError> {
+        // Width before class: the shape of the input is a precondition for
+        // indexing the matrix at all, so it is validated before the content of
+        // the request. The allocating form of this method already reports the
+        // width error first; this keeps the caller-owned primitive agreeing
+        // with it.
+        validate_feature_width(data, self.n_features_in)?;
         let column = self
             .classes
             .binary_search(&class)
             .map_err(|_| ModelError::UnknownClass { class })?;
-        validate_predict(data, output.len(), self.n_features_in)?;
+        validate_output_len(output.len(), data.rows())?;
         if self.is_binary() {
             for (row_index, (row, slot)) in data.iter_rows().zip(output).enumerate() {
                 let decision = validate_prediction(self.decision_value(row), row_index)?;
@@ -1390,9 +1396,18 @@ fn validate_predict(
     features: usize,
 ) -> Result<(), ModelError> {
     validate_feature_width(data, features)?;
-    if output_len != data.rows() {
+    validate_output_len(output_len, data.rows())
+}
+
+/// Rejects an output buffer that is not one slot per row.
+///
+/// Split out of [`validate_predict`] so an entry point that also resolves a
+/// requested class can validate the feature width before the class and the
+/// buffer length after it.
+fn validate_output_len(output_len: usize, rows: usize) -> Result<(), ModelError> {
+    if output_len != rows {
         return Err(ModelError::OutputLength {
-            expected: data.rows(),
+            expected: rows,
             actual: output_len,
         });
     }

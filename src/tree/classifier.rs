@@ -4,8 +4,9 @@ use super::grower::{
 use super::packed::{ClassTree, PackedTree};
 use super::parameters::{DecisionTreeClassifierParams, encode_max_features, encode_splitter};
 use super::validation::{
-    MAX_ARTIFACT_FEATURES, MAX_ARTIFACT_TOTAL_NODES, check_output_len, check_prediction_data,
-    check_row, read_common_metadata, tree_seed, validate_fit, write_common_metadata,
+    MAX_ARTIFACT_FEATURES, MAX_ARTIFACT_TOTAL_NODES, check_feature_width, check_output_len,
+    check_prediction_data, check_row, read_common_metadata, tree_seed, validate_fit,
+    write_common_metadata,
 };
 use crate::api::{
     Capabilities, Classifier, Estimator, HasCapabilities, HasParams, ModelError,
@@ -399,8 +400,14 @@ impl DecisionTreeClassifier {
         class: u8,
         output: &mut [f32],
     ) -> Result<(), ModelError> {
+        // Width before class: the shape of the input is a precondition for
+        // indexing the matrix at all, so it is validated before the content of
+        // the request. The single-row and allocating forms of this method
+        // already report the width error first; this keeps the caller-owned
+        // primitive agreeing with them.
+        check_feature_width(data, self.n_features_in)?;
         let class_index = self.class_index(class)?;
-        check_prediction_data(data, output.len(), data.rows(), self.n_features_in)?;
+        check_output_len(output.len(), data.rows())?;
         let mut storage = [0.0_f32; MAX_CLASSES];
         let probabilities = &mut storage[..self.classes.len()];
         for (row, slot) in data.iter_rows().zip(output) {
