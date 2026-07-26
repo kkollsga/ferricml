@@ -35,12 +35,20 @@ fitting evaluates a transcendental function:
 
 | Estimator | Artifact kind | Transcendental |
 |---|---|---|
-| `LogisticRegression`, binary | 1 | `exp`, through the sigmoid |
-| `LogisticRegression`, multiclass | — | `exp`, through the row softmax |
+| `LogisticRegression`, binary | 1 | `exp` through the sigmoid, and `exp` and `ln` through the loss value the damped step compares |
+| `LogisticRegression`, multiclass | — | `exp` through the row softmax, and `exp` and `ln` through the loss value the damped step compares |
 | `LogisticRegression`, `LogisticSolver::Lbfgs` | — | `exp` and `ln`, through the loss value and the softmax |
 | `PairwiseLinearRanker` | 8 | `exp`, through the logistic model it fits |
 | `Pipeline<StandardScaler, LogisticRegression>` | 5 | as above |
 | `HistGradientBoostingClassifier` | 20 | `ln` for the baseline, `exp` once per row per iteration through the sigmoid |
+
+The two Newton rows gained `ln` on 2026-07-26, when the exact step was damped by
+an Armijo backtracking search. Deciding how far to step means comparing the
+objective at two points, and the binary log-loss value is
+`log_sum_exp(0, raw) - target * raw`. Their tier is unchanged — both already
+evaluated `exp` — but the entry is listed because the set of libm functions a
+fitting path calls is what the tier rests on, and a reader checking the claim
+should find every one of them named.
 
 The boosted classifier is tier 2 for the same reason logistic is, and for the
 same *kind* of reason it is unavoidable: its gradient is `y - sigmoid(raw)`, so a
@@ -97,6 +105,22 @@ condition that fired differently on two machines produces two "fitted" models
 instead of one model and one error. Coordinate descent evaluates no
 transcendental at all, which is why `Lasso` and `ElasticNet` are tier 1 despite
 being iterative.
+
+**A step-length search is part of that sequence, and the damped Newton path's is
+narrower than the L-BFGS one's.** `optimize::damping` tries `1, 1/2, 1/4, ...`:
+exact powers of two, each exactly representable, and a trial point is one
+multiplication and one subtraction per coordinate. It does not interpolate, and
+unlike bisection its next trial does not even depend on a bracket — only on the
+halving index — so the property the paragraph above rests on is preserved and
+tightened rather than weakened. The acceptance test is a pair of `f64`
+comparisons, which IEEE-754 evaluates exactly; a comparison that fired
+differently on two machines would need the *objective value* to differ, which is
+the `exp`/`ln` scope tier 2 already states, not a new source of divergence. So
+the number of halvings, and therefore the iterate sequence, is a function of the
+data, the parameters, the seed and the thread count alone. `src/optimize/damping.rs`
+asserts the reproducibility of the accepted factor directly, and asserts that a
+zero-length step is refused rather than accepted — without which a search could
+report progress it did not make and spend a whole budget standing still.
 
 **Thread count.** Forest training is the only parallel fitting path. It derives
 tree `i`'s seed from `i` alone and sorts the finished trees back into index

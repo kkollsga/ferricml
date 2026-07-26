@@ -13,8 +13,9 @@ use crate::artifact::{
     decode_legacy_envelope, decode_v2_envelope, encode_component, encode_v2_envelope,
 };
 use crate::data::{BinaryTargets, ClassTargets, MatrixView, SampleWeights};
-use crate::loss::{BinaryLogLoss, accumulate_newton_row, newton_decrement, raw_score};
+use crate::loss::{BinaryLogLoss, Objective, accumulate_newton_row, newton_decrement, raw_score};
 use crate::numeric::{sigmoid_f32, softmax_in_place_f32, sum_in_order};
+use crate::optimize::armijo_backtracking;
 
 const BINARY_CLASSES: [u8; 2] = [0, 1];
 /// Every class label is a `u8`, so no fit can observe more classes than this.
@@ -53,6 +54,19 @@ const LOGISTIC_MULTICLASS_FIXED_PAYLOAD_BYTES: usize = 8 * 4;
 /// Its cost is one `parameters x parameters` factorization per iteration, so a
 /// joint multinomial fit — whose system is `classes * parameters` square —
 /// refuses rather than allocate one it cannot hold.
+///
+/// The step is **damped**, and the full step is tried first. An exact Newton
+/// step minimizes a local quadratic model of the objective; where that model is
+/// trustworthy the full step is what gives the method its quadratic tail, and
+/// where it is not the full step overshoots and the next model is built
+/// somewhere worse. On a badly scaled near-separable design with a weak penalty
+/// that failure compounds, and iterates reaching `1e63` were measured before the
+/// step was globalized. So the full step is accepted whenever it decreases the
+/// penalized objective sufficiently, and halved until it does otherwise. A fit
+/// whose exact steps all descend keeps exactly the iterate sequence it always
+/// had; over 1,600 generated well-conditioned binary fits, all of which take
+/// more than one step, 1,573 are bit-identical to the undamped path and none
+/// changes its iteration count.
 ///
 /// [`Lbfgs`](Self::Lbfgs) never forms that system. Its storage is linear in the
 /// parameter count, so it accepts sixty-four times as many multiclass
@@ -312,6 +326,21 @@ impl LogisticRegression {
     /// reported otherwise. [`n_iter`](Self::n_iter) can therefore equal
     /// `max_iter` on a returned fit, and when it does the fit is at the
     /// minimum rather than merely the last thing tried.
+    ///
+    /// The convergence test reads the **exact** step, not the damped one
+    /// [`LogisticSolver::Newton`] actually takes. That is deliberate: the exact
+    /// step's size is the second-order estimate of how far the minimum is, while
+    /// a step shortened because the local model was untrustworthy is evidence
+    /// about the model rather than about the distance, and treating a short
+    /// damped step as convergence would stop the iteration wherever the model
+    /// was worst.
+    ///
+    /// Damping is also why a *non-convergence* refusal is now rare rather than
+    /// routine on badly conditioned data. Over a generated ill-conditioned
+    /// region of 972 designs the undamped step refused 53; damped, it refuses
+    /// none of them, and every one of the 972 is returned at a local minimum of
+    /// the penalized objective. A starved `max_iter` is still refused, which is
+    /// what keeps the acceptance test a test.
     pub fn fit(
         data: &MatrixView<'_>,
         targets: &BinaryTargets,
@@ -419,7 +448,31 @@ impl LogisticRegression {
         let mut gradient = vec![0.0_f64; parameter_count];
         let mut hessian = vec![0.0_f64; parameter_count * parameter_count];
         let mut update = vec![0.0_f64; parameter_count];
+        let mut trial = vec![0.0_f64; parameter_count];
         let lambda = 1.0 / f64::from(params.c);
+        // The objective the step length is judged against: the same penalized
+        // log-loss the Newton system is the second-order expansion of, in the
+        // same standardized coordinates, so a decrease here is a decrease in
+        // the quantity the fit minimizes rather than in a proxy for it.
+        let penalized_value = |theta: &[f64]| -> f64 {
+            let loss = sum_in_order(
+                design
+                    .chunks_exact(parameter_count)
+                    .zip(targets.as_slice())
+                    .enumerate()
+                    .map(|(row_index, (design_row, &target))| {
+                        let raw = raw_score(theta, design_row, columns, intercept_index);
+                        sample_weight(sample_weights, row_index)
+                            * BinaryLogLoss::value(raw, f64::from(target))
+                    }),
+            );
+            let penalty = sum_in_order((0..columns).map(|column| {
+                let scaled_penalty = lambda / (scales[column] * scales[column]);
+                0.5 * scaled_penalty * theta[column] * theta[column]
+            }));
+            loss + penalty
+        };
+        let mut value = penalized_value(&theta);
         let mut iterations = 0;
         let mut converged = false;
         // Refuse by default: only a step the loop actually took can certify an
@@ -461,14 +514,29 @@ impl LogisticRegression {
                 hessian[column * parameter_count + column] += scaled_penalty;
             }
             solve_positive_definite(&mut hessian, &gradient, &mut update, parameter_count)?;
-            let max_update = update
-                .iter()
-                .fold(0.0_f64, |max, value| max.max(value.abs()));
+            let max_update = update.iter().fold(0.0_f64, |max, step| max.max(step.abs()));
             decrement = newton_decrement(&gradient, &update);
-            for (value, &update) in theta.iter_mut().zip(&update) {
-                *value -= update;
-            }
             iterations = iteration + 1;
+            // The full step first, so a fit whose exact step already descends
+            // keeps exactly the iterate sequence it has always had.
+            let Some(damped) = armijo_backtracking(
+                &mut theta,
+                &update,
+                &mut trial,
+                value,
+                decrement,
+                &penalized_value,
+            ) else {
+                // No representable step along this direction improves the
+                // objective. The decrement below is what decides whether that
+                // is a minimum or a stall; nothing here needs a second name.
+                break;
+            };
+            value = damped.value;
+            // The convergence test reads the *exact* step, not the damped one.
+            // The exact step's size is the second-order estimate of how far the
+            // minimum is; a short step taken because the model was untrustworthy
+            // is evidence about the model, not about the distance.
             if max_update <= f64::from(params.tol) {
                 converged = true;
                 break;
@@ -2352,34 +2420,56 @@ mod tests {
         );
     }
 
-    /// A fit that is genuinely nowhere near its minimum is refused at the full
-    /// default budget, not only at a starved one.
+    /// The whole ill-conditioned region is fitted, and fitted *at its minimum*.
     ///
-    /// The undamped exact step is not globally convergent. On a badly scaled,
-    /// near-separable design with a weak penalty it overshoots and keeps
-    /// overshooting, so a hundred iterations end further from the minimum than
-    /// they started. This is the population the old code returned as a fitted
-    /// model, and the one the acceptance test has to keep out.
+    /// This replaces a test that asserted the opposite, and the replacement is
+    /// the point of damping the step. Until the exact step was globalized, 53 of
+    /// these 972 designs ended a hundred iterations further from the minimum
+    /// than they started — the undamped exact step minimizes a local quadratic
+    /// model, and on a badly scaled near-separable design with a weak penalty
+    /// that model is wrong by enough to overshoot, repeatedly. Those 53 were
+    /// correctly refused rather than returned, but a refusal was never the
+    /// answer a caller wanted, and iterates reaching `1e63` were the solver's
+    /// problem rather than the design's.
+    ///
+    /// Two things are asserted because either alone would be weak. That every
+    /// case is returned would be satisfied by a solver that returned anything,
+    /// so every returned fit is also checked to be a local minimum of the
+    /// penalized objective in the caller's own feature space. And local
+    /// minimality alone would be satisfied by refusing everything difficult,
+    /// which is what the previous behaviour did.
+    ///
+    /// Removing the damping fails this: those same 53 designs return
+    /// `SolverDidNotConverge` again. Keeping the damping but dropping the
+    /// local-minimality check would leave the interesting half unstated.
     #[test]
-    fn a_binary_fit_that_diverged_under_its_full_budget_is_refused() {
+    fn every_binary_fit_in_the_ill_conditioned_region_reaches_its_minimum() {
         let cases = ill_conditioned_neighbourhood();
-        let mut diverged = 0_usize;
-        for (data, targets, params) in &cases {
-            let Err(error) = LogisticRegression::fit(&data.as_view(), targets, params.clone())
-            else {
-                continue;
-            };
+        let mut fitted = 0_usize;
+        for (index, (data, targets, params)) in cases.iter().enumerate() {
+            let model = LogisticRegression::fit(&data.as_view(), targets, params.clone())
+                .unwrap_or_else(|error| {
+                    panic!("case {index} was refused with {error:?}; the exact step is damped")
+                });
+            let coefficients: Vec<f64> =
+                model.coefficients().iter().map(|&v| f64::from(v)).collect();
             assert!(
-                matches!(error, ModelError::SolverDidNotConverge { iterations } if iterations
-                    == params.max_iter()),
-                "unexpected refusal {error:?}"
+                is_a_local_minimum(
+                    data,
+                    targets,
+                    &coefficients,
+                    f64::from(model.intercept()),
+                    f64::from(params.c()),
+                ),
+                "case {index} was returned away from the minimum"
             );
-            diverged += 1;
+            fitted += 1;
         }
+        assert_eq!(fitted, cases.len());
         assert!(
-            diverged > 0,
-            "the region no longer contains a genuinely non-convergent fit, so nothing \
-             here distinguishes the acceptance test from an unconditional yes"
+            fitted >= 900,
+            "the region shrank to {fitted} cases and no longer covers the conditioning \
+             that made damping necessary"
         );
     }
 

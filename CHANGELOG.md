@@ -812,6 +812,82 @@ and releases use [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- `linear_model::LogisticRegression`'s Newton step is now **damped**, so the
+  default solver is globally convergent instead of only locally so. The exact
+  step minimizes a local quadratic model of the penalized objective; where that
+  model is untrustworthy the step overshoots, the next model is built somewhere
+  worse, and the failure compounds. On a badly scaled near-separable design with
+  a weak penalty, iterates reaching `1e63` were measured. The full step is now
+  accepted whenever it sufficiently decreases the objective and halved until it
+  does otherwise — Armijo backtracking, in the new `optimize::damping` seam that
+  both the binary and the multinomial path consume.
+  <br>
+  **This is a breaking change: some fitted values move.** They move far less than
+  the description suggests, and the measurement is what says so. Over 1,600
+  generated well-conditioned binary designs — every one of which takes more than
+  one Newton step — 1,573 fitted `f32` coefficient sets are bit-identical to the
+  undamped path and no iteration count changes at all; the 27 that move do so
+  because the full step failed sufficient decrease somewhere, which is the case
+  damping exists for. At `f64`, before narrowing, 108 of the 1,600 moved, by a
+  relative displacement of median `4.8e-9` and at most `5.1e-8` — under half an
+  `f32` ulp, which is why only 27 survive narrowing. All 108 are at a local
+  minimum under both arms, and the damped point has the strictly lower objective
+  on 78 of them against 11 the other way. The four designs the frozen reference
+  fixture pins are bit-identical, `make reference-check` passes unchanged, and no
+  fixture constant moves — that file holds the reference implementation's own
+  outputs, so a FerricML solver change cannot move one; what it could break is
+  agreement *with* them, and that is what `reference-check` reports. On the
+  deliberately ill-conditioned regions the
+  move is larger, 342 of 919 binary and 147 of 343 multinomial, which is the
+  population whose old iterates were wrong.
+  <br>
+  What it buys, measured the same way: over a generated ill-conditioned region of
+  972 binary designs the undamped step refused 53 as non-convergent, and the
+  damped step refuses **none**, with all 972 returned at a local minimum of the
+  penalized objective in the caller's own feature space — convergence, not merely
+  the absence of an error. The multinomial region's 22 non-convergence refusals
+  likewise go to zero, and 18 of its 210 collapsed-curvature `LinearSolveFailed`
+  refusals resolve as well, because the damped path never reaches the iterate
+  whose curvature had collapsed. Over a wider and harsher 704-design sweep — column
+  scales to `1e7`, separations to `12`, `C` to `1e12` — there is no
+  non-convergence refusal left at the default budget at all, and 139 fits exhaust
+  it and are accepted on the Newton decrement.
+  <br>
+  The convergence test still reads the **exact** step rather than the damped one.
+  The exact step's size is the second-order estimate of the distance to the
+  minimum; a step shortened because the local model was untrustworthy is evidence
+  about the model, and treating it as convergence would stop the iteration
+  wherever the model was worst.
+  <br>
+  `optimize::line_search`'s strong-Wolfe search was the obvious candidate and was
+  rejected on measurement. Its curvature condition exists to keep L-BFGS's stored
+  inverse-Hessian approximation positive definite, and a Newton path has no such
+  pairs — it refactorizes the exact Hessian every iteration, and that
+  factorization succeeding *is* the certificate. Counted directly: over the 1,600
+  well-conditioned designs the curvature condition rejects the exact step on
+  **none**, so it would move exactly the population sufficient decrease already
+  moves; over the ill-conditioned region it rejects a further 273 of 972 that
+  sufficient decrease alone already rescues. It would move more fitted values for
+  no additional capability.
+  <br>
+  Two tests replace ones whose premise the fix falsified, and both replacements
+  are stronger. `every_binary_fit_in_the_ill_conditioned_region_reaches_its_minimum`
+  asserts the whole region is returned *and* at a local minimum — either half
+  alone is satisfiable by a bad solver — and undamping the step fails it.
+  `an_exhausted_multinomial_budget_that_reached_its_minimum_is_fitted_not_refused`
+  can no longer reach an exhausted budget at the default `max_iter`, because the
+  region now converges in at most 53 of its hundred iterations; it sets the budget
+  to one iteration short of what each fit needs instead, which exercises both
+  answers — 348 of 385 accepted on the decrement and 37 refused — where the
+  previous construction only ever watched acceptances. Deleting the decrement
+  certificate refuses all 385; making it unconditional accepts all 385, and also
+  fails five starved-budget tests.
+  <br>
+  `docs/determinism.md` gains the two `ln` entries this adds to the Newton fitting
+  paths, and the argument that a halving sequence of exact powers of two is a
+  narrower determinism risk than the bisection it sits beside: its next trial does
+  not depend even on a bracket, only on the halving index.
+
 - `linear_model::LogisticRegression` no longer returns an unconverged Newton
   iterate as a fitted model, on **either** target shape. `fit` and
   `fit_multiclass` broke out of the iteration when the largest standardized

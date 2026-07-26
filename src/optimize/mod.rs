@@ -9,6 +9,15 @@
 //! line search — so a new objective reaches a second-order-quality solver
 //! without shipping a solver of its own.
 //!
+//! It also owns the step-length rule the *exact* Newton paths need. An exact
+//! step is globally convergent on nothing: it minimizes a local quadratic
+//! model, and where that model is untrustworthy the step overshoots and keeps
+//! overshooting. [`armijo_backtracking`] is the standard remedy, kept here
+//! rather than inside an estimator so the binary and multinomial logistic paths
+//! — and any later exact-Newton consumer — share one rule instead of three
+//! copies. Its own documentation states why those consumers do not reach for the
+//! strong-Wolfe search next to it.
+//!
 //! # Boundaries
 //!
 //! - Private. Optimizers are not public vocabulary; keeping them internal lets
@@ -39,9 +48,11 @@
 //! bisection's next trial depends only on the current bracket, so the iterate
 //! sequence is a function of the inputs alone.
 
+mod damping;
 mod lbfgs;
 mod line_search;
 
+pub(crate) use damping::armijo_backtracking;
 pub(crate) use lbfgs::{
     DEFAULT_MEMORY, LbfgsOptions, LbfgsWorkspace, OptimizeError, Problem, minimize,
 };
