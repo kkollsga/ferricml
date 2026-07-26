@@ -188,6 +188,21 @@ and releases use [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   is 2.8 ms against 1.8 ms, and on small data the exact step's single-digit
   iteration count wins — so the default is unchanged and no fitted artifact
   moves.
+- `StratifiedKFold` and `GroupKFold` now say that **fold membership is not a
+  parity claim**, on the types and in the evaluation guide. What each promises
+  is its defining property plus reproducibility from the stated inputs, not
+  which fold a given row lands in: `StratifiedKFold` deals each class
+  round-robin where another library assigns contiguous blocks of the same
+  stratum, and `GroupKFold` states the tie-break between two equally light
+  folds where another library leaves it unobservable. Both differences preserve
+  everything claimed — measured against the comparison reference, per-fold
+  positive rates agree to four decimals and `GroupKFold`'s fold sizes are
+  identical (`[194, 210, 209, 193, 194]` on both sides) with no group straddling
+  a split. No assignment changed; the sentence exists so a membership diff is
+  not read as a defect, and the properties it names are the ones
+  `stratified_folds_balance_every_class_and_global_size`,
+  `no_group_appears_on_both_sides_of_any_split` and
+  `folds_are_as_even_as_whole_groups_allow` already assert.
 
 ## [0.2.0] - 2026-07-26
 

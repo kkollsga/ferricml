@@ -15,6 +15,18 @@ use super::{Split, SplitError, validate_fold_count};
 /// fold index. Fold sizes are therefore as even as whole groups allow, which is
 /// not exactly even when group sizes are not.
 ///
+/// **Those two tie-breaks are the claim; the resulting membership is not.**
+/// Which fold a given group lands in is not a parity claim against any other
+/// library. Another implementation taking groups largest-first into the
+/// lightest fold — the same greedy rule — but breaking its ties differently
+/// produces identical fold *sizes* and the same no-group-straddles-a-split
+/// guarantee over an entirely different assignment, and a tie-break that is
+/// not stated is not reproducible from the group labels either. What this
+/// splitter promises is the integrity property, the size balance, and
+/// reproducibility from `groups` and `n_splits` alone. A cross-library
+/// comparison of fold contents is comparing something neither splitter
+/// promises.
+///
 /// ```
 /// use ferricml::model_selection::GroupKFold;
 ///
