@@ -14,15 +14,42 @@ cargo package --locked --allow-dirty --no-verify
 tar -xzf "$archive" -C "$package_root"
 mv "$package_root/ferricml-${version}" "$package_root/ferricml"
 
-# These paths are development-only. Checking the extract, rather than
-# `cargo package --list`, makes the assertion cover the exact archive consumed
-# below.
-for source_only in .cargo .github .readthedocs.yaml .venv-docs CLAUDE.md Makefile mkdocs.yml RELEASING.md benches benchmarks dev-docs research requirements scripts site tests; do
+# The development-only paths are `package.exclude` in Cargo.toml, read from
+# there rather than repeated here: a second copy is a second place to remember,
+# and nothing would have failed the day `.cargo` was added to one list and not
+# the other. Checking the extract, rather than `cargo package --list`, makes the
+# assertion cover the exact archive consumed below.
+#
+# An exclude entry naming a path this checkout does not have proves nothing by
+# being absent from the archive, so the two counters below separate the entries
+# from the assertions that are actually live here. Zero of either means this
+# loop checked nothing, which is a failure rather than a pass.
+excluded=0
+asserted=0
+while IFS= read -r source_only; do
+  excluded=$((excluded + 1))
+  if [[ -e "$source_only" ]]; then
+    asserted=$((asserted + 1))
+  fi
   if [[ -e "$package_root/ferricml/$source_only" ]]; then
     echo "packaged crate unexpectedly contains source-only path: $source_only" >&2
     exit 1
   fi
-done
+done < <(python3 -c '
+import pathlib, tomllib
+manifest = tomllib.loads(pathlib.Path("Cargo.toml").read_text())
+for entry in manifest["package"].get("exclude", []):
+    print(entry.lstrip("/"))
+')
+
+if [[ "$excluded" -eq 0 ]]; then
+  echo "Cargo.toml declares no package.exclude paths; the source-only assertion checked nothing" >&2
+  exit 1
+fi
+if [[ "$asserted" -eq 0 ]]; then
+  echo "no excluded path exists in this checkout; the source-only assertion checked nothing" >&2
+  exit 1
+fi
 
 # The narrative documentation ships, because it is the crate's only offline
 # documentation and because `src/lib.rs` compiles those pages as doctests. What
@@ -53,4 +80,5 @@ CARGO_TARGET_DIR="$package_root/target" cargo run \
   --locked \
   --quiet
 
+echo "packaged crate: ${asserted} of ${excluded} excluded paths exist here and are absent from the archive"
 echo "packaged crate: external fit/predict consumer passed for ferricml ${version}"
