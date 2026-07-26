@@ -12,6 +12,12 @@
 //! 2026-07-26, documented as an independent stream while emitting the same
 //! values for the same seed — the shape rule 6 exists to forbid.
 //!
+//! The integration-test crates cannot reach a `pub(crate)` item, so they have one
+//! generator of their own in `tests/support/rng.rs` and a sibling rule,
+//! `test-rng-single-source`, holding it to the same "exactly one" standard. Both
+//! test binaries that needed the crate's own stream carried a third and fourth
+//! copy of this core until the same day.
+//!
 //! The stream is part of FerricML's determinism contract: for a given seed the
 //! sequence of `next_u64` values, and therefore every fitted artifact derived
 //! from it, is frozen. Changing the mixing constants or the rejection bound

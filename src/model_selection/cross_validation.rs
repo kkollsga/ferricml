@@ -171,7 +171,7 @@ impl CrossValidationResult {
 /// classifier-versus-regressor and on nothing else: how many classes the labels
 /// name is a property of the *metric*, which already declares what it reads
 /// through
-/// [`ClassificationScore::output_kind`](super::ClassificationScore::output_kind),
+/// [`ClassificationScore::output_kind`],
 /// so [`ClassTargets`](crate::data::ClassTargets) folds here exactly as
 /// [`BinaryTargets`](crate::data::BinaryTargets) does. A score reading
 /// [`ClassifierOutputKind::ProbabilityMatrix`] works for any observed class set;

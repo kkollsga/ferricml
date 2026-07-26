@@ -1,4 +1,4 @@
-//! The matrix-free logistic fit behind [`LogisticSolver::Lbfgs`].
+//! The matrix-free logistic fit behind [`super::LogisticSolver::Lbfgs`].
 //!
 //! # Why a second solver exists
 //!

@@ -62,7 +62,10 @@ estimator meaning follow the reference contract.
   handoff is validated before the composition exists, and one caller-owned workspace is split into a disjoint
   segment per stage, so multi-stage inference allocates nothing. Prediction
   stays on the generic callback rather than per-category convenience methods,
-  which cannot coexist as inherent methods of one name.
+  which cannot coexist as inherent methods of one name — and, in the one shape
+  that *does* compile for both categories, could only reach a caller-owned
+  buffer by allocating a transform workspace behind it. Both attempts and the
+  reversal condition are recorded on `StagedPipeline::with_transformed`.
 - `linear_model` separates estimator facades from private numerical seams, and
   now holds two solver families rather than one. The closed-form fits — ordinary
   least squares and ridge — stay closed form. `LogisticRegression` selects

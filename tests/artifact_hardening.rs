@@ -78,6 +78,7 @@ use std::collections::HashSet;
 mod support;
 
 use support::api_profile::{self, PERSISTENCE_TRAITS};
+use support::rng::TestRng;
 
 // ---------------------------------------------------------------------------
 // Peak-allocation meter
@@ -178,24 +179,31 @@ fn measure_peak<R>(operation: impl FnOnce() -> R) -> (R, usize) {
 // Deterministic generator
 // ---------------------------------------------------------------------------
 
-/// SplitMix64, the same stream `src/numeric/rng.rs` defines for the crate.
+/// The campaign's draw sequence, over the one test-crate generator.
 ///
-/// It is restated rather than imported because the crate generator is
-/// `pub(crate)`; an integration test cannot reach it, and exposing it would
-/// enlarge the public API for a test's convenience.
-struct Rng(u64);
+/// The SplitMix64 core used to be restated here, character-identical to
+/// `src/numeric/rng.rs`'s and to `tests/reference_semantics.rs`'s — three copies
+/// of one stream, which is the shape `src/numeric/mod.rs` rule 6 forbids. It now
+/// comes from `tests/support/rng.rs`, and `rng-single-source` in
+/// `scripts/check_source_layout.py` covers `tests/` so it cannot come back.
+///
+/// `TestRng::from_state` rather than `TestRng::new`, and the biased `below`
+/// rather than the support generator's rejection-sampled one, because both
+/// choices are what keep this campaign's stream *unchanged*: the reach floors
+/// below are calibrated against the mutations this exact sequence produces, so
+/// substituting a differently-shaped draw would silently re-aim the fuzzer while
+/// looking like a refactor. The bias is irrelevant to what it is used for —
+/// `below` picks a mutation site or a strategy — and the stream is pinned by
+/// value in [`the_campaign_draw_sequence_is_frozen`].
+struct Rng(TestRng);
 
 impl Rng {
     const fn new(seed: u64) -> Self {
-        Self(seed)
+        Self(TestRng::from_state(seed))
     }
 
     fn next_u64(&mut self) -> u64 {
-        self.0 = self.0.wrapping_add(0x9e37_79b9_7f4a_7c15);
-        let mut value = self.0;
-        value = (value ^ (value >> 30)).wrapping_mul(0xbf58_476d_1ce4_e5b9);
-        value = (value ^ (value >> 27)).wrapping_mul(0x94d0_49bb_1331_11eb);
-        value ^ (value >> 31)
+        self.0.next_u64()
     }
 
     fn below(&mut self, upper: usize) -> usize {
@@ -210,6 +218,40 @@ impl Rng {
     fn pick<'a, T>(&mut self, values: &'a [T]) -> &'a T {
         &values[self.below(values.len())]
     }
+}
+
+/// The draw sequence the reach floors are calibrated against, by value.
+///
+/// Captured from the private copy this file carried before it was deleted. The
+/// floors themselves could not have proven the stream unchanged: they are
+/// inequalities over a whole campaign, so a different sequence that happened to
+/// reach as far would satisfy every one of them while testing different bytes.
+#[test]
+fn the_campaign_draw_sequence_is_frozen() {
+    let mut rng = Rng::new(FUZZ_SEED);
+    assert_eq!(
+        (0..6).map(|_| rng.next_u64()).collect::<Vec<_>>(),
+        vec![
+            8914142084118001171,
+            12254255926221854166,
+            2808264588722131936,
+            6858291291935140443,
+            6635311097510039988,
+            5950000538024547785,
+        ]
+    );
+
+    let mut rng = Rng::new(FUZZ_SEED);
+    assert_eq!(
+        (0..8).map(|_| rng.below(10)).collect::<Vec<_>>(),
+        vec![1, 6, 6, 3, 8, 5, 3, 5]
+    );
+
+    let mut rng = Rng::new(FUZZ_SEED);
+    assert_eq!(
+        (0..8).map(|_| rng.chance(3)).collect::<Vec<_>>(),
+        vec![false, true, false, true, true, false, false, false]
+    );
 }
 
 /// Values that sit on a bound, just past one, or exercise sign handling.
@@ -4510,6 +4552,255 @@ const CONTROL_CASES: &[&str] = &[
     "control-fitted-lasso",
     "control-fitted-elastic-net",
 ];
+
+// ---------------------------------------------------------------------------
+// Which check rejected, not merely which kind came back
+// ---------------------------------------------------------------------------
+//
+// Every corpus entry asserts an exact `ArtifactError`, which sounds tighter than
+// it is: 92 of the 128 expect a bare `InvalidPayload`, and eleven of those are
+// one-record edits of the *same* five-record tree. So a fixture could be rejected
+// by a completely different clause than the one its provenance names, return the
+// recorded error, and read as coverage of a check that no test reaches. That is
+// not hypothetical — `tree-feature-beyond-fitted-width` was confirmed to be
+// rejected by the feature bound only by injecting a fault that made it accepted,
+// by hand, once.
+//
+// The oracle below makes that confirmation a test. For a fixture that is one
+// named deviation from an artifact which decodes, the *repair* — the same builder
+// with the honest value — must be **accepted**. If some other clause were doing
+// the rejecting, it would still reject the repair, because the repair differs
+// from the fixture only in the named fault.
+//
+// # What is pinned, and what deliberately is not
+//
+// Pinned: the tree-topology family, which is exactly where the discrimination is
+// weakest. Eleven forest fixtures and six preorder fixtures across five other
+// estimator kinds all expect bare `InvalidPayload` over one canonical tree, so
+// nothing but this oracle separates "the leaf count check fired" from "the depth
+// check fired" from "the feature bound fired".
+//
+// Not pinned, and asserting kind only: fixtures built from scratch rather than
+// derived from something valid — an inflated element count with no bytes behind
+// it, a truncated header, an unknown version word. There is no repair to accept,
+// because there is no otherwise-valid artifact underneath: the honest value would
+// be a different fixture, not a repaired one. Their errors are also mostly
+// discriminating on their own (`Truncated`, `UnsupportedVersion { found }`,
+// `SizeLimitExceeded { limit, actual }`), which is the property the tree family
+// lacks.
+//
+// The boundary is a decision rather than an omission, and pinning all 117 fault
+// fixtures was declined on the same ground: a repair table nobody maintains is
+// worse than none, and 92 entries of it would carry no information the error kind
+// does not already carry.
+//
+// # What the corpus already covered by accident, and where it did not
+//
+// Measured while building this, by injecting a clause that rejects a well-formed
+// five-record single-feature tree: the corpus test failed too, on
+// `forest-trailing-tree-component`. That fixture expects `TrailingBytes`, which
+// is only reachable once its *first* tree decodes — so the forest decoder's
+// canonical baseline was incidentally guarded, by one fixture, as a side effect
+// of what it was actually testing.
+//
+// No such fixture exists for extra-trees, histogram boosting, the boosted
+// classifier, the standalone tree, or the standalone tree classifier. Their
+// pre-order claims rested on nothing at all: every one of their fixtures expects
+// `InvalidPayload`, and none of them needed a valid tree of that shape to decode
+// for its own assertion to hold. Those five are the entries in the table below
+// that were not covered in any form before.
+
+/// Below this many pinned fixtures the oracle is not doing its job: the table
+/// was gutted, or the family it covers was renamed out from under it.
+const MIN_ATTRIBUTED_FIXTURES: usize = 17;
+
+/// Each pinned fixture, and the bytes with **only** the named fault undone.
+///
+/// Every repair here is the same builder call the fixture uses, with the honest
+/// value in place of the fault — so the two byte strings differ in the named
+/// field and nothing else, which is what makes an accepted repair evidence about
+/// that field rather than about the artifact in general.
+fn attributed_repairs() -> Vec<(&'static str, Vec<u8>)> {
+    let forest = forest_with(&canonical_tree(), 3, 2);
+    vec![
+        // The metadata-versus-records pair: the fixtures declare a leaf count
+        // and a depth the records do not produce, and the repair declares the
+        // ones they do.
+        ("tree-leaf-count-mismatch", forest.clone()),
+        ("tree-depth-mismatch", forest.clone()),
+        // One edited record each, over the same canonical tree.
+        ("tree-cyclic-child", forest.clone()),
+        ("tree-left-child-not-adjacent", forest.clone()),
+        ("tree-unreachable-record", forest.clone()),
+        ("tree-non-finite-leaf", forest.clone()),
+        ("tree-non-finite-threshold", forest.clone()),
+        ("tree-feature-beyond-fitted-width", forest.clone()),
+        ("tree-leaf-sentinel-as-feature", forest.clone()),
+        ("tree-unknown-record-tag", forest.clone()),
+        ("tree-leaf-padding-nonzero", forest.clone()),
+        // The record *order* cases, on every kind that reads a tree component.
+        // These share one fault across six decoders, so an accepted repair per
+        // decoder is what says each one really checks pre-order rather than
+        // rejecting the payload for a reason of its own.
+        ("forest-non-canonical-preorder", forest),
+        (
+            "boosting-non-canonical-preorder",
+            boosting_with(&canonical_tree(), 3, 2),
+        ),
+        (
+            "boosting-classifier-non-canonical-preorder",
+            boosting_classifier_with(&canonical_tree(), 3, 2),
+        ),
+        (
+            "extra-trees-non-canonical-preorder",
+            extra_trees_with(&canonical_tree(), 3, 2),
+        ),
+        (
+            "decision-tree-non-canonical-preorder",
+            decision_tree_with(&canonical_tree(), 3, 2),
+        ),
+        (
+            "decision-tree-classifier-non-canonical-preorder",
+            decision_tree_classifier_with(&canonical_probability_tree(), 3, 2),
+        ),
+    ]
+}
+
+/// Why `repaired` fails to attribute the rejection of `frozen`, if it does.
+///
+/// A named function rather than an inline assertion, because it is itself
+/// something that has to be proven able to fire — see
+/// [`the_attribution_oracle_reports_a_fixture_rejected_by_another_clause`].
+fn attribution_failure(decoder: &Decoder, frozen: &[u8], repaired: &[u8]) -> Option<String> {
+    let (name, _, decode, _) = *decoder;
+    if frozen == repaired {
+        return Some(
+            "the repair is byte-identical to the fixture, so it undoes no fault".to_owned(),
+        );
+    }
+    match decode(frozen) {
+        Outcome::Accepted(_) => {
+            return Some("the fixture itself was accepted, so nothing rejected it".to_owned());
+        }
+        Outcome::Rejected(_) => {}
+    }
+    match decode(repaired) {
+        Outcome::Accepted(_) => None,
+        Outcome::Rejected(error) => Some(format!(
+            "undoing the fault its provenance names left {name} rejecting it with \
+             {error}, so the fixture is rejected by some other clause and pins a \
+             check no test reaches"
+        )),
+    }
+}
+
+/// Each pinned fixture is rejected by the clause its provenance names.
+#[test]
+fn each_pinned_fixture_is_rejected_by_the_clause_its_provenance_names() {
+    let decoders = decoders();
+    let cases = corpus();
+    let repairs = attributed_repairs();
+
+    assert!(
+        repairs.len() >= MIN_ATTRIBUTED_FIXTURES,
+        "the repair table fell to {} entries, below the floor of {MIN_ATTRIBUTED_FIXTURES}",
+        repairs.len()
+    );
+    let mut names: Vec<&str> = repairs.iter().map(|(name, _)| *name).collect();
+    names.sort_unstable();
+    let distinct = names.len();
+    names.dedup();
+    assert_eq!(
+        names.len(),
+        distinct,
+        "the repair table repeats a fixture name"
+    );
+
+    for (name, repaired) in &repairs {
+        // Closed against the corpus in both directions: a repair naming a
+        // fixture that no longer exists is a stale entry, and one naming a
+        // control would be asserting that a valid artifact is valid.
+        let case = cases
+            .iter()
+            .find(|case| case.name == *name)
+            .unwrap_or_else(|| panic!("the repair table names no corpus fixture: {name}"));
+        assert!(
+            !CONTROL_CASES.contains(&case.name),
+            "{name} is a control fixture, so a repair for it asserts nothing"
+        );
+
+        let frozen = std::fs::read(corpus_path(case.name))
+            .unwrap_or_else(|error| panic!("missing corpus fixture {}.bin ({error})", case.name));
+        let decoder = decoders
+            .iter()
+            .find(|(decoder, ..)| *decoder == case.decoder)
+            .unwrap_or_else(|| panic!("{}: no decoder named {}", case.name, case.decoder));
+
+        if let Some(failure) = attribution_failure(decoder, &frozen, repaired) {
+            panic!("{} ({}): {failure}", case.name, case.provenance);
+        }
+    }
+}
+
+/// The oracle fires when a fixture is rejected by a clause its provenance does
+/// not name.
+///
+/// This is the assertion that makes the test above evidence rather than
+/// decoration. The synthetic fixture carries **two** faults — a split on a
+/// feature index the fitted width does not have, plus a declared leaf count the
+/// records do not produce — and its repair undoes only the first. A fixture like
+/// that would pass every existing corpus assertion: it is rejected, and with
+/// exactly `InvalidPayload`. The oracle has to report it, because the check its
+/// provenance would name is not the check that rejected it.
+#[test]
+fn the_attribution_oracle_reports_a_fixture_rejected_by_another_clause() {
+    let decoders = decoders();
+    let decoder = decoders
+        .iter()
+        .find(|(name, ..)| *name == "random-forest")
+        .expect("forest decoder");
+
+    let mut records = canonical_tree();
+    records[1] = branch_record(9, 2.0, 2, 3);
+    let two_faults = forest_with(&records, 2, 2);
+    let named_fault_undone = forest_with(&canonical_tree(), 2, 2);
+
+    // Both are rejected with the recorded kind, which is precisely why the
+    // corpus assertions cannot tell them apart.
+    let (_, _, decode, _) = *decoder;
+    for bytes in [&two_faults, &named_fault_undone] {
+        match decode(bytes) {
+            Outcome::Rejected(ArtifactError::InvalidPayload) => {}
+            Outcome::Rejected(other) => panic!(
+                "the mis-attribution probe no longer produces the shared error \
+                 kind; got {other}"
+            ),
+            Outcome::Accepted(_) => {
+                panic!("the mis-attribution probe is no longer rejected at all")
+            }
+        }
+    }
+
+    let failure = attribution_failure(decoder, &two_faults, &named_fault_undone)
+        .expect("the attribution oracle accepted a fixture rejected by another clause");
+    assert!(
+        failure.contains("rejected by some other clause"),
+        "unexpected attribution failure: {failure}"
+    );
+
+    // And the two other ways the oracle can be defeated are reported as well: a
+    // repair that changes nothing, and a "fixture" that is not rejected at all.
+    let honest = forest_with(&canonical_tree(), 3, 2);
+    assert!(
+        attribution_failure(decoder, &two_faults, &two_faults)
+            .is_some_and(|failure| failure.contains("undoes no fault")),
+        "a repair identical to its fixture was not reported"
+    );
+    assert!(
+        attribution_failure(decoder, &honest, &honest.clone()).is_some(),
+        "an accepted fixture was not reported"
+    );
+}
 
 fn corpus_path(name: &str) -> std::path::PathBuf {
     std::path::Path::new(env!("CARGO_MANIFEST_DIR"))

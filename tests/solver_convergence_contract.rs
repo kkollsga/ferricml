@@ -15,6 +15,22 @@
 //! estimator with an iteration budget is one row here, and a solver that
 //! regresses to returning its last iterate fails on the row it already has.
 //!
+//! # What makes the enumeration complete
+//!
+//! Nothing in this file, and that was the gap.
+//! [`every_budgeted_entry_point_in_the_public_api_is_enumerated`] catches a row
+//! being **removed**; neither it nor anything else caught a row never being
+//! **added**, so a new budgeted estimator could ship with the general claim
+//! unenforced for it and no test anywhere saying so.
+//!
+//! `scripts/check_solver_registration.py`, run by `make gate`, closes that from
+//! outside: every params type in `src/` exposing both `with_max_iter` and
+//! `with_tol` has to be named in this file outside its `use` declarations. The
+//! rule is deliberately syntactic and claims nothing about numerics — there is
+//! no way to satisfy it by weakening a tolerance or by accepting an unconverged
+//! iterate, only by adding a row that then has to pass the assertions below on
+//! its own merits.
+//!
 //! # What this file cannot decide
 //!
 //! Only that a refusal happens — never that the *acceptance* is right. The two
