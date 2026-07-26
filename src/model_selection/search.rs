@@ -3,13 +3,14 @@
 use std::error::Error;
 use std::fmt;
 
-use crate::api::{Classifier, ModelError, ProbabilisticClassifier, Regressor};
-use crate::data::{BinaryTargets, MatrixView, RegressionTargets};
+use crate::api::{ModelError, Regressor};
+use crate::data::{MatrixView, RegressionTargets};
 
 use super::cross_validation::{validate_split_sample_count, validate_target_length};
 use super::{
-    ClassificationScore, CrossValidationError, CrossValidationResult, RegressionScore, Split,
-    cross_validate_classifier, cross_validate_classifier_labels, cross_validate_regressor,
+    ClassificationScore, ClassificationTargets, CrossValidationError, CrossValidationResult,
+    RegressionScore, ScorableClassifier, Split, cross_validate_classifier,
+    cross_validate_regressor,
 };
 
 /// An ordered, explicit set of typed parameter candidates.
@@ -294,22 +295,34 @@ impl<P> SearchResult<P> {
 /// [`cross_validate_classifier`], which runs through the same caller-owned
 /// scoring entry point batch scoring and permutation importance use, so a
 /// caller-defined score behaves in search exactly as it does anywhere else.
-pub fn grid_search_classifier<M, P, I, F, S>(
+///
+/// `view` is that entry point's view argument, forwarded unchanged:
+/// [`ScorableClassifier::probabilistic`] for a model that produces
+/// probabilities, [`ScorableClassifier::labels_only`] for one that does not.
+/// There is no separate label-only search, because there is no separate
+/// label-only cross-validation.
+///
+/// The target vocabulary is forwarded the same way, so tuning a natively
+/// multiclass estimator over [`ClassTargets`](crate::data::ClassTargets) is
+/// this function with a different `T` rather than a fourth entry point.
+pub fn grid_search_classifier<M, T, P, I, F, S, V>(
     data: &MatrixView<'_>,
-    targets: &BinaryTargets,
+    targets: &T,
     splits: I,
     grid: &ParameterGrid<P>,
     scorer: S,
     mut fit: F,
+    view: V,
 ) -> Result<SearchResult<P>, SearchError>
 where
-    M: ProbabilisticClassifier,
+    T: ClassificationTargets,
     P: Clone,
     I: IntoIterator<Item = Split>,
-    F: FnMut(&MatrixView<'_>, &BinaryTargets, &P) -> Result<M, ModelError>,
+    F: FnMut(&MatrixView<'_>, &T, &P) -> Result<M, ModelError>,
     S: ClassificationScore,
+    V: for<'m> Fn(&'m M) -> ScorableClassifier<'m>,
 {
-    let splits = validated_setup(data.rows(), targets.len(), grid, splits)?;
+    let splits = validated_setup(data.rows(), targets.as_slice().len(), grid, splits)?;
     let mut candidates = Vec::with_capacity(grid.len());
     for (candidate, params) in grid.candidates().iter().enumerate() {
         let folds = cross_validate_classifier(
@@ -318,49 +331,7 @@ where
             splits.iter().cloned(),
             &scorer,
             |train, train_targets| fit(train, train_targets, params),
-        )
-        .map_err(|source| SearchError::Candidate { candidate, source })?;
-        candidates.push(finish_candidate(candidate, params.clone(), folds)?);
-    }
-    Ok(select_best(candidates, scorer.greater_is_better()))
-}
-
-/// Searches a typed parameter grid for a label-producing classifier.
-///
-/// This is [`grid_search_classifier`] for a classifier that produces no
-/// probabilities, evaluating candidates through
-/// [`cross_validate_classifier_labels`]. Only label metrics apply; a
-/// probability metric is reported as an error rather than scored against a
-/// substituted value.
-///
-/// The loop is spelled out rather than shared with [`grid_search_classifier`]:
-/// the only difference is which cross-validation entry point it calls, and
-/// threading that through a higher-ranked function parameter costs more in
-/// bounds than the fourteen lines it saves.
-pub fn grid_search_classifier_labels<M, P, I, F, S>(
-    data: &MatrixView<'_>,
-    targets: &BinaryTargets,
-    splits: I,
-    grid: &ParameterGrid<P>,
-    scorer: S,
-    mut fit: F,
-) -> Result<SearchResult<P>, SearchError>
-where
-    M: Classifier,
-    P: Clone,
-    I: IntoIterator<Item = Split>,
-    F: FnMut(&MatrixView<'_>, &BinaryTargets, &P) -> Result<M, ModelError>,
-    S: ClassificationScore,
-{
-    let splits = validated_setup(data.rows(), targets.len(), grid, splits)?;
-    let mut candidates = Vec::with_capacity(grid.len());
-    for (candidate, params) in grid.candidates().iter().enumerate() {
-        let folds = cross_validate_classifier_labels(
-            data,
-            targets,
-            splits.iter().cloned(),
-            &scorer,
-            |train, train_targets| fit(train, train_targets, params),
+            &view,
         )
         .map_err(|source| SearchError::Candidate { candidate, source })?;
         candidates.push(finish_candidate(candidate, params.clone(), folds)?);
@@ -504,7 +475,7 @@ fn select_best<P>(candidates: Vec<CandidateScores<P>>, greater_is_better: bool) 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::data::DenseMatrix;
+    use crate::data::{BinaryTargets, ClassTargets, DenseMatrix};
     use crate::linear_model::{LogisticRegression, LogisticRegressionParams, Ridge, RidgeParams};
     use crate::model_selection::{
         ClassificationScorer, ClassifierOutput, ClassifierOutputKind, KFold, RegressionScorer,
@@ -901,6 +872,7 @@ mod tests {
             |train, train_targets, params| {
                 LogisticRegression::fit(train, train_targets, params.clone())
             },
+            |model| ScorableClassifier::probabilistic(model),
         )
         .unwrap();
         assert_eq!(by_accuracy.len(), 4);
@@ -924,6 +896,7 @@ mod tests {
             |train, train_targets, params| {
                 LogisticRegression::fit(train, train_targets, params.clone())
             },
+            |model| ScorableClassifier::probabilistic(model),
         )
         .unwrap();
         assert_eq!(by_custom.len(), 4);
@@ -936,6 +909,85 @@ mod tests {
                     .all(|score| (0.0..=1.0).contains(score))
             );
         }
+    }
+
+    /// Finding 5's headline consequence: tuning a natively multiclass
+    /// estimator, through the same entry point a binary one uses.
+    #[test]
+    fn an_arbitrary_class_set_is_searched_through_the_same_entry_point() {
+        let data = DenseMatrix::new(
+            (0..12)
+                .flat_map(|row| [row as f32, ((row * 5) % 7) as f32])
+                .collect(),
+            12,
+            2,
+        )
+        .unwrap();
+        // Deliberately non-contiguous, non-zero-based labels.
+        let targets =
+            ClassTargets::new((0..12).map(|row| [3_u8, 7, 10][row % 3]).collect()).unwrap();
+        assert_eq!(targets.classes(), &[3, 7, 10]);
+        let splits = StratifiedKFold::new(2)
+            .split(targets.as_slice())
+            .unwrap()
+            .collect::<Vec<_>>();
+        let grid = ParameterGrid::new(LogisticRegressionParams::default().with_max_iter(200))
+            .axis([0.1_f32, 1.0], LogisticRegressionParams::with_c);
+
+        let result = grid_search_classifier(
+            &data.as_view(),
+            &targets,
+            splits.iter().cloned(),
+            &grid,
+            ClassificationScorer::MulticlassLogLoss,
+            |train, train_targets, params| {
+                LogisticRegression::fit_multiclass(train, train_targets, params.clone())
+            },
+            |model| ScorableClassifier::probabilistic(model),
+        )
+        .unwrap();
+        assert_eq!(result.len(), 2);
+
+        // Search is still a loop over the one cross-validation entry point,
+        // with the wider vocabulary forwarded rather than reimplemented.
+        for (candidate, scores) in result.candidates().iter().enumerate() {
+            let manual = cross_validate_classifier(
+                &data.as_view(),
+                &targets,
+                splits.iter().cloned(),
+                ClassificationScorer::MulticlassLogLoss,
+                |train, train_targets| {
+                    LogisticRegression::fit_multiclass(
+                        train,
+                        train_targets,
+                        scores.params().clone(),
+                    )
+                },
+                |model| ScorableClassifier::probabilistic(model),
+            )
+            .unwrap();
+            assert_eq!(scores.folds(), &manual, "candidate {candidate}");
+        }
+
+        // The wider vocabulary buys no leniency: a binary positive-probability
+        // metric still fails the candidate that asked for it.
+        assert_eq!(
+            grid_search_classifier(
+                &data.as_view(),
+                &targets,
+                splits,
+                &grid,
+                ClassificationScorer::RocAuc,
+                |train, train_targets, params| {
+                    LogisticRegression::fit_multiclass(train, train_targets, params.clone())
+                },
+                |model| ScorableClassifier::probabilistic(model),
+            ),
+            Err(SearchError::Candidate {
+                candidate: 0,
+                source: CrossValidationError::UnsupportedClasses { fold: 0 },
+            })
+        );
     }
 
     #[test]

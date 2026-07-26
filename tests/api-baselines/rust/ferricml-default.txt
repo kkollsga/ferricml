@@ -759,6 +759,9 @@ pub fn ferricml::data::ClassTargets::from(ferricml::data::BinaryTargets) -> Self
 impl core::fmt::Debug for ferricml::data::BinaryTargets
 pub fn ferricml::data::BinaryTargets::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
 impl core::marker::StructuralPartialEq for ferricml::data::BinaryTargets
+impl ferricml::model_selection::ClassificationTargets for ferricml::data::BinaryTargets
+pub fn ferricml::data::BinaryTargets::as_slice(&self) -> &[u8]
+pub fn ferricml::data::BinaryTargets::select(&self, &[usize]) -> core::result::Result<Self, ferricml::data::SelectionError>
 pub struct ferricml::data::ClassTargets
 impl ferricml::data::ClassTargets
 pub fn ferricml::data::ClassTargets::as_slice(&self) -> &[u8]
@@ -781,6 +784,9 @@ pub fn ferricml::data::ClassTargets::from(ferricml::data::BinaryTargets) -> Self
 impl core::fmt::Debug for ferricml::data::ClassTargets
 pub fn ferricml::data::ClassTargets::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
 impl core::marker::StructuralPartialEq for ferricml::data::ClassTargets
+impl ferricml::model_selection::ClassificationTargets for ferricml::data::ClassTargets
+pub fn ferricml::data::ClassTargets::as_slice(&self) -> &[u8]
+pub fn ferricml::data::ClassTargets::select(&self, &[usize]) -> core::result::Result<Self, ferricml::data::SelectionError>
 pub struct ferricml::data::DenseMatrix
 impl ferricml::data::DenseMatrix
 pub fn ferricml::data::DenseMatrix::as_slice(&self) -> &[f32]
@@ -2444,6 +2450,15 @@ impl<S: ferricml::model_selection::ClassificationScore + ?core::marker::Sized> f
 pub fn &S::greater_is_better(&self) -> bool
 pub fn &S::output_kind(&self) -> ferricml::model_selection::ClassifierOutputKind
 pub fn &S::score(&self, &[u8], ferricml::model_selection::ClassifierOutput<'_>) -> core::result::Result<f64, ferricml::model_selection::ScoringError>
+pub trait ferricml::model_selection::ClassificationTargets: ferricml::model_selection::targets::sealed::Sealed + core::marker::Sized
+pub fn ferricml::model_selection::ClassificationTargets::as_slice(&self) -> &[u8]
+pub fn ferricml::model_selection::ClassificationTargets::select(&self, &[usize]) -> core::result::Result<Self, ferricml::data::SelectionError>
+impl ferricml::model_selection::ClassificationTargets for ferricml::data::BinaryTargets
+pub fn ferricml::data::BinaryTargets::as_slice(&self) -> &[u8]
+pub fn ferricml::data::BinaryTargets::select(&self, &[usize]) -> core::result::Result<Self, ferricml::data::SelectionError>
+impl ferricml::model_selection::ClassificationTargets for ferricml::data::ClassTargets
+pub fn ferricml::data::ClassTargets::as_slice(&self) -> &[u8]
+pub fn ferricml::data::ClassTargets::select(&self, &[usize]) -> core::result::Result<Self, ferricml::data::SelectionError>
 pub trait ferricml::model_selection::RegressionScore
 pub fn ferricml::model_selection::RegressionScore::greater_is_better(&self) -> bool
 pub fn ferricml::model_selection::RegressionScore::score(&self, &[f32], &[f32]) -> core::result::Result<f64, ferricml::model_selection::ScoringError>
@@ -2453,11 +2468,9 @@ pub fn ferricml::model_selection::RegressionScorer::score(&self, &[f32], &[f32])
 impl<S: ferricml::model_selection::RegressionScore + ?core::marker::Sized> ferricml::model_selection::RegressionScore for &S
 pub fn &S::greater_is_better(&self) -> bool
 pub fn &S::score(&self, &[f32], &[f32]) -> core::result::Result<f64, ferricml::model_selection::ScoringError>
-pub fn ferricml::model_selection::cross_validate_classifier<M, I, F, S>(&ferricml::data::MatrixView<'_>, &ferricml::data::BinaryTargets, I, S, F) -> core::result::Result<ferricml::model_selection::CrossValidationResult, ferricml::model_selection::CrossValidationError> where M: ferricml::api::ProbabilisticClassifier, I: core::iter::traits::collect::IntoIterator<Item = ferricml::model_selection::Split>, F: core::ops::function::FnMut(&ferricml::data::MatrixView<'_>, &ferricml::data::BinaryTargets) -> core::result::Result<M, ferricml::api::ModelError>, S: ferricml::model_selection::ClassificationScore
-pub fn ferricml::model_selection::cross_validate_classifier_labels<M, I, F, S>(&ferricml::data::MatrixView<'_>, &ferricml::data::BinaryTargets, I, S, F) -> core::result::Result<ferricml::model_selection::CrossValidationResult, ferricml::model_selection::CrossValidationError> where M: ferricml::api::Classifier, I: core::iter::traits::collect::IntoIterator<Item = ferricml::model_selection::Split>, F: core::ops::function::FnMut(&ferricml::data::MatrixView<'_>, &ferricml::data::BinaryTargets) -> core::result::Result<M, ferricml::api::ModelError>, S: ferricml::model_selection::ClassificationScore
+pub fn ferricml::model_selection::cross_validate_classifier<M, T, I, F, S, V>(&ferricml::data::MatrixView<'_>, &T, I, S, F, V) -> core::result::Result<ferricml::model_selection::CrossValidationResult, ferricml::model_selection::CrossValidationError> where T: ferricml::model_selection::ClassificationTargets, I: core::iter::traits::collect::IntoIterator<Item = ferricml::model_selection::Split>, F: core::ops::function::FnMut(&ferricml::data::MatrixView<'_>, &T) -> core::result::Result<M, ferricml::api::ModelError>, S: ferricml::model_selection::ClassificationScore, V: for<'m> core::ops::function::Fn(&'m M) -> ferricml::model_selection::ScorableClassifier<'m>
 pub fn ferricml::model_selection::cross_validate_regressor<M, I, F, S>(&ferricml::data::MatrixView<'_>, &ferricml::data::RegressionTargets, I, S, F) -> core::result::Result<ferricml::model_selection::CrossValidationResult, ferricml::model_selection::CrossValidationError> where M: ferricml::api::Regressor, I: core::iter::traits::collect::IntoIterator<Item = ferricml::model_selection::Split>, F: core::ops::function::FnMut(&ferricml::data::MatrixView<'_>, &ferricml::data::RegressionTargets) -> core::result::Result<M, ferricml::api::ModelError>, S: ferricml::model_selection::RegressionScore
-pub fn ferricml::model_selection::grid_search_classifier<M, P, I, F, S>(&ferricml::data::MatrixView<'_>, &ferricml::data::BinaryTargets, I, &ferricml::model_selection::ParameterGrid<P>, S, F) -> core::result::Result<ferricml::model_selection::SearchResult<P>, ferricml::model_selection::SearchError> where M: ferricml::api::ProbabilisticClassifier, P: core::clone::Clone, I: core::iter::traits::collect::IntoIterator<Item = ferricml::model_selection::Split>, F: core::ops::function::FnMut(&ferricml::data::MatrixView<'_>, &ferricml::data::BinaryTargets, &P) -> core::result::Result<M, ferricml::api::ModelError>, S: ferricml::model_selection::ClassificationScore
-pub fn ferricml::model_selection::grid_search_classifier_labels<M, P, I, F, S>(&ferricml::data::MatrixView<'_>, &ferricml::data::BinaryTargets, I, &ferricml::model_selection::ParameterGrid<P>, S, F) -> core::result::Result<ferricml::model_selection::SearchResult<P>, ferricml::model_selection::SearchError> where M: ferricml::api::Classifier, P: core::clone::Clone, I: core::iter::traits::collect::IntoIterator<Item = ferricml::model_selection::Split>, F: core::ops::function::FnMut(&ferricml::data::MatrixView<'_>, &ferricml::data::BinaryTargets, &P) -> core::result::Result<M, ferricml::api::ModelError>, S: ferricml::model_selection::ClassificationScore
+pub fn ferricml::model_selection::grid_search_classifier<M, T, P, I, F, S, V>(&ferricml::data::MatrixView<'_>, &T, I, &ferricml::model_selection::ParameterGrid<P>, S, F, V) -> core::result::Result<ferricml::model_selection::SearchResult<P>, ferricml::model_selection::SearchError> where T: ferricml::model_selection::ClassificationTargets, P: core::clone::Clone, I: core::iter::traits::collect::IntoIterator<Item = ferricml::model_selection::Split>, F: core::ops::function::FnMut(&ferricml::data::MatrixView<'_>, &T, &P) -> core::result::Result<M, ferricml::api::ModelError>, S: ferricml::model_selection::ClassificationScore, V: for<'m> core::ops::function::Fn(&'m M) -> ferricml::model_selection::ScorableClassifier<'m>
 pub fn ferricml::model_selection::grid_search_regressor<M, P, I, F, S>(&ferricml::data::MatrixView<'_>, &ferricml::data::RegressionTargets, I, &ferricml::model_selection::ParameterGrid<P>, S, F) -> core::result::Result<ferricml::model_selection::SearchResult<P>, ferricml::model_selection::SearchError> where M: ferricml::api::Regressor, P: core::clone::Clone, I: core::iter::traits::collect::IntoIterator<Item = ferricml::model_selection::Split>, F: core::ops::function::FnMut(&ferricml::data::MatrixView<'_>, &ferricml::data::RegressionTargets, &P) -> core::result::Result<M, ferricml::api::ModelError>, S: ferricml::model_selection::RegressionScore
 pub fn ferricml::model_selection::score_classifier<S: ferricml::model_selection::ClassificationScore>(ferricml::model_selection::ScorableClassifier<'_>, &ferricml::data::MatrixView<'_>, &ferricml::data::BinaryTargets, S) -> core::result::Result<f64, ferricml::model_selection::ScoringError>
 pub fn ferricml::model_selection::score_classifier_with<S: ferricml::model_selection::ClassificationScore>(ferricml::model_selection::ScorableClassifier<'_>, &ferricml::data::MatrixView<'_>, &ferricml::data::BinaryTargets, S, &mut ferricml::model_selection::ScoringWorkspace) -> core::result::Result<f64, ferricml::model_selection::ScoringError>

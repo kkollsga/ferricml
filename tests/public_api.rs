@@ -280,6 +280,7 @@ fn closure_based_cross_validation_paths_are_stable() {
                     .with_bootstrap(false),
             )
         },
+        |model| ScorableClassifier::probabilistic(model),
     )
     .unwrap();
     assert_eq!(classifier.len(), 2);

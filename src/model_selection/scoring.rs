@@ -504,10 +504,13 @@ pub fn score_multiclass_classifier_with<S: ClassificationScore>(
 
 /// The one classifier scoring implementation, over already-validated labels.
 ///
-/// Both target vocabularies reach the model through this function, so the
+/// Every target vocabulary reaches the model through this function, so the
 /// prediction call, the class-layout handling, and the workspace reuse exist
-/// exactly once.
-fn score_labelled<S: ClassificationScore>(
+/// exactly once. Cross-validation calls it directly rather than through one of
+/// the two public wrappers: it is generic over the target vocabulary and
+/// already holds a validated fold of it, so routing through a wrapper would
+/// mean choosing a vocabulary the loop deliberately does not know.
+pub(super) fn score_labelled<S: ClassificationScore>(
     classifier: ScorableClassifier<'_>,
     data: &MatrixView<'_>,
     targets: &[u8],

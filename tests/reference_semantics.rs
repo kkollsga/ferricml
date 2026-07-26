@@ -298,6 +298,7 @@ fn cross_validation_fold_scores_and_error_attribution_are_frozen() {
                     .with_bootstrap(false),
             )
         },
+        |model| ScorableClassifier::probabilistic(model),
     )
     .unwrap();
     assert_eq!(classification.scores(), &[0.5, 1.0]);
