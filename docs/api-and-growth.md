@@ -253,8 +253,8 @@ concrete compositions predate that scheme and keep their own artifact kinds.
 Documentation that contradicts behaviour has been this crate's most active
 defect class, so `make gate` runs `scripts/check_documentation_truth.py`. It
 reads prose — rustdoc comments in `src/` and the narrative pages in `docs/`,
-which rustdoc never sees at all — and reports five kinds of claim that stopped
-being true:
+which rustdoc never sees at all, plus the root readme for the one rule whose
+claim lives there — and reports six kinds of claim that stopped being true:
 
 - a capability declaration with no doc comment at all, which is the coverage
   floor under the next rule;
@@ -263,7 +263,17 @@ being true:
 - a `Type::member` reference to a type this crate declares, where the member
   does not exist;
 - a generic bound written in prose that the documented item does not carry;
-- a repository path cited in prose that is not there.
+- a repository path cited in prose that is not there;
+- a documented dependency requirement on this crate that the crate's own
+  manifest version does not satisfy. This is the one rule that measures prose
+  against the manifest rather than against the source, and the one whose being
+  wrong produces no error at all: below 1.0 Cargo treats the minor as the
+  breaking component, so a quickstart saying `ferricml = "0.1"` beside a 0.2.0
+  manifest resolves quietly to the last 0.1.x release and hands the reader an
+  API the page does not describe. The requirement is evaluated as Cargo
+  evaluates it, so every spelling that does admit the current version passes;
+  `path` and `git` dependencies and an unversioned `cargo add` are exempt,
+  because none of them names a registry version to be wrong about.
 
 The first rule exists because the second could only check a declaration someone
 had written a sentence about, and nothing required the sentence. Measured on

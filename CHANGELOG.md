@@ -165,6 +165,32 @@ and releases use [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   while equality leaves both possible. That is now documented on the variant,
   and `tests/solver_refusal_message.rs` renders a refusal at every construction
   site and fails on a message that names either cause.
+
+- **The install snippet in the guide asks for the crate that exists.**
+  `docs/guide/quickstart.md` still said `ferricml = "0.1"` after the 0.2.0
+  release. Measured rather than reasoned about: a scratch crate carrying
+  exactly that requirement resolves, against the live index, to
+  `ferricml v0.1.2 (available: v0.2.0)` and builds without a warning. The
+  mechanism is that below 1.0 Cargo treats the minor as the breaking
+  component, so `"0.1"` is `>=0.1.0, <0.2.0` and cannot reach 0.2.0 at all.
+  Nothing fails: the reader gets a silently older crate and then works through
+  a page describing an API their build does not contain, and 0.2.0 carried
+  breaking changes, so the two genuinely disagree. The requirement is now
+  `"0.2"`.
+
+  The string was the smaller half. `scripts/check_documentation_truth.py`
+  gained a sixth rule, `documented-dependency-requirement-resolves`, which
+  reads every documented `ferricml = "<req>"` — TOML block, dependency table,
+  or `cargo add` line, in `docs/`, in rustdoc, and in `README.md` — and
+  *evaluates* it the way Cargo does against the manifest's own version rather
+  than string-matching the current one. It fires in both directions, on a
+  requirement that excludes the released crate and on one naming a release
+  that does not exist yet, and it reports rather than passes when it loses its
+  input: an empty or missing page, a page with no snippet left in it, and a
+  missing or unreadable manifest are each a finding. Twelve accepted spellings
+  are proven accepted in `--self-test`, because a rule that rejects everything
+  would also have caught this.
+
 ### Added
 
 - **A declared minimum supported Rust version: `rust-version = "1.88"`**, plus
