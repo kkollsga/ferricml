@@ -2,10 +2,10 @@ use std::error::Error;
 use std::fmt;
 
 use crate::api::Regressor;
-use crate::data::{BinaryTargets, MatrixView, RegressionTargets};
+use crate::data::{ClassificationTargets, MatrixView, RegressionTargets};
 use crate::model_selection::{
     ClassificationScore, RegressionScore, ScorableClassifier, ScoringError, ScoringWorkspace,
-    score_classifier_with, score_regressor_with,
+    score_labelled, score_regressor_with,
 };
 use crate::numeric::OwnedRng;
 
@@ -134,10 +134,65 @@ impl Error for InspectionError {
 }
 
 /// Measures permutation importance for a fitted classifier.
-pub fn permutation_importance_classifier<S: ClassificationScore>(
+///
+/// This is the crate's only classifier permutation-importance entry point, over
+/// **any** [`ClassificationTargets`] vocabulary. Shuffling a column and
+/// re-scoring says how much the model relied on it; how many classes the labels
+/// name is a property of the *metric*, so
+/// [`ClassTargets`](crate::data::ClassTargets) is inspected here exactly as
+/// [`BinaryTargets`](crate::data::BinaryTargets) is. A score reading
+/// [`ClassifierOutputKind::ProbabilityMatrix`](crate::model_selection::ClassifierOutputKind::ProbabilityMatrix)
+/// works for any observed class set, while the binary positive-probability
+/// layouts still refuse a wider one with
+/// [`ScoringError::UnsupportedClasses`] rather than reinterpreting a column.
+///
+/// Values are quality **losses**, oriented so a larger number always means a
+/// more important feature — whichever direction the underlying metric improves
+/// in. The orientation is taken from the score's own declaration rather than
+/// assumed.
+///
+/// ```
+/// use ferricml::data::{ClassTargets, DenseMatrix};
+/// use ferricml::inspection::{PermutationImportanceParams, permutation_importance_classifier};
+/// use ferricml::model_selection::{ClassificationScorer, ScorableClassifier};
+/// use ferricml::tree::{DecisionTreeClassifier, DecisionTreeClassifierParams};
+///
+/// // Column 0 determines one of three classes; column 1 alternates and says
+/// // nothing. The labels are neither contiguous nor zero-based.
+/// let mut values = Vec::new();
+/// let mut labels = Vec::new();
+/// for index in 0..30_usize {
+///     values.push((index % 3) as f32);
+///     values.push(if index % 2 == 0 { 1.0 } else { -1.0 });
+///     labels.push([3, 7, 10][index % 3]);
+/// }
+/// let data = DenseMatrix::new(values, 30, 2)?;
+/// let targets = ClassTargets::new(labels)?;
+/// assert_eq!(targets.classes(), &[3, 7, 10]);
+///
+/// let model = DecisionTreeClassifier::fit_multiclass(
+///     &data.as_view(),
+///     &targets,
+///     DecisionTreeClassifierParams::default().with_min_samples_leaf(1),
+/// )?;
+///
+/// let importance = permutation_importance_classifier(
+///     ScorableClassifier::probabilistic(&model),
+///     &data.as_view(),
+///     &targets,
+///     ClassificationScorer::MulticlassLogLoss,
+///     PermutationImportanceParams::default().with_random_state(5),
+/// )?;
+///
+/// // The deciding column matters; the alternating one does not.
+/// assert_eq!(importance.ranked()[0], 0);
+/// assert!(importance.means()[0] > importance.means()[1]);
+/// # Ok::<(), Box<dyn std::error::Error>>(())
+/// ```
+pub fn permutation_importance_classifier<T: ClassificationTargets, S: ClassificationScore>(
     classifier: ScorableClassifier<'_>,
     data: &MatrixView<'_>,
-    targets: &BinaryTargets,
+    targets: &T,
     scorer: S,
     params: PermutationImportanceParams,
 ) -> Result<PermutationImportance, InspectionError> {
@@ -161,21 +216,21 @@ pub fn permutation_importance_classifier<S: ClassificationScore>(
 /// Both output slices must have one entry per input feature. Prediction and
 /// permutation workspace is allocated once, so the cost of extra repeats is
 /// scoring alone.
-pub fn permutation_importance_classifier_into<S: ClassificationScore>(
+pub fn permutation_importance_classifier_into<T: ClassificationTargets, S: ClassificationScore>(
     classifier: ScorableClassifier<'_>,
     data: &MatrixView<'_>,
-    targets: &BinaryTargets,
+    targets: &T,
     scorer: S,
     params: PermutationImportanceParams,
     means: &mut [f64],
     std_devs: &mut [f64],
 ) -> Result<(), InspectionError> {
-    validate(data, targets.len(), params, means, std_devs)?;
+    let labels = targets.as_slice();
+    validate(data, labels.len(), params, means, std_devs)?;
     let greater_is_better = scorer.greater_is_better();
     let mut workspace = ScoringWorkspace::new();
-    let mut score = |view: &MatrixView<'_>| {
-        score_classifier_with(classifier, view, targets, &scorer, &mut workspace)
-    };
+    let mut score =
+        |view: &MatrixView<'_>| score_labelled(classifier, view, labels, &scorer, &mut workspace);
     run_permutations(data, params, greater_is_better, means, std_devs, &mut score)
 }
 

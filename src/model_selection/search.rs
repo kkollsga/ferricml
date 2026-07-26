@@ -4,13 +4,12 @@ use std::error::Error;
 use std::fmt;
 
 use crate::api::{ModelError, Regressor};
-use crate::data::{MatrixView, RegressionTargets};
+use crate::data::{ClassificationTargets, MatrixView, RegressionTargets};
 
 use super::cross_validation::{validate_split_sample_count, validate_target_length};
 use super::{
-    ClassificationScore, ClassificationTargets, CrossValidationError, CrossValidationResult,
-    RegressionScore, ScorableClassifier, Split, cross_validate_classifier,
-    cross_validate_regressor,
+    ClassificationScore, CrossValidationError, CrossValidationResult, RegressionScore,
+    ScorableClassifier, Split, cross_validate_classifier, cross_validate_regressor,
 };
 
 /// An ordered, explicit set of typed parameter candidates.

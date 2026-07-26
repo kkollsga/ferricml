@@ -1,14 +1,16 @@
 use ferricml::api::{AnyRegressor, ModelError, Regressor};
-use ferricml::data::{BinaryTargets, DenseMatrix, RegressionTargets};
+use ferricml::data::{
+    BinaryTargets, ClassTargets, ClassificationTargets, DenseMatrix, RegressionTargets,
+};
 use ferricml::ensemble::{
     HistGradientBoostingRegressor, HistGradientBoostingRegressorParams, MaxFeatures,
     RandomForestClassifier, RandomForestClassifierParams, RandomForestRegressor,
     RandomForestRegressorParams,
 };
 use ferricml::inspection::{
-    InspectionError, PermutationImportanceParams, permutation_importance_classifier,
-    permutation_importance_classifier_into, permutation_importance_regressor,
-    permutation_importance_regressor_into,
+    InspectionError, PermutationImportance, PermutationImportanceParams,
+    permutation_importance_classifier, permutation_importance_classifier_into,
+    permutation_importance_regressor, permutation_importance_regressor_into,
 };
 use ferricml::linear_model::{LinearRegression, LinearRegressionParams, Ridge, RidgeParams};
 use ferricml::metrics::mean_squared_error;
@@ -42,6 +44,46 @@ fn classification_fixture() -> (DenseMatrix, BinaryTargets) {
         .map(|&value| u8::from(value > 0.0))
         .collect();
     (data, BinaryTargets::new(labels).unwrap())
+}
+
+/// The same four columns, labelled into three neither contiguous nor
+/// zero-based classes. The label is decided by the dominant column, so the
+/// weak column carries only the little information the tertile boundaries
+/// leave it and the last two columns carry none.
+fn multiclass_fixture() -> (DenseMatrix, ClassTargets) {
+    let (data, regression) = regression_fixture();
+    let labels = regression
+        .as_slice()
+        .iter()
+        .map(|&value| match value {
+            value if value < -2.7 => 3,
+            value if value < 2.7 => 7,
+            _ => 10,
+        })
+        .collect();
+    (data, ClassTargets::new(labels).unwrap())
+}
+
+/// Permutation importance written once, over any target vocabulary.
+///
+/// A caller outside the crate can write this because the bound is public and
+/// there is one entry point under it; before the widening it needed one copy
+/// per target type.
+fn classifier_importance<T: ClassificationTargets>(
+    model: &RandomForestClassifier,
+    data: &DenseMatrix,
+    targets: &T,
+    scorer: ClassificationScorer,
+    seed: u64,
+) -> PermutationImportance {
+    permutation_importance_classifier(
+        ScorableClassifier::probabilistic(model),
+        &data.as_view(),
+        targets,
+        scorer,
+        params(6, seed),
+    )
+    .unwrap()
 }
 
 fn forest_regressor(data: &DenseMatrix, targets: &RegressionTargets) -> RandomForestRegressor {
@@ -284,6 +326,128 @@ fn classifier_importance_covers_label_and_probability_scorers() {
     )
     .unwrap();
     assert!(importance.means().iter().all(|&value| value == 0.0));
+}
+
+#[test]
+fn a_multiclass_vocabulary_reaches_the_same_permutation_entry_point() {
+    let (data, targets) = multiclass_fixture();
+    assert_eq!(targets.classes(), &[3, 7, 10]);
+    let model = RandomForestClassifier::fit_multiclass(
+        &data.as_view(),
+        &targets,
+        RandomForestClassifierParams::default()
+            .with_n_estimators(12)
+            .with_max_features(MaxFeatures::All)
+            .with_random_state(9),
+    )
+    .unwrap();
+    assert_eq!(model.classes(), &[3, 7, 10]);
+
+    for scorer in [
+        ClassificationScorer::Accuracy,
+        ClassificationScorer::MulticlassLogLoss,
+        ClassificationScorer::MulticlassBrier,
+    ] {
+        let importance = classifier_importance(&model, &data, &targets, scorer, 13);
+        assert_eq!(importance.n_features(), 4);
+        assert_eq!(
+            importance.ranked()[0],
+            0,
+            "{scorer:?} ranked {:?}",
+            importance.means()
+        );
+        assert!(importance.means()[0] > 0.0, "{scorer:?} orientation");
+        // A constant column, and a duplicate of it, cannot be permuted into a
+        // different matrix, so their importance is exactly zero.
+        assert_eq!(importance.means()[2], 0.0, "{scorer:?} constant feature");
+        assert_eq!(importance.means()[3], 0.0, "{scorer:?} duplicated feature");
+
+        // The caller-owned form widened with it and is the same measurement.
+        let mut means = vec![0.0; data.columns()];
+        let mut std_devs = vec![0.0; data.columns()];
+        permutation_importance_classifier_into(
+            ScorableClassifier::probabilistic(&model),
+            &data.as_view(),
+            &targets,
+            scorer,
+            params(6, 13),
+            &mut means,
+            &mut std_devs,
+        )
+        .unwrap();
+        assert_eq!(means, importance.means(), "{scorer:?}");
+        assert_eq!(std_devs, importance.std_devs(), "{scorer:?}");
+    }
+
+    // Non-vacuity: a positive importance is a claim about this model, not a
+    // property of the machinery. A model that observed one class predicts the
+    // same distribution whatever the columns say, so the identical call
+    // reports exactly zero for every column — including the one asserted
+    // positive above.
+    let single_labels = ClassTargets::new(vec![7; data.rows()]).unwrap();
+    let single = RandomForestClassifier::fit_multiclass(
+        &data.as_view(),
+        &single_labels,
+        RandomForestClassifierParams::default().with_n_estimators(2),
+    )
+    .unwrap();
+    assert_eq!(single.classes(), &[7]);
+    let flat = classifier_importance(
+        &single,
+        &data,
+        &single_labels,
+        ClassificationScorer::MulticlassLogLoss,
+        13,
+    );
+    assert!(
+        flat.means().iter().all(|&value| value == 0.0),
+        "{:?}",
+        flat.means()
+    );
+
+    // Widening the vocabulary bought no leniency: a binary
+    // positive-probability metric over three classes is still refused rather
+    // than reading one column as "the positive one".
+    assert_eq!(
+        permutation_importance_classifier(
+            ScorableClassifier::probabilistic(&model),
+            &data.as_view(),
+            &targets,
+            ClassificationScorer::Brier,
+            params(3, 13),
+        ),
+        Err(InspectionError::Scoring(ScoringError::UnsupportedClasses)),
+    );
+}
+
+#[test]
+fn widening_binary_targets_to_a_class_set_measures_the_same_thing() {
+    let (data, binary) = classification_fixture();
+    let model = RandomForestClassifier::fit(
+        &data.as_view(),
+        &binary,
+        RandomForestClassifierParams::default()
+            .with_n_estimators(12)
+            .with_max_features(MaxFeatures::All)
+            .with_random_state(9),
+    )
+    .unwrap();
+    let widened = ClassTargets::from(binary.clone());
+    assert_eq!(widened.classes(), &[0, 1]);
+
+    for scorer in [ClassificationScorer::Accuracy, ClassificationScorer::Brier] {
+        let from_binary = classifier_importance(&model, &data, &binary, scorer, 13);
+        let from_classes = classifier_importance(&model, &data, &widened, scorer, 13);
+        assert_eq!(from_binary, from_classes, "{scorer:?}");
+        // Non-vacuity: the two agree because the labels and the permutation
+        // stream are the same, not because every run of this returns the same
+        // numbers — one seed away, they differ.
+        assert_ne!(
+            from_binary.means(),
+            classifier_importance(&model, &data, &binary, scorer, 14).means(),
+            "{scorer:?}"
+        );
+    }
 }
 
 #[test]

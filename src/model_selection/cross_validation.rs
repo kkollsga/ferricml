@@ -2,13 +2,13 @@ use std::error::Error;
 use std::fmt;
 
 use crate::api::{ModelError, Regressor};
-use crate::data::{MatrixView, RegressionTargets};
+use crate::data::{ClassificationTargets, MatrixView, RegressionTargets};
 use crate::metrics::MetricError;
 
 use super::scoring::score_labelled;
 use super::{
-    ClassificationScore, ClassificationTargets, ClassifierOutputKind, RegressionScore,
-    ScorableClassifier, ScoringError, ScoringWorkspace, Split, score_regressor_with,
+    ClassificationScore, ClassifierOutputKind, RegressionScore, ScorableClassifier, ScoringError,
+    ScoringWorkspace, Split, score_regressor_with,
 };
 
 /// Errors produced while running serial cross-validation.

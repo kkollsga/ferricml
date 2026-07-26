@@ -227,8 +227,10 @@ Two properties are worth relying on:
   once, so the cost of extra repeats is scoring alone. `with_n_repeats` and
   `with_random_state` make the result reproducible.
 
-There is a matching `permutation_importance_classifier`, and `_into` variants of
-both that write into caller-owned buffers.
+There is a matching `permutation_importance_classifier` — one entry point over
+any `data::ClassificationTargets`, so `BinaryTargets` and `ClassTargets` are
+inspected the same way and only the metric has to know how many classes there
+are — and `_into` variants of both that write into caller-owned buffers.
 
 ## Next
 
