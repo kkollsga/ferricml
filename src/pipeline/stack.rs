@@ -11,9 +11,21 @@ use crate::data::MatrixView;
 
 /// One or more fitted transform stages applied in a fixed order.
 ///
-/// FerricML implements this for tuples of two and three fitted transformers.
-/// A single stage is [`Pipeline`](super::Pipeline), which needs no workspace
-/// split at all.
+/// FerricML implements this for every flat tuple of fitted transformers from
+/// one stage to [`MAX_STAGES`]. A one-tuple is a real stack rather than a
+/// special case, so nothing about a stack's vocabulary changes with its length;
+/// [`Pipeline`](super::Pipeline) remains the two-part shorthand for the common
+/// single-transformer composition and needs no workspace split at all.
+///
+/// # Why flat tuples and a ceiling
+///
+/// A right-nested pair — `(A, (B, (C,)))` — would give unbounded arity from two
+/// impls, and it is rejected. It conflicts (`E0119`) with a flat impl, so it
+/// cannot be added beside one; it would rewrite the type parameters of every
+/// composition FerricML has shipped; and it replaces the flat tuple vocabulary
+/// every signature, artifact tag sequence and test already reads with a shape
+/// whose nesting carries no meaning. A fixed ceiling over flat tuples is what
+/// the standard library does for the same reason.
 ///
 /// The workspace contract is the reason this is a trait rather than a concrete
 /// chain type: a stack reports exactly how much `f32` storage it needs for a
@@ -112,82 +124,91 @@ fn run_stage<'segment, T: Transformer>(
     Ok(transformed)
 }
 
-impl<A, B> TransformerStack for (A, B)
-where
-    A: Transformer + HasCapabilities,
-    B: Transformer + HasCapabilities,
-{
-    const STAGES_PERSIST: bool = A::CAPABILITIES.artifact() && B::CAPABILITIES.artifact();
+/// Implements the stack contract for one flat tuple arity.
+///
+/// The bodies are written as running folds rather than per-arity code, so every
+/// arity is the same four operations and none of them can drift from another:
+/// widths chain left to right, the workspace requirement accumulates one stage
+/// at a time, and each stage runs into the segment split off the front of what
+/// its predecessors left.
+macro_rules! impl_transformer_stack {
+    ($head:ident $head_index:tt $(, $tail:ident $tail_index:tt)*) => {
+        impl<$head, $($tail,)*> TransformerStack for ($head, $($tail,)*)
+        where
+            $head: Transformer + HasCapabilities,
+            $($tail: Transformer + HasCapabilities,)*
+        {
+            const STAGES_PERSIST: bool =
+                $head::CAPABILITIES.artifact() $(&& $tail::CAPABILITIES.artifact())*;
 
-    fn n_features_in(&self) -> usize {
-        Estimator::n_features_in(&self.0)
-    }
+            fn n_features_in(&self) -> usize {
+                Estimator::n_features_in(&self.$head_index)
+            }
 
-    fn n_features_out(&self) -> usize {
-        self.1.n_features_out()
-    }
+            fn n_features_out(&self) -> usize {
+                let widths = [
+                    self.$head_index.n_features_out(),
+                    $(self.$tail_index.n_features_out(),)*
+                ];
+                // The array is fixed-size per arity, so this is the last stage's
+                // width rather than a search, and it never indexes out of range.
+                widths[widths.len() - 1]
+            }
 
-    fn validate_handoff(&self) -> Result<(), ModelError> {
-        check_handoff(self.0.n_features_out(), Estimator::n_features_in(&self.1))
-    }
+            fn validate_handoff(&self) -> Result<(), ModelError> {
+                let produced = self.$head_index.n_features_out();
+                $(
+                    check_handoff(produced, Estimator::n_features_in(&self.$tail_index))?;
+                    let produced = self.$tail_index.n_features_out();
+                )*
+                let _ = produced;
+                Ok(())
+            }
 
-    fn workspace_len(&self, rows: usize) -> Result<usize, ModelError> {
-        let total = extend_workspace(0, rows, self.0.n_features_out())?;
-        extend_workspace(total, rows, self.1.n_features_out())
-    }
+            fn workspace_len(&self, rows: usize) -> Result<usize, ModelError> {
+                let total = extend_workspace(0, rows, self.$head_index.n_features_out())?;
+                $(let total = extend_workspace(total, rows, self.$tail_index.n_features_out())?;)*
+                Ok(total)
+            }
 
-    fn transform_into<'workspace>(
-        &self,
-        data: &MatrixView<'_>,
-        workspace: &'workspace mut [f32],
-    ) -> Result<MatrixView<'workspace>, ModelError> {
-        validate_request(self, data, workspace)?;
-        let (first, rest) =
-            workspace.split_at_mut(stage_len(data.rows(), self.0.n_features_out())?);
-        let intermediate = run_stage(&self.0, data, first)?;
-        run_stage(&self.1, &intermediate, rest)
-    }
+            fn transform_into<'workspace>(
+                &self,
+                data: &MatrixView<'_>,
+                workspace: &'workspace mut [f32],
+            ) -> Result<MatrixView<'workspace>, ModelError> {
+                validate_request(self, data, workspace)?;
+                let rows = data.rows();
+                let (segment, rest) =
+                    workspace.split_at_mut(stage_len(rows, self.$head_index.n_features_out())?);
+                let produced = run_stage(&self.$head_index, data, segment)?;
+                $(
+                    let (segment, rest) =
+                        rest.split_at_mut(stage_len(rows, self.$tail_index.n_features_out())?);
+                    let produced = run_stage(&self.$tail_index, &produced, segment)?;
+                )*
+                let _ = rest;
+                Ok(produced)
+            }
+        }
+    };
 }
 
-impl<A, B, C> TransformerStack for (A, B, C)
-where
-    A: Transformer + HasCapabilities,
-    B: Transformer + HasCapabilities,
-    C: Transformer + HasCapabilities,
-{
-    const STAGES_PERSIST: bool =
-        A::CAPABILITIES.artifact() && B::CAPABILITIES.artifact() && C::CAPABILITIES.artifact();
+/// The longest transform chain a [`TransformerStack`] tuple carries.
+///
+/// A ceiling exists because the impls are generated per flat tuple arity rather
+/// than recursively; see [`TransformerStack`] for why that trade is taken. It
+/// matches the standard library's own tuple-trait ceiling.
+pub const MAX_STAGES: usize = 12;
 
-    fn n_features_in(&self) -> usize {
-        Estimator::n_features_in(&self.0)
-    }
-
-    fn n_features_out(&self) -> usize {
-        self.2.n_features_out()
-    }
-
-    fn validate_handoff(&self) -> Result<(), ModelError> {
-        check_handoff(self.0.n_features_out(), Estimator::n_features_in(&self.1))?;
-        check_handoff(self.1.n_features_out(), Estimator::n_features_in(&self.2))
-    }
-
-    fn workspace_len(&self, rows: usize) -> Result<usize, ModelError> {
-        let total = extend_workspace(0, rows, self.0.n_features_out())?;
-        let total = extend_workspace(total, rows, self.1.n_features_out())?;
-        extend_workspace(total, rows, self.2.n_features_out())
-    }
-
-    fn transform_into<'workspace>(
-        &self,
-        data: &MatrixView<'_>,
-        workspace: &'workspace mut [f32],
-    ) -> Result<MatrixView<'workspace>, ModelError> {
-        validate_request(self, data, workspace)?;
-        let (first, rest) =
-            workspace.split_at_mut(stage_len(data.rows(), self.0.n_features_out())?);
-        let (second, rest) = rest.split_at_mut(stage_len(data.rows(), self.1.n_features_out())?);
-        let intermediate = run_stage(&self.0, data, first)?;
-        let intermediate = run_stage(&self.1, &intermediate, second)?;
-        run_stage(&self.2, &intermediate, rest)
-    }
-}
+impl_transformer_stack!(A 0);
+impl_transformer_stack!(A 0, B 1);
+impl_transformer_stack!(A 0, B 1, C 2);
+impl_transformer_stack!(A 0, B 1, C 2, D 3);
+impl_transformer_stack!(A 0, B 1, C 2, D 3, E 4);
+impl_transformer_stack!(A 0, B 1, C 2, D 3, E 4, F 5);
+impl_transformer_stack!(A 0, B 1, C 2, D 3, E 4, F 5, G 6);
+impl_transformer_stack!(A 0, B 1, C 2, D 3, E 4, F 5, G 6, H 7);
+impl_transformer_stack!(A 0, B 1, C 2, D 3, E 4, F 5, G 6, H 7, I 8);
+impl_transformer_stack!(A 0, B 1, C 2, D 3, E 4, F 5, G 6, H 7, I 8, J 9);
+impl_transformer_stack!(A 0, B 1, C 2, D 3, E 4, F 5, G 6, H 7, I 8, J 9, K 10);
+impl_transformer_stack!(A 0, B 1, C 2, D 3, E 4, F 5, G 6, H 7, I 8, J 9, K 10, L 11);

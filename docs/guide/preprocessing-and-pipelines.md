@@ -275,9 +275,10 @@ reuses it, so repeated inference allocates nothing at all.
 
 ## More than one stage
 
-`Pipeline` holds exactly one transformer. `StagedPipeline` holds two or more,
-plus the estimator, and can fit the whole composition in one pass — each stage
-on the previous stage's output:
+`Pipeline` holds exactly one transformer, and fits it and the estimator in one
+pass with `Pipeline::fit`. `StagedPipeline` holds a `TransformerStack` of one to
+`pipeline::MAX_STAGES` stages plus the estimator, and fits a two-stage
+composition in one pass — each stage on the previous stage's output:
 
 ```rust
 use ferricml::api::Estimator;
@@ -319,6 +320,11 @@ assert_eq!(predictions.len(), 4);
 Every handoff is validated before the composition exists, and the whole
 composition is monomorphized: there is no per-row dynamic dispatch, no parameter
 erasure, and no string registry of stages.
+
+Longer chains compose and persist the same way, through `StagedPipeline::new`
+after fitting each stage on its predecessor's output. One-call fitting stops at
+two stages; the reason, and the two measured attempts to lift it, are recorded
+on `StagedPipeline::fit`.
 
 Prediction goes through the generic `with_transformed` callback rather than
 per-category convenience methods, because several such methods cannot coexist as

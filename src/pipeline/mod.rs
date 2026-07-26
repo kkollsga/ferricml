@@ -1,17 +1,18 @@
 //! Generic fitted preprocessing pipelines.
 //!
-//! [`Pipeline`] composes one fitted transformer with one fitted estimator.
-//! [`StagedPipeline`] composes two or more transform stages, and can fit the
-//! whole composition in one pass. Every part stays a concrete type, so
-//! transformation and the callback passed to `with_transformed` are statically
-//! dispatched and no stage is reached through a trait object.
+//! [`Pipeline`] composes one fitted transformer with one fitted estimator, and
+//! can fit both in one pass. [`StagedPipeline`] composes a
+//! [`TransformerStack`] of one to [`MAX_STAGES`] transform stages with an
+//! estimator. Every part stays a concrete type, so transformation and the
+//! callback passed to `with_transformed` are statically dispatched and no stage
+//! is reached through a trait object.
 
 mod artifact;
 mod stack;
 mod staged;
 
 pub use artifact::PersistedStack;
-pub use stack::TransformerStack;
+pub use stack::{MAX_STAGES, TransformerStack};
 pub use staged::StagedPipeline;
 
 use crate::api::ProbabilisticClassifier;
@@ -89,6 +90,49 @@ where
     T: Transformer,
     E: Estimator,
 {
+    /// Fits the transformer and the estimator in one pass, in that order.
+    ///
+    /// The transformer closure sees the caller's data and the estimator closure
+    /// sees what the transformer produced, so the estimator cannot be fitted on
+    /// untransformed rows by mistake — the one handoff error that yields a
+    /// silently wrong model instead of a width mismatch.
+    ///
+    /// The single-transformer case gets this for the same reason every longer
+    /// composition has it: one-call fitting is a property of a composition, not
+    /// of a length.
+    ///
+    /// ```
+    /// use ferricml::data::{DenseMatrix, RegressionTargets};
+    /// use ferricml::linear_model::{Ridge, RidgeParams};
+    /// use ferricml::pipeline::Pipeline;
+    /// use ferricml::preprocessing::{StandardScaler, StandardScalerParams};
+    ///
+    /// let data = DenseMatrix::new(vec![1.0, 1000.0, 2.0, 3000.0, 3.0, 2000.0, 4.0, 5000.0], 4, 2)?;
+    /// let targets = RegressionTargets::new(vec![1.0, 2.0, 3.0, 4.0])?;
+    ///
+    /// let pipeline = Pipeline::fit(
+    ///     &data.as_view(),
+    ///     |view| StandardScaler::fit(view, StandardScalerParams::default()),
+    ///     |view| Ridge::fit(view, &targets, RidgeParams::default()),
+    /// )?;
+    ///
+    /// let mut workspace = vec![0.0_f32; pipeline.workspace_len(4)?];
+    /// let mut predictions = vec![0.0_f32; 4];
+    /// pipeline.predict_into(&data.as_view(), &mut workspace, &mut predictions)?;
+    /// assert!(predictions.iter().all(|value| value.is_finite()));
+    /// # Ok::<(), Box<dyn std::error::Error>>(())
+    /// ```
+    pub fn fit(
+        data: &MatrixView<'_>,
+        fit_transformer: impl FnOnce(&MatrixView<'_>) -> Result<T, ModelError>,
+        fit_estimator: impl FnOnce(&MatrixView<'_>) -> Result<E, ModelError>,
+    ) -> Result<Self, ModelError> {
+        let transformer = fit_transformer(data)?;
+        let transformed = transformer.transform(data)?;
+        let estimator = fit_estimator(&transformed.as_view())?;
+        Self::new(transformer, estimator)
+    }
+
     /// Composes fitted parts after validating their feature-width handoff.
     pub fn new(transformer: T, estimator: E) -> Result<Self, ModelError> {
         let transformed = transformer.n_features_out();
@@ -423,6 +467,80 @@ mod tests {
 
     fn scaler() -> StandardScaler {
         StandardScaler::fit(&data().as_view(), StandardScalerParams::default()).unwrap()
+    }
+
+    /// One-call fitting is a property of a composition, not of a length, so the
+    /// single-transformer type has it too — and it means the same thing: the
+    /// estimator is fitted on what the transformer produced.
+    #[test]
+    fn a_one_call_fit_equals_fitting_both_parts_by_hand() {
+        let raw = data();
+        let targets = RegressionTargets::new(vec![0.0, 1.0, 4.0, 9.0]).unwrap();
+        let scaler = scaler();
+        let transformed = scaler.transform(&raw.as_view()).unwrap();
+        let expected = Pipeline::new(
+            scaler,
+            Ridge::fit(&transformed.as_view(), &targets, RidgeParams::default()).unwrap(),
+        )
+        .unwrap();
+
+        let fitted = Pipeline::fit(
+            &raw.as_view(),
+            |batch| StandardScaler::fit(batch, StandardScalerParams::default()),
+            |batch| Ridge::fit(batch, &targets, RidgeParams::default()),
+        )
+        .unwrap();
+        assert_eq!(fitted, expected);
+
+        // The estimator really saw the transformed batch: fitting it on the raw
+        // one gives a different model.
+        let unscaled = Ridge::fit(&raw.as_view(), &targets, RidgeParams::default()).unwrap();
+        assert_ne!(fitted.estimator(), &unscaled);
+    }
+
+    /// A failing stage stops the composition before the estimator is fitted.
+    #[test]
+    fn a_failing_transformer_fit_never_reaches_the_estimator() {
+        let raw = data();
+        let targets = RegressionTargets::new(vec![0.0, 1.0, 4.0, 9.0]).unwrap();
+        let estimator_fits = std::cell::Cell::new(0_u32);
+        let outcome: Result<Pipeline<StandardScaler, Ridge>, ModelError> = Pipeline::fit(
+            &raw.as_view(),
+            |_| Err(ModelError::EmptyData),
+            |batch| {
+                estimator_fits.set(estimator_fits.get() + 1);
+                Ridge::fit(batch, &targets, RidgeParams::default())
+            },
+        );
+        assert_eq!(outcome.unwrap_err(), ModelError::EmptyData);
+        assert_eq!(estimator_fits.get(), 0);
+    }
+
+    /// The documented ceiling is the ceiling the impls actually reach.
+    ///
+    /// This is a compile-time claim: the function body is never run, and the
+    /// bound is what fails if the longest generated arity ever falls short of
+    /// the constant that advertises it.
+    #[test]
+    fn the_advertised_stage_ceiling_is_the_one_the_impls_reach() {
+        const fn accepts_the_longest_stack<S: TransformerStack>() {}
+        type Longest = (
+            StandardScaler,
+            StandardScaler,
+            StandardScaler,
+            StandardScaler,
+            StandardScaler,
+            StandardScaler,
+            StandardScaler,
+            StandardScaler,
+            StandardScaler,
+            StandardScaler,
+            StandardScaler,
+            StandardScaler,
+        );
+        accepts_the_longest_stack::<Longest>();
+        accepts_the_longest_stack::<(StandardScaler,)>();
+        assert_eq!(MAX_STAGES, 12);
     }
 
     #[test]

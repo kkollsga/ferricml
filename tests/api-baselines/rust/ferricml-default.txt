@@ -2646,6 +2646,7 @@ impl ferricml::pipeline::Pipeline<ferricml::preprocessing::StandardScaler, ferri
 pub fn ferricml::pipeline::Pipeline<ferricml::preprocessing::StandardScaler, ferricml::linear_model::Ridge>::predict_into(&self, &ferricml::data::MatrixView<'_>, &mut [f32], &mut [f32]) -> core::result::Result<(), ferricml::api::ModelError>
 impl<T, E> ferricml::pipeline::Pipeline<T, E> where T: ferricml::api::Transformer, E: ferricml::api::Estimator
 pub const fn ferricml::pipeline::Pipeline<T, E>::estimator(&self) -> &E
+pub fn ferricml::pipeline::Pipeline<T, E>::fit(&ferricml::data::MatrixView<'_>, impl core::ops::function::FnOnce(&ferricml::data::MatrixView<'_>) -> core::result::Result<T, ferricml::api::ModelError>, impl core::ops::function::FnOnce(&ferricml::data::MatrixView<'_>) -> core::result::Result<E, ferricml::api::ModelError>) -> core::result::Result<Self, ferricml::api::ModelError>
 pub fn ferricml::pipeline::Pipeline<T, E>::into_parts(self) -> (T, E)
 pub fn ferricml::pipeline::Pipeline<T, E>::new(T, E) -> core::result::Result<Self, ferricml::api::ModelError>
 pub fn ferricml::pipeline::Pipeline<T, E>::transform(&self, &ferricml::data::MatrixView<'_>) -> core::result::Result<ferricml::data::DenseMatrix, ferricml::api::ModelError>
@@ -2711,10 +2712,47 @@ pub fn ferricml::pipeline::StagedPipeline<S, E>::eq(&self, &ferricml::pipeline::
 impl<S: core::cmp::PartialEq, E: core::cmp::PartialEq> core::marker::StructuralPartialEq for ferricml::pipeline::StagedPipeline<S, E>
 impl<S: core::fmt::Debug, E: core::fmt::Debug> core::fmt::Debug for ferricml::pipeline::StagedPipeline<S, E>
 pub fn ferricml::pipeline::StagedPipeline<S, E>::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+pub const ferricml::pipeline::MAX_STAGES: usize
 pub trait ferricml::pipeline::PersistedStack: core::marker::Sized
 pub const ferricml::pipeline::PersistedStack::STAGE_TAGS: &'static [u16]
 pub fn ferricml::pipeline::PersistedStack::decode_stages(&[&[u8]], [u8; 32], [u8; 32]) -> core::result::Result<Self, ferricml::artifact::ArtifactError>
 pub fn ferricml::pipeline::PersistedStack::encode_stages(&self, [u8; 32], [u8; 32]) -> core::result::Result<alloc::vec::Vec<alloc::vec::Vec<u8>>, ferricml::artifact::ArtifactError>
+impl<A, B, C, D, E, F, G, H, I, J, K, L> ferricml::pipeline::PersistedStack for (A, B, C, D, E, F, G, H, I, J, K, L) where A: ferricml::artifact::StageArtifact, B: ferricml::artifact::StageArtifact, C: ferricml::artifact::StageArtifact, D: ferricml::artifact::StageArtifact, E: ferricml::artifact::StageArtifact, F: ferricml::artifact::StageArtifact, G: ferricml::artifact::StageArtifact, H: ferricml::artifact::StageArtifact, I: ferricml::artifact::StageArtifact, J: ferricml::artifact::StageArtifact, K: ferricml::artifact::StageArtifact, L: ferricml::artifact::StageArtifact
+pub const (A, B, C, D, E, F, G, H, I, J, K, L)::STAGE_TAGS: &'static [u16]
+pub fn (A, B, C, D, E, F, G, H, I, J, K, L)::decode_stages(&[&[u8]], [u8; 32], [u8; 32]) -> core::result::Result<Self, ferricml::artifact::ArtifactError>
+pub fn (A, B, C, D, E, F, G, H, I, J, K, L)::encode_stages(&self, [u8; 32], [u8; 32]) -> core::result::Result<alloc::vec::Vec<alloc::vec::Vec<u8>>, ferricml::artifact::ArtifactError>
+impl<A, B, C, D, E, F, G, H, I, J, K> ferricml::pipeline::PersistedStack for (A, B, C, D, E, F, G, H, I, J, K) where A: ferricml::artifact::StageArtifact, B: ferricml::artifact::StageArtifact, C: ferricml::artifact::StageArtifact, D: ferricml::artifact::StageArtifact, E: ferricml::artifact::StageArtifact, F: ferricml::artifact::StageArtifact, G: ferricml::artifact::StageArtifact, H: ferricml::artifact::StageArtifact, I: ferricml::artifact::StageArtifact, J: ferricml::artifact::StageArtifact, K: ferricml::artifact::StageArtifact
+pub const (A, B, C, D, E, F, G, H, I, J, K)::STAGE_TAGS: &'static [u16]
+pub fn (A, B, C, D, E, F, G, H, I, J, K)::decode_stages(&[&[u8]], [u8; 32], [u8; 32]) -> core::result::Result<Self, ferricml::artifact::ArtifactError>
+pub fn (A, B, C, D, E, F, G, H, I, J, K)::encode_stages(&self, [u8; 32], [u8; 32]) -> core::result::Result<alloc::vec::Vec<alloc::vec::Vec<u8>>, ferricml::artifact::ArtifactError>
+impl<A, B, C, D, E, F, G, H, I, J> ferricml::pipeline::PersistedStack for (A, B, C, D, E, F, G, H, I, J) where A: ferricml::artifact::StageArtifact, B: ferricml::artifact::StageArtifact, C: ferricml::artifact::StageArtifact, D: ferricml::artifact::StageArtifact, E: ferricml::artifact::StageArtifact, F: ferricml::artifact::StageArtifact, G: ferricml::artifact::StageArtifact, H: ferricml::artifact::StageArtifact, I: ferricml::artifact::StageArtifact, J: ferricml::artifact::StageArtifact
+pub const (A, B, C, D, E, F, G, H, I, J)::STAGE_TAGS: &'static [u16]
+pub fn (A, B, C, D, E, F, G, H, I, J)::decode_stages(&[&[u8]], [u8; 32], [u8; 32]) -> core::result::Result<Self, ferricml::artifact::ArtifactError>
+pub fn (A, B, C, D, E, F, G, H, I, J)::encode_stages(&self, [u8; 32], [u8; 32]) -> core::result::Result<alloc::vec::Vec<alloc::vec::Vec<u8>>, ferricml::artifact::ArtifactError>
+impl<A, B, C, D, E, F, G, H, I> ferricml::pipeline::PersistedStack for (A, B, C, D, E, F, G, H, I) where A: ferricml::artifact::StageArtifact, B: ferricml::artifact::StageArtifact, C: ferricml::artifact::StageArtifact, D: ferricml::artifact::StageArtifact, E: ferricml::artifact::StageArtifact, F: ferricml::artifact::StageArtifact, G: ferricml::artifact::StageArtifact, H: ferricml::artifact::StageArtifact, I: ferricml::artifact::StageArtifact
+pub const (A, B, C, D, E, F, G, H, I)::STAGE_TAGS: &'static [u16]
+pub fn (A, B, C, D, E, F, G, H, I)::decode_stages(&[&[u8]], [u8; 32], [u8; 32]) -> core::result::Result<Self, ferricml::artifact::ArtifactError>
+pub fn (A, B, C, D, E, F, G, H, I)::encode_stages(&self, [u8; 32], [u8; 32]) -> core::result::Result<alloc::vec::Vec<alloc::vec::Vec<u8>>, ferricml::artifact::ArtifactError>
+impl<A, B, C, D, E, F, G, H> ferricml::pipeline::PersistedStack for (A, B, C, D, E, F, G, H) where A: ferricml::artifact::StageArtifact, B: ferricml::artifact::StageArtifact, C: ferricml::artifact::StageArtifact, D: ferricml::artifact::StageArtifact, E: ferricml::artifact::StageArtifact, F: ferricml::artifact::StageArtifact, G: ferricml::artifact::StageArtifact, H: ferricml::artifact::StageArtifact
+pub const (A, B, C, D, E, F, G, H)::STAGE_TAGS: &'static [u16]
+pub fn (A, B, C, D, E, F, G, H)::decode_stages(&[&[u8]], [u8; 32], [u8; 32]) -> core::result::Result<Self, ferricml::artifact::ArtifactError>
+pub fn (A, B, C, D, E, F, G, H)::encode_stages(&self, [u8; 32], [u8; 32]) -> core::result::Result<alloc::vec::Vec<alloc::vec::Vec<u8>>, ferricml::artifact::ArtifactError>
+impl<A, B, C, D, E, F, G> ferricml::pipeline::PersistedStack for (A, B, C, D, E, F, G) where A: ferricml::artifact::StageArtifact, B: ferricml::artifact::StageArtifact, C: ferricml::artifact::StageArtifact, D: ferricml::artifact::StageArtifact, E: ferricml::artifact::StageArtifact, F: ferricml::artifact::StageArtifact, G: ferricml::artifact::StageArtifact
+pub const (A, B, C, D, E, F, G)::STAGE_TAGS: &'static [u16]
+pub fn (A, B, C, D, E, F, G)::decode_stages(&[&[u8]], [u8; 32], [u8; 32]) -> core::result::Result<Self, ferricml::artifact::ArtifactError>
+pub fn (A, B, C, D, E, F, G)::encode_stages(&self, [u8; 32], [u8; 32]) -> core::result::Result<alloc::vec::Vec<alloc::vec::Vec<u8>>, ferricml::artifact::ArtifactError>
+impl<A, B, C, D, E, F> ferricml::pipeline::PersistedStack for (A, B, C, D, E, F) where A: ferricml::artifact::StageArtifact, B: ferricml::artifact::StageArtifact, C: ferricml::artifact::StageArtifact, D: ferricml::artifact::StageArtifact, E: ferricml::artifact::StageArtifact, F: ferricml::artifact::StageArtifact
+pub const (A, B, C, D, E, F)::STAGE_TAGS: &'static [u16]
+pub fn (A, B, C, D, E, F)::decode_stages(&[&[u8]], [u8; 32], [u8; 32]) -> core::result::Result<Self, ferricml::artifact::ArtifactError>
+pub fn (A, B, C, D, E, F)::encode_stages(&self, [u8; 32], [u8; 32]) -> core::result::Result<alloc::vec::Vec<alloc::vec::Vec<u8>>, ferricml::artifact::ArtifactError>
+impl<A, B, C, D, E> ferricml::pipeline::PersistedStack for (A, B, C, D, E) where A: ferricml::artifact::StageArtifact, B: ferricml::artifact::StageArtifact, C: ferricml::artifact::StageArtifact, D: ferricml::artifact::StageArtifact, E: ferricml::artifact::StageArtifact
+pub const (A, B, C, D, E)::STAGE_TAGS: &'static [u16]
+pub fn (A, B, C, D, E)::decode_stages(&[&[u8]], [u8; 32], [u8; 32]) -> core::result::Result<Self, ferricml::artifact::ArtifactError>
+pub fn (A, B, C, D, E)::encode_stages(&self, [u8; 32], [u8; 32]) -> core::result::Result<alloc::vec::Vec<alloc::vec::Vec<u8>>, ferricml::artifact::ArtifactError>
+impl<A, B, C, D> ferricml::pipeline::PersistedStack for (A, B, C, D) where A: ferricml::artifact::StageArtifact, B: ferricml::artifact::StageArtifact, C: ferricml::artifact::StageArtifact, D: ferricml::artifact::StageArtifact
+pub const (A, B, C, D)::STAGE_TAGS: &'static [u16]
+pub fn (A, B, C, D)::decode_stages(&[&[u8]], [u8; 32], [u8; 32]) -> core::result::Result<Self, ferricml::artifact::ArtifactError>
+pub fn (A, B, C, D)::encode_stages(&self, [u8; 32], [u8; 32]) -> core::result::Result<alloc::vec::Vec<alloc::vec::Vec<u8>>, ferricml::artifact::ArtifactError>
 impl<A, B, C> ferricml::pipeline::PersistedStack for (A, B, C) where A: ferricml::artifact::StageArtifact, B: ferricml::artifact::StageArtifact, C: ferricml::artifact::StageArtifact
 pub const (A, B, C)::STAGE_TAGS: &'static [u16]
 pub fn (A, B, C)::decode_stages(&[&[u8]], [u8; 32], [u8; 32]) -> core::result::Result<Self, ferricml::artifact::ArtifactError>
@@ -2723,6 +2761,10 @@ impl<A, B> ferricml::pipeline::PersistedStack for (A, B) where A: ferricml::arti
 pub const (A, B)::STAGE_TAGS: &'static [u16]
 pub fn (A, B)::decode_stages(&[&[u8]], [u8; 32], [u8; 32]) -> core::result::Result<Self, ferricml::artifact::ArtifactError>
 pub fn (A, B)::encode_stages(&self, [u8; 32], [u8; 32]) -> core::result::Result<alloc::vec::Vec<alloc::vec::Vec<u8>>, ferricml::artifact::ArtifactError>
+impl<A> ferricml::pipeline::PersistedStack for (A) where A: ferricml::artifact::StageArtifact
+pub const (A)::STAGE_TAGS: &'static [u16]
+pub fn (A)::decode_stages(&[&[u8]], [u8; 32], [u8; 32]) -> core::result::Result<Self, ferricml::artifact::ArtifactError>
+pub fn (A)::encode_stages(&self, [u8; 32], [u8; 32]) -> core::result::Result<alloc::vec::Vec<alloc::vec::Vec<u8>>, ferricml::artifact::ArtifactError>
 pub trait ferricml::pipeline::TransformerStack
 pub const ferricml::pipeline::TransformerStack::STAGES_PERSIST: bool
 pub fn ferricml::pipeline::TransformerStack::n_features_in(&self) -> usize
@@ -2730,6 +2772,69 @@ pub fn ferricml::pipeline::TransformerStack::n_features_out(&self) -> usize
 pub fn ferricml::pipeline::TransformerStack::transform_into<'workspace>(&self, &ferricml::data::MatrixView<'_>, &'workspace mut [f32]) -> core::result::Result<ferricml::data::MatrixView<'workspace>, ferricml::api::ModelError>
 pub fn ferricml::pipeline::TransformerStack::validate_handoff(&self) -> core::result::Result<(), ferricml::api::ModelError>
 pub fn ferricml::pipeline::TransformerStack::workspace_len(&self, usize) -> core::result::Result<usize, ferricml::api::ModelError>
+impl<A, B, C, D, E, F, G, H, I, J, K, L> ferricml::pipeline::TransformerStack for (A, B, C, D, E, F, G, H, I, J, K, L) where A: ferricml::api::Transformer + ferricml::api::HasCapabilities, B: ferricml::api::Transformer + ferricml::api::HasCapabilities, C: ferricml::api::Transformer + ferricml::api::HasCapabilities, D: ferricml::api::Transformer + ferricml::api::HasCapabilities, E: ferricml::api::Transformer + ferricml::api::HasCapabilities, F: ferricml::api::Transformer + ferricml::api::HasCapabilities, G: ferricml::api::Transformer + ferricml::api::HasCapabilities, H: ferricml::api::Transformer + ferricml::api::HasCapabilities, I: ferricml::api::Transformer + ferricml::api::HasCapabilities, J: ferricml::api::Transformer + ferricml::api::HasCapabilities, K: ferricml::api::Transformer + ferricml::api::HasCapabilities, L: ferricml::api::Transformer + ferricml::api::HasCapabilities
+pub const (A, B, C, D, E, F, G, H, I, J, K, L)::STAGES_PERSIST: bool
+pub fn (A, B, C, D, E, F, G, H, I, J, K, L)::n_features_in(&self) -> usize
+pub fn (A, B, C, D, E, F, G, H, I, J, K, L)::n_features_out(&self) -> usize
+pub fn (A, B, C, D, E, F, G, H, I, J, K, L)::transform_into<'workspace>(&self, &ferricml::data::MatrixView<'_>, &'workspace mut [f32]) -> core::result::Result<ferricml::data::MatrixView<'workspace>, ferricml::api::ModelError>
+pub fn (A, B, C, D, E, F, G, H, I, J, K, L)::validate_handoff(&self) -> core::result::Result<(), ferricml::api::ModelError>
+pub fn (A, B, C, D, E, F, G, H, I, J, K, L)::workspace_len(&self, usize) -> core::result::Result<usize, ferricml::api::ModelError>
+impl<A, B, C, D, E, F, G, H, I, J, K> ferricml::pipeline::TransformerStack for (A, B, C, D, E, F, G, H, I, J, K) where A: ferricml::api::Transformer + ferricml::api::HasCapabilities, B: ferricml::api::Transformer + ferricml::api::HasCapabilities, C: ferricml::api::Transformer + ferricml::api::HasCapabilities, D: ferricml::api::Transformer + ferricml::api::HasCapabilities, E: ferricml::api::Transformer + ferricml::api::HasCapabilities, F: ferricml::api::Transformer + ferricml::api::HasCapabilities, G: ferricml::api::Transformer + ferricml::api::HasCapabilities, H: ferricml::api::Transformer + ferricml::api::HasCapabilities, I: ferricml::api::Transformer + ferricml::api::HasCapabilities, J: ferricml::api::Transformer + ferricml::api::HasCapabilities, K: ferricml::api::Transformer + ferricml::api::HasCapabilities
+pub const (A, B, C, D, E, F, G, H, I, J, K)::STAGES_PERSIST: bool
+pub fn (A, B, C, D, E, F, G, H, I, J, K)::n_features_in(&self) -> usize
+pub fn (A, B, C, D, E, F, G, H, I, J, K)::n_features_out(&self) -> usize
+pub fn (A, B, C, D, E, F, G, H, I, J, K)::transform_into<'workspace>(&self, &ferricml::data::MatrixView<'_>, &'workspace mut [f32]) -> core::result::Result<ferricml::data::MatrixView<'workspace>, ferricml::api::ModelError>
+pub fn (A, B, C, D, E, F, G, H, I, J, K)::validate_handoff(&self) -> core::result::Result<(), ferricml::api::ModelError>
+pub fn (A, B, C, D, E, F, G, H, I, J, K)::workspace_len(&self, usize) -> core::result::Result<usize, ferricml::api::ModelError>
+impl<A, B, C, D, E, F, G, H, I, J> ferricml::pipeline::TransformerStack for (A, B, C, D, E, F, G, H, I, J) where A: ferricml::api::Transformer + ferricml::api::HasCapabilities, B: ferricml::api::Transformer + ferricml::api::HasCapabilities, C: ferricml::api::Transformer + ferricml::api::HasCapabilities, D: ferricml::api::Transformer + ferricml::api::HasCapabilities, E: ferricml::api::Transformer + ferricml::api::HasCapabilities, F: ferricml::api::Transformer + ferricml::api::HasCapabilities, G: ferricml::api::Transformer + ferricml::api::HasCapabilities, H: ferricml::api::Transformer + ferricml::api::HasCapabilities, I: ferricml::api::Transformer + ferricml::api::HasCapabilities, J: ferricml::api::Transformer + ferricml::api::HasCapabilities
+pub const (A, B, C, D, E, F, G, H, I, J)::STAGES_PERSIST: bool
+pub fn (A, B, C, D, E, F, G, H, I, J)::n_features_in(&self) -> usize
+pub fn (A, B, C, D, E, F, G, H, I, J)::n_features_out(&self) -> usize
+pub fn (A, B, C, D, E, F, G, H, I, J)::transform_into<'workspace>(&self, &ferricml::data::MatrixView<'_>, &'workspace mut [f32]) -> core::result::Result<ferricml::data::MatrixView<'workspace>, ferricml::api::ModelError>
+pub fn (A, B, C, D, E, F, G, H, I, J)::validate_handoff(&self) -> core::result::Result<(), ferricml::api::ModelError>
+pub fn (A, B, C, D, E, F, G, H, I, J)::workspace_len(&self, usize) -> core::result::Result<usize, ferricml::api::ModelError>
+impl<A, B, C, D, E, F, G, H, I> ferricml::pipeline::TransformerStack for (A, B, C, D, E, F, G, H, I) where A: ferricml::api::Transformer + ferricml::api::HasCapabilities, B: ferricml::api::Transformer + ferricml::api::HasCapabilities, C: ferricml::api::Transformer + ferricml::api::HasCapabilities, D: ferricml::api::Transformer + ferricml::api::HasCapabilities, E: ferricml::api::Transformer + ferricml::api::HasCapabilities, F: ferricml::api::Transformer + ferricml::api::HasCapabilities, G: ferricml::api::Transformer + ferricml::api::HasCapabilities, H: ferricml::api::Transformer + ferricml::api::HasCapabilities, I: ferricml::api::Transformer + ferricml::api::HasCapabilities
+pub const (A, B, C, D, E, F, G, H, I)::STAGES_PERSIST: bool
+pub fn (A, B, C, D, E, F, G, H, I)::n_features_in(&self) -> usize
+pub fn (A, B, C, D, E, F, G, H, I)::n_features_out(&self) -> usize
+pub fn (A, B, C, D, E, F, G, H, I)::transform_into<'workspace>(&self, &ferricml::data::MatrixView<'_>, &'workspace mut [f32]) -> core::result::Result<ferricml::data::MatrixView<'workspace>, ferricml::api::ModelError>
+pub fn (A, B, C, D, E, F, G, H, I)::validate_handoff(&self) -> core::result::Result<(), ferricml::api::ModelError>
+pub fn (A, B, C, D, E, F, G, H, I)::workspace_len(&self, usize) -> core::result::Result<usize, ferricml::api::ModelError>
+impl<A, B, C, D, E, F, G, H> ferricml::pipeline::TransformerStack for (A, B, C, D, E, F, G, H) where A: ferricml::api::Transformer + ferricml::api::HasCapabilities, B: ferricml::api::Transformer + ferricml::api::HasCapabilities, C: ferricml::api::Transformer + ferricml::api::HasCapabilities, D: ferricml::api::Transformer + ferricml::api::HasCapabilities, E: ferricml::api::Transformer + ferricml::api::HasCapabilities, F: ferricml::api::Transformer + ferricml::api::HasCapabilities, G: ferricml::api::Transformer + ferricml::api::HasCapabilities, H: ferricml::api::Transformer + ferricml::api::HasCapabilities
+pub const (A, B, C, D, E, F, G, H)::STAGES_PERSIST: bool
+pub fn (A, B, C, D, E, F, G, H)::n_features_in(&self) -> usize
+pub fn (A, B, C, D, E, F, G, H)::n_features_out(&self) -> usize
+pub fn (A, B, C, D, E, F, G, H)::transform_into<'workspace>(&self, &ferricml::data::MatrixView<'_>, &'workspace mut [f32]) -> core::result::Result<ferricml::data::MatrixView<'workspace>, ferricml::api::ModelError>
+pub fn (A, B, C, D, E, F, G, H)::validate_handoff(&self) -> core::result::Result<(), ferricml::api::ModelError>
+pub fn (A, B, C, D, E, F, G, H)::workspace_len(&self, usize) -> core::result::Result<usize, ferricml::api::ModelError>
+impl<A, B, C, D, E, F, G> ferricml::pipeline::TransformerStack for (A, B, C, D, E, F, G) where A: ferricml::api::Transformer + ferricml::api::HasCapabilities, B: ferricml::api::Transformer + ferricml::api::HasCapabilities, C: ferricml::api::Transformer + ferricml::api::HasCapabilities, D: ferricml::api::Transformer + ferricml::api::HasCapabilities, E: ferricml::api::Transformer + ferricml::api::HasCapabilities, F: ferricml::api::Transformer + ferricml::api::HasCapabilities, G: ferricml::api::Transformer + ferricml::api::HasCapabilities
+pub const (A, B, C, D, E, F, G)::STAGES_PERSIST: bool
+pub fn (A, B, C, D, E, F, G)::n_features_in(&self) -> usize
+pub fn (A, B, C, D, E, F, G)::n_features_out(&self) -> usize
+pub fn (A, B, C, D, E, F, G)::transform_into<'workspace>(&self, &ferricml::data::MatrixView<'_>, &'workspace mut [f32]) -> core::result::Result<ferricml::data::MatrixView<'workspace>, ferricml::api::ModelError>
+pub fn (A, B, C, D, E, F, G)::validate_handoff(&self) -> core::result::Result<(), ferricml::api::ModelError>
+pub fn (A, B, C, D, E, F, G)::workspace_len(&self, usize) -> core::result::Result<usize, ferricml::api::ModelError>
+impl<A, B, C, D, E, F> ferricml::pipeline::TransformerStack for (A, B, C, D, E, F) where A: ferricml::api::Transformer + ferricml::api::HasCapabilities, B: ferricml::api::Transformer + ferricml::api::HasCapabilities, C: ferricml::api::Transformer + ferricml::api::HasCapabilities, D: ferricml::api::Transformer + ferricml::api::HasCapabilities, E: ferricml::api::Transformer + ferricml::api::HasCapabilities, F: ferricml::api::Transformer + ferricml::api::HasCapabilities
+pub const (A, B, C, D, E, F)::STAGES_PERSIST: bool
+pub fn (A, B, C, D, E, F)::n_features_in(&self) -> usize
+pub fn (A, B, C, D, E, F)::n_features_out(&self) -> usize
+pub fn (A, B, C, D, E, F)::transform_into<'workspace>(&self, &ferricml::data::MatrixView<'_>, &'workspace mut [f32]) -> core::result::Result<ferricml::data::MatrixView<'workspace>, ferricml::api::ModelError>
+pub fn (A, B, C, D, E, F)::validate_handoff(&self) -> core::result::Result<(), ferricml::api::ModelError>
+pub fn (A, B, C, D, E, F)::workspace_len(&self, usize) -> core::result::Result<usize, ferricml::api::ModelError>
+impl<A, B, C, D, E> ferricml::pipeline::TransformerStack for (A, B, C, D, E) where A: ferricml::api::Transformer + ferricml::api::HasCapabilities, B: ferricml::api::Transformer + ferricml::api::HasCapabilities, C: ferricml::api::Transformer + ferricml::api::HasCapabilities, D: ferricml::api::Transformer + ferricml::api::HasCapabilities, E: ferricml::api::Transformer + ferricml::api::HasCapabilities
+pub const (A, B, C, D, E)::STAGES_PERSIST: bool
+pub fn (A, B, C, D, E)::n_features_in(&self) -> usize
+pub fn (A, B, C, D, E)::n_features_out(&self) -> usize
+pub fn (A, B, C, D, E)::transform_into<'workspace>(&self, &ferricml::data::MatrixView<'_>, &'workspace mut [f32]) -> core::result::Result<ferricml::data::MatrixView<'workspace>, ferricml::api::ModelError>
+pub fn (A, B, C, D, E)::validate_handoff(&self) -> core::result::Result<(), ferricml::api::ModelError>
+pub fn (A, B, C, D, E)::workspace_len(&self, usize) -> core::result::Result<usize, ferricml::api::ModelError>
+impl<A, B, C, D> ferricml::pipeline::TransformerStack for (A, B, C, D) where A: ferricml::api::Transformer + ferricml::api::HasCapabilities, B: ferricml::api::Transformer + ferricml::api::HasCapabilities, C: ferricml::api::Transformer + ferricml::api::HasCapabilities, D: ferricml::api::Transformer + ferricml::api::HasCapabilities
+pub const (A, B, C, D)::STAGES_PERSIST: bool
+pub fn (A, B, C, D)::n_features_in(&self) -> usize
+pub fn (A, B, C, D)::n_features_out(&self) -> usize
+pub fn (A, B, C, D)::transform_into<'workspace>(&self, &ferricml::data::MatrixView<'_>, &'workspace mut [f32]) -> core::result::Result<ferricml::data::MatrixView<'workspace>, ferricml::api::ModelError>
+pub fn (A, B, C, D)::validate_handoff(&self) -> core::result::Result<(), ferricml::api::ModelError>
+pub fn (A, B, C, D)::workspace_len(&self, usize) -> core::result::Result<usize, ferricml::api::ModelError>
 impl<A, B, C> ferricml::pipeline::TransformerStack for (A, B, C) where A: ferricml::api::Transformer + ferricml::api::HasCapabilities, B: ferricml::api::Transformer + ferricml::api::HasCapabilities, C: ferricml::api::Transformer + ferricml::api::HasCapabilities
 pub const (A, B, C)::STAGES_PERSIST: bool
 pub fn (A, B, C)::n_features_in(&self) -> usize
@@ -2744,6 +2849,13 @@ pub fn (A, B)::n_features_out(&self) -> usize
 pub fn (A, B)::transform_into<'workspace>(&self, &ferricml::data::MatrixView<'_>, &'workspace mut [f32]) -> core::result::Result<ferricml::data::MatrixView<'workspace>, ferricml::api::ModelError>
 pub fn (A, B)::validate_handoff(&self) -> core::result::Result<(), ferricml::api::ModelError>
 pub fn (A, B)::workspace_len(&self, usize) -> core::result::Result<usize, ferricml::api::ModelError>
+impl<A> ferricml::pipeline::TransformerStack for (A) where A: ferricml::api::Transformer + ferricml::api::HasCapabilities
+pub const (A)::STAGES_PERSIST: bool
+pub fn (A)::n_features_in(&self) -> usize
+pub fn (A)::n_features_out(&self) -> usize
+pub fn (A)::transform_into<'workspace>(&self, &ferricml::data::MatrixView<'_>, &'workspace mut [f32]) -> core::result::Result<ferricml::data::MatrixView<'workspace>, ferricml::api::ModelError>
+pub fn (A)::validate_handoff(&self) -> core::result::Result<(), ferricml::api::ModelError>
+pub fn (A)::workspace_len(&self, usize) -> core::result::Result<usize, ferricml::api::ModelError>
 pub mod ferricml::preprocessing
 pub enum ferricml::preprocessing::Norm
 pub ferricml::preprocessing::Norm::L1

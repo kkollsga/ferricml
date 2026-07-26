@@ -1,6 +1,6 @@
 //! Trainable multi-stage typed pipelines.
 //!
-//! [`StagedPipeline`] composes two or more fitted transform stages with one
+//! [`StagedPipeline`] composes one or more fitted transform stages with one
 //! fitted estimator. Every part stays a concrete type, so the whole
 //! composition is monomorphized: there is no per-row dynamic dispatch, no
 //! parameter erasure, and no string registry of stages.
@@ -21,12 +21,15 @@ const STAGE_COMPONENT_KIND: u16 = 2;
 const ESTIMATOR_COMPONENT_KIND: u16 = 3;
 const COMPONENT_VERSION: u16 = 1;
 
-/// Two or more fitted transform stages followed by one fitted estimator.
+/// One or more fitted transform stages followed by one fitted estimator.
 ///
 /// A composition is built either from already-fitted parts with
 /// [`StagedPipeline::new`], which validates every feature-width handoff before
-/// the composition exists, or in one training pass with `fit`, which fits each
-/// stage on the previous stage's output and only then fits the estimator.
+/// the composition exists, or in one training pass with
+/// [`StagedPipeline::fit`], which fits each stage on the previous stage's
+/// output and only then fits the estimator. Composition and persistence work at
+/// every length [`TransformerStack`] covers; one-call fitting is bounded at two
+/// stages for the reason recorded on [`StagedPipeline::fit`].
 ///
 /// Inference is allocation-free: [`StagedPipeline::workspace_len`] reports one
 /// buffer size, the caller allocates it once, and every batch reuses it
@@ -189,15 +192,35 @@ where
     /// A stage that cannot consume the previous stage's output fails here,
     /// before the estimator closure is called at all.
     ///
-    /// # Why only two stages have a `fit`
+    /// # Why one-call fitting stops at two stages
     ///
-    /// A second inherent `fit` for a three-stage composition would make every
-    /// `StagedPipeline::fit` call site ambiguous (`E0034`), even one whose
-    /// binding is fully annotated, because an inherent associated function is
-    /// resolved before `Self` is inferred. Longer compositions are built from
-    /// separately fitted stages with [`StagedPipeline::new`], which validates
-    /// the same handoffs; a single unambiguous training entry point is worth
-    /// more than a second one that forces a turbofish everywhere.
+    /// [`StagedPipeline::new`] composes any length the stack trait covers, and
+    /// so does persistence; only this one entry point is bounded at two. Both
+    /// ways of lifting the bound were built and measured, and both cost more
+    /// than the bound does.
+    ///
+    /// *A second inherent `fit` for a longer composition* is `E0034` at every
+    /// existing call site — not only at the new one, and including sites whose
+    /// binding is fully annotated — because an inherent associated function is
+    /// resolved before `Self` is inferred. Measured: ten call sites in this
+    /// repository stop compiling.
+    ///
+    /// *One `fit` taking a tuple of stage closures* moves the arity out of
+    /// method resolution and does give a single entry point at every length.
+    /// It compiles, and it makes every stage closure at every call site require
+    /// either a `&MatrixView<'_>` parameter annotation or a coercion wrapper:
+    /// a closure written inside a tuple is not checked against a function-trait
+    /// obligation, so its signature is inferred with early-bound regions and
+    /// then rejected as "not general enough". Measured: all fourteen call sites
+    /// in this repository, including every two-stage one. Making the common
+    /// case carry a permanent workaround for a compiler limitation, in order to
+    /// reach lengths reached today by fitting each stage and calling
+    /// [`StagedPipeline::new`], is the worse trade.
+    ///
+    /// Longer compositions are therefore built stage by stage and composed with
+    /// [`StagedPipeline::new`], which revalidates every width handoff. If
+    /// closure signature inference through tuples improves, the general form
+    /// becomes free and this bound should go.
     pub fn fit(
         data: &MatrixView<'_>,
         fit_first: impl FnOnce(&MatrixView<'_>) -> Result<A, ModelError>,
@@ -435,6 +458,126 @@ mod tests {
             })
             .unwrap();
         assert_eq!(actual, expected);
+    }
+
+    /// A one-tuple is a real stack, not a degenerate case that happens to work.
+    ///
+    /// The reference has no special case at one step, and neither does this: a
+    /// one-stage composition reports the same widths, splits the same single
+    /// workspace, persists under the same envelope, and declares the same
+    /// capability as a longer one.
+    #[test]
+    fn a_single_stage_stack_behaves_exactly_like_a_longer_one() {
+        let raw = data();
+        let scaler = MinMaxScaler::fit(&raw.as_view(), MinMaxScalerParams::default()).unwrap();
+        let transformed = scaler.transform(&raw.as_view()).unwrap();
+        let estimator =
+            Ridge::fit(&transformed.as_view(), &targets(), RidgeParams::default()).unwrap();
+        let pipeline = StagedPipeline::new((scaler,), estimator).unwrap();
+
+        assert_eq!(Estimator::n_features_in(&pipeline), 2);
+        assert_eq!(pipeline.workspace_len(raw.rows()).unwrap(), 8 * 2);
+        assert_eq!(
+            pipeline.transform(&raw.as_view()).unwrap().as_slice(),
+            transformed.as_slice()
+        );
+        assert!(
+            <StagedPipeline<(MinMaxScaler,), Ridge> as HasCapabilities>::CAPABILITIES.artifact()
+        );
+
+        let bytes = pipeline.to_artifact([1; 32], [2; 32]).unwrap();
+        assert_eq!(
+            StagedPipeline::<(MinMaxScaler,), Ridge>::from_artifact(&bytes, [1; 32], [2; 32])
+                .unwrap(),
+            pipeline
+        );
+        // A two-stage composition records a different stage count, so a shorter
+        // stack cannot be read as a longer one or the reverse.
+        assert_eq!(
+            StagedPipeline::<(MinMaxScaler, StandardScaler), Ridge>::from_artifact(
+                &bytes, [1; 32], [2; 32]
+            )
+            .unwrap_err(),
+            ArtifactError::InvalidPayload
+        );
+    }
+
+    /// Past the two and three the crate used to stop at, with the handoff bound
+    /// and the workspace split both exercised beyond the old ceiling.
+    #[test]
+    fn a_stack_longer_than_three_chains_persists_and_rejects_a_bad_handoff() {
+        let raw = data();
+        let first = MinMaxScaler::fit(&raw.as_view(), MinMaxScalerParams::default()).unwrap();
+        let after_first = first.transform(&raw.as_view()).unwrap();
+        let second =
+            StandardScaler::fit(&after_first.as_view(), StandardScalerParams::default()).unwrap();
+        let after_second = second.transform(&after_first.as_view()).unwrap();
+        let third = MaxAbsScaler::fit(&after_second.as_view(), MaxAbsScalerParams).unwrap();
+        let after_third = third.transform(&after_second.as_view()).unwrap();
+        let fourth =
+            MinMaxScaler::fit(&after_third.as_view(), MinMaxScalerParams::default()).unwrap();
+        let after_fourth = fourth.transform(&after_third.as_view()).unwrap();
+        let fifth =
+            StandardScaler::fit(&after_fourth.as_view(), StandardScalerParams::default()).unwrap();
+        let transformed = fifth.transform(&after_fourth.as_view()).unwrap();
+        let estimator =
+            Ridge::fit(&transformed.as_view(), &targets(), RidgeParams::default()).unwrap();
+
+        let stages = (
+            first.clone(),
+            second.clone(),
+            third.clone(),
+            fourth.clone(),
+            fifth,
+        );
+        let pipeline = StagedPipeline::new(stages, estimator.clone()).unwrap();
+        assert_eq!(pipeline.workspace_len(raw.rows()).unwrap(), 8 * 2 * 5);
+        assert_eq!(
+            pipeline.transform(&raw.as_view()).unwrap().as_slice(),
+            transformed.as_slice()
+        );
+
+        let mut workspace = vec![0.0; pipeline.workspace_len(raw.rows()).unwrap()];
+        let mut predictions = vec![0.0; raw.rows()];
+        pipeline
+            .with_transformed(&raw.as_view(), &mut workspace, |model, batch| {
+                model.predict_into(batch, &mut predictions)
+            })
+            .unwrap();
+        assert_eq!(
+            predictions,
+            pipeline
+                .estimator()
+                .predict(&transformed.as_view())
+                .unwrap()
+        );
+
+        let bytes = pipeline.to_artifact([3; 32], [4; 32]).unwrap();
+        assert_eq!(
+            StagedPipeline::<
+                (
+                    MinMaxScaler,
+                    StandardScaler,
+                    MaxAbsScaler,
+                    MinMaxScaler,
+                    StandardScaler,
+                ),
+                Ridge,
+            >::from_artifact(&bytes, [3; 32], [4; 32])
+            .unwrap(),
+            pipeline
+        );
+
+        // The handoff check reaches every position, not just the first pair.
+        let narrow = DenseMatrix::new(vec![1.0, 2.0, 3.0, 4.0], 4, 1).unwrap();
+        let wrong_width = MaxAbsScaler::fit(&narrow.as_view(), MaxAbsScalerParams).unwrap();
+        assert_eq!(
+            StagedPipeline::new((first, second, wrong_width, fourth), estimator).unwrap_err(),
+            ModelError::FeatureDimension {
+                expected: 1,
+                actual: 2
+            }
+        );
     }
 
     #[test]
