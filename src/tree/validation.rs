@@ -102,10 +102,13 @@ pub(super) fn check_row(row: &[f32], expected: usize) -> Result<(), ModelError> 
     Ok(())
 }
 
-pub(super) fn check_prediction_data(
+/// Rejects a batch whose feature width is not the fitted one.
+///
+/// Split out of [`check_prediction_data`] so an entry point that also resolves
+/// a requested class can validate the shape of the input before the content of
+/// the request, which is the crate's uniform precedence.
+pub(super) fn check_feature_width(
     data: &MatrixView<'_>,
-    output_len: usize,
-    expected_output_len: usize,
     expected_features: usize,
 ) -> Result<(), ModelError> {
     if data.columns() != expected_features {
@@ -114,6 +117,16 @@ pub(super) fn check_prediction_data(
             actual: data.columns(),
         });
     }
+    Ok(())
+}
+
+pub(super) fn check_prediction_data(
+    data: &MatrixView<'_>,
+    output_len: usize,
+    expected_output_len: usize,
+    expected_features: usize,
+) -> Result<(), ModelError> {
+    check_feature_width(data, expected_features)?;
     check_output_len(output_len, expected_output_len)
 }
 

@@ -92,6 +92,7 @@ pub const CLASSIFIER_OBLIGATIONS: &[&str] = &[
     "feature_width_validated_before_write",
     "output_length_validated_before_write",
     "unknown_class_rejected",
+    "width_precedes_class",
     "refit_is_deterministic",
     "sample_weight_declaration_matches_behavior",
     "artifact_declaration_matches_behavior",
@@ -1493,6 +1494,51 @@ fn classifier_obligations<C: ClassifierUnderTest>() -> Report {
             || {
                 format!(
                     "allocating predict_class_proba for absent class {absent} returned {rejected:?}"
+                )
+            },
+        );
+
+        // A doubly-invalid call: the batch is the wrong width *and* the
+        // requested class was never fitted. Both errors are true statements,
+        // so which one a caller gets is decided rather than derived — the
+        // crate's ruling is that the shape of the input is validated before
+        // the content of the request. Every other obligation above makes
+        // exactly one thing wrong, which is why the precedence between two of
+        // them needs an obligation of its own: without this call no test in
+        // the suite is doubly invalid, and the order is free to differ between
+        // an entry point and its own `_into` partner.
+        let width_error = ModelError::FeatureDimension {
+            expected: train.columns(),
+            actual: wrong_width.columns(),
+        };
+        let mut untouched = vec![7.0_f32; wrong_width.rows()];
+        let rejected = C::predict_class_proba_into(
+            &model,
+            &wrong_width.as_view(),
+            &mut workspace,
+            absent,
+            &mut untouched,
+        );
+        report.require(
+            "width_precedes_class",
+            rejected == Some(Err(width_error.clone()))
+                && untouched == vec![7.0_f32; wrong_width.rows()],
+            || {
+                format!(
+                    "predict_class_proba_into on a wrong-width batch asking for absent class \
+                     {absent} returned {rejected:?} and wrote {untouched:?}"
+                )
+            },
+        );
+        let rejected =
+            C::predict_class_proba(&model, &wrong_width.as_view(), &mut workspace, absent);
+        report.require(
+            "width_precedes_class",
+            rejected == Some(Err(width_error)),
+            || {
+                format!(
+                    "allocating predict_class_proba on a wrong-width batch asking for absent \
+                     class {absent} returned {rejected:?}"
                 )
             },
         );

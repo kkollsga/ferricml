@@ -476,6 +476,21 @@ impl HistGradientBoostingClassifier {
         <Self as ProbabilisticClassifier>::predict_class_proba_into(self, data, class, output)
     }
 
+    /// Rejects a batch whose feature width is not the fitted one.
+    ///
+    /// Split out of [`Self::check_batch`] so an entry point that also resolves
+    /// a requested class can validate the shape of the input before the
+    /// content of the request, which is the crate's uniform precedence.
+    fn check_batch_width(&self, data: &MatrixView<'_>) -> Result<(), ModelError> {
+        if data.columns() != self.n_features_in {
+            return Err(ModelError::FeatureDimension {
+                expected: self.n_features_in,
+                actual: data.columns(),
+            });
+        }
+        Ok(())
+    }
+
     /// Validates a batch request's feature width and output length together.
     fn check_batch(
         &self,
@@ -483,12 +498,7 @@ impl HistGradientBoostingClassifier {
         output_len: usize,
         expected: usize,
     ) -> Result<(), ModelError> {
-        if data.columns() != self.n_features_in {
-            return Err(ModelError::FeatureDimension {
-                expected: self.n_features_in,
-                actual: data.columns(),
-            });
-        }
+        self.check_batch_width(data)?;
         if output_len != expected {
             return Err(ModelError::OutputLength {
                 expected,
@@ -740,6 +750,10 @@ impl ProbabilisticClassifier for HistGradientBoostingClassifier {
         class: u8,
         output: &mut [f32],
     ) -> Result<(), ModelError> {
+        // Width before class: the shape of the input is validated before the
+        // content of the request, so this primitive reports the same error its
+        // allocating partner does.
+        self.check_batch_width(data)?;
         let column = BINARY_CLASSES
             .binary_search(&class)
             .map_err(|_| ModelError::UnknownClass { class })?;

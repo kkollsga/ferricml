@@ -81,6 +81,11 @@ pub trait ProbabilisticClassifier: Classifier {
 
     /// Predicts one requested probability column without materializing the
     /// full probability matrix.
+    ///
+    /// A call that is invalid in both its batch width and its requested class
+    /// reports the width: implementations validate the shape of the input
+    /// before the content of the request, so this method and its allocating
+    /// partner return the same error for the same call.
     fn predict_class_proba_into(
         &self,
         data: &MatrixView<'_>,
