@@ -62,8 +62,22 @@ impl LinearRegressionParams {
 
 /// Dense single-target ordinary least-squares regression.
 ///
-/// Fitting uses a deterministic SVD and returns the minimum-norm solution for
-/// rank-deficient or underdetermined inputs.
+/// Fitting takes a thin SVD of the centered design and returns the minimum-norm
+/// least-squares solution, including for rank-deficient and underdetermined
+/// inputs.
+///
+/// That is a promise the crate keeps rather than one it states. Until 0.2.0 the
+/// same sentence stood over a backend whose SVD did not reconstruct its own
+/// input on exactly rank-deficient tall designs, so on a measurable fraction of
+/// such inputs the returned coefficients were not a least-squares solution at
+/// all — they did not zero the normal-equation gradient, and no assertion in
+/// the crate looked. `least_squares.rs` now sweeps that defect class and checks
+/// the gradient directly.
+///
+/// Repeating a fit reproduces its result exactly. Reproducing it *on another
+/// machine* is bounded by tier M in `docs/determinism.md`: the decomposition
+/// runs in a kernel that selects instructions from the CPU features it detects
+/// at run time, which no target triple pins down.
 ///
 /// ```
 /// use ferricml::data::{DenseMatrix, RegressionTargets};
