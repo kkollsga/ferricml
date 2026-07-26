@@ -9,6 +9,15 @@ and releases use [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- `linear_model::Lasso` and `linear_model::ElasticNet` now persist, under their
+  own artifact kinds. They were the last tunable regressors that could be fitted
+  but not saved, which is backwards for an L1 model: a sparse coefficient vector
+  is chosen precisely because it is the thing worth shipping. Both artifacts
+  store the mixing weight and the coordinate-descent sweep count alongside the
+  coefficients rather than re-deriving either, because both are readable on a
+  fitted model. Neither has an `api::AnyRegressor` variant yet; that remains a
+  dispatch gap rather than a contract gap, and adding one later will not touch
+  either estimator's bytes.
 - `api::ModelError::InvalidTreeStructure`, for a fitted tree whose topology or
   values the packed node format cannot represent at any size. It is separate
   from `TreeTooLarge`, which is a size bound; see the note under Changed for

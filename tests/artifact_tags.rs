@@ -28,7 +28,7 @@ use ferricml::ensemble::{
     ExtraTreesClassifier, ExtraTreesRegressor, HistGradientBoostingClassifier,
     HistGradientBoostingRegressor, RandomForestClassifier, RandomForestRegressor,
 };
-use ferricml::linear_model::{LinearRegression, LogisticRegression, Ridge};
+use ferricml::linear_model::{ElasticNet, Lasso, LinearRegression, LogisticRegression, Ridge};
 use ferricml::pipeline::{Pipeline, StagedPipeline};
 use ferricml::preprocessing::{MaxAbsScaler, MinMaxScaler, RobustScaler, StandardScaler};
 use ferricml::ranking::PairwiseLinearRanker;
@@ -136,6 +136,8 @@ fn model_rows() -> Vec<(Row, u16, u16, bool)> {
             24,
             !LEGACY,
         ),
+        (model_row::<Lasso>("Lasso"), 69, 69, !LEGACY),
+        (model_row::<ElasticNet>("ElasticNet"), 70, 70, !LEGACY),
     ]
 }
 

@@ -578,14 +578,16 @@ fn the_persistence_closure_detects_a_missing_impl_and_an_undeclared_one() {
     ));
 
     // A declaring type with no impl is the seven-estimator defect inverted, and
-    // a covering impl is what clears it.
+    // a covering impl is what clears it. `DummyRegressor` is the anchor because
+    // its lack of persistence is a documented decision rather than a gap: a
+    // baseline is refitted, never restored.
     let impls = persistence_impls();
     assert!(
         !impls
             .iter()
-            .any(|(pattern, _)| covers(pattern, "ferricml::linear_model::Lasso")),
-        "Lasso must not be covered while it has no persistence; this assertion \
-         is what makes the missing-impl direction non-vacuous today"
+            .any(|(pattern, _)| covers(pattern, "ferricml::dummy::DummyRegressor")),
+        "a type with no persistence must match no impl; this assertion is what \
+         keeps the missing-impl direction non-vacuous"
     );
     assert!(
         impls

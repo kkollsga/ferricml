@@ -66,19 +66,17 @@ fn linear_estimators_declare_weighted_fitting_and_persistence() {
 }
 
 #[test]
-fn the_penalized_regressors_declare_weighted_fitting_but_no_artifact_yet() {
-    // Persistence is a separate contract from semantics: these estimators have
-    // no artifact kind, so declaring one they do not have would promise bytes
-    // that cannot be written. Flipping this is a reviewable diff, which is the
-    // point of stating it here.
-    assert_eq!(
-        Lasso::CAPABILITIES,
-        Capabilities::NONE.with_sample_weights(true)
-    );
-    assert_eq!(
-        ElasticNet::CAPABILITIES,
-        Capabilities::NONE.with_sample_weights(true)
-    );
+fn the_penalized_regressors_declare_weighted_fitting_and_persistence() {
+    // These two were the last tunable regressors a caller could fit but not
+    // save, which is the wrong way round for an L1 model: a sparse coefficient
+    // vector is chosen precisely because it is the thing you want to ship.
+    //
+    // Their artifacts store `l1_ratio` and the sweep count alongside the
+    // coefficients rather than re-deriving either. Both are readable on a
+    // fitted model, so a decode that recomputed them could return something
+    // that no longer equals what was written.
+    assert_eq!(Lasso::CAPABILITIES, WEIGHTED_AND_PERSISTED);
+    assert_eq!(ElasticNet::CAPABILITIES, WEIGHTED_AND_PERSISTED);
 }
 
 #[test]

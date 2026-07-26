@@ -5,8 +5,19 @@ use crate::api::{
     Capabilities, Estimator, HasCapabilities, HasParams, ModelError, Regressor,
     validate_prediction, validate_scalar_row,
 };
+use crate::artifact::{
+    ArtifactCursor, ArtifactError, ArtifactPayloadWriter, ELASTIC_NET_ARTIFACT_KIND,
+    MODEL_ARTIFACT_VERSION, ModelArtifact, SchemaRole, artifact_version, decode_component,
+    decode_v2_envelope, encode_component, encode_v2_envelope,
+};
 use crate::data::{MatrixView, RegressionTargets, SampleWeights};
 use crate::loss::ElasticNetPenalty;
+
+const MAX_ARTIFACT_FEATURES: usize = 1_000_000;
+const PAYLOAD_VERSION: u16 = 1;
+const STATE_COMPONENT_KIND: u16 = 1;
+const STATE_COMPONENT_VERSION: u16 = 1;
+const FIXED_PAYLOAD_BYTES: usize = 9 * 4;
 
 /// Parameters for [`ElasticNet`].
 #[derive(Clone, Debug, PartialEq)]
@@ -273,8 +284,138 @@ impl Estimator for ElasticNet {
 }
 
 impl HasCapabilities for ElasticNet {
-    /// Weighted fitting only; there is no artifact schema for this estimator.
-    const CAPABILITIES: Capabilities = Capabilities::NONE.with_sample_weights(true);
+    /// Weighted fitting and persistence.
+    const CAPABILITIES: Capabilities = Capabilities::NONE
+        .with_sample_weights(true)
+        .with_artifact(true);
+}
+
+impl ModelArtifact for ElasticNet {
+    const ARTIFACT_KIND: u16 = ELASTIC_NET_ARTIFACT_KIND;
+
+    /// Encodes the fitted coefficient vector and the mixed penalty it came
+    /// from.
+    ///
+    /// `l1_ratio` is stored beside `alpha` rather than folded into it. The two
+    /// numbers are separately readable through
+    /// [`get_params`](crate::api::HasParams::get_params), and a pair that
+    /// multiplied to the same product would be a different fitted model with
+    /// the same bytes.
+    fn to_artifact(&self, schema: [u8; 32]) -> Result<Vec<u8>, ArtifactError> {
+        if self.n_features_in > MAX_ARTIFACT_FEATURES {
+            return Err(ArtifactError::InvalidPayload);
+        }
+        let n_features =
+            u32::try_from(self.n_features_in).map_err(|_| ArtifactError::InvalidPayload)?;
+        let max_iter =
+            u32::try_from(self.params.max_iter).map_err(|_| ArtifactError::InvalidPayload)?;
+        let sweeps = u32::try_from(self.sweeps).map_err(|_| ArtifactError::InvalidPayload)?;
+        let mut state =
+            ArtifactPayloadWriter::with_capacity(FIXED_PAYLOAD_BYTES + self.coefficients.len() * 4);
+        state.u32(n_features);
+        state.f32(self.params.alpha);
+        state.f32(self.params.l1_ratio);
+        state.u32(u32::from(self.params.fit_intercept));
+        state.u32(max_iter);
+        state.f32(self.params.tol);
+        state.u32(sweeps);
+        state.f32(self.intercept);
+        state.u32(n_features);
+        for &coefficient in &self.coefficients {
+            state.f32(coefficient);
+        }
+        let component = encode_component(
+            STATE_COMPONENT_KIND,
+            STATE_COMPONENT_VERSION,
+            &state.finish(),
+        )?;
+        encode_v2_envelope(
+            Self::ARTIFACT_KIND,
+            PAYLOAD_VERSION,
+            &[(SchemaRole::Input, schema)],
+            &component,
+        )
+    }
+
+    /// Decodes an elastic-net model after checking integrity and feature
+    /// identity.
+    fn from_artifact(bytes: &[u8], schema: [u8; 32]) -> Result<Self, ArtifactError> {
+        let version = artifact_version(bytes)?;
+        if version != MODEL_ARTIFACT_VERSION {
+            return Err(ArtifactError::UnsupportedVersion { found: version });
+        }
+        let mut envelope = decode_v2_envelope(
+            bytes,
+            Self::ARTIFACT_KIND,
+            PAYLOAD_VERSION,
+            &[(SchemaRole::Input, schema)],
+        )?;
+        let component =
+            decode_component(&mut envelope, STATE_COMPONENT_KIND, STATE_COMPONENT_VERSION)?;
+        if !envelope.is_empty() {
+            return Err(ArtifactError::TrailingBytes);
+        }
+        Self::decode_payload(component)
+    }
+}
+
+impl ElasticNet {
+    fn decode_payload(mut cursor: ArtifactCursor<'_>) -> Result<Self, ArtifactError> {
+        let n_features_in = cursor.u32()? as usize;
+        let alpha = cursor.f32()?;
+        let l1_ratio = cursor.f32()?;
+        let fit_intercept = match cursor.u32()? {
+            0 => false,
+            1 => true,
+            _ => return Err(ArtifactError::InvalidPayload),
+        };
+        let max_iter = cursor.u32()? as usize;
+        let tol = cursor.f32()?;
+        let sweeps = cursor.u32()? as usize;
+        let intercept = cursor.f32()?;
+        let coefficient_count = cursor.u32()? as usize;
+        // The same bounds a fit enforces, including the `0..=1` that makes
+        // `l1_ratio` a mixing weight rather than an arbitrary scale.
+        if n_features_in == 0
+            || n_features_in > MAX_ARTIFACT_FEATURES
+            || coefficient_count != n_features_in
+            || !alpha.is_finite()
+            || alpha < 0.0
+            || !l1_ratio.is_finite()
+            || !(0.0..=1.0).contains(&l1_ratio)
+            || max_iter == 0
+            || !tol.is_finite()
+            || tol <= 0.0
+            || sweeps > max_iter
+            || !intercept.is_finite()
+        {
+            return Err(ArtifactError::InvalidPayload);
+        }
+        let mut coefficients = Vec::with_capacity(cursor.bounded_capacity(coefficient_count, 4));
+        for _ in 0..coefficient_count {
+            let value = cursor.f32()?;
+            if !value.is_finite() {
+                return Err(ArtifactError::InvalidPayload);
+            }
+            coefficients.push(value);
+        }
+        if !cursor.is_empty() {
+            return Err(ArtifactError::TrailingBytes);
+        }
+        Ok(Self {
+            n_features_in,
+            params: ElasticNetParams {
+                alpha,
+                l1_ratio,
+                fit_intercept,
+                max_iter,
+                tol,
+            },
+            coefficients,
+            intercept,
+            sweeps,
+        })
+    }
 }
 
 impl HasParams for ElasticNet {
@@ -613,7 +754,75 @@ mod tests {
     #[test]
     fn the_declared_capabilities_match_the_entry_points_that_exist() {
         assert!(ElasticNet::CAPABILITIES.sample_weights());
-        assert!(!ElasticNet::CAPABILITIES.artifact());
+        assert!(ElasticNet::CAPABILITIES.artifact());
         assert!(!ElasticNet::CAPABILITIES.multiclass());
+    }
+
+    #[test]
+    fn a_fitted_model_round_trips_through_its_artifact_and_predicts_identically() {
+        const SCHEMA: [u8; 32] = [7; 32];
+        let (data, targets) = correlated_problem();
+        let model = ElasticNet::fit(
+            &data.as_view(),
+            &targets,
+            ElasticNetParams::default()
+                .with_alpha(0.05)
+                .with_l1_ratio(0.75)
+                .with_tol(1.0e-8),
+        )
+        .expect("fit");
+        // A penalty that actually zeroes a coefficient, so the sparse vector
+        // the artifact exists to carry is the one being round-tripped.
+        assert!(model.n_zero_coefficients() >= 1);
+
+        let bytes = model.to_artifact(SCHEMA).expect("encode");
+        assert_eq!(bytes, model.to_artifact(SCHEMA).expect("re-encode"));
+
+        let restored = ElasticNet::from_artifact(&bytes, SCHEMA).expect("decode");
+        assert_eq!(restored, model);
+        assert_eq!(restored.n_iter(), model.n_iter());
+        assert_eq!(restored.get_params().l1_ratio(), 0.75);
+        assert_eq!(
+            restored.predict(&data.as_view()).expect("predict"),
+            model.predict(&data.as_view()).expect("predict")
+        );
+    }
+
+    #[test]
+    fn a_decoder_refuses_another_schema_and_another_estimators_bytes() {
+        const SCHEMA: [u8; 32] = [7; 32];
+        const OTHER: [u8; 32] = [9; 32];
+        let (data, targets) = correlated_problem();
+        let model = ElasticNet::fit(
+            &data.as_view(),
+            &targets,
+            ElasticNetParams::default()
+                .with_alpha(0.05)
+                .with_l1_ratio(0.75)
+                .with_tol(1.0e-8),
+        )
+        .expect("fit");
+        let bytes = model.to_artifact(SCHEMA).expect("encode");
+
+        assert_eq!(
+            ElasticNet::from_artifact(&bytes, OTHER),
+            Err(ArtifactError::FeatureSchemaMismatch)
+        );
+
+        let mut corrupted = bytes.clone();
+        let last = corrupted.len() - 40;
+        corrupted[last] ^= 1;
+        assert_eq!(
+            ElasticNet::from_artifact(&corrupted, SCHEMA),
+            Err(ArtifactError::ChecksumMismatch)
+        );
+
+        // The kind is what keeps the two penalized readers off each other's
+        // bytes: their payload layouts differ by one word, so a reader that
+        // trusted the layout alone would misread every field after it.
+        assert_eq!(
+            Lasso::from_artifact(&bytes, SCHEMA).unwrap_err(),
+            ArtifactError::UnsupportedModelKind { found: 70 }
+        );
     }
 }

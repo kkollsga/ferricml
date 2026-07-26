@@ -632,6 +632,16 @@ pub const ferricml::ensemble::RandomForestRegressor::ARTIFACT_KIND: u16
 pub const ferricml::ensemble::RandomForestRegressor::MODEL_TAG: u16
 pub fn ferricml::ensemble::RandomForestRegressor::from_artifact(&[u8], [u8; 32]) -> core::result::Result<Self, ferricml::artifact::ArtifactError>
 pub fn ferricml::ensemble::RandomForestRegressor::to_artifact(&self, [u8; 32]) -> core::result::Result<alloc::vec::Vec<u8>, ferricml::artifact::ArtifactError>
+impl ferricml::artifact::ModelArtifact for ferricml::linear_model::ElasticNet
+pub const ferricml::linear_model::ElasticNet::ARTIFACT_KIND: u16
+pub const ferricml::linear_model::ElasticNet::MODEL_TAG: u16
+pub fn ferricml::linear_model::ElasticNet::from_artifact(&[u8], [u8; 32]) -> core::result::Result<Self, ferricml::artifact::ArtifactError>
+pub fn ferricml::linear_model::ElasticNet::to_artifact(&self, [u8; 32]) -> core::result::Result<alloc::vec::Vec<u8>, ferricml::artifact::ArtifactError>
+impl ferricml::artifact::ModelArtifact for ferricml::linear_model::Lasso
+pub const ferricml::linear_model::Lasso::ARTIFACT_KIND: u16
+pub const ferricml::linear_model::Lasso::MODEL_TAG: u16
+pub fn ferricml::linear_model::Lasso::from_artifact(&[u8], [u8; 32]) -> core::result::Result<Self, ferricml::artifact::ArtifactError>
+pub fn ferricml::linear_model::Lasso::to_artifact(&self, [u8; 32]) -> core::result::Result<alloc::vec::Vec<u8>, ferricml::artifact::ArtifactError>
 impl ferricml::artifact::ModelArtifact for ferricml::linear_model::LinearRegression
 pub const ferricml::linear_model::LinearRegression::ARTIFACT_KIND: u16
 pub const ferricml::linear_model::LinearRegression::MODEL_TAG: u16
@@ -1602,6 +1612,11 @@ pub fn ferricml::linear_model::ElasticNet::get_params(&self) -> &Self::Params
 impl ferricml::api::Regressor for ferricml::linear_model::ElasticNet
 pub fn ferricml::linear_model::ElasticNet::predict(&self, &ferricml::data::MatrixView<'_>) -> core::result::Result<alloc::vec::Vec<f32>, ferricml::api::ModelError>
 pub fn ferricml::linear_model::ElasticNet::predict_into(&self, &ferricml::data::MatrixView<'_>, &mut [f32]) -> core::result::Result<(), ferricml::api::ModelError>
+impl ferricml::artifact::ModelArtifact for ferricml::linear_model::ElasticNet
+pub const ferricml::linear_model::ElasticNet::ARTIFACT_KIND: u16
+pub const ferricml::linear_model::ElasticNet::MODEL_TAG: u16
+pub fn ferricml::linear_model::ElasticNet::from_artifact(&[u8], [u8; 32]) -> core::result::Result<Self, ferricml::artifact::ArtifactError>
+pub fn ferricml::linear_model::ElasticNet::to_artifact(&self, [u8; 32]) -> core::result::Result<alloc::vec::Vec<u8>, ferricml::artifact::ArtifactError>
 pub struct ferricml::linear_model::ElasticNetParams
 impl ferricml::linear_model::ElasticNetParams
 pub const fn ferricml::linear_model::ElasticNetParams::alpha(&self) -> f32
@@ -1653,6 +1668,11 @@ pub fn ferricml::linear_model::Lasso::get_params(&self) -> &Self::Params
 impl ferricml::api::Regressor for ferricml::linear_model::Lasso
 pub fn ferricml::linear_model::Lasso::predict(&self, &ferricml::data::MatrixView<'_>) -> core::result::Result<alloc::vec::Vec<f32>, ferricml::api::ModelError>
 pub fn ferricml::linear_model::Lasso::predict_into(&self, &ferricml::data::MatrixView<'_>, &mut [f32]) -> core::result::Result<(), ferricml::api::ModelError>
+impl ferricml::artifact::ModelArtifact for ferricml::linear_model::Lasso
+pub const ferricml::linear_model::Lasso::ARTIFACT_KIND: u16
+pub const ferricml::linear_model::Lasso::MODEL_TAG: u16
+pub fn ferricml::linear_model::Lasso::from_artifact(&[u8], [u8; 32]) -> core::result::Result<Self, ferricml::artifact::ArtifactError>
+pub fn ferricml::linear_model::Lasso::to_artifact(&self, [u8; 32]) -> core::result::Result<alloc::vec::Vec<u8>, ferricml::artifact::ArtifactError>
 pub struct ferricml::linear_model::LassoParams
 impl ferricml::linear_model::LassoParams
 pub const fn ferricml::linear_model::LassoParams::alpha(&self) -> f32

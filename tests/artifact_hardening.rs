@@ -38,8 +38,8 @@ use ferricml::ensemble::{
     RandomForestClassifierParams, RandomForestRegressor, RandomForestRegressorParams,
 };
 use ferricml::linear_model::{
-    LinearRegression, LinearRegressionParams, LogisticRegression, LogisticRegressionParams, Ridge,
-    RidgeParams,
+    ElasticNet, ElasticNetParams, Lasso, LassoParams, LinearRegression, LinearRegressionParams,
+    LogisticRegression, LogisticRegressionParams, Ridge, RidgeParams,
 };
 use ferricml::pipeline::{Pipeline, StagedPipeline};
 use ferricml::preprocessing::{
@@ -388,6 +388,16 @@ fn decoders() -> Vec<Decoder> {
                 m.to_artifact(INPUT_SCHEMA)
             })
         }),
+        ("lasso", |bytes| {
+            accepted(Lasso::from_artifact(bytes, INPUT_SCHEMA), |m| {
+                m.to_artifact(INPUT_SCHEMA)
+            })
+        }),
+        ("elastic-net", |bytes| {
+            accepted(ElasticNet::from_artifact(bytes, INPUT_SCHEMA), |m| {
+                m.to_artifact(INPUT_SCHEMA)
+            })
+        }),
         ("standard-scaler", |bytes| {
             accepted(
                 StandardScaler::from_artifact(bytes, INPUT_SCHEMA, TRANSFORMED_SCHEMA),
@@ -598,6 +608,25 @@ fn seed_corpus() -> Vec<(&'static str, Vec<u8>)> {
     )
     .unwrap();
     let ridge = Ridge::fit(&data.as_view(), &regression, RidgeParams::default()).unwrap();
+    // A penalty small enough to leave both coefficients non-zero, and one large
+    // enough to drive at least one to exactly zero: the sparse vector is the
+    // state an L1 artifact exists to carry, so a seed without a zero in it
+    // would never exercise it.
+    let lasso = Lasso::fit(
+        &data.as_view(),
+        &regression,
+        LassoParams::default().with_alpha(0.5).with_max_iter(50),
+    )
+    .unwrap();
+    let elastic_net = ElasticNet::fit(
+        &data.as_view(),
+        &regression,
+        ElasticNetParams::default()
+            .with_alpha(0.5)
+            .with_l1_ratio(0.25)
+            .with_max_iter(50),
+    )
+    .unwrap();
     let standard = StandardScaler::fit(&data.as_view(), StandardScalerParams::default()).unwrap();
     let min_max = MinMaxScaler::fit(&data.as_view(), MinMaxScalerParams::default()).unwrap();
     let max_abs = MaxAbsScaler::fit(&data.as_view(), MaxAbsScalerParams).unwrap();
@@ -819,6 +848,11 @@ fn seed_corpus() -> Vec<(&'static str, Vec<u8>)> {
         ),
         ("linear", linear.to_artifact(INPUT_SCHEMA).unwrap()),
         ("ridge", ridge.to_artifact(INPUT_SCHEMA).unwrap()),
+        ("lasso", lasso.to_artifact(INPUT_SCHEMA).unwrap()),
+        (
+            "elastic-net",
+            elastic_net.to_artifact(INPUT_SCHEMA).unwrap(),
+        ),
         (
             "standard-scaler",
             standard
@@ -1810,6 +1844,14 @@ fn corpus() -> Vec<Case> {
     let staged_forest = seed("staged-forest");
     let staged_boosting = seed("staged-boosting");
     let ranker = seed("pairwise-ranker");
+    let lasso = seed("lasso");
+    let elastic_net = seed("elastic-net");
+    let (lasso_payload, _) = payload_span(&lasso).expect("lasso payload");
+    let (elastic_net_payload, _) = payload_span(&elastic_net).expect("elastic-net payload");
+    // Both payloads are one state component: eight words for the lasso, nine
+    // for the elastic net, then the coefficients.
+    let lasso_state = lasso_payload + COMPONENT_HEADER_BYTES;
+    let elastic_net_state = elastic_net_payload + COMPONENT_HEADER_BYTES;
     let any_ridge = seed("any-ridge");
     let (scaler_payload, _) = payload_span(&scaler).expect("scaler payload");
     let (logistic_payload, _) = payload_span(&logistic).expect("logistic payload");
@@ -2609,6 +2651,75 @@ fn corpus() -> Vec<Case> {
                 &9_u32.to_le_bytes(),
             ),
         },
+        // The penalized linear pair. Their payloads carry two fields no other
+        // linear artifact has — an iteration budget with a sweep count that
+        // must fit inside it, and (for the elastic net) a mixing weight that is
+        // only meaningful in `0..=1`. Both are properties a decoder alone can
+        // check, because the bytes can always claim otherwise.
+        Case {
+            name: "lasso-sweeps-past-the-iteration-budget",
+            provenance: "a lasso reporting more sweeps than its own max_iter allows",
+            decoder: "lasso",
+            expected: ArtifactError::InvalidPayload,
+            bytes: overwrite(&lasso, lasso_state + 20, &51_u32.to_le_bytes()),
+        },
+        Case {
+            name: "lasso-zero-iteration-budget",
+            provenance: "a lasso whose max_iter is zero, which no fit accepts",
+            decoder: "lasso",
+            expected: ArtifactError::InvalidPayload,
+            bytes: overwrite(&lasso, lasso_state + 12, &0_u32.to_le_bytes()),
+        },
+        Case {
+            name: "lasso-negative-penalty",
+            provenance: "a lasso with a negative alpha, which is not a penalty",
+            decoder: "lasso",
+            expected: ArtifactError::InvalidPayload,
+            bytes: overwrite(&lasso, lasso_state + 4, &(-1.0_f32).to_bits().to_le_bytes()),
+        },
+        Case {
+            name: "lasso-non-positive-tolerance",
+            provenance: "a lasso whose convergence tolerance is zero",
+            decoder: "lasso",
+            expected: ArtifactError::InvalidPayload,
+            bytes: overwrite(&lasso, lasso_state + 16, &0.0_f32.to_bits().to_le_bytes()),
+        },
+        Case {
+            name: "elastic-net-mixing-weight-out-of-range",
+            provenance: "an elastic net whose l1_ratio is above one, so it mixes nothing",
+            decoder: "elastic-net",
+            expected: ArtifactError::InvalidPayload,
+            bytes: overwrite(
+                &elastic_net,
+                elastic_net_state + 8,
+                &1.5_f32.to_bits().to_le_bytes(),
+            ),
+        },
+        Case {
+            name: "elastic-net-non-finite-mixing-weight",
+            provenance: "an elastic net whose l1_ratio is NaN",
+            decoder: "elastic-net",
+            expected: ArtifactError::InvalidPayload,
+            bytes: overwrite(
+                &elastic_net,
+                elastic_net_state + 8,
+                &f32::NAN.to_bits().to_le_bytes(),
+            ),
+        },
+        Case {
+            name: "elastic-net-relabelled-as-lasso",
+            provenance: "an elastic-net payload carrying the lasso kind, whose field layout differs",
+            decoder: "lasso",
+            expected: ArtifactError::UnsupportedModelKind { found: 70 },
+            bytes: elastic_net.clone(),
+        },
+        Case {
+            name: "lasso-relabelled-as-elastic-net",
+            provenance: "a lasso payload handed to the elastic-net reader",
+            decoder: "elastic-net",
+            expected: ArtifactError::UnsupportedModelKind { found: 69 },
+            bytes: lasso.clone(),
+        },
         Case {
             name: "pairwise-objective-version-unknown",
             provenance: "a ranker declaring an objective version this reader does not implement",
@@ -3106,6 +3217,20 @@ fn corpus() -> Vec<Case> {
         // the one the writer actually wrote, which is what makes them the
         // byte-level record of composition tags 4 and 5.
         Case {
+            name: "control-fitted-lasso",
+            provenance: "an unmodified fitted sparse linear model, which must still decode",
+            decoder: "lasso",
+            expected: ArtifactError::InvalidPayload,
+            bytes: lasso,
+        },
+        Case {
+            name: "control-fitted-elastic-net",
+            provenance: "an unmodified fitted mixed-penalty linear model, which must decode",
+            decoder: "elastic-net",
+            expected: ArtifactError::InvalidPayload,
+            bytes: elastic_net,
+        },
+        Case {
             name: "control-fitted-staged-forest",
             provenance: "an unmodified forest composition carrying estimator tag 4",
             decoder: "staged-forest",
@@ -3144,6 +3269,8 @@ const CONTROL_CASES: &[&str] = &[
     "control-fitted-multiclass-decision-tree",
     "control-fitted-staged-forest",
     "control-fitted-staged-boosting",
+    "control-fitted-lasso",
+    "control-fitted-elastic-net",
 ];
 
 fn corpus_path(name: &str) -> std::path::PathBuf {

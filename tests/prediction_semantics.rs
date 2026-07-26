@@ -659,6 +659,13 @@ impl RegressorCase for LassoCase {
             lasso_params(),
         ))
     }
+
+    fn round_trip(model: &Self::Model) -> RoundTrip<Self::Model> {
+        round_trip(
+            || model.to_artifact(SCHEMA),
+            |bytes| Lasso::from_artifact(bytes, SCHEMA),
+        )
+    }
 }
 
 impl ScalarRegressorCase for LassoCase {
@@ -692,6 +699,13 @@ impl RegressorCase for ElasticNetCase {
             &train.unit_weights(),
             elastic_net_params(),
         ))
+    }
+
+    fn round_trip(model: &Self::Model) -> RoundTrip<Self::Model> {
+        round_trip(
+            || model.to_artifact(SCHEMA),
+            |bytes| ElasticNet::from_artifact(bytes, SCHEMA),
+        )
     }
 }
 
