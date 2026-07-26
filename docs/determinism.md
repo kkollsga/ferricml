@@ -41,6 +41,7 @@ fitting evaluates a transcendental function:
 | `PairwiseLinearRanker` | 8 | `exp`, through the logistic model it fits |
 | `Pipeline<StandardScaler, LogisticRegression>` | 5 | as above |
 | `HistGradientBoostingClassifier` | 20 | `ln` for the baseline, `exp` once per row per iteration through the sigmoid |
+| `PlattCalibrator` | — | `exp`, through the sigmoid |
 
 The two Newton rows gained `ln` on 2026-07-26, when the exact step was damped by
 an Armijo backtracking search. Deciding how far to step means comparing the
@@ -49,6 +50,13 @@ objective at two points, and the binary log-loss value is
 evaluated `exp` — but the entry is listed because the set of libm functions a
 fitting path calls is what the tier rests on, and a reader checking the claim
 should find every one of them named.
+
+`PlattCalibrator` was added to the table on the same date. It was always tier 2
+by this document's own rule and had simply never been listed, which is the kind
+of omission the rule at the bottom of this file exists to prevent. Its fit has no
+artifact kind — nothing in the crate persists a calibrator, and
+`CalibratedClassifier` says so in its own capability declaration — so the tier
+governs its fitted `slope`, `intercept` and centre rather than any bytes.
 
 The boosted classifier is tier 2 for the same reason logistic is, and for the
 same *kind* of reason it is unavoidable: its gradient is `y - sigmoid(raw)`, so a

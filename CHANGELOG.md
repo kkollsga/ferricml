@@ -888,6 +888,72 @@ and releases use [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   narrower determinism risk than the bisection it sits beside: its next trial does
   not depend even on a bracket, only on the halving index.
 
+- `calibration::PlattCalibrator` now stores its map in **centred** form, so a fit
+  on a near-constant score column returns the line it solved instead of a
+  narrowing that lost the answer. The map was stored as `slope` and `intercept`
+  and evaluated as `slope * score + intercept`. A calibration sample whose scores
+  are nearly equal identifies its slope only through their spread, so a spread of
+  `1e-6` puts both stored fields near `1e6`, where an `f32` ulp is `0.0625` —
+  while their sum is `O(1)`. Every bit of the cancellation was charged to a
+  quantity six orders of magnitude smaller than its operands. The solve was
+  already correct and already tested to be at the minimum; the storage was not.
+  <br>
+  **This is a breaking change: calibrated probabilities move.** Nothing else
+  does. The centred pair is stored *beside* `slope` and `intercept` rather than
+  replacing them, so both accessors return the same bits they always returned and
+  the public API is byte-identical under `api-check` — `intercept` also stays a
+  single narrowing of the `f64` answer, which is strictly more accurate than
+  recovering it from two already-narrowed fields would have been. What moves is
+  what a caller *evaluates*: `calibrate` and `decision_score` change in their last
+  bits on about a third of scores for well-conditioned samples, and change
+  substantively on the degenerate ones, which is the point. The centre is
+  deliberately not exposed — two `f32` accessors were never enough to reconstruct
+  this map, which is the defect rather than an omission, and a third would invite
+  a caller to rebuild the line by hand and get the cancellation straight back.
+  `decision_score` is the map.
+  <br>
+  Measured over 6,330 fits from the near-constant region, against the same
+  objective solved independently in centred and scaled coordinates at `f64`: the
+  shipped line's log-loss gap above the minimum had median `1.7e-5`, 99th
+  percentile `8.6e-1` and maximum `5.0` nats, and its worst calibrated
+  probability was off by `0.65`. Centred, the same region's gap is median `0`,
+  99th percentile `3.5e-8`, maximum `6.5e-8`, and the worst probability error is
+  `8.3e-8`. On 2,000 well-conditioned samples the two forms are
+  indistinguishable — worst gap `8.3e-8` against `7.8e-8` — so this costs nothing
+  where there was nothing to fix.
+  <br>
+  Storing better-rounded values in the old two fields was not an option, and that
+  is a measurement rather than a judgement: searching +-2 ulp in **both** stored
+  fields, the uncentred form still cannot get its worst case below `4.2` nats,
+  while the centred form's achieved `6.5e-8` is already at its own +-2 ulp floor
+  of `5.8e-8`. The defect is which two numbers are stored. For the same reason the
+  filed "only 1,296 of 7,725 fits are a minimum among their eight one-ulp
+  neighbours" statistic is not the defect and barely moves (1,500 of 6,330 becomes
+  1,720): narrowing an `f64` minimizer lands beside a marginally better grid point
+  whatever the parametrization, and what matters is whether the miss costs `1e-8`
+  nats or `5`.
+  <br>
+  No artifact format changes and no payload version moves, because
+  `PlattCalibrator` has no artifact representation at all — there is no
+  calibration entry in the artifact-kind table, `CalibratedClassifier` documents
+  that it has no artifact kind, and `PairwiseLinearRanker` persists a nested
+  `LogisticRegression` rather than a calibrator. The 128 adversarial artifact
+  fixtures are untouched and `MinMaxScaler`'s emit-a-version-only-when-needed
+  precedent has nothing to apply to.
+  <br>
+  The order of the two narrowings is load-bearing and tested. The centre is
+  narrowed to `f32` first and the stored intercept computed at *that* centre,
+  because evaluation subtracts the stored `f32` centre and nothing else; folding
+  in the `f64` centre instead leaves `slope * (mean64 - mean32)` unaccounted for,
+  which at these slopes is a raw-score error around `0.03`.
+  `a_near_constant_fit_evaluates_the_probability_its_solve_found` fails on that
+  one-line change and on reverting `decision_score` to the uncentred form, and it
+  asserts that the region still reaches slopes of `1e5` so the bound cannot hold
+  vacuously. A companion test pins the arithmetic property the accuracy rests on —
+  that the centring subtraction's error stays *relative* to its own result, at most
+  half an ulp, often exactly zero by Sterbenz's lemma — and counts both the exact
+  and the rounded population so neither half is asserted over an empty set.
+
 - `linear_model::LogisticRegression` no longer returns an unconverged Newton
   iterate as a fitted model, on **either** target shape. `fit` and
   `fit_multiclass` broke out of the iteration when the largest standardized

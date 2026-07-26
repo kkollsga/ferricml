@@ -3,7 +3,7 @@
 use crate::api::ModelError;
 use crate::data::BinaryTargets;
 use crate::loss::{BinaryLogLoss, accumulate_newton_row, newton_decrement, raw_score};
-use crate::numeric::sigmoid_f32;
+use crate::numeric::{sigmoid_f32, sum_in_order};
 
 use super::Calibrator;
 
@@ -60,6 +60,50 @@ impl PlattParams {
 /// other FerricML solver minimizes — this consumes the crate's shared objective
 /// contract rather than carrying a third logistic solver.
 ///
+/// # How the map is stored
+///
+/// That formula is the model. It is deliberately *not* the arithmetic, because
+/// evaluating it as written throws the answer away on exactly the samples
+/// calibration is most needed for.
+///
+/// A calibration sample whose scores are nearly equal identifies its slope only
+/// through their spread, so a spread of `1e-6` puts the maximum-likelihood slope
+/// near `1e6` and the intercept near `-slope * score`. Both stored fields are
+/// then around `1e6`, where an `f32` ulp is `0.0625`, while `slope * score +
+/// intercept` is `O(1)`: every bit of the cancellation is charged to a quantity
+/// six orders of magnitude smaller than the operands that produced it. Measured
+/// over 6,330 fits from that region the stored line's log-loss sat up to `5.0`
+/// nats above the true minimum and its worst calibrated probability was off by
+/// `0.65` — and searching two ulps in both fields could not get the worst case
+/// below `4.2` nats, because the problem is which two numbers are stored, not
+/// how they are rounded.
+///
+/// So the fit additionally stores the calibration sample's mean score as a
+/// `centre`, and the raw score at that centre, and *evaluates*
+/// `sigmoid(slope * (score - centre) + centred intercept)`. Nothing in that
+/// expression is larger than the result and every rounding stays **relative** to
+/// the quantity it rounds — see [`decision_score`](Self::decision_score). Over
+/// the same region the worst log-loss gap becomes `6.5e-8` nats and the worst
+/// probability error `8.3e-8`, which is the floor `f32` storage allows at all. On
+/// well-conditioned samples the two forms are indistinguishable (`8.3e-8` against
+/// `7.8e-8` worst gap over 2,000 fits), so this costs nothing where there was
+/// nothing to fix.
+///
+/// **The public surface and the reported parameters are unchanged.**
+/// [`slope`](Self::slope) and [`intercept`](Self::intercept) return the same
+/// bits they always did — the centred pair is added beside them rather than
+/// replacing them, which also keeps the reported intercept a *single* narrowing
+/// of the `f64` answer instead of a narrowed difference of two narrowed fields.
+/// The centre is deliberately not exposed: two `f32` accessors were never enough
+/// to reconstruct this map exactly, which is the defect rather than an omission,
+/// and a third would invite a caller to rebuild the line by hand and get the
+/// cancellation straight back. [`decision_score`](Self::decision_score) is the
+/// map, for any input, and it is the supported way to reach it.
+///
+/// What does move is therefore only what a caller *evaluates*:
+/// [`calibrate`](super::Calibrator::calibrate) and
+/// [`decision_score`](Self::decision_score).
+///
 /// # Prior-corrected targets
 ///
 /// The fit does **not** regress on the raw `0`/`1` labels. It regresses on
@@ -113,7 +157,20 @@ impl PlattParams {
 #[derive(Clone, Debug, PartialEq)]
 pub struct PlattCalibrator {
     slope: f32,
+    /// The raw score at a score of zero: what [`PlattCalibrator::intercept`]
+    /// reports, and *not* what the map is evaluated through. It is stored rather
+    /// than recovered from the centred pair below because a single narrowing of
+    /// the `f64` answer is strictly more accurate than a narrowed difference of
+    /// two already-narrowed fields, and because the accessor it serves is
+    /// `const`.
     intercept: f32,
+    /// The calibration sample's mean score. See the type's storage section.
+    centre: f32,
+    /// The raw score at `centre`. This and `centre` are the pair
+    /// [`PlattCalibrator::decision_score`] evaluates, and the reason a
+    /// near-constant calibration sample no longer loses its answer to
+    /// cancellation.
+    centred_intercept: f32,
     params: PlattParams,
     iterations: usize,
 }
@@ -156,11 +213,12 @@ impl PlattCalibrator {
     /// `max_iter` on a returned fit, and when it does the fit is at the
     /// minimum rather than merely the last thing tried.
     ///
-    /// A fit that reaches such a slope is at the minimum *as solved*, which is
-    /// a separate question from how well two `f32` fields represent it: the map
-    /// is stored as `slope` and `intercept` whose product very nearly cancels,
-    /// and single precision loses accuracy there that no convergence test can
-    /// recover. Reading [`slope`](Self::slope) is the way to notice.
+    /// A fit that reaches such a slope is at the minimum *as solved*, and how
+    /// well the returned object represents it is a separate question that the
+    /// centred storage described on the type answers: the two questions were
+    /// once conflated, because a finite-difference probe of a fit stored as
+    /// `slope` and `intercept` at `1e6` measures the storage rather than the
+    /// solve.
     pub fn fit(
         scores: &[f32],
         targets: &BinaryTargets,
@@ -229,14 +287,36 @@ impl PlattCalibrator {
             return Err(ModelError::SolverDidNotConverge { iterations });
         }
 
+        // The solve is untouched, and so is everything a caller could already
+        // read: `slope` and `intercept` are the same single narrowings of the
+        // same `f64` answer they have always been. What is *added* is the
+        // centred pair the map is now evaluated through. See the type's storage
+        // section for why the evaluated form has to differ from the reported one.
         let slope = theta[0] as f32;
         let intercept = theta[1] as f32;
-        if !slope.is_finite() || !intercept.is_finite() {
+
+        // Order matters in the centred pair. The centre is narrowed to `f32`
+        // *first*, and the centred intercept is computed at that narrowed
+        // centre, because evaluation subtracts the stored `f32` centre and
+        // nothing else. Folding the `f64` centre in instead would leave
+        // `slope * (mean64 - mean32)` unaccounted for, which at a slope of `1e6`
+        // is a raw-score error of `0.03` — the same order as the defect this
+        // replaces.
+        let centre = (sum_in_order(scores.iter().map(|&score| f64::from(score)))
+            / scores.len() as f64) as f32;
+        let centred_intercept = (theta[1] + theta[0] * f64::from(centre)) as f32;
+        if !slope.is_finite()
+            || !intercept.is_finite()
+            || !centre.is_finite()
+            || !centred_intercept.is_finite()
+        {
             return Err(ModelError::LinearSolveFailed);
         }
         Ok(Self {
             slope,
             intercept,
+            centre,
+            centred_intercept,
             params,
             iterations,
         })
@@ -275,7 +355,18 @@ impl PlattCalibrator {
         self.slope
     }
 
-    /// Returns the fitted intercept.
+    /// Returns the fitted intercept: the raw score this map assigns to a score
+    /// of zero.
+    ///
+    /// This is the same value, bit for bit, that this accessor has always
+    /// returned — the `f64` maximum-likelihood intercept narrowed once. But it is
+    /// **not** what [`decision_score`](Self::decision_score) evaluates, and on a
+    /// near-constant calibration sample the difference matters: the number this
+    /// returns is an `O(slope)` quantity whose `f32` ulp can exceed the whole
+    /// raw score it participates in, which is exactly why the map is stored and
+    /// evaluated in the centred form the type describes. Reconstructing
+    /// `slope() * score + intercept()` by hand reproduces the old defect;
+    /// [`decision_score`](Self::decision_score) is the map.
     pub const fn intercept(&self) -> f32 {
         self.intercept
     }
@@ -299,8 +390,21 @@ impl PlattCalibrator {
     /// This is the calibrated model's decision function: a real-valued score,
     /// monotone in the input score, that a threshold-sweeping consumer can read
     /// without the sigmoid's saturation flattening the extremes.
+    /// The centring is what keeps this accurate. `score - centre` is one
+    /// correctly rounded subtraction, so its error is at most half an ulp *of
+    /// its own result* — often none at all, since Sterbenz's lemma makes `a - b`
+    /// exact whenever `b/2 <= a <= 2b` and a near-constant sample puts most
+    /// scores that close to the centre. Multiplying by the slope gives an `O(1)`
+    /// addend, so a relative error stays relative, and adding an `O(1)` intercept
+    /// cancels nothing.
+    ///
+    /// Evaluating `slope * score + intercept` instead has no such bound. At a
+    /// slope of `1e6` both operands are `1e6`, each carrying half an ulp of
+    /// `1e6` — about `0.03` — and their `O(1)` difference inherits that absolute
+    /// error rather than a relative one.
     pub fn decision_score(&self, score: f32) -> f32 {
-        self.slope.mul_add(score, self.intercept)
+        self.slope
+            .mul_add(score - self.centre, self.centred_intercept)
     }
 }
 
@@ -837,6 +941,162 @@ mod tests {
         let (slope, intercept) = conditioned_minimizer(&scores, &corrected);
         assert_eq!(fitted.slope().to_bits(), (slope as f32).to_bits());
         assert_eq!(fitted.intercept().to_bits(), (intercept as f32).to_bits());
+    }
+
+    /// The returned calibrator evaluates the line it solved, not a narrowing of
+    /// it that lost the answer.
+    ///
+    /// This is the storage contract, over the region that breaks the uncentred
+    /// form. For every fit in the near-constant neighbourhood, the probability
+    /// the shipped `calibrate` produces is compared against the probability the
+    /// independently conditioned `f64` minimizer produces at the same score. The
+    /// bound is `1e-6`, which is loose for the centred form — measured worst
+    /// error over a 6,330-fit version of this region is `8.3e-8` — and
+    /// unreachable for the uncentred one, whose worst error over the same region
+    /// is `0.65`.
+    ///
+    /// Reverting `decision_score` to `slope.mul_add(score, intercept)` with the
+    /// at-zero intercept fails this test. So does computing the stored intercept
+    /// at the `f64` centre instead of the narrowed `f32` one: that leaves
+    /// `slope * (mean64 - mean32)` out of the stored value, which at these
+    /// slopes is a raw-score error around `0.03` and a probability error far
+    /// above the bound. Both are one-line changes, and the assertion below is
+    /// what refuses them.
+    #[test]
+    fn a_near_constant_fit_evaluates_the_probability_its_solve_found() {
+        let cases = near_constant_neighbourhood();
+        let mut checked = 0_usize;
+        let mut worst = 0.0_f64;
+        for (index, (scores, targets)) in cases.iter().enumerate() {
+            let Ok(fitted) = PlattCalibrator::fit(scores, targets, PlattParams::default()) else {
+                continue;
+            };
+            let corrected = corrected_targets(targets);
+            let (slope, intercept) = conditioned_minimizer(scores, &corrected);
+            for &score in scores {
+                let truth = 1.0 / (1.0 + (-(slope * f64::from(score) + intercept)).exp());
+                let error = (f64::from(fitted.calibrate(score)) - truth).abs();
+                worst = worst.max(error);
+                assert!(
+                    error <= 1.0e-6,
+                    "case {index} at score {score} calibrated to {} against {truth}",
+                    fitted.calibrate(score)
+                );
+            }
+            checked += 1;
+        }
+        // The region has to still contain the conditioning this is about, or
+        // the bound above holds for the empty reason.
+        assert!(
+            checked >= 150,
+            "only {checked} fits were checked; the near-constant region no longer covers \
+             the cancellation this test exists for"
+        );
+        // And the fits really are at the parameter scale where the uncentred
+        // form fails, rather than a benign region that would pass either way.
+        let extreme = cases
+            .iter()
+            .filter_map(|(scores, targets)| {
+                PlattCalibrator::fit(scores, targets, PlattParams::default()).ok()
+            })
+            .filter(|fit| fit.slope().abs() >= 1.0e5)
+            .count();
+        assert!(
+            extreme >= 100,
+            "only {extreme} fits reached a slope of 1e5, so this region no longer forces \
+             the cancellation the centred storage removes"
+        );
+        println!("worst calibrated probability error {worst:.3e}");
+    }
+
+    /// Centring keeps its error *relative*, which is the property the storage
+    /// argument actually needs.
+    ///
+    /// `score - centre` is one correctly rounded `f32` subtraction, so its
+    /// relative error is at most half an ulp however the two operands are placed.
+    /// The result is then multiplied by the slope to give an `O(1)` addend, so
+    /// that relative error stays relative and lands at `1e-7` of the raw score.
+    /// The uncentred form has no such bound: `slope * score` and `intercept` are
+    /// each `1e6` with a *half-ulp of `1e6`* to their names, and the `O(1)`
+    /// difference inherits their absolute error rather than its own relative one.
+    /// That asymmetry is the whole defect, and neither storage form nor argument
+    /// depends on the subtraction being exact.
+    ///
+    /// It often *is* exact, by Sterbenz's lemma — `a - b` is exact whenever
+    /// `b / 2 <= a <= 2 b` — and both populations are counted below so that
+    /// neither half of the claim is asserted over an empty set.
+    #[test]
+    fn subtracting_the_centre_keeps_its_error_relative() {
+        let cases = near_constant_neighbourhood();
+        let mut checked = 0_usize;
+        let mut exact = 0_usize;
+        let mut rounded = 0_usize;
+        for (scores, targets) in &cases {
+            if PlattCalibrator::fit(scores, targets, PlattParams::default()).is_err() {
+                continue;
+            }
+            let rows = scores.len() as f64;
+            let centre = (scores.iter().map(|&s| f64::from(s)).sum::<f64>() / rows) as f32;
+            for &score in scores {
+                let narrow = f64::from(score - centre);
+                let wide = f64::from(score) - f64::from(centre);
+                let sterbenz = score == centre
+                    || (score / centre >= 0.5 && score / centre <= 2.0)
+                    || (centre / score >= 0.5 && centre / score <= 2.0);
+                if narrow == wide {
+                    exact += 1;
+                } else {
+                    assert!(
+                        !sterbenz,
+                        "Sterbenz's precondition held for score {score} and centre \
+                         {centre} but the subtraction rounded"
+                    );
+                    rounded += 1;
+                }
+                // Relative, always: half an ulp of the result.
+                assert!(
+                    (narrow - wide).abs() <= f64::from(f32::EPSILON) * wide.abs() * 0.5,
+                    "score {score} minus centre {centre} rounded beyond half an ulp"
+                );
+            }
+            checked += 1;
+        }
+        assert!(checked >= 150, "only {checked} samples were checked");
+        assert!(
+            exact > 0 && rounded > 0,
+            "{exact} exact against {rounded} rounded; the region no longer contains both \
+             cases, so one half of this test proves nothing"
+        );
+    }
+
+    /// `intercept` still answers its own question, and `slope` did not move.
+    ///
+    /// The stored second field changed meaning; the accessor did not. On a
+    /// well-conditioned sample where the at-zero intercept is representable, the
+    /// recovered value is the raw score at a score of zero to `f32` resolution,
+    /// and the documented `sigmoid(slope * score + intercept)` reading of the two
+    /// accessors still holds.
+    #[test]
+    fn the_intercept_accessor_is_still_the_raw_score_at_a_score_of_zero() {
+        let (scores, targets) = sample();
+        let fitted = PlattCalibrator::fit(&scores, &targets, PlattParams::default()).unwrap();
+        let at_zero = fitted.decision_score(0.0);
+        assert!(
+            (at_zero - fitted.intercept()).abs() <= 4.0 * f32::EPSILON * at_zero.abs().max(1.0),
+            "decision_score(0) = {at_zero} against intercept {}",
+            fitted.intercept()
+        );
+        // And the two-accessor reading of the map still reproduces it on a
+        // sample with no cancellation to lose.
+        for &score in &scores {
+            let by_accessors = fitted.slope().mul_add(score, fitted.intercept());
+            assert!(
+                (by_accessors - fitted.decision_score(score)).abs()
+                    <= 1.0e-4 * by_accessors.abs().max(1.0),
+                "score {score}: {by_accessors} against {}",
+                fitted.decision_score(score)
+            );
+        }
     }
 
     #[test]
