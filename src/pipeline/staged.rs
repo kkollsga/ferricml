@@ -7,13 +7,13 @@
 
 use crate::api::{Capabilities, Estimator, HasCapabilities, ModelError, Transformer};
 use crate::artifact::{
-    ArtifactError, ArtifactPayloadWriter, MODEL_ARTIFACT_VERSION, STAGED_PIPELINE_ARTIFACT_KIND,
-    SchemaRole, artifact_version, decode_component, decode_v2_envelope, encode_component,
-    encode_v2_envelope,
+    ArtifactError, ArtifactPayloadWriter, MODEL_ARTIFACT_VERSION, ModelArtifact,
+    STAGED_PIPELINE_ARTIFACT_KIND, SchemaRole, StageArtifact, artifact_version, decode_component,
+    decode_v2_envelope, encode_component, encode_v2_envelope,
 };
 use crate::data::{DenseMatrix, MatrixView};
 
-use super::{ModelArtifact, PersistedStack, TransformerStack};
+use super::{PersistedStack, TransformerStack};
 
 const PAYLOAD_VERSION: u16 = 1;
 const METADATA_COMPONENT_KIND: u16 = 1;
@@ -174,8 +174,8 @@ where
 
 impl<A, B, E> StagedPipeline<(A, B), E>
 where
-    A: Transformer,
-    B: Transformer,
+    A: Transformer + HasCapabilities,
+    B: Transformer + HasCapabilities,
     E: Estimator,
 {
     /// Fits two stages and an estimator in one pass, in that fixed order.
@@ -225,10 +225,21 @@ where
 
 /// A composition persists exactly when every one of its parts does.
 ///
-/// The bound is what makes this declaration honest for *every* composition
-/// rather than for a hand-listed few: an impl exists only where each stage and
-/// the estimator really have a schema-bound artifact, so asking a composition
-/// that cannot persist is a compile error rather than a wrong answer.
+/// That sentence is a statement about the declaration's *value*, so it is
+/// computed rather than gated. An earlier version instead bounded this impl on
+/// the persistence traits, which conflated two different things: "this
+/// composition declares no artifact" and "this composition cannot declare
+/// anything at all". A composition holding a stateless stage, or ending in a
+/// baseline estimator, is perfectly usable — it simply does not persist — yet
+/// under the bound it had no capability vocabulary, and the conformance
+/// battery requires a declaring model to check one. Whole families of working
+/// compositions were therefore unreachable by the battery for the sole reason
+/// that they were honest about not persisting.
+///
+/// Taking the declaration from the parts is the same shape that fixed
+/// `decision_function` on [`Pipeline`](super::Pipeline): ask where the property
+/// actually comes from. Persistence genuinely is an intersection — every part
+/// must have it — so it is computed as one, from each part's own declaration.
 ///
 /// Weighted fitting is declared away structurally. `StagedPipeline` has no
 /// `fit_weighted` of its own — weights reach the parts through the fitting
@@ -236,23 +247,26 @@ where
 /// each part, never of the composition.
 impl<S, E> HasCapabilities for StagedPipeline<S, E>
 where
-    S: TransformerStack + PersistedStack,
-    E: Estimator + ModelArtifact,
+    S: TransformerStack,
+    E: Estimator + HasCapabilities,
 {
-    const CAPABILITIES: Capabilities = Capabilities::NONE.with_artifact(true);
+    const CAPABILITIES: Capabilities =
+        Capabilities::NONE.with_artifact(S::STAGES_PERSIST && E::CAPABILITIES.artifact());
 }
 
-impl<S, E> StagedPipeline<S, E>
+impl<S, E> StageArtifact for StagedPipeline<S, E>
 where
     S: TransformerStack + PersistedStack,
     E: Estimator + ModelArtifact,
 {
+    const ARTIFACT_KIND: u16 = STAGED_PIPELINE_ARTIFACT_KIND;
+
     /// Encodes the whole composition and both schema identities.
     ///
     /// The payload records which concrete stage types the composition holds,
     /// in order, plus its estimator type, so a composition never decodes as a
     /// different one.
-    pub fn to_artifact(
+    fn to_artifact(
         &self,
         input_schema: [u8; 32],
         transformed_schema: [u8; 32],
@@ -287,11 +301,11 @@ where
         payload.extend_from_slice(&encode_component(
             ESTIMATOR_COMPONENT_KIND,
             COMPONENT_VERSION,
-            &self.estimator.to_model_artifact(transformed_schema)?,
+            &self.estimator.to_artifact(transformed_schema)?,
         )?);
 
         encode_v2_envelope(
-            STAGED_PIPELINE_ARTIFACT_KIND,
+            Self::ARTIFACT_KIND,
             PAYLOAD_VERSION,
             &[
                 (SchemaRole::Input, input_schema),
@@ -307,7 +321,7 @@ where
     /// estimator tag must all match the composition being decoded into, every
     /// part revalidates its own payload, and the reconstructed composition
     /// goes back through [`StagedPipeline::new`].
-    pub fn from_artifact(
+    fn from_artifact(
         bytes: &[u8],
         input_schema: [u8; 32],
         transformed_schema: [u8; 32],
@@ -318,7 +332,7 @@ where
         }
         let mut envelope = decode_v2_envelope(
             bytes,
-            STAGED_PIPELINE_ARTIFACT_KIND,
+            Self::ARTIFACT_KIND,
             PAYLOAD_VERSION,
             &[
                 (SchemaRole::Input, input_schema),
@@ -354,7 +368,7 @@ where
         }
 
         let stages = S::decode_stages(&components, input_schema, transformed_schema)?;
-        let estimator = E::from_model_artifact(estimator.remaining(), transformed_schema)?;
+        let estimator = E::from_artifact(estimator.remaining(), transformed_schema)?;
         Self::new(stages, estimator).map_err(|_| ArtifactError::InvalidPayload)
     }
 }

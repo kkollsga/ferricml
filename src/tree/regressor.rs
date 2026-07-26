@@ -9,8 +9,8 @@ use crate::api::{
     Capabilities, Estimator, HasCapabilities, HasParams, ModelError, Regressor, validate_prediction,
 };
 use crate::artifact::{
-    ArtifactError, ArtifactPayloadWriter, DECISION_TREE_REGRESSOR_ARTIFACT_KIND, SchemaRole,
-    decode_component, decode_logical_tree, decode_v2_envelope, encode_component,
+    ArtifactError, ArtifactPayloadWriter, DECISION_TREE_REGRESSOR_ARTIFACT_KIND, ModelArtifact,
+    SchemaRole, decode_component, decode_logical_tree, decode_v2_envelope, encode_component,
     encode_logical_tree, encode_v2_envelope,
 };
 use crate::data::{MatrixView, RegressionTargets, SampleWeights};
@@ -195,13 +195,17 @@ impl DecisionTreeRegressor {
         }
         Ok(())
     }
+}
+
+impl ModelArtifact for DecisionTreeRegressor {
+    const ARTIFACT_KIND: u16 = DECISION_TREE_REGRESSOR_ARTIFACT_KIND;
 
     /// Encodes the fitted parameters and the canonical logical tree.
     ///
     /// The private packed inference layout is never serialized; the tree is
     /// expanded into stable logical records first, so the compact runtime
     /// representation stays free to change.
-    pub fn to_artifact(&self, schema: [u8; 32]) -> Result<Vec<u8>, ArtifactError> {
+    fn to_artifact(&self, schema: [u8; 32]) -> Result<Vec<u8>, ArtifactError> {
         let node_count = self.tree.logical_node_count();
         if self.n_features_in > MAX_ARTIFACT_FEATURES
             || node_count > MAX_ARTIFACT_TOTAL_NODES
@@ -233,7 +237,7 @@ impl DecisionTreeRegressor {
             &encode_logical_tree(&self.tree.to_logical_nodes())?,
         )?);
         encode_v2_envelope(
-            DECISION_TREE_REGRESSOR_ARTIFACT_KIND,
+            Self::ARTIFACT_KIND,
             PAYLOAD_VERSION,
             &[(SchemaRole::Input, schema)],
             &payload,
@@ -245,10 +249,10 @@ impl DecisionTreeRegressor {
     /// Parameters and the declared node count are checked before the tree is
     /// read, and the decoded records re-enter the same topology validator that
     /// fitting uses, so the encoded bytes are never trusted.
-    pub fn from_artifact(bytes: &[u8], schema: [u8; 32]) -> Result<Self, ArtifactError> {
+    fn from_artifact(bytes: &[u8], schema: [u8; 32]) -> Result<Self, ArtifactError> {
         let mut envelope = decode_v2_envelope(
             bytes,
-            DECISION_TREE_REGRESSOR_ARTIFACT_KIND,
+            Self::ARTIFACT_KIND,
             PAYLOAD_VERSION,
             &[(SchemaRole::Input, schema)],
         )?;

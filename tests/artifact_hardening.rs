@@ -28,7 +28,7 @@
 //! SplitMix64 stream, restated here because `src/numeric/rng.rs` is private.
 
 use ferricml::api::{AnyClassifier, AnyRegressor};
-use ferricml::artifact::ArtifactError;
+use ferricml::artifact::{ArtifactError, ModelArtifact, StageArtifact};
 use ferricml::data::{BinaryTargets, ClassTargets, DenseMatrix, RegressionTargets};
 use ferricml::ensemble::{
     ExtraTreesClassifier, ExtraTreesClassifierParams, ExtraTreesRegressor,
@@ -38,8 +38,8 @@ use ferricml::ensemble::{
     RandomForestClassifierParams, RandomForestRegressor, RandomForestRegressorParams,
 };
 use ferricml::linear_model::{
-    LinearRegression, LinearRegressionParams, LogisticRegression, LogisticRegressionParams, Ridge,
-    RidgeParams,
+    ElasticNet, ElasticNetParams, Lasso, LassoParams, LinearRegression, LinearRegressionParams,
+    LogisticRegression, LogisticRegressionParams, Ridge, RidgeParams,
 };
 use ferricml::pipeline::{Pipeline, StagedPipeline};
 use ferricml::preprocessing::{
@@ -362,6 +362,14 @@ type Decoder = (&'static str, fn(&[u8]) -> Outcome);
 type StagedTwo = StagedPipeline<(MinMaxScaler, StandardScaler), Ridge>;
 type StagedThree = StagedPipeline<(MinMaxScaler, StandardScaler, MaxAbsScaler), Ridge>;
 
+// The two compositions whose estimator tag is *not* that estimator's artifact
+// kind. Every other composable estimator happens to agree on the two numbers,
+// so a reader that confused the composition tag with the artifact kind would be
+// caught nowhere else: the corpus covered compositions over `Ridge` alone, whose
+// tag and kind are both 3.
+type StagedForest = StagedPipeline<(MinMaxScaler, StandardScaler), RandomForestRegressor>;
+type StagedBoosting = StagedPipeline<(MinMaxScaler, StandardScaler), HistGradientBoostingRegressor>;
+
 fn decoders() -> Vec<Decoder> {
     let table: Vec<Decoder> = vec![
         ("logistic", |bytes| {
@@ -377,6 +385,16 @@ fn decoders() -> Vec<Decoder> {
         }),
         ("ridge", |bytes| {
             accepted(Ridge::from_artifact(bytes, INPUT_SCHEMA), |m| {
+                m.to_artifact(INPUT_SCHEMA)
+            })
+        }),
+        ("lasso", |bytes| {
+            accepted(Lasso::from_artifact(bytes, INPUT_SCHEMA), |m| {
+                m.to_artifact(INPUT_SCHEMA)
+            })
+        }),
+        ("elastic-net", |bytes| {
+            accepted(ElasticNet::from_artifact(bytes, INPUT_SCHEMA), |m| {
                 m.to_artifact(INPUT_SCHEMA)
             })
         }),
@@ -510,6 +528,18 @@ fn decoders() -> Vec<Decoder> {
                 |m| m.to_artifact(INPUT_SCHEMA, TRANSFORMED_SCHEMA),
             )
         }),
+        ("staged-forest", |bytes| {
+            accepted(
+                StagedForest::from_artifact(bytes, INPUT_SCHEMA, TRANSFORMED_SCHEMA),
+                |m| m.to_artifact(INPUT_SCHEMA, TRANSFORMED_SCHEMA),
+            )
+        }),
+        ("staged-boosting", |bytes| {
+            accepted(
+                StagedBoosting::from_artifact(bytes, INPUT_SCHEMA, TRANSFORMED_SCHEMA),
+                |m| m.to_artifact(INPUT_SCHEMA, TRANSFORMED_SCHEMA),
+            )
+        }),
     ];
     table
 }
@@ -578,6 +608,25 @@ fn seed_corpus() -> Vec<(&'static str, Vec<u8>)> {
     )
     .unwrap();
     let ridge = Ridge::fit(&data.as_view(), &regression, RidgeParams::default()).unwrap();
+    // A penalty small enough to leave both coefficients non-zero, and one large
+    // enough to drive at least one to exactly zero: the sparse vector is the
+    // state an L1 artifact exists to carry, so a seed without a zero in it
+    // would never exercise it.
+    let lasso = Lasso::fit(
+        &data.as_view(),
+        &regression,
+        LassoParams::default().with_alpha(0.5).with_max_iter(50),
+    )
+    .unwrap();
+    let elastic_net = ElasticNet::fit(
+        &data.as_view(),
+        &regression,
+        ElasticNetParams::default()
+            .with_alpha(0.5)
+            .with_l1_ratio(0.25)
+            .with_max_iter(50),
+    )
+    .unwrap();
     let standard = StandardScaler::fit(&data.as_view(), StandardScalerParams::default()).unwrap();
     let min_max = MinMaxScaler::fit(&data.as_view(), MinMaxScalerParams::default()).unwrap();
     let max_abs = MaxAbsScaler::fit(&data.as_view(), MaxAbsScalerParams).unwrap();
@@ -751,6 +800,46 @@ fn seed_corpus() -> Vec<(&'static str, Vec<u8>)> {
     )
     .unwrap();
 
+    // Compositions over the two estimators whose frozen composition tag differs
+    // from their artifact kind: the forest regressor is tag 4 / kind 10, and the
+    // boosted regressor is tag 5 / kind 9. Those four numbers are the whole
+    // reason a composed payload's estimator tag is a namespace of its own, and
+    // until these seeds existed nothing wrote them down.
+    let staged_forest: StagedForest = StagedPipeline::fit(
+        &data.as_view(),
+        |batch| MinMaxScaler::fit(batch, MinMaxScalerParams::default()),
+        |batch| StandardScaler::fit(batch, StandardScalerParams::default()),
+        |batch| {
+            RandomForestRegressor::fit(
+                batch,
+                &regression,
+                RandomForestRegressorParams::default()
+                    .with_n_estimators(2)
+                    .with_max_depth(Some(3))
+                    .with_max_features(MaxFeatures::All)
+                    .with_random_state(11),
+            )
+        },
+    )
+    .unwrap();
+    let staged_boosting: StagedBoosting = StagedPipeline::fit(
+        &boosting_data.as_view(),
+        |batch| MinMaxScaler::fit(batch, MinMaxScalerParams::default()),
+        |batch| StandardScaler::fit(batch, StandardScalerParams::default()),
+        |batch| {
+            HistGradientBoostingRegressor::fit(
+                batch,
+                &boosting_targets,
+                HistGradientBoostingRegressorParams::default()
+                    .with_max_iter(2)
+                    .with_max_leaf_nodes(4)
+                    .with_min_samples_leaf(1)
+                    .with_max_bins(8),
+            )
+        },
+    )
+    .unwrap();
+
     vec![
         ("logistic", logistic.to_artifact(INPUT_SCHEMA).unwrap()),
         (
@@ -759,6 +848,11 @@ fn seed_corpus() -> Vec<(&'static str, Vec<u8>)> {
         ),
         ("linear", linear.to_artifact(INPUT_SCHEMA).unwrap()),
         ("ridge", ridge.to_artifact(INPUT_SCHEMA).unwrap()),
+        ("lasso", lasso.to_artifact(INPUT_SCHEMA).unwrap()),
+        (
+            "elastic-net",
+            elastic_net.to_artifact(INPUT_SCHEMA).unwrap(),
+        ),
         (
             "standard-scaler",
             standard
@@ -886,6 +980,18 @@ fn seed_corpus() -> Vec<(&'static str, Vec<u8>)> {
         (
             "staged-three",
             staged_three
+                .to_artifact(INPUT_SCHEMA, TRANSFORMED_SCHEMA)
+                .unwrap(),
+        ),
+        (
+            "staged-forest",
+            staged_forest
+                .to_artifact(INPUT_SCHEMA, TRANSFORMED_SCHEMA)
+                .unwrap(),
+        ),
+        (
+            "staged-boosting",
+            staged_boosting
                 .to_artifact(INPUT_SCHEMA, TRANSFORMED_SCHEMA)
                 .unwrap(),
         ),
@@ -1735,12 +1841,25 @@ fn corpus() -> Vec<Case> {
     let scaler = seed("standard-scaler");
     let forest = seed("forest");
     let staged = seed("staged-two");
+    let staged_forest = seed("staged-forest");
+    let staged_boosting = seed("staged-boosting");
     let ranker = seed("pairwise-ranker");
+    let lasso = seed("lasso");
+    let elastic_net = seed("elastic-net");
+    let (lasso_payload, _) = payload_span(&lasso).expect("lasso payload");
+    let (elastic_net_payload, _) = payload_span(&elastic_net).expect("elastic-net payload");
+    // Both payloads are one state component: eight words for the lasso, nine
+    // for the elastic net, then the coefficients.
+    let lasso_state = lasso_payload + COMPONENT_HEADER_BYTES;
+    let elastic_net_state = elastic_net_payload + COMPONENT_HEADER_BYTES;
     let any_ridge = seed("any-ridge");
     let (scaler_payload, _) = payload_span(&scaler).expect("scaler payload");
     let (logistic_payload, _) = payload_span(&logistic).expect("logistic payload");
     let (any_payload, _) = payload_span(&any_ridge).expect("dispatch payload");
     let (staged_payload, _) = payload_span(&staged).expect("staged payload");
+    let (staged_forest_payload, _) = payload_span(&staged_forest).expect("staged forest payload");
+    let (staged_boosting_payload, _) =
+        payload_span(&staged_boosting).expect("staged boosting payload");
     let (ranker_payload, _) = payload_span(&ranker).expect("ranker payload");
     // The multiclass state component sits one component header past the
     // payload; its fixed fields are eight words, then the class list.
@@ -2501,6 +2620,106 @@ fn corpus() -> Vec<Case> {
             expected: ArtifactError::InvalidPayload,
             bytes: overwrite(&staged, staged_payload + 8, &3_u32.to_le_bytes()),
         },
+        // The composition tag and the artifact kind are two independent
+        // namespaces, and these two cases are the only place that fact is
+        // falsifiable. A forest regressor is composition tag 4 and artifact kind
+        // 10; a boosted regressor is tag 5 and kind 9. Writing the *kind* where
+        // the tag belongs must be refused — so an implementation that derived
+        // one from the other would turn these two rejections into acceptances
+        // and fail here rather than silently rewriting what existing artifacts
+        // mean. Every other composable estimator agrees on both numbers, which
+        // is exactly why no other case can state this.
+        Case {
+            name: "staged-forest-estimator-tag-is-its-artifact-kind",
+            provenance: "a forest composition tagged with kind 10 instead of composition tag 4",
+            decoder: "staged-forest",
+            expected: ArtifactError::InvalidPayload,
+            bytes: overwrite(
+                &staged_forest,
+                staged_forest_payload + 12,
+                &10_u32.to_le_bytes(),
+            ),
+        },
+        Case {
+            name: "staged-boosting-estimator-tag-is-its-artifact-kind",
+            provenance: "a boosted composition tagged with kind 9 instead of composition tag 5",
+            decoder: "staged-boosting",
+            expected: ArtifactError::InvalidPayload,
+            bytes: overwrite(
+                &staged_boosting,
+                staged_boosting_payload + 12,
+                &9_u32.to_le_bytes(),
+            ),
+        },
+        // The penalized linear pair. Their payloads carry two fields no other
+        // linear artifact has — an iteration budget with a sweep count that
+        // must fit inside it, and (for the elastic net) a mixing weight that is
+        // only meaningful in `0..=1`. Both are properties a decoder alone can
+        // check, because the bytes can always claim otherwise.
+        Case {
+            name: "lasso-sweeps-past-the-iteration-budget",
+            provenance: "a lasso reporting more sweeps than its own max_iter allows",
+            decoder: "lasso",
+            expected: ArtifactError::InvalidPayload,
+            bytes: overwrite(&lasso, lasso_state + 20, &51_u32.to_le_bytes()),
+        },
+        Case {
+            name: "lasso-zero-iteration-budget",
+            provenance: "a lasso whose max_iter is zero, which no fit accepts",
+            decoder: "lasso",
+            expected: ArtifactError::InvalidPayload,
+            bytes: overwrite(&lasso, lasso_state + 12, &0_u32.to_le_bytes()),
+        },
+        Case {
+            name: "lasso-negative-penalty",
+            provenance: "a lasso with a negative alpha, which is not a penalty",
+            decoder: "lasso",
+            expected: ArtifactError::InvalidPayload,
+            bytes: overwrite(&lasso, lasso_state + 4, &(-1.0_f32).to_bits().to_le_bytes()),
+        },
+        Case {
+            name: "lasso-non-positive-tolerance",
+            provenance: "a lasso whose convergence tolerance is zero",
+            decoder: "lasso",
+            expected: ArtifactError::InvalidPayload,
+            bytes: overwrite(&lasso, lasso_state + 16, &0.0_f32.to_bits().to_le_bytes()),
+        },
+        Case {
+            name: "elastic-net-mixing-weight-out-of-range",
+            provenance: "an elastic net whose l1_ratio is above one, so it mixes nothing",
+            decoder: "elastic-net",
+            expected: ArtifactError::InvalidPayload,
+            bytes: overwrite(
+                &elastic_net,
+                elastic_net_state + 8,
+                &1.5_f32.to_bits().to_le_bytes(),
+            ),
+        },
+        Case {
+            name: "elastic-net-non-finite-mixing-weight",
+            provenance: "an elastic net whose l1_ratio is NaN",
+            decoder: "elastic-net",
+            expected: ArtifactError::InvalidPayload,
+            bytes: overwrite(
+                &elastic_net,
+                elastic_net_state + 8,
+                &f32::NAN.to_bits().to_le_bytes(),
+            ),
+        },
+        Case {
+            name: "elastic-net-relabelled-as-lasso",
+            provenance: "an elastic-net payload carrying the lasso kind, whose field layout differs",
+            decoder: "lasso",
+            expected: ArtifactError::UnsupportedModelKind { found: 70 },
+            bytes: elastic_net.clone(),
+        },
+        Case {
+            name: "lasso-relabelled-as-elastic-net",
+            provenance: "a lasso payload handed to the elastic-net reader",
+            decoder: "elastic-net",
+            expected: ArtifactError::UnsupportedModelKind { found: 69 },
+            bytes: lasso.clone(),
+        },
         Case {
             name: "pairwise-objective-version-unknown",
             provenance: "a ranker declaring an objective version this reader does not implement",
@@ -2993,6 +3212,38 @@ fn corpus() -> Vec<Case> {
             expected: ArtifactError::InvalidPayload,
             bytes: multiclass_decision_tree,
         },
+        // The positive halves of the two tag cases above. A rejection case
+        // proves the wrong tag is refused; only these prove the *right* tag is
+        // the one the writer actually wrote, which is what makes them the
+        // byte-level record of composition tags 4 and 5.
+        Case {
+            name: "control-fitted-lasso",
+            provenance: "an unmodified fitted sparse linear model, which must still decode",
+            decoder: "lasso",
+            expected: ArtifactError::InvalidPayload,
+            bytes: lasso,
+        },
+        Case {
+            name: "control-fitted-elastic-net",
+            provenance: "an unmodified fitted mixed-penalty linear model, which must decode",
+            decoder: "elastic-net",
+            expected: ArtifactError::InvalidPayload,
+            bytes: elastic_net,
+        },
+        Case {
+            name: "control-fitted-staged-forest",
+            provenance: "an unmodified forest composition carrying estimator tag 4",
+            decoder: "staged-forest",
+            expected: ArtifactError::InvalidPayload,
+            bytes: staged_forest,
+        },
+        Case {
+            name: "control-fitted-staged-boosting",
+            provenance: "an unmodified boosted composition carrying estimator tag 5",
+            decoder: "staged-boosting",
+            expected: ArtifactError::InvalidPayload,
+            bytes: staged_boosting,
+        },
     ]);
     cases
 }
@@ -3016,6 +3267,10 @@ const CONTROL_CASES: &[&str] = &[
     "control-fitted-decision-tree",
     "control-fitted-decision-tree-classifier",
     "control-fitted-multiclass-decision-tree",
+    "control-fitted-staged-forest",
+    "control-fitted-staged-boosting",
+    "control-fitted-lasso",
+    "control-fitted-elastic-net",
 ];
 
 fn corpus_path(name: &str) -> std::path::PathBuf {

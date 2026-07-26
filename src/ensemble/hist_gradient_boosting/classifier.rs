@@ -13,8 +13,8 @@ use crate::api::{
 };
 use crate::artifact::{
     ArtifactError, ArtifactPayloadWriter, HIST_GRADIENT_BOOSTING_CLASSIFIER_ARTIFACT_KIND,
-    MIN_ENCODED_TREE_BYTES, SchemaRole, decode_component, decode_logical_tree, decode_v2_envelope,
-    encode_component, encode_logical_tree, encode_v2_envelope,
+    MIN_ENCODED_TREE_BYTES, ModelArtifact, SchemaRole, decode_component, decode_logical_tree,
+    decode_v2_envelope, encode_component, encode_logical_tree, encode_v2_envelope,
 };
 use crate::data::{BinaryTargets, MatrixView, SampleWeights};
 use crate::loss::{BinaryLogLoss, BoostingObjective};
@@ -453,6 +453,32 @@ impl HistGradientBoostingClassifier {
         <Self as ProbabilisticClassifier>::predict_class_proba_into(self, data, class, output)
     }
 
+    /// Validates a batch request's feature width and output length together.
+    fn check_batch(
+        &self,
+        data: &MatrixView<'_>,
+        output_len: usize,
+        expected: usize,
+    ) -> Result<(), ModelError> {
+        if data.columns() != self.n_features_in {
+            return Err(ModelError::FeatureDimension {
+                expected: self.n_features_in,
+                actual: data.columns(),
+            });
+        }
+        if output_len != expected {
+            return Err(ModelError::OutputLength {
+                expected,
+                actual: output_len,
+            });
+        }
+        Ok(())
+    }
+}
+
+impl ModelArtifact for HistGradientBoostingClassifier {
+    const ARTIFACT_KIND: u16 = HIST_GRADIENT_BOOSTING_CLASSIFIER_ARTIFACT_KIND;
+
     /// Encodes the fitted baseline, parameters, and canonical logical trees.
     ///
     /// The payload is shaped exactly like the regressor's — the same twelve
@@ -470,7 +496,7 @@ impl HistGradientBoostingClassifier {
     /// storing it would add a field whose only valid value decode would have to
     /// re-derive anyway. A multiclass boosted model is a different payload
     /// version, and that version is where an observed class list belongs.
-    pub fn to_artifact(&self, schema: [u8; 32]) -> Result<Vec<u8>, ArtifactError> {
+    fn to_artifact(&self, schema: [u8; 32]) -> Result<Vec<u8>, ArtifactError> {
         let n_features =
             u32::try_from(self.n_features_in).map_err(|_| ArtifactError::InvalidPayload)?;
         let max_iter =
@@ -522,7 +548,7 @@ impl HistGradientBoostingClassifier {
             )?);
         }
         encode_v2_envelope(
-            HIST_GRADIENT_BOOSTING_CLASSIFIER_ARTIFACT_KIND,
+            Self::ARTIFACT_KIND,
             ARTIFACT_PAYLOAD_VERSION,
             &[(SchemaRole::Input, schema)],
             &payload,
@@ -537,10 +563,10 @@ impl HistGradientBoostingClassifier {
     /// reservation is made, and the aggregate node total must match what the
     /// trees really contain. A model whose raw score could not stay finite is
     /// refused rather than left to report an infinity at prediction time.
-    pub fn from_artifact(bytes: &[u8], schema: [u8; 32]) -> Result<Self, ArtifactError> {
+    fn from_artifact(bytes: &[u8], schema: [u8; 32]) -> Result<Self, ArtifactError> {
         let mut envelope = decode_v2_envelope(
             bytes,
-            HIST_GRADIENT_BOOSTING_CLASSIFIER_ARTIFACT_KIND,
+            Self::ARTIFACT_KIND,
             ARTIFACT_PAYLOAD_VERSION,
             &[(SchemaRole::Input, schema)],
         )?;
@@ -615,28 +641,6 @@ impl HistGradientBoostingClassifier {
             baseline,
             trees,
         })
-    }
-
-    /// Validates a batch request's feature width and output length together.
-    fn check_batch(
-        &self,
-        data: &MatrixView<'_>,
-        output_len: usize,
-        expected: usize,
-    ) -> Result<(), ModelError> {
-        if data.columns() != self.n_features_in {
-            return Err(ModelError::FeatureDimension {
-                expected: self.n_features_in,
-                actual: data.columns(),
-            });
-        }
-        if output_len != expected {
-            return Err(ModelError::OutputLength {
-                expected,
-                actual: output_len,
-            });
-        }
-        Ok(())
     }
 }
 

@@ -307,55 +307,6 @@ macro_rules! forest_classifier {
                 self.core.predict_positive_proba_into(data, output)
             }
 
-            /// Encodes the fitted parameters, class list, and canonical logical
-            /// trees.
-            ///
-            /// The two fits are different models with different leaf
-            /// arithmetic, so the payload records which one it holds and the
-            /// reader refuses to build the other. A binary fit reuses the scalar
-            /// logical-tree records unchanged — the same codec the regressor and
-            /// the boosted trees use. A multiclass fit writes the same topology
-            /// records with a reserved zero where a scalar leaf carries its
-            /// value, followed by that tree's leaf distributions in pre-order
-            /// leaf rank. Storing rank rather than the runtime leaf ordinal is
-            /// what keeps the encoding unique: the ordinals could be permuted
-            /// together with the block to name one model twice.
-            pub fn to_artifact(
-                &self,
-                schema: [u8; 32],
-            ) -> Result<Vec<u8>, $crate::artifact::ArtifactError> {
-                $crate::ensemble::forest::codec::encode_classifier(
-                    $kind,
-                    &self.params.artifact_fields(self.core.n_features_in),
-                    &self.core.classes,
-                    &self.core.forest,
-                    schema,
-                )
-            }
-
-            /// Decodes and revalidates a classifier before building runtime
-            /// state.
-            ///
-            /// Counts, parameters, and the class list are checked before any
-            /// tree is read, every decoded tree re-enters the same topology
-            /// validator fitting uses, and every decoded probability re-enters
-            /// the same class-topology invariant a fitted tree satisfies.
-            pub fn from_artifact(
-                bytes: &[u8],
-                schema: [u8; 32],
-            ) -> Result<Self, $crate::artifact::ArtifactError> {
-                let (fields, classes, forest) =
-                    $crate::ensemble::forest::codec::decode_classifier($kind, bytes, schema)?;
-                Ok(Self {
-                    params: $params::from_artifact_fields(&fields),
-                    core: $crate::ensemble::forest::model::ClassifierCore {
-                        n_features_in: fields.n_features_in,
-                        classes,
-                        forest,
-                    },
-                })
-            }
-
             /// The scalar trees of a binary fit, for in-crate structural tests.
             #[cfg(test)]
             pub(crate) fn binary_trees(&self) -> &[$crate::tree::PackedTree] {
@@ -407,6 +358,63 @@ macro_rules! forest_classifier {
 
             fn get_params(&self) -> &Self::Params {
                 &self.params
+            }
+        }
+
+        impl $crate::artifact::ModelArtifact for $name {
+            const ARTIFACT_KIND: u16 = $kind;
+
+            /// Encodes the fitted parameters, class list, and canonical logical
+            /// trees.
+            ///
+            /// The two fits are different models with different leaf
+            /// arithmetic, so the payload records which one it holds and the
+            /// reader refuses to build the other. A binary fit reuses the scalar
+            /// logical-tree records unchanged — the same codec the regressor and
+            /// the boosted trees use. A multiclass fit writes the same topology
+            /// records with a reserved zero where a scalar leaf carries its
+            /// value, followed by that tree's leaf distributions in pre-order
+            /// leaf rank. Storing rank rather than the runtime leaf ordinal is
+            /// what keeps the encoding unique: the ordinals could be permuted
+            /// together with the block to name one model twice.
+            fn to_artifact(
+                &self,
+                schema: [u8; 32],
+            ) -> Result<Vec<u8>, $crate::artifact::ArtifactError> {
+                $crate::ensemble::forest::codec::encode_classifier(
+                    Self::ARTIFACT_KIND,
+                    &self.params.artifact_fields(self.core.n_features_in),
+                    &self.core.classes,
+                    &self.core.forest,
+                    schema,
+                )
+            }
+
+            /// Decodes and revalidates a classifier before building runtime
+            /// state.
+            ///
+            /// Counts, parameters, and the class list are checked before any
+            /// tree is read, every decoded tree re-enters the same topology
+            /// validator fitting uses, and every decoded probability re-enters
+            /// the same class-topology invariant a fitted tree satisfies.
+            fn from_artifact(
+                bytes: &[u8],
+                schema: [u8; 32],
+            ) -> Result<Self, $crate::artifact::ArtifactError> {
+                let (fields, classes, forest) =
+                    $crate::ensemble::forest::codec::decode_classifier(
+                        Self::ARTIFACT_KIND,
+                        bytes,
+                        schema,
+                    )?;
+                Ok(Self {
+                    params: $params::from_artifact_fields(&fields),
+                    core: $crate::ensemble::forest::model::ClassifierCore {
+                        n_features_in: fields.n_features_in,
+                        classes,
+                        forest,
+                    },
+                })
             }
         }
 
@@ -525,17 +533,22 @@ macro_rules! forest_regressor {
                 self.core.predict_into(data, output)
             }
 
+        }
+
+        impl $crate::artifact::ModelArtifact for $name {
+            const ARTIFACT_KIND: u16 = $kind;
+
             /// Encodes the fitted parameters and canonical logical trees.
             ///
             /// The private packed inference layout is never serialized. Each
             /// tree is expanded into stable logical records first, so the
             /// compact runtime representation stays free to change.
-            pub fn to_artifact(
+            fn to_artifact(
                 &self,
                 schema: [u8; 32],
             ) -> Result<Vec<u8>, $crate::artifact::ArtifactError> {
                 $crate::ensemble::forest::codec::encode_regressor(
-                    $kind,
+                    Self::ARTIFACT_KIND,
                     &self.params.artifact_fields(self.core.n_features_in),
                     &self.core.trees,
                     schema,
@@ -548,12 +561,15 @@ macro_rules! forest_regressor {
             /// Counts and parameters are checked before any tree is read, and
             /// each decoded tree is rebuilt through the same topology validator
             /// that fitting uses, so the encoded bytes are never trusted.
-            pub fn from_artifact(
+            fn from_artifact(
                 bytes: &[u8],
                 schema: [u8; 32],
             ) -> Result<Self, $crate::artifact::ArtifactError> {
-                let (fields, trees) =
-                    $crate::ensemble::forest::codec::decode_regressor($kind, bytes, schema)?;
+                let (fields, trees) = $crate::ensemble::forest::codec::decode_regressor(
+                    Self::ARTIFACT_KIND,
+                    bytes,
+                    schema,
+                )?;
                 Ok(Self {
                     params: $params::from_artifact_fields(&fields),
                     core: $crate::ensemble::forest::model::RegressorCore {

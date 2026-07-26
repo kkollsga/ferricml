@@ -1,7 +1,9 @@
 //! Deterministic dense scaling onto the unit interval.
 
 use crate::api::{Capabilities, Estimator, HasCapabilities, HasParams, ModelError, Transformer};
-use crate::artifact::{ArtifactError, MIN_MAX_SCALER_ARTIFACT_KIND, artifact_payload_version};
+use crate::artifact::{
+    ArtifactError, MIN_MAX_SCALER_ARTIFACT_KIND, StageArtifact, artifact_payload_version,
+};
 use crate::data::MatrixView;
 
 use super::scaling::{
@@ -249,9 +251,13 @@ impl MinMaxScaler {
             self.inverse_transform_into(batch, output).map(|_| ())
         })
     }
+}
+
+impl StageArtifact for MinMaxScaler {
+    const ARTIFACT_KIND: u16 = MIN_MAX_SCALER_ARTIFACT_KIND;
 
     /// Encodes fitted scaling state with explicit input and transformed schemas.
-    pub fn to_artifact(
+    fn to_artifact(
         &self,
         input_schema: [u8; 32],
         transformed_schema: [u8; 32],
@@ -266,7 +272,7 @@ impl MinMaxScaler {
         let default_range = self.params.range_is_default();
         let range = [feature_min, feature_max];
         encode_scaler_artifact(
-            MIN_MAX_SCALER_ARTIFACT_KIND,
+            Self::ARTIFACT_KIND,
             input_schema,
             transformed_schema,
             self.n_features_in,
@@ -288,7 +294,7 @@ impl MinMaxScaler {
     }
 
     /// Decodes fitted scaling state after checking both schemas.
-    pub fn from_artifact(
+    fn from_artifact(
         bytes: &[u8],
         input_schema: [u8; 32],
         transformed_schema: [u8; 32],
@@ -309,7 +315,7 @@ impl MinMaxScaler {
             mut state,
         } = decode_scaler_artifact(
             bytes,
-            MIN_MAX_SCALER_ARTIFACT_KIND,
+            Self::ARTIFACT_KIND,
             input_schema,
             transformed_schema,
             version,

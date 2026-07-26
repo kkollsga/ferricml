@@ -1,4 +1,5 @@
 use ferricml::api::{Classifier, Estimator, HasParams, ModelError, Regressor, Transformer};
+use ferricml::artifact::{ModelArtifact, StageArtifact};
 use ferricml::data::{
     BinaryTargets, DenseMatrix, MatrixView, RegressionTargets, SampleWeights, SelectionError,
 };

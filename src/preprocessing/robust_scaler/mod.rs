@@ -1,7 +1,7 @@
 //! Deterministic dense scaling by robust order statistics.
 
 use crate::api::{Capabilities, Estimator, HasCapabilities, HasParams, ModelError, Transformer};
-use crate::artifact::{ArtifactError, ROBUST_SCALER_ARTIFACT_KIND};
+use crate::artifact::{ArtifactError, ROBUST_SCALER_ARTIFACT_KIND, StageArtifact};
 use crate::data::MatrixView;
 use crate::numeric::{QuantileRule, quantile_sorted, sort_for_quantiles};
 
@@ -300,20 +300,24 @@ impl RobustScaler {
             self.inverse_transform_into(batch, output).map(|_| ())
         })
     }
+}
+
+impl StageArtifact for RobustScaler {
+    const ARTIFACT_KIND: u16 = ROBUST_SCALER_ARTIFACT_KIND;
 
     /// Encodes fitted scaling state with explicit input and transformed schemas.
     ///
     /// The raw spread is stored and the divisor is recomputed on decode, so a
     /// fitted model has exactly one valid byte string: a writer cannot choose
     /// to store a substituted divisor beside the spread it was substituted for.
-    pub fn to_artifact(
+    fn to_artifact(
         &self,
         input_schema: [u8; 32],
         transformed_schema: [u8; 32],
     ) -> Result<Vec<u8>, ArtifactError> {
         let (low, high) = self.params.quantile_range();
         encode_scaler_artifact(
-            ROBUST_SCALER_ARTIFACT_KIND,
+            Self::ARTIFACT_KIND,
             input_schema,
             transformed_schema,
             self.n_features_in,
@@ -334,7 +338,7 @@ impl RobustScaler {
     }
 
     /// Decodes fitted scaling state after checking both schemas.
-    pub fn from_artifact(
+    fn from_artifact(
         bytes: &[u8],
         input_schema: [u8; 32],
         transformed_schema: [u8; 32],
@@ -346,7 +350,7 @@ impl RobustScaler {
             mut state,
         } = decode_scaler_artifact(
             bytes,
-            ROBUST_SCALER_ARTIFACT_KIND,
+            Self::ARTIFACT_KIND,
             input_schema,
             transformed_schema,
             BASE_PAYLOAD_VERSION,

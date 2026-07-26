@@ -8,12 +8,10 @@ impl ferricml::api::AnyClassifier
 pub fn ferricml::api::AnyClassifier::as_probabilistic(&self) -> core::option::Option<&dyn ferricml::api::ProbabilisticClassifier>
 pub fn ferricml::api::AnyClassifier::capabilities(&self) -> ferricml::api::Capabilities
 pub fn ferricml::api::AnyClassifier::classes(&self) -> &[u8]
-pub fn ferricml::api::AnyClassifier::from_artifact(&[u8], [u8; 32]) -> core::result::Result<Self, ferricml::artifact::ArtifactError>
 pub fn ferricml::api::AnyClassifier::get_params(&self) -> ferricml::api::AnyClassifierParams<'_>
 pub fn ferricml::api::AnyClassifier::n_features_in(&self) -> usize
 pub fn ferricml::api::AnyClassifier::predict(&self, &ferricml::data::MatrixView<'_>) -> core::result::Result<alloc::vec::Vec<u8>, ferricml::api::ModelError>
 pub fn ferricml::api::AnyClassifier::predict_into(&self, &ferricml::data::MatrixView<'_>, &mut [u8]) -> core::result::Result<(), ferricml::api::ModelError>
-pub fn ferricml::api::AnyClassifier::to_artifact(&self, [u8; 32]) -> core::result::Result<alloc::vec::Vec<u8>, ferricml::artifact::ArtifactError>
 impl core::clone::Clone for ferricml::api::AnyClassifier
 pub fn ferricml::api::AnyClassifier::clone(&self) -> ferricml::api::AnyClassifier
 impl core::cmp::PartialEq for ferricml::api::AnyClassifier
@@ -35,6 +33,11 @@ impl ferricml::api::Estimator for ferricml::api::AnyClassifier
 pub fn ferricml::api::AnyClassifier::n_features_in(&self) -> usize
 impl ferricml::api::HasCapabilities for ferricml::api::AnyClassifier
 pub const ferricml::api::AnyClassifier::CAPABILITIES: ferricml::api::Capabilities
+impl ferricml::artifact::ModelArtifact for ferricml::api::AnyClassifier
+pub const ferricml::api::AnyClassifier::ARTIFACT_KIND: u16
+pub const ferricml::api::AnyClassifier::MODEL_TAG: u16
+pub fn ferricml::api::AnyClassifier::from_artifact(&[u8], [u8; 32]) -> core::result::Result<Self, ferricml::artifact::ArtifactError>
+pub fn ferricml::api::AnyClassifier::to_artifact(&self, [u8; 32]) -> core::result::Result<alloc::vec::Vec<u8>, ferricml::artifact::ArtifactError>
 #[non_exhaustive] pub enum ferricml::api::AnyClassifierParams<'a>
 pub ferricml::api::AnyClassifierParams::HistGradientBoosting(&'a ferricml::ensemble::HistGradientBoostingClassifierParams)
 pub ferricml::api::AnyClassifierParams::LogisticRegression(&'a ferricml::linear_model::LogisticRegressionParams)
@@ -54,12 +57,10 @@ pub ferricml::api::AnyRegressor::RandomForest(ferricml::ensemble::RandomForestRe
 pub ferricml::api::AnyRegressor::Ridge(ferricml::linear_model::Ridge)
 impl ferricml::api::AnyRegressor
 pub fn ferricml::api::AnyRegressor::capabilities(&self) -> ferricml::api::Capabilities
-pub fn ferricml::api::AnyRegressor::from_artifact(&[u8], [u8; 32]) -> core::result::Result<Self, ferricml::artifact::ArtifactError>
 pub fn ferricml::api::AnyRegressor::get_params(&self) -> ferricml::api::AnyRegressorParams<'_>
 pub fn ferricml::api::AnyRegressor::n_features_in(&self) -> usize
 pub fn ferricml::api::AnyRegressor::predict(&self, &ferricml::data::MatrixView<'_>) -> core::result::Result<alloc::vec::Vec<f32>, ferricml::api::ModelError>
 pub fn ferricml::api::AnyRegressor::predict_into(&self, &ferricml::data::MatrixView<'_>, &mut [f32]) -> core::result::Result<(), ferricml::api::ModelError>
-pub fn ferricml::api::AnyRegressor::to_artifact(&self, [u8; 32]) -> core::result::Result<alloc::vec::Vec<u8>, ferricml::artifact::ArtifactError>
 impl core::clone::Clone for ferricml::api::AnyRegressor
 pub fn ferricml::api::AnyRegressor::clone(&self) -> ferricml::api::AnyRegressor
 impl core::cmp::PartialEq for ferricml::api::AnyRegressor
@@ -82,6 +83,11 @@ pub const ferricml::api::AnyRegressor::CAPABILITIES: ferricml::api::Capabilities
 impl ferricml::api::Regressor for ferricml::api::AnyRegressor
 pub fn ferricml::api::AnyRegressor::predict(&self, &ferricml::data::MatrixView<'_>) -> core::result::Result<alloc::vec::Vec<f32>, ferricml::api::ModelError>
 pub fn ferricml::api::AnyRegressor::predict_into(&self, &ferricml::data::MatrixView<'_>, &mut [f32]) -> core::result::Result<(), ferricml::api::ModelError>
+impl ferricml::artifact::ModelArtifact for ferricml::api::AnyRegressor
+pub const ferricml::api::AnyRegressor::ARTIFACT_KIND: u16
+pub const ferricml::api::AnyRegressor::MODEL_TAG: u16
+pub fn ferricml::api::AnyRegressor::from_artifact(&[u8], [u8; 32]) -> core::result::Result<Self, ferricml::artifact::ArtifactError>
+pub fn ferricml::api::AnyRegressor::to_artifact(&self, [u8; 32]) -> core::result::Result<alloc::vec::Vec<u8>, ferricml::artifact::ArtifactError>
 #[non_exhaustive] pub enum ferricml::api::AnyRegressorParams<'a>
 pub ferricml::api::AnyRegressorParams::HistGradientBoosting(&'a ferricml::ensemble::HistGradientBoostingRegressorParams)
 pub ferricml::api::AnyRegressorParams::LinearRegression(&'a ferricml::linear_model::LinearRegressionParams)
@@ -366,7 +372,7 @@ impl<C: ferricml::api::ProbabilisticClassifier> ferricml::api::HasCapabilities f
 pub const ferricml::calibration::CalibratedClassifier<C, ferricml::calibration::IsotonicRegression>::CAPABILITIES: ferricml::api::Capabilities
 impl<C: ferricml::api::ProbabilisticClassifier> ferricml::api::HasCapabilities for ferricml::calibration::CalibratedClassifier<C, ferricml::calibration::PlattCalibrator>
 pub const ferricml::calibration::CalibratedClassifier<C, ferricml::calibration::PlattCalibrator>::CAPABILITIES: ferricml::api::Capabilities
-impl<S, E> ferricml::api::HasCapabilities for ferricml::pipeline::StagedPipeline<S, E> where S: ferricml::pipeline::TransformerStack + ferricml::pipeline::PersistedStack, E: ferricml::api::Estimator + ferricml::pipeline::ModelArtifact
+impl<S, E> ferricml::api::HasCapabilities for ferricml::pipeline::StagedPipeline<S, E> where S: ferricml::pipeline::TransformerStack, E: ferricml::api::Estimator + ferricml::api::HasCapabilities
 pub const ferricml::pipeline::StagedPipeline<S, E>::CAPABILITIES: ferricml::api::Capabilities
 pub trait ferricml::api::HasParams
 pub type ferricml::api::HasParams::Params
@@ -581,6 +587,136 @@ pub fn ferricml::artifact::ArtifactError::fmt(&self, &mut core::fmt::Formatter<'
 impl core::marker::StructuralPartialEq for ferricml::artifact::ArtifactError
 pub const ferricml::artifact::MAX_MODEL_ARTIFACT_BYTES: usize
 pub const ferricml::artifact::MODEL_ARTIFACT_VERSION: u16
+pub trait ferricml::artifact::ModelArtifact: core::marker::Sized
+pub const ferricml::artifact::ModelArtifact::ARTIFACT_KIND: u16
+pub const ferricml::artifact::ModelArtifact::MODEL_TAG: u16
+pub fn ferricml::artifact::ModelArtifact::from_artifact(&[u8], [u8; 32]) -> core::result::Result<Self, ferricml::artifact::ArtifactError>
+pub fn ferricml::artifact::ModelArtifact::to_artifact(&self, [u8; 32]) -> core::result::Result<alloc::vec::Vec<u8>, ferricml::artifact::ArtifactError>
+impl ferricml::artifact::ModelArtifact for ferricml::api::AnyClassifier
+pub const ferricml::api::AnyClassifier::ARTIFACT_KIND: u16
+pub const ferricml::api::AnyClassifier::MODEL_TAG: u16
+pub fn ferricml::api::AnyClassifier::from_artifact(&[u8], [u8; 32]) -> core::result::Result<Self, ferricml::artifact::ArtifactError>
+pub fn ferricml::api::AnyClassifier::to_artifact(&self, [u8; 32]) -> core::result::Result<alloc::vec::Vec<u8>, ferricml::artifact::ArtifactError>
+impl ferricml::artifact::ModelArtifact for ferricml::api::AnyRegressor
+pub const ferricml::api::AnyRegressor::ARTIFACT_KIND: u16
+pub const ferricml::api::AnyRegressor::MODEL_TAG: u16
+pub fn ferricml::api::AnyRegressor::from_artifact(&[u8], [u8; 32]) -> core::result::Result<Self, ferricml::artifact::ArtifactError>
+pub fn ferricml::api::AnyRegressor::to_artifact(&self, [u8; 32]) -> core::result::Result<alloc::vec::Vec<u8>, ferricml::artifact::ArtifactError>
+impl ferricml::artifact::ModelArtifact for ferricml::ensemble::ExtraTreesClassifier
+pub const ferricml::ensemble::ExtraTreesClassifier::ARTIFACT_KIND: u16
+pub const ferricml::ensemble::ExtraTreesClassifier::MODEL_TAG: u16
+pub fn ferricml::ensemble::ExtraTreesClassifier::from_artifact(&[u8], [u8; 32]) -> core::result::Result<Self, ferricml::artifact::ArtifactError>
+pub fn ferricml::ensemble::ExtraTreesClassifier::to_artifact(&self, [u8; 32]) -> core::result::Result<alloc::vec::Vec<u8>, ferricml::artifact::ArtifactError>
+impl ferricml::artifact::ModelArtifact for ferricml::ensemble::ExtraTreesRegressor
+pub const ferricml::ensemble::ExtraTreesRegressor::ARTIFACT_KIND: u16
+pub const ferricml::ensemble::ExtraTreesRegressor::MODEL_TAG: u16
+pub fn ferricml::ensemble::ExtraTreesRegressor::from_artifact(&[u8], [u8; 32]) -> core::result::Result<Self, ferricml::artifact::ArtifactError>
+pub fn ferricml::ensemble::ExtraTreesRegressor::to_artifact(&self, [u8; 32]) -> core::result::Result<alloc::vec::Vec<u8>, ferricml::artifact::ArtifactError>
+impl ferricml::artifact::ModelArtifact for ferricml::ensemble::HistGradientBoostingClassifier
+pub const ferricml::ensemble::HistGradientBoostingClassifier::ARTIFACT_KIND: u16
+pub const ferricml::ensemble::HistGradientBoostingClassifier::MODEL_TAG: u16
+pub fn ferricml::ensemble::HistGradientBoostingClassifier::from_artifact(&[u8], [u8; 32]) -> core::result::Result<Self, ferricml::artifact::ArtifactError>
+pub fn ferricml::ensemble::HistGradientBoostingClassifier::to_artifact(&self, [u8; 32]) -> core::result::Result<alloc::vec::Vec<u8>, ferricml::artifact::ArtifactError>
+impl ferricml::artifact::ModelArtifact for ferricml::ensemble::HistGradientBoostingRegressor
+pub const ferricml::ensemble::HistGradientBoostingRegressor::ARTIFACT_KIND: u16
+pub const ferricml::ensemble::HistGradientBoostingRegressor::MODEL_TAG: u16
+pub fn ferricml::ensemble::HistGradientBoostingRegressor::from_artifact(&[u8], [u8; 32]) -> core::result::Result<Self, ferricml::artifact::ArtifactError>
+pub fn ferricml::ensemble::HistGradientBoostingRegressor::to_artifact(&self, [u8; 32]) -> core::result::Result<alloc::vec::Vec<u8>, ferricml::artifact::ArtifactError>
+impl ferricml::artifact::ModelArtifact for ferricml::ensemble::RandomForestClassifier
+pub const ferricml::ensemble::RandomForestClassifier::ARTIFACT_KIND: u16
+pub const ferricml::ensemble::RandomForestClassifier::MODEL_TAG: u16
+pub fn ferricml::ensemble::RandomForestClassifier::from_artifact(&[u8], [u8; 32]) -> core::result::Result<Self, ferricml::artifact::ArtifactError>
+pub fn ferricml::ensemble::RandomForestClassifier::to_artifact(&self, [u8; 32]) -> core::result::Result<alloc::vec::Vec<u8>, ferricml::artifact::ArtifactError>
+impl ferricml::artifact::ModelArtifact for ferricml::ensemble::RandomForestRegressor
+pub const ferricml::ensemble::RandomForestRegressor::ARTIFACT_KIND: u16
+pub const ferricml::ensemble::RandomForestRegressor::MODEL_TAG: u16
+pub fn ferricml::ensemble::RandomForestRegressor::from_artifact(&[u8], [u8; 32]) -> core::result::Result<Self, ferricml::artifact::ArtifactError>
+pub fn ferricml::ensemble::RandomForestRegressor::to_artifact(&self, [u8; 32]) -> core::result::Result<alloc::vec::Vec<u8>, ferricml::artifact::ArtifactError>
+impl ferricml::artifact::ModelArtifact for ferricml::linear_model::ElasticNet
+pub const ferricml::linear_model::ElasticNet::ARTIFACT_KIND: u16
+pub const ferricml::linear_model::ElasticNet::MODEL_TAG: u16
+pub fn ferricml::linear_model::ElasticNet::from_artifact(&[u8], [u8; 32]) -> core::result::Result<Self, ferricml::artifact::ArtifactError>
+pub fn ferricml::linear_model::ElasticNet::to_artifact(&self, [u8; 32]) -> core::result::Result<alloc::vec::Vec<u8>, ferricml::artifact::ArtifactError>
+impl ferricml::artifact::ModelArtifact for ferricml::linear_model::Lasso
+pub const ferricml::linear_model::Lasso::ARTIFACT_KIND: u16
+pub const ferricml::linear_model::Lasso::MODEL_TAG: u16
+pub fn ferricml::linear_model::Lasso::from_artifact(&[u8], [u8; 32]) -> core::result::Result<Self, ferricml::artifact::ArtifactError>
+pub fn ferricml::linear_model::Lasso::to_artifact(&self, [u8; 32]) -> core::result::Result<alloc::vec::Vec<u8>, ferricml::artifact::ArtifactError>
+impl ferricml::artifact::ModelArtifact for ferricml::linear_model::LinearRegression
+pub const ferricml::linear_model::LinearRegression::ARTIFACT_KIND: u16
+pub const ferricml::linear_model::LinearRegression::MODEL_TAG: u16
+pub fn ferricml::linear_model::LinearRegression::from_artifact(&[u8], [u8; 32]) -> core::result::Result<Self, ferricml::artifact::ArtifactError>
+pub fn ferricml::linear_model::LinearRegression::to_artifact(&self, [u8; 32]) -> core::result::Result<alloc::vec::Vec<u8>, ferricml::artifact::ArtifactError>
+impl ferricml::artifact::ModelArtifact for ferricml::linear_model::LogisticRegression
+pub const ferricml::linear_model::LogisticRegression::ARTIFACT_KIND: u16
+pub const ferricml::linear_model::LogisticRegression::MODEL_TAG: u16
+pub fn ferricml::linear_model::LogisticRegression::from_artifact(&[u8], [u8; 32]) -> core::result::Result<Self, ferricml::artifact::ArtifactError>
+pub fn ferricml::linear_model::LogisticRegression::to_artifact(&self, [u8; 32]) -> core::result::Result<alloc::vec::Vec<u8>, ferricml::artifact::ArtifactError>
+impl ferricml::artifact::ModelArtifact for ferricml::linear_model::Ridge
+pub const ferricml::linear_model::Ridge::ARTIFACT_KIND: u16
+pub const ferricml::linear_model::Ridge::MODEL_TAG: u16
+pub fn ferricml::linear_model::Ridge::from_artifact(&[u8], [u8; 32]) -> core::result::Result<Self, ferricml::artifact::ArtifactError>
+pub fn ferricml::linear_model::Ridge::to_artifact(&self, [u8; 32]) -> core::result::Result<alloc::vec::Vec<u8>, ferricml::artifact::ArtifactError>
+impl ferricml::artifact::ModelArtifact for ferricml::ranking::PairwiseLinearRanker
+pub const ferricml::ranking::PairwiseLinearRanker::ARTIFACT_KIND: u16
+pub const ferricml::ranking::PairwiseLinearRanker::MODEL_TAG: u16
+pub fn ferricml::ranking::PairwiseLinearRanker::from_artifact(&[u8], [u8; 32]) -> core::result::Result<Self, ferricml::artifact::ArtifactError>
+pub fn ferricml::ranking::PairwiseLinearRanker::to_artifact(&self, [u8; 32]) -> core::result::Result<alloc::vec::Vec<u8>, ferricml::artifact::ArtifactError>
+impl ferricml::artifact::ModelArtifact for ferricml::tree::DecisionTreeClassifier
+pub const ferricml::tree::DecisionTreeClassifier::ARTIFACT_KIND: u16
+pub const ferricml::tree::DecisionTreeClassifier::MODEL_TAG: u16
+pub fn ferricml::tree::DecisionTreeClassifier::from_artifact(&[u8], [u8; 32]) -> core::result::Result<Self, ferricml::artifact::ArtifactError>
+pub fn ferricml::tree::DecisionTreeClassifier::to_artifact(&self, [u8; 32]) -> core::result::Result<alloc::vec::Vec<u8>, ferricml::artifact::ArtifactError>
+impl ferricml::artifact::ModelArtifact for ferricml::tree::DecisionTreeRegressor
+pub const ferricml::tree::DecisionTreeRegressor::ARTIFACT_KIND: u16
+pub const ferricml::tree::DecisionTreeRegressor::MODEL_TAG: u16
+pub fn ferricml::tree::DecisionTreeRegressor::from_artifact(&[u8], [u8; 32]) -> core::result::Result<Self, ferricml::artifact::ArtifactError>
+pub fn ferricml::tree::DecisionTreeRegressor::to_artifact(&self, [u8; 32]) -> core::result::Result<alloc::vec::Vec<u8>, ferricml::artifact::ArtifactError>
+pub trait ferricml::artifact::StageArtifact: core::marker::Sized
+pub const ferricml::artifact::StageArtifact::ARTIFACT_KIND: u16
+pub const ferricml::artifact::StageArtifact::STAGE_TAG: u16
+pub fn ferricml::artifact::StageArtifact::from_artifact(&[u8], [u8; 32], [u8; 32]) -> core::result::Result<Self, ferricml::artifact::ArtifactError>
+pub fn ferricml::artifact::StageArtifact::to_artifact(&self, [u8; 32], [u8; 32]) -> core::result::Result<alloc::vec::Vec<u8>, ferricml::artifact::ArtifactError>
+impl ferricml::artifact::StageArtifact for ferricml::pipeline::Pipeline<ferricml::preprocessing::StandardScaler, ferricml::linear_model::LinearRegression>
+pub const ferricml::pipeline::Pipeline<ferricml::preprocessing::StandardScaler, ferricml::linear_model::LinearRegression>::ARTIFACT_KIND: u16
+pub const ferricml::pipeline::Pipeline<ferricml::preprocessing::StandardScaler, ferricml::linear_model::LinearRegression>::STAGE_TAG: u16
+pub fn ferricml::pipeline::Pipeline<ferricml::preprocessing::StandardScaler, ferricml::linear_model::LinearRegression>::from_artifact(&[u8], [u8; 32], [u8; 32]) -> core::result::Result<Self, ferricml::artifact::ArtifactError>
+pub fn ferricml::pipeline::Pipeline<ferricml::preprocessing::StandardScaler, ferricml::linear_model::LinearRegression>::to_artifact(&self, [u8; 32], [u8; 32]) -> core::result::Result<alloc::vec::Vec<u8>, ferricml::artifact::ArtifactError>
+impl ferricml::artifact::StageArtifact for ferricml::pipeline::Pipeline<ferricml::preprocessing::StandardScaler, ferricml::linear_model::LogisticRegression>
+pub const ferricml::pipeline::Pipeline<ferricml::preprocessing::StandardScaler, ferricml::linear_model::LogisticRegression>::ARTIFACT_KIND: u16
+pub const ferricml::pipeline::Pipeline<ferricml::preprocessing::StandardScaler, ferricml::linear_model::LogisticRegression>::STAGE_TAG: u16
+pub fn ferricml::pipeline::Pipeline<ferricml::preprocessing::StandardScaler, ferricml::linear_model::LogisticRegression>::from_artifact(&[u8], [u8; 32], [u8; 32]) -> core::result::Result<Self, ferricml::artifact::ArtifactError>
+pub fn ferricml::pipeline::Pipeline<ferricml::preprocessing::StandardScaler, ferricml::linear_model::LogisticRegression>::to_artifact(&self, [u8; 32], [u8; 32]) -> core::result::Result<alloc::vec::Vec<u8>, ferricml::artifact::ArtifactError>
+impl ferricml::artifact::StageArtifact for ferricml::pipeline::Pipeline<ferricml::preprocessing::StandardScaler, ferricml::linear_model::Ridge>
+pub const ferricml::pipeline::Pipeline<ferricml::preprocessing::StandardScaler, ferricml::linear_model::Ridge>::ARTIFACT_KIND: u16
+pub const ferricml::pipeline::Pipeline<ferricml::preprocessing::StandardScaler, ferricml::linear_model::Ridge>::STAGE_TAG: u16
+pub fn ferricml::pipeline::Pipeline<ferricml::preprocessing::StandardScaler, ferricml::linear_model::Ridge>::from_artifact(&[u8], [u8; 32], [u8; 32]) -> core::result::Result<Self, ferricml::artifact::ArtifactError>
+pub fn ferricml::pipeline::Pipeline<ferricml::preprocessing::StandardScaler, ferricml::linear_model::Ridge>::to_artifact(&self, [u8; 32], [u8; 32]) -> core::result::Result<alloc::vec::Vec<u8>, ferricml::artifact::ArtifactError>
+impl ferricml::artifact::StageArtifact for ferricml::preprocessing::MaxAbsScaler
+pub const ferricml::preprocessing::MaxAbsScaler::ARTIFACT_KIND: u16
+pub const ferricml::preprocessing::MaxAbsScaler::STAGE_TAG: u16
+pub fn ferricml::preprocessing::MaxAbsScaler::from_artifact(&[u8], [u8; 32], [u8; 32]) -> core::result::Result<Self, ferricml::artifact::ArtifactError>
+pub fn ferricml::preprocessing::MaxAbsScaler::to_artifact(&self, [u8; 32], [u8; 32]) -> core::result::Result<alloc::vec::Vec<u8>, ferricml::artifact::ArtifactError>
+impl ferricml::artifact::StageArtifact for ferricml::preprocessing::MinMaxScaler
+pub const ferricml::preprocessing::MinMaxScaler::ARTIFACT_KIND: u16
+pub const ferricml::preprocessing::MinMaxScaler::STAGE_TAG: u16
+pub fn ferricml::preprocessing::MinMaxScaler::from_artifact(&[u8], [u8; 32], [u8; 32]) -> core::result::Result<Self, ferricml::artifact::ArtifactError>
+pub fn ferricml::preprocessing::MinMaxScaler::to_artifact(&self, [u8; 32], [u8; 32]) -> core::result::Result<alloc::vec::Vec<u8>, ferricml::artifact::ArtifactError>
+impl ferricml::artifact::StageArtifact for ferricml::preprocessing::RobustScaler
+pub const ferricml::preprocessing::RobustScaler::ARTIFACT_KIND: u16
+pub const ferricml::preprocessing::RobustScaler::STAGE_TAG: u16
+pub fn ferricml::preprocessing::RobustScaler::from_artifact(&[u8], [u8; 32], [u8; 32]) -> core::result::Result<Self, ferricml::artifact::ArtifactError>
+pub fn ferricml::preprocessing::RobustScaler::to_artifact(&self, [u8; 32], [u8; 32]) -> core::result::Result<alloc::vec::Vec<u8>, ferricml::artifact::ArtifactError>
+impl ferricml::artifact::StageArtifact for ferricml::preprocessing::StandardScaler
+pub const ferricml::preprocessing::StandardScaler::ARTIFACT_KIND: u16
+pub const ferricml::preprocessing::StandardScaler::STAGE_TAG: u16
+pub fn ferricml::preprocessing::StandardScaler::from_artifact(&[u8], [u8; 32], [u8; 32]) -> core::result::Result<Self, ferricml::artifact::ArtifactError>
+pub fn ferricml::preprocessing::StandardScaler::to_artifact(&self, [u8; 32], [u8; 32]) -> core::result::Result<alloc::vec::Vec<u8>, ferricml::artifact::ArtifactError>
+impl<S, E> ferricml::artifact::StageArtifact for ferricml::pipeline::StagedPipeline<S, E> where S: ferricml::pipeline::TransformerStack + ferricml::pipeline::PersistedStack, E: ferricml::api::Estimator + ferricml::artifact::ModelArtifact
+pub const ferricml::pipeline::StagedPipeline<S, E>::ARTIFACT_KIND: u16
+pub const ferricml::pipeline::StagedPipeline<S, E>::STAGE_TAG: u16
+pub fn ferricml::pipeline::StagedPipeline<S, E>::from_artifact(&[u8], [u8; 32], [u8; 32]) -> core::result::Result<Self, ferricml::artifact::ArtifactError>
+pub fn ferricml::pipeline::StagedPipeline<S, E>::to_artifact(&self, [u8; 32], [u8; 32]) -> core::result::Result<alloc::vec::Vec<u8>, ferricml::artifact::ArtifactError>
 pub mod ferricml::calibration
 pub struct ferricml::calibration::CalibratedClassifier<C, K>
 impl<C: ferricml::api::ProbabilisticClassifier, K: ferricml::calibration::Calibrator> ferricml::calibration::CalibratedClassifier<C, K>
@@ -979,7 +1115,6 @@ pub fn ferricml::ensemble::ExtraTreesClassifier::fit(&ferricml::data::MatrixView
 pub fn ferricml::ensemble::ExtraTreesClassifier::fit_multiclass(&ferricml::data::MatrixView<'_>, &ferricml::data::ClassTargets, ferricml::ensemble::ExtraTreesClassifierParams) -> core::result::Result<Self, ferricml::api::ModelError>
 pub fn ferricml::ensemble::ExtraTreesClassifier::fit_multiclass_weighted(&ferricml::data::MatrixView<'_>, &ferricml::data::ClassTargets, &ferricml::data::SampleWeights, ferricml::ensemble::ExtraTreesClassifierParams) -> core::result::Result<Self, ferricml::api::ModelError>
 pub fn ferricml::ensemble::ExtraTreesClassifier::fit_weighted(&ferricml::data::MatrixView<'_>, &ferricml::data::BinaryTargets, &ferricml::data::SampleWeights, ferricml::ensemble::ExtraTreesClassifierParams) -> core::result::Result<Self, ferricml::api::ModelError>
-pub fn ferricml::ensemble::ExtraTreesClassifier::from_artifact(&[u8], [u8; 32]) -> core::result::Result<Self, ferricml::artifact::ArtifactError>
 pub fn ferricml::ensemble::ExtraTreesClassifier::get_params(&self) -> &ferricml::ensemble::ExtraTreesClassifierParams
 pub fn ferricml::ensemble::ExtraTreesClassifier::n_features_in(&self) -> usize
 pub fn ferricml::ensemble::ExtraTreesClassifier::predict(&self, &ferricml::data::MatrixView<'_>) -> core::result::Result<alloc::vec::Vec<u8>, ferricml::api::ModelError>
@@ -994,7 +1129,6 @@ pub fn ferricml::ensemble::ExtraTreesClassifier::predict_proba(&self, &ferricml:
 pub fn ferricml::ensemble::ExtraTreesClassifier::predict_proba_into(&self, &ferricml::data::MatrixView<'_>, &mut [f32]) -> core::result::Result<(), ferricml::api::ModelError>
 pub fn ferricml::ensemble::ExtraTreesClassifier::predict_proba_one(&self, &[f32]) -> core::result::Result<alloc::vec::Vec<f32>, ferricml::api::ModelError>
 pub fn ferricml::ensemble::ExtraTreesClassifier::predict_proba_one_into(&self, &[f32], &mut [f32]) -> core::result::Result<(), ferricml::api::ModelError>
-pub fn ferricml::ensemble::ExtraTreesClassifier::to_artifact(&self, [u8; 32]) -> core::result::Result<alloc::vec::Vec<u8>, ferricml::artifact::ArtifactError>
 impl core::clone::Clone for ferricml::ensemble::ExtraTreesClassifier
 pub fn ferricml::ensemble::ExtraTreesClassifier::clone(&self) -> ferricml::ensemble::ExtraTreesClassifier
 impl core::cmp::PartialEq for ferricml::ensemble::ExtraTreesClassifier
@@ -1018,6 +1152,11 @@ pub fn ferricml::ensemble::ExtraTreesClassifier::predict_class_proba(&self, &fer
 pub fn ferricml::ensemble::ExtraTreesClassifier::predict_class_proba_into(&self, &ferricml::data::MatrixView<'_>, u8, &mut [f32]) -> core::result::Result<(), ferricml::api::ModelError>
 pub fn ferricml::ensemble::ExtraTreesClassifier::predict_proba(&self, &ferricml::data::MatrixView<'_>) -> core::result::Result<alloc::vec::Vec<f32>, ferricml::api::ModelError>
 pub fn ferricml::ensemble::ExtraTreesClassifier::predict_proba_into(&self, &ferricml::data::MatrixView<'_>, &mut [f32]) -> core::result::Result<(), ferricml::api::ModelError>
+impl ferricml::artifact::ModelArtifact for ferricml::ensemble::ExtraTreesClassifier
+pub const ferricml::ensemble::ExtraTreesClassifier::ARTIFACT_KIND: u16
+pub const ferricml::ensemble::ExtraTreesClassifier::MODEL_TAG: u16
+pub fn ferricml::ensemble::ExtraTreesClassifier::from_artifact(&[u8], [u8; 32]) -> core::result::Result<Self, ferricml::artifact::ArtifactError>
+pub fn ferricml::ensemble::ExtraTreesClassifier::to_artifact(&self, [u8; 32]) -> core::result::Result<alloc::vec::Vec<u8>, ferricml::artifact::ArtifactError>
 pub struct ferricml::ensemble::ExtraTreesClassifierParams
 impl ferricml::ensemble::ExtraTreesClassifierParams
 pub const fn ferricml::ensemble::ExtraTreesClassifierParams::bootstrap(&self) -> bool
@@ -1050,13 +1189,11 @@ pub struct ferricml::ensemble::ExtraTreesRegressor
 impl ferricml::ensemble::ExtraTreesRegressor
 pub fn ferricml::ensemble::ExtraTreesRegressor::fit(&ferricml::data::MatrixView<'_>, &ferricml::data::RegressionTargets, ferricml::ensemble::ExtraTreesRegressorParams) -> core::result::Result<Self, ferricml::api::ModelError>
 pub fn ferricml::ensemble::ExtraTreesRegressor::fit_weighted(&ferricml::data::MatrixView<'_>, &ferricml::data::RegressionTargets, &ferricml::data::SampleWeights, ferricml::ensemble::ExtraTreesRegressorParams) -> core::result::Result<Self, ferricml::api::ModelError>
-pub fn ferricml::ensemble::ExtraTreesRegressor::from_artifact(&[u8], [u8; 32]) -> core::result::Result<Self, ferricml::artifact::ArtifactError>
 pub fn ferricml::ensemble::ExtraTreesRegressor::get_params(&self) -> &ferricml::ensemble::ExtraTreesRegressorParams
 pub fn ferricml::ensemble::ExtraTreesRegressor::n_features_in(&self) -> usize
 pub fn ferricml::ensemble::ExtraTreesRegressor::predict(&self, &ferricml::data::MatrixView<'_>) -> core::result::Result<alloc::vec::Vec<f32>, ferricml::api::ModelError>
 pub fn ferricml::ensemble::ExtraTreesRegressor::predict_into(&self, &ferricml::data::MatrixView<'_>, &mut [f32]) -> core::result::Result<(), ferricml::api::ModelError>
 pub fn ferricml::ensemble::ExtraTreesRegressor::predict_one(&self, &[f32]) -> core::result::Result<f32, ferricml::api::ModelError>
-pub fn ferricml::ensemble::ExtraTreesRegressor::to_artifact(&self, [u8; 32]) -> core::result::Result<alloc::vec::Vec<u8>, ferricml::artifact::ArtifactError>
 impl core::clone::Clone for ferricml::ensemble::ExtraTreesRegressor
 pub fn ferricml::ensemble::ExtraTreesRegressor::clone(&self) -> ferricml::ensemble::ExtraTreesRegressor
 impl core::cmp::PartialEq for ferricml::ensemble::ExtraTreesRegressor
@@ -1074,6 +1211,11 @@ pub fn ferricml::ensemble::ExtraTreesRegressor::get_params(&self) -> &Self::Para
 impl ferricml::api::Regressor for ferricml::ensemble::ExtraTreesRegressor
 pub fn ferricml::ensemble::ExtraTreesRegressor::predict(&self, &ferricml::data::MatrixView<'_>) -> core::result::Result<alloc::vec::Vec<f32>, ferricml::api::ModelError>
 pub fn ferricml::ensemble::ExtraTreesRegressor::predict_into(&self, &ferricml::data::MatrixView<'_>, &mut [f32]) -> core::result::Result<(), ferricml::api::ModelError>
+impl ferricml::artifact::ModelArtifact for ferricml::ensemble::ExtraTreesRegressor
+pub const ferricml::ensemble::ExtraTreesRegressor::ARTIFACT_KIND: u16
+pub const ferricml::ensemble::ExtraTreesRegressor::MODEL_TAG: u16
+pub fn ferricml::ensemble::ExtraTreesRegressor::from_artifact(&[u8], [u8; 32]) -> core::result::Result<Self, ferricml::artifact::ArtifactError>
+pub fn ferricml::ensemble::ExtraTreesRegressor::to_artifact(&self, [u8; 32]) -> core::result::Result<alloc::vec::Vec<u8>, ferricml::artifact::ArtifactError>
 pub struct ferricml::ensemble::ExtraTreesRegressorParams
 impl ferricml::ensemble::ExtraTreesRegressorParams
 pub const fn ferricml::ensemble::ExtraTreesRegressorParams::bootstrap(&self) -> bool
@@ -1111,7 +1253,6 @@ pub fn ferricml::ensemble::HistGradientBoostingClassifier::decision_function_int
 pub fn ferricml::ensemble::HistGradientBoostingClassifier::decision_function_one(&self, &[f32]) -> core::result::Result<f32, ferricml::api::ModelError>
 pub fn ferricml::ensemble::HistGradientBoostingClassifier::fit(&ferricml::data::MatrixView<'_>, &ferricml::data::BinaryTargets, ferricml::ensemble::HistGradientBoostingClassifierParams) -> core::result::Result<Self, ferricml::api::ModelError>
 pub fn ferricml::ensemble::HistGradientBoostingClassifier::fit_weighted(&ferricml::data::MatrixView<'_>, &ferricml::data::BinaryTargets, &ferricml::data::SampleWeights, ferricml::ensemble::HistGradientBoostingClassifierParams) -> core::result::Result<Self, ferricml::api::ModelError>
-pub fn ferricml::ensemble::HistGradientBoostingClassifier::from_artifact(&[u8], [u8; 32]) -> core::result::Result<Self, ferricml::artifact::ArtifactError>
 pub const fn ferricml::ensemble::HistGradientBoostingClassifier::get_params(&self) -> &ferricml::ensemble::HistGradientBoostingClassifierParams
 pub const fn ferricml::ensemble::HistGradientBoostingClassifier::n_features_in(&self) -> usize
 pub fn ferricml::ensemble::HistGradientBoostingClassifier::n_iter(&self) -> usize
@@ -1123,7 +1264,6 @@ pub fn ferricml::ensemble::HistGradientBoostingClassifier::predict_one(&self, &[
 pub fn ferricml::ensemble::HistGradientBoostingClassifier::predict_positive_proba(&self, &[f32]) -> core::result::Result<f32, ferricml::api::ModelError>
 pub fn ferricml::ensemble::HistGradientBoostingClassifier::predict_proba(&self, &ferricml::data::MatrixView<'_>) -> core::result::Result<alloc::vec::Vec<f32>, ferricml::api::ModelError>
 pub fn ferricml::ensemble::HistGradientBoostingClassifier::predict_proba_into(&self, &ferricml::data::MatrixView<'_>, &mut [f32]) -> core::result::Result<(), ferricml::api::ModelError>
-pub fn ferricml::ensemble::HistGradientBoostingClassifier::to_artifact(&self, [u8; 32]) -> core::result::Result<alloc::vec::Vec<u8>, ferricml::artifact::ArtifactError>
 impl core::clone::Clone for ferricml::ensemble::HistGradientBoostingClassifier
 pub fn ferricml::ensemble::HistGradientBoostingClassifier::clone(&self) -> ferricml::ensemble::HistGradientBoostingClassifier
 impl core::cmp::PartialEq for ferricml::ensemble::HistGradientBoostingClassifier
@@ -1149,6 +1289,11 @@ pub fn ferricml::ensemble::HistGradientBoostingClassifier::predict_class_proba(&
 pub fn ferricml::ensemble::HistGradientBoostingClassifier::predict_class_proba_into(&self, &ferricml::data::MatrixView<'_>, u8, &mut [f32]) -> core::result::Result<(), ferricml::api::ModelError>
 pub fn ferricml::ensemble::HistGradientBoostingClassifier::predict_proba(&self, &ferricml::data::MatrixView<'_>) -> core::result::Result<alloc::vec::Vec<f32>, ferricml::api::ModelError>
 pub fn ferricml::ensemble::HistGradientBoostingClassifier::predict_proba_into(&self, &ferricml::data::MatrixView<'_>, &mut [f32]) -> core::result::Result<(), ferricml::api::ModelError>
+impl ferricml::artifact::ModelArtifact for ferricml::ensemble::HistGradientBoostingClassifier
+pub const ferricml::ensemble::HistGradientBoostingClassifier::ARTIFACT_KIND: u16
+pub const ferricml::ensemble::HistGradientBoostingClassifier::MODEL_TAG: u16
+pub fn ferricml::ensemble::HistGradientBoostingClassifier::from_artifact(&[u8], [u8; 32]) -> core::result::Result<Self, ferricml::artifact::ArtifactError>
+pub fn ferricml::ensemble::HistGradientBoostingClassifier::to_artifact(&self, [u8; 32]) -> core::result::Result<alloc::vec::Vec<u8>, ferricml::artifact::ArtifactError>
 pub struct ferricml::ensemble::HistGradientBoostingClassifierParams
 impl ferricml::ensemble::HistGradientBoostingClassifierParams
 pub const fn ferricml::ensemble::HistGradientBoostingClassifierParams::l2_regularization(&self) -> f32
@@ -1179,14 +1324,12 @@ impl ferricml::ensemble::HistGradientBoostingRegressor
 pub const fn ferricml::ensemble::HistGradientBoostingRegressor::baseline(&self) -> f32
 pub fn ferricml::ensemble::HistGradientBoostingRegressor::fit(&ferricml::data::MatrixView<'_>, &ferricml::data::RegressionTargets, ferricml::ensemble::HistGradientBoostingRegressorParams) -> core::result::Result<Self, ferricml::api::ModelError>
 pub fn ferricml::ensemble::HistGradientBoostingRegressor::fit_weighted(&ferricml::data::MatrixView<'_>, &ferricml::data::RegressionTargets, &ferricml::data::SampleWeights, ferricml::ensemble::HistGradientBoostingRegressorParams) -> core::result::Result<Self, ferricml::api::ModelError>
-pub fn ferricml::ensemble::HistGradientBoostingRegressor::from_artifact(&[u8], [u8; 32]) -> core::result::Result<Self, ferricml::artifact::ArtifactError>
 pub const fn ferricml::ensemble::HistGradientBoostingRegressor::get_params(&self) -> &ferricml::ensemble::HistGradientBoostingRegressorParams
 pub const fn ferricml::ensemble::HistGradientBoostingRegressor::n_features_in(&self) -> usize
 pub fn ferricml::ensemble::HistGradientBoostingRegressor::n_iter(&self) -> usize
 pub fn ferricml::ensemble::HistGradientBoostingRegressor::predict(&self, &ferricml::data::MatrixView<'_>) -> core::result::Result<alloc::vec::Vec<f32>, ferricml::api::ModelError>
 pub fn ferricml::ensemble::HistGradientBoostingRegressor::predict_into(&self, &ferricml::data::MatrixView<'_>, &mut [f32]) -> core::result::Result<(), ferricml::api::ModelError>
 pub fn ferricml::ensemble::HistGradientBoostingRegressor::predict_one(&self, &[f32]) -> core::result::Result<f32, ferricml::api::ModelError>
-pub fn ferricml::ensemble::HistGradientBoostingRegressor::to_artifact(&self, [u8; 32]) -> core::result::Result<alloc::vec::Vec<u8>, ferricml::artifact::ArtifactError>
 impl core::clone::Clone for ferricml::ensemble::HistGradientBoostingRegressor
 pub fn ferricml::ensemble::HistGradientBoostingRegressor::clone(&self) -> ferricml::ensemble::HistGradientBoostingRegressor
 impl core::cmp::PartialEq for ferricml::ensemble::HistGradientBoostingRegressor
@@ -1206,10 +1349,11 @@ pub fn ferricml::ensemble::HistGradientBoostingRegressor::get_params(&self) -> &
 impl ferricml::api::Regressor for ferricml::ensemble::HistGradientBoostingRegressor
 pub fn ferricml::ensemble::HistGradientBoostingRegressor::predict(&self, &ferricml::data::MatrixView<'_>) -> core::result::Result<alloc::vec::Vec<f32>, ferricml::api::ModelError>
 pub fn ferricml::ensemble::HistGradientBoostingRegressor::predict_into(&self, &ferricml::data::MatrixView<'_>, &mut [f32]) -> core::result::Result<(), ferricml::api::ModelError>
-impl ferricml::pipeline::ModelArtifact for ferricml::ensemble::HistGradientBoostingRegressor
+impl ferricml::artifact::ModelArtifact for ferricml::ensemble::HistGradientBoostingRegressor
+pub const ferricml::ensemble::HistGradientBoostingRegressor::ARTIFACT_KIND: u16
 pub const ferricml::ensemble::HistGradientBoostingRegressor::MODEL_TAG: u16
-pub fn ferricml::ensemble::HistGradientBoostingRegressor::from_model_artifact(&[u8], [u8; 32]) -> core::result::Result<Self, ferricml::artifact::ArtifactError>
-pub fn ferricml::ensemble::HistGradientBoostingRegressor::to_model_artifact(&self, [u8; 32]) -> core::result::Result<alloc::vec::Vec<u8>, ferricml::artifact::ArtifactError>
+pub fn ferricml::ensemble::HistGradientBoostingRegressor::from_artifact(&[u8], [u8; 32]) -> core::result::Result<Self, ferricml::artifact::ArtifactError>
+pub fn ferricml::ensemble::HistGradientBoostingRegressor::to_artifact(&self, [u8; 32]) -> core::result::Result<alloc::vec::Vec<u8>, ferricml::artifact::ArtifactError>
 pub struct ferricml::ensemble::HistGradientBoostingRegressorParams
 impl ferricml::ensemble::HistGradientBoostingRegressorParams
 pub const fn ferricml::ensemble::HistGradientBoostingRegressorParams::l2_regularization(&self) -> f32
@@ -1242,7 +1386,6 @@ pub fn ferricml::ensemble::RandomForestClassifier::fit(&ferricml::data::MatrixVi
 pub fn ferricml::ensemble::RandomForestClassifier::fit_multiclass(&ferricml::data::MatrixView<'_>, &ferricml::data::ClassTargets, ferricml::ensemble::RandomForestClassifierParams) -> core::result::Result<Self, ferricml::api::ModelError>
 pub fn ferricml::ensemble::RandomForestClassifier::fit_multiclass_weighted(&ferricml::data::MatrixView<'_>, &ferricml::data::ClassTargets, &ferricml::data::SampleWeights, ferricml::ensemble::RandomForestClassifierParams) -> core::result::Result<Self, ferricml::api::ModelError>
 pub fn ferricml::ensemble::RandomForestClassifier::fit_weighted(&ferricml::data::MatrixView<'_>, &ferricml::data::BinaryTargets, &ferricml::data::SampleWeights, ferricml::ensemble::RandomForestClassifierParams) -> core::result::Result<Self, ferricml::api::ModelError>
-pub fn ferricml::ensemble::RandomForestClassifier::from_artifact(&[u8], [u8; 32]) -> core::result::Result<Self, ferricml::artifact::ArtifactError>
 pub fn ferricml::ensemble::RandomForestClassifier::get_params(&self) -> &ferricml::ensemble::RandomForestClassifierParams
 pub fn ferricml::ensemble::RandomForestClassifier::n_features_in(&self) -> usize
 pub fn ferricml::ensemble::RandomForestClassifier::predict(&self, &ferricml::data::MatrixView<'_>) -> core::result::Result<alloc::vec::Vec<u8>, ferricml::api::ModelError>
@@ -1257,7 +1400,6 @@ pub fn ferricml::ensemble::RandomForestClassifier::predict_proba(&self, &ferricm
 pub fn ferricml::ensemble::RandomForestClassifier::predict_proba_into(&self, &ferricml::data::MatrixView<'_>, &mut [f32]) -> core::result::Result<(), ferricml::api::ModelError>
 pub fn ferricml::ensemble::RandomForestClassifier::predict_proba_one(&self, &[f32]) -> core::result::Result<alloc::vec::Vec<f32>, ferricml::api::ModelError>
 pub fn ferricml::ensemble::RandomForestClassifier::predict_proba_one_into(&self, &[f32], &mut [f32]) -> core::result::Result<(), ferricml::api::ModelError>
-pub fn ferricml::ensemble::RandomForestClassifier::to_artifact(&self, [u8; 32]) -> core::result::Result<alloc::vec::Vec<u8>, ferricml::artifact::ArtifactError>
 impl core::clone::Clone for ferricml::ensemble::RandomForestClassifier
 pub fn ferricml::ensemble::RandomForestClassifier::clone(&self) -> ferricml::ensemble::RandomForestClassifier
 impl core::cmp::PartialEq for ferricml::ensemble::RandomForestClassifier
@@ -1283,6 +1425,11 @@ pub fn ferricml::ensemble::RandomForestClassifier::predict_class_proba(&self, &f
 pub fn ferricml::ensemble::RandomForestClassifier::predict_class_proba_into(&self, &ferricml::data::MatrixView<'_>, u8, &mut [f32]) -> core::result::Result<(), ferricml::api::ModelError>
 pub fn ferricml::ensemble::RandomForestClassifier::predict_proba(&self, &ferricml::data::MatrixView<'_>) -> core::result::Result<alloc::vec::Vec<f32>, ferricml::api::ModelError>
 pub fn ferricml::ensemble::RandomForestClassifier::predict_proba_into(&self, &ferricml::data::MatrixView<'_>, &mut [f32]) -> core::result::Result<(), ferricml::api::ModelError>
+impl ferricml::artifact::ModelArtifact for ferricml::ensemble::RandomForestClassifier
+pub const ferricml::ensemble::RandomForestClassifier::ARTIFACT_KIND: u16
+pub const ferricml::ensemble::RandomForestClassifier::MODEL_TAG: u16
+pub fn ferricml::ensemble::RandomForestClassifier::from_artifact(&[u8], [u8; 32]) -> core::result::Result<Self, ferricml::artifact::ArtifactError>
+pub fn ferricml::ensemble::RandomForestClassifier::to_artifact(&self, [u8; 32]) -> core::result::Result<alloc::vec::Vec<u8>, ferricml::artifact::ArtifactError>
 pub struct ferricml::ensemble::RandomForestClassifierParams
 impl ferricml::ensemble::RandomForestClassifierParams
 pub const fn ferricml::ensemble::RandomForestClassifierParams::bootstrap(&self) -> bool
@@ -1315,13 +1462,11 @@ pub struct ferricml::ensemble::RandomForestRegressor
 impl ferricml::ensemble::RandomForestRegressor
 pub fn ferricml::ensemble::RandomForestRegressor::fit(&ferricml::data::MatrixView<'_>, &ferricml::data::RegressionTargets, ferricml::ensemble::RandomForestRegressorParams) -> core::result::Result<Self, ferricml::api::ModelError>
 pub fn ferricml::ensemble::RandomForestRegressor::fit_weighted(&ferricml::data::MatrixView<'_>, &ferricml::data::RegressionTargets, &ferricml::data::SampleWeights, ferricml::ensemble::RandomForestRegressorParams) -> core::result::Result<Self, ferricml::api::ModelError>
-pub fn ferricml::ensemble::RandomForestRegressor::from_artifact(&[u8], [u8; 32]) -> core::result::Result<Self, ferricml::artifact::ArtifactError>
 pub fn ferricml::ensemble::RandomForestRegressor::get_params(&self) -> &ferricml::ensemble::RandomForestRegressorParams
 pub fn ferricml::ensemble::RandomForestRegressor::n_features_in(&self) -> usize
 pub fn ferricml::ensemble::RandomForestRegressor::predict(&self, &ferricml::data::MatrixView<'_>) -> core::result::Result<alloc::vec::Vec<f32>, ferricml::api::ModelError>
 pub fn ferricml::ensemble::RandomForestRegressor::predict_into(&self, &ferricml::data::MatrixView<'_>, &mut [f32]) -> core::result::Result<(), ferricml::api::ModelError>
 pub fn ferricml::ensemble::RandomForestRegressor::predict_one(&self, &[f32]) -> core::result::Result<f32, ferricml::api::ModelError>
-pub fn ferricml::ensemble::RandomForestRegressor::to_artifact(&self, [u8; 32]) -> core::result::Result<alloc::vec::Vec<u8>, ferricml::artifact::ArtifactError>
 impl core::clone::Clone for ferricml::ensemble::RandomForestRegressor
 pub fn ferricml::ensemble::RandomForestRegressor::clone(&self) -> ferricml::ensemble::RandomForestRegressor
 impl core::cmp::PartialEq for ferricml::ensemble::RandomForestRegressor
@@ -1341,10 +1486,11 @@ pub fn ferricml::ensemble::RandomForestRegressor::get_params(&self) -> &Self::Pa
 impl ferricml::api::Regressor for ferricml::ensemble::RandomForestRegressor
 pub fn ferricml::ensemble::RandomForestRegressor::predict(&self, &ferricml::data::MatrixView<'_>) -> core::result::Result<alloc::vec::Vec<f32>, ferricml::api::ModelError>
 pub fn ferricml::ensemble::RandomForestRegressor::predict_into(&self, &ferricml::data::MatrixView<'_>, &mut [f32]) -> core::result::Result<(), ferricml::api::ModelError>
-impl ferricml::pipeline::ModelArtifact for ferricml::ensemble::RandomForestRegressor
+impl ferricml::artifact::ModelArtifact for ferricml::ensemble::RandomForestRegressor
+pub const ferricml::ensemble::RandomForestRegressor::ARTIFACT_KIND: u16
 pub const ferricml::ensemble::RandomForestRegressor::MODEL_TAG: u16
-pub fn ferricml::ensemble::RandomForestRegressor::from_model_artifact(&[u8], [u8; 32]) -> core::result::Result<Self, ferricml::artifact::ArtifactError>
-pub fn ferricml::ensemble::RandomForestRegressor::to_model_artifact(&self, [u8; 32]) -> core::result::Result<alloc::vec::Vec<u8>, ferricml::artifact::ArtifactError>
+pub fn ferricml::ensemble::RandomForestRegressor::from_artifact(&[u8], [u8; 32]) -> core::result::Result<Self, ferricml::artifact::ArtifactError>
+pub fn ferricml::ensemble::RandomForestRegressor::to_artifact(&self, [u8; 32]) -> core::result::Result<alloc::vec::Vec<u8>, ferricml::artifact::ArtifactError>
 pub struct ferricml::ensemble::RandomForestRegressorParams
 impl ferricml::ensemble::RandomForestRegressorParams
 pub const fn ferricml::ensemble::RandomForestRegressorParams::bootstrap(&self) -> bool
@@ -1472,6 +1618,11 @@ pub fn ferricml::linear_model::ElasticNet::get_params(&self) -> &Self::Params
 impl ferricml::api::Regressor for ferricml::linear_model::ElasticNet
 pub fn ferricml::linear_model::ElasticNet::predict(&self, &ferricml::data::MatrixView<'_>) -> core::result::Result<alloc::vec::Vec<f32>, ferricml::api::ModelError>
 pub fn ferricml::linear_model::ElasticNet::predict_into(&self, &ferricml::data::MatrixView<'_>, &mut [f32]) -> core::result::Result<(), ferricml::api::ModelError>
+impl ferricml::artifact::ModelArtifact for ferricml::linear_model::ElasticNet
+pub const ferricml::linear_model::ElasticNet::ARTIFACT_KIND: u16
+pub const ferricml::linear_model::ElasticNet::MODEL_TAG: u16
+pub fn ferricml::linear_model::ElasticNet::from_artifact(&[u8], [u8; 32]) -> core::result::Result<Self, ferricml::artifact::ArtifactError>
+pub fn ferricml::linear_model::ElasticNet::to_artifact(&self, [u8; 32]) -> core::result::Result<alloc::vec::Vec<u8>, ferricml::artifact::ArtifactError>
 pub struct ferricml::linear_model::ElasticNetParams
 impl ferricml::linear_model::ElasticNetParams
 pub const fn ferricml::linear_model::ElasticNetParams::alpha(&self) -> f32
@@ -1523,6 +1674,11 @@ pub fn ferricml::linear_model::Lasso::get_params(&self) -> &Self::Params
 impl ferricml::api::Regressor for ferricml::linear_model::Lasso
 pub fn ferricml::linear_model::Lasso::predict(&self, &ferricml::data::MatrixView<'_>) -> core::result::Result<alloc::vec::Vec<f32>, ferricml::api::ModelError>
 pub fn ferricml::linear_model::Lasso::predict_into(&self, &ferricml::data::MatrixView<'_>, &mut [f32]) -> core::result::Result<(), ferricml::api::ModelError>
+impl ferricml::artifact::ModelArtifact for ferricml::linear_model::Lasso
+pub const ferricml::linear_model::Lasso::ARTIFACT_KIND: u16
+pub const ferricml::linear_model::Lasso::MODEL_TAG: u16
+pub fn ferricml::linear_model::Lasso::from_artifact(&[u8], [u8; 32]) -> core::result::Result<Self, ferricml::artifact::ArtifactError>
+pub fn ferricml::linear_model::Lasso::to_artifact(&self, [u8; 32]) -> core::result::Result<alloc::vec::Vec<u8>, ferricml::artifact::ArtifactError>
 pub struct ferricml::linear_model::LassoParams
 impl ferricml::linear_model::LassoParams
 pub const fn ferricml::linear_model::LassoParams::alpha(&self) -> f32
@@ -1547,7 +1703,6 @@ impl ferricml::linear_model::LinearRegression
 pub fn ferricml::linear_model::LinearRegression::coefficients(&self) -> &[f32]
 pub fn ferricml::linear_model::LinearRegression::fit(&ferricml::data::MatrixView<'_>, &ferricml::data::RegressionTargets, ferricml::linear_model::LinearRegressionParams) -> core::result::Result<Self, ferricml::api::ModelError>
 pub fn ferricml::linear_model::LinearRegression::fit_weighted(&ferricml::data::MatrixView<'_>, &ferricml::data::RegressionTargets, &ferricml::data::SampleWeights, ferricml::linear_model::LinearRegressionParams) -> core::result::Result<Self, ferricml::api::ModelError>
-pub fn ferricml::linear_model::LinearRegression::from_artifact(&[u8], [u8; 32]) -> core::result::Result<Self, ferricml::artifact::ArtifactError>
 pub const fn ferricml::linear_model::LinearRegression::get_params(&self) -> &ferricml::linear_model::LinearRegressionParams
 pub const fn ferricml::linear_model::LinearRegression::intercept(&self) -> f32
 pub const fn ferricml::linear_model::LinearRegression::n_features_in(&self) -> usize
@@ -1555,7 +1710,6 @@ pub fn ferricml::linear_model::LinearRegression::predict(&self, &ferricml::data:
 pub fn ferricml::linear_model::LinearRegression::predict_into(&self, &ferricml::data::MatrixView<'_>, &mut [f32]) -> core::result::Result<(), ferricml::api::ModelError>
 pub fn ferricml::linear_model::LinearRegression::predict_one(&self, &[f32]) -> core::result::Result<f32, ferricml::api::ModelError>
 pub const fn ferricml::linear_model::LinearRegression::rank(&self) -> usize
-pub fn ferricml::linear_model::LinearRegression::to_artifact(&self, [u8; 32]) -> core::result::Result<alloc::vec::Vec<u8>, ferricml::artifact::ArtifactError>
 impl core::clone::Clone for ferricml::linear_model::LinearRegression
 pub fn ferricml::linear_model::LinearRegression::clone(&self) -> ferricml::linear_model::LinearRegression
 impl core::cmp::PartialEq for ferricml::linear_model::LinearRegression
@@ -1575,10 +1729,11 @@ pub fn ferricml::linear_model::LinearRegression::get_params(&self) -> &Self::Par
 impl ferricml::api::Regressor for ferricml::linear_model::LinearRegression
 pub fn ferricml::linear_model::LinearRegression::predict(&self, &ferricml::data::MatrixView<'_>) -> core::result::Result<alloc::vec::Vec<f32>, ferricml::api::ModelError>
 pub fn ferricml::linear_model::LinearRegression::predict_into(&self, &ferricml::data::MatrixView<'_>, &mut [f32]) -> core::result::Result<(), ferricml::api::ModelError>
-impl ferricml::pipeline::ModelArtifact for ferricml::linear_model::LinearRegression
+impl ferricml::artifact::ModelArtifact for ferricml::linear_model::LinearRegression
+pub const ferricml::linear_model::LinearRegression::ARTIFACT_KIND: u16
 pub const ferricml::linear_model::LinearRegression::MODEL_TAG: u16
-pub fn ferricml::linear_model::LinearRegression::from_model_artifact(&[u8], [u8; 32]) -> core::result::Result<Self, ferricml::artifact::ArtifactError>
-pub fn ferricml::linear_model::LinearRegression::to_model_artifact(&self, [u8; 32]) -> core::result::Result<alloc::vec::Vec<u8>, ferricml::artifact::ArtifactError>
+pub fn ferricml::linear_model::LinearRegression::from_artifact(&[u8], [u8; 32]) -> core::result::Result<Self, ferricml::artifact::ArtifactError>
+pub fn ferricml::linear_model::LinearRegression::to_artifact(&self, [u8; 32]) -> core::result::Result<alloc::vec::Vec<u8>, ferricml::artifact::ArtifactError>
 pub struct ferricml::linear_model::LinearRegressionParams
 impl ferricml::linear_model::LinearRegressionParams
 pub const fn ferricml::linear_model::LinearRegressionParams::fit_intercept(&self) -> bool
@@ -1605,7 +1760,6 @@ pub fn ferricml::linear_model::LogisticRegression::fit(&ferricml::data::MatrixVi
 pub fn ferricml::linear_model::LogisticRegression::fit_multiclass(&ferricml::data::MatrixView<'_>, &ferricml::data::ClassTargets, ferricml::linear_model::LogisticRegressionParams) -> core::result::Result<Self, ferricml::api::ModelError>
 pub fn ferricml::linear_model::LogisticRegression::fit_multiclass_weighted(&ferricml::data::MatrixView<'_>, &ferricml::data::ClassTargets, &ferricml::data::SampleWeights, ferricml::linear_model::LogisticRegressionParams) -> core::result::Result<Self, ferricml::api::ModelError>
 pub fn ferricml::linear_model::LogisticRegression::fit_weighted(&ferricml::data::MatrixView<'_>, &ferricml::data::BinaryTargets, &ferricml::data::SampleWeights, ferricml::linear_model::LogisticRegressionParams) -> core::result::Result<Self, ferricml::api::ModelError>
-pub fn ferricml::linear_model::LogisticRegression::from_artifact(&[u8], [u8; 32]) -> core::result::Result<Self, ferricml::artifact::ArtifactError>
 pub const fn ferricml::linear_model::LogisticRegression::get_params(&self) -> &ferricml::linear_model::LogisticRegressionParams
 pub fn ferricml::linear_model::LogisticRegression::intercept(&self) -> f32
 pub fn ferricml::linear_model::LogisticRegression::intercepts(&self) -> &[f32]
@@ -1619,7 +1773,6 @@ pub fn ferricml::linear_model::LogisticRegression::predict_one(&self, &[f32]) ->
 pub fn ferricml::linear_model::LogisticRegression::predict_positive_proba(&self, &[f32]) -> core::result::Result<f32, ferricml::api::ModelError>
 pub fn ferricml::linear_model::LogisticRegression::predict_proba(&self, &ferricml::data::MatrixView<'_>) -> core::result::Result<alloc::vec::Vec<f32>, ferricml::api::ModelError>
 pub fn ferricml::linear_model::LogisticRegression::predict_proba_into(&self, &ferricml::data::MatrixView<'_>, &mut [f32]) -> core::result::Result<(), ferricml::api::ModelError>
-pub fn ferricml::linear_model::LogisticRegression::to_artifact(&self, [u8; 32]) -> core::result::Result<alloc::vec::Vec<u8>, ferricml::artifact::ArtifactError>
 impl core::clone::Clone for ferricml::linear_model::LogisticRegression
 pub fn ferricml::linear_model::LogisticRegression::clone(&self) -> ferricml::linear_model::LogisticRegression
 impl core::cmp::PartialEq for ferricml::linear_model::LogisticRegression
@@ -1645,10 +1798,11 @@ pub fn ferricml::linear_model::LogisticRegression::predict_class_proba(&self, &f
 pub fn ferricml::linear_model::LogisticRegression::predict_class_proba_into(&self, &ferricml::data::MatrixView<'_>, u8, &mut [f32]) -> core::result::Result<(), ferricml::api::ModelError>
 pub fn ferricml::linear_model::LogisticRegression::predict_proba(&self, &ferricml::data::MatrixView<'_>) -> core::result::Result<alloc::vec::Vec<f32>, ferricml::api::ModelError>
 pub fn ferricml::linear_model::LogisticRegression::predict_proba_into(&self, &ferricml::data::MatrixView<'_>, &mut [f32]) -> core::result::Result<(), ferricml::api::ModelError>
-impl ferricml::pipeline::ModelArtifact for ferricml::linear_model::LogisticRegression
+impl ferricml::artifact::ModelArtifact for ferricml::linear_model::LogisticRegression
+pub const ferricml::linear_model::LogisticRegression::ARTIFACT_KIND: u16
 pub const ferricml::linear_model::LogisticRegression::MODEL_TAG: u16
-pub fn ferricml::linear_model::LogisticRegression::from_model_artifact(&[u8], [u8; 32]) -> core::result::Result<Self, ferricml::artifact::ArtifactError>
-pub fn ferricml::linear_model::LogisticRegression::to_model_artifact(&self, [u8; 32]) -> core::result::Result<alloc::vec::Vec<u8>, ferricml::artifact::ArtifactError>
+pub fn ferricml::linear_model::LogisticRegression::from_artifact(&[u8], [u8; 32]) -> core::result::Result<Self, ferricml::artifact::ArtifactError>
+pub fn ferricml::linear_model::LogisticRegression::to_artifact(&self, [u8; 32]) -> core::result::Result<alloc::vec::Vec<u8>, ferricml::artifact::ArtifactError>
 pub struct ferricml::linear_model::LogisticRegressionParams
 impl ferricml::linear_model::LogisticRegressionParams
 pub const fn ferricml::linear_model::LogisticRegressionParams::c(&self) -> f32
@@ -1675,14 +1829,12 @@ impl ferricml::linear_model::Ridge
 pub fn ferricml::linear_model::Ridge::coefficients(&self) -> &[f32]
 pub fn ferricml::linear_model::Ridge::fit(&ferricml::data::MatrixView<'_>, &ferricml::data::RegressionTargets, ferricml::linear_model::RidgeParams) -> core::result::Result<Self, ferricml::api::ModelError>
 pub fn ferricml::linear_model::Ridge::fit_weighted(&ferricml::data::MatrixView<'_>, &ferricml::data::RegressionTargets, &ferricml::data::SampleWeights, ferricml::linear_model::RidgeParams) -> core::result::Result<Self, ferricml::api::ModelError>
-pub fn ferricml::linear_model::Ridge::from_artifact(&[u8], [u8; 32]) -> core::result::Result<Self, ferricml::artifact::ArtifactError>
 pub const fn ferricml::linear_model::Ridge::get_params(&self) -> &ferricml::linear_model::RidgeParams
 pub const fn ferricml::linear_model::Ridge::intercept(&self) -> f32
 pub const fn ferricml::linear_model::Ridge::n_features_in(&self) -> usize
 pub fn ferricml::linear_model::Ridge::predict(&self, &ferricml::data::MatrixView<'_>) -> core::result::Result<alloc::vec::Vec<f32>, ferricml::api::ModelError>
 pub fn ferricml::linear_model::Ridge::predict_into(&self, &ferricml::data::MatrixView<'_>, &mut [f32]) -> core::result::Result<(), ferricml::api::ModelError>
 pub fn ferricml::linear_model::Ridge::predict_one(&self, &[f32]) -> core::result::Result<f32, ferricml::api::ModelError>
-pub fn ferricml::linear_model::Ridge::to_artifact(&self, [u8; 32]) -> core::result::Result<alloc::vec::Vec<u8>, ferricml::artifact::ArtifactError>
 impl core::clone::Clone for ferricml::linear_model::Ridge
 pub fn ferricml::linear_model::Ridge::clone(&self) -> ferricml::linear_model::Ridge
 impl core::cmp::PartialEq for ferricml::linear_model::Ridge
@@ -1702,10 +1854,11 @@ pub fn ferricml::linear_model::Ridge::get_params(&self) -> &Self::Params
 impl ferricml::api::Regressor for ferricml::linear_model::Ridge
 pub fn ferricml::linear_model::Ridge::predict(&self, &ferricml::data::MatrixView<'_>) -> core::result::Result<alloc::vec::Vec<f32>, ferricml::api::ModelError>
 pub fn ferricml::linear_model::Ridge::predict_into(&self, &ferricml::data::MatrixView<'_>, &mut [f32]) -> core::result::Result<(), ferricml::api::ModelError>
-impl ferricml::pipeline::ModelArtifact for ferricml::linear_model::Ridge
+impl ferricml::artifact::ModelArtifact for ferricml::linear_model::Ridge
+pub const ferricml::linear_model::Ridge::ARTIFACT_KIND: u16
 pub const ferricml::linear_model::Ridge::MODEL_TAG: u16
-pub fn ferricml::linear_model::Ridge::from_model_artifact(&[u8], [u8; 32]) -> core::result::Result<Self, ferricml::artifact::ArtifactError>
-pub fn ferricml::linear_model::Ridge::to_model_artifact(&self, [u8; 32]) -> core::result::Result<alloc::vec::Vec<u8>, ferricml::artifact::ArtifactError>
+pub fn ferricml::linear_model::Ridge::from_artifact(&[u8], [u8; 32]) -> core::result::Result<Self, ferricml::artifact::ArtifactError>
+pub fn ferricml::linear_model::Ridge::to_artifact(&self, [u8; 32]) -> core::result::Result<alloc::vec::Vec<u8>, ferricml::artifact::ArtifactError>
 pub struct ferricml::linear_model::RidgeParams
 impl ferricml::linear_model::RidgeParams
 pub const fn ferricml::linear_model::RidgeParams::alpha(&self) -> f32
@@ -2483,20 +2636,14 @@ pub fn ferricml::model_selection::train_test_split(usize, ferricml::model_select
 pub mod ferricml::pipeline
 pub struct ferricml::pipeline::Pipeline<T, E>
 impl ferricml::pipeline::Pipeline<ferricml::preprocessing::StandardScaler, ferricml::linear_model::LinearRegression>
-pub fn ferricml::pipeline::Pipeline<ferricml::preprocessing::StandardScaler, ferricml::linear_model::LinearRegression>::from_artifact(&[u8], [u8; 32], [u8; 32]) -> core::result::Result<Self, ferricml::artifact::ArtifactError>
 pub fn ferricml::pipeline::Pipeline<ferricml::preprocessing::StandardScaler, ferricml::linear_model::LinearRegression>::predict_into(&self, &ferricml::data::MatrixView<'_>, &mut [f32], &mut [f32]) -> core::result::Result<(), ferricml::api::ModelError>
-pub fn ferricml::pipeline::Pipeline<ferricml::preprocessing::StandardScaler, ferricml::linear_model::LinearRegression>::to_artifact(&self, [u8; 32], [u8; 32]) -> core::result::Result<alloc::vec::Vec<u8>, ferricml::artifact::ArtifactError>
 impl ferricml::pipeline::Pipeline<ferricml::preprocessing::StandardScaler, ferricml::linear_model::LogisticRegression>
 pub fn ferricml::pipeline::Pipeline<ferricml::preprocessing::StandardScaler, ferricml::linear_model::LogisticRegression>::decision_function_into(&self, &ferricml::data::MatrixView<'_>, &mut [f32], &mut [f32]) -> core::result::Result<(), ferricml::api::ModelError>
-pub fn ferricml::pipeline::Pipeline<ferricml::preprocessing::StandardScaler, ferricml::linear_model::LogisticRegression>::from_artifact(&[u8], [u8; 32], [u8; 32]) -> core::result::Result<Self, ferricml::artifact::ArtifactError>
 pub fn ferricml::pipeline::Pipeline<ferricml::preprocessing::StandardScaler, ferricml::linear_model::LogisticRegression>::predict_class_proba_into(&self, &ferricml::data::MatrixView<'_>, u8, &mut [f32], &mut [f32]) -> core::result::Result<(), ferricml::api::ModelError>
 pub fn ferricml::pipeline::Pipeline<ferricml::preprocessing::StandardScaler, ferricml::linear_model::LogisticRegression>::predict_into(&self, &ferricml::data::MatrixView<'_>, &mut [f32], &mut [u8]) -> core::result::Result<(), ferricml::api::ModelError>
 pub fn ferricml::pipeline::Pipeline<ferricml::preprocessing::StandardScaler, ferricml::linear_model::LogisticRegression>::predict_proba_into(&self, &ferricml::data::MatrixView<'_>, &mut [f32], &mut [f32]) -> core::result::Result<(), ferricml::api::ModelError>
-pub fn ferricml::pipeline::Pipeline<ferricml::preprocessing::StandardScaler, ferricml::linear_model::LogisticRegression>::to_artifact(&self, [u8; 32], [u8; 32]) -> core::result::Result<alloc::vec::Vec<u8>, ferricml::artifact::ArtifactError>
 impl ferricml::pipeline::Pipeline<ferricml::preprocessing::StandardScaler, ferricml::linear_model::Ridge>
-pub fn ferricml::pipeline::Pipeline<ferricml::preprocessing::StandardScaler, ferricml::linear_model::Ridge>::from_artifact(&[u8], [u8; 32], [u8; 32]) -> core::result::Result<Self, ferricml::artifact::ArtifactError>
 pub fn ferricml::pipeline::Pipeline<ferricml::preprocessing::StandardScaler, ferricml::linear_model::Ridge>::predict_into(&self, &ferricml::data::MatrixView<'_>, &mut [f32], &mut [f32]) -> core::result::Result<(), ferricml::api::ModelError>
-pub fn ferricml::pipeline::Pipeline<ferricml::preprocessing::StandardScaler, ferricml::linear_model::Ridge>::to_artifact(&self, [u8; 32], [u8; 32]) -> core::result::Result<alloc::vec::Vec<u8>, ferricml::artifact::ArtifactError>
 impl<T, E> ferricml::pipeline::Pipeline<T, E> where T: ferricml::api::Transformer, E: ferricml::api::Estimator
 pub const fn ferricml::pipeline::Pipeline<T, E>::estimator(&self) -> &E
 pub fn ferricml::pipeline::Pipeline<T, E>::into_parts(self) -> (T, E)
@@ -2512,6 +2659,21 @@ impl ferricml::api::HasCapabilities for ferricml::pipeline::Pipeline<ferricml::p
 pub const ferricml::pipeline::Pipeline<ferricml::preprocessing::StandardScaler, ferricml::linear_model::LogisticRegression>::CAPABILITIES: ferricml::api::Capabilities
 impl ferricml::api::HasCapabilities for ferricml::pipeline::Pipeline<ferricml::preprocessing::StandardScaler, ferricml::linear_model::Ridge>
 pub const ferricml::pipeline::Pipeline<ferricml::preprocessing::StandardScaler, ferricml::linear_model::Ridge>::CAPABILITIES: ferricml::api::Capabilities
+impl ferricml::artifact::StageArtifact for ferricml::pipeline::Pipeline<ferricml::preprocessing::StandardScaler, ferricml::linear_model::LinearRegression>
+pub const ferricml::pipeline::Pipeline<ferricml::preprocessing::StandardScaler, ferricml::linear_model::LinearRegression>::ARTIFACT_KIND: u16
+pub const ferricml::pipeline::Pipeline<ferricml::preprocessing::StandardScaler, ferricml::linear_model::LinearRegression>::STAGE_TAG: u16
+pub fn ferricml::pipeline::Pipeline<ferricml::preprocessing::StandardScaler, ferricml::linear_model::LinearRegression>::from_artifact(&[u8], [u8; 32], [u8; 32]) -> core::result::Result<Self, ferricml::artifact::ArtifactError>
+pub fn ferricml::pipeline::Pipeline<ferricml::preprocessing::StandardScaler, ferricml::linear_model::LinearRegression>::to_artifact(&self, [u8; 32], [u8; 32]) -> core::result::Result<alloc::vec::Vec<u8>, ferricml::artifact::ArtifactError>
+impl ferricml::artifact::StageArtifact for ferricml::pipeline::Pipeline<ferricml::preprocessing::StandardScaler, ferricml::linear_model::LogisticRegression>
+pub const ferricml::pipeline::Pipeline<ferricml::preprocessing::StandardScaler, ferricml::linear_model::LogisticRegression>::ARTIFACT_KIND: u16
+pub const ferricml::pipeline::Pipeline<ferricml::preprocessing::StandardScaler, ferricml::linear_model::LogisticRegression>::STAGE_TAG: u16
+pub fn ferricml::pipeline::Pipeline<ferricml::preprocessing::StandardScaler, ferricml::linear_model::LogisticRegression>::from_artifact(&[u8], [u8; 32], [u8; 32]) -> core::result::Result<Self, ferricml::artifact::ArtifactError>
+pub fn ferricml::pipeline::Pipeline<ferricml::preprocessing::StandardScaler, ferricml::linear_model::LogisticRegression>::to_artifact(&self, [u8; 32], [u8; 32]) -> core::result::Result<alloc::vec::Vec<u8>, ferricml::artifact::ArtifactError>
+impl ferricml::artifact::StageArtifact for ferricml::pipeline::Pipeline<ferricml::preprocessing::StandardScaler, ferricml::linear_model::Ridge>
+pub const ferricml::pipeline::Pipeline<ferricml::preprocessing::StandardScaler, ferricml::linear_model::Ridge>::ARTIFACT_KIND: u16
+pub const ferricml::pipeline::Pipeline<ferricml::preprocessing::StandardScaler, ferricml::linear_model::Ridge>::STAGE_TAG: u16
+pub fn ferricml::pipeline::Pipeline<ferricml::preprocessing::StandardScaler, ferricml::linear_model::Ridge>::from_artifact(&[u8], [u8; 32], [u8; 32]) -> core::result::Result<Self, ferricml::artifact::ArtifactError>
+pub fn ferricml::pipeline::Pipeline<ferricml::preprocessing::StandardScaler, ferricml::linear_model::Ridge>::to_artifact(&self, [u8; 32], [u8; 32]) -> core::result::Result<alloc::vec::Vec<u8>, ferricml::artifact::ArtifactError>
 impl<T, E> ferricml::api::Estimator for ferricml::pipeline::Pipeline<T, E> where T: ferricml::api::Transformer, E: ferricml::api::Estimator
 pub fn ferricml::pipeline::Pipeline<T, E>::n_features_in(&self) -> usize
 impl<T: core::clone::Clone, E: core::clone::Clone> core::clone::Clone for ferricml::pipeline::Pipeline<T, E>
@@ -2522,11 +2684,8 @@ impl<T: core::cmp::PartialEq, E: core::cmp::PartialEq> core::marker::StructuralP
 impl<T: core::fmt::Debug, E: core::fmt::Debug> core::fmt::Debug for ferricml::pipeline::Pipeline<T, E>
 pub fn ferricml::pipeline::Pipeline<T, E>::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
 pub struct ferricml::pipeline::StagedPipeline<S, E>
-impl<A, B, E> ferricml::pipeline::StagedPipeline<(A, B), E> where A: ferricml::api::Transformer, B: ferricml::api::Transformer, E: ferricml::api::Estimator
+impl<A, B, E> ferricml::pipeline::StagedPipeline<(A, B), E> where A: ferricml::api::Transformer + ferricml::api::HasCapabilities, B: ferricml::api::Transformer + ferricml::api::HasCapabilities, E: ferricml::api::Estimator
 pub fn ferricml::pipeline::StagedPipeline<(A, B), E>::fit(&ferricml::data::MatrixView<'_>, impl core::ops::function::FnOnce(&ferricml::data::MatrixView<'_>) -> core::result::Result<A, ferricml::api::ModelError>, impl core::ops::function::FnOnce(&ferricml::data::MatrixView<'_>) -> core::result::Result<B, ferricml::api::ModelError>, impl core::ops::function::FnOnce(&ferricml::data::MatrixView<'_>) -> core::result::Result<E, ferricml::api::ModelError>) -> core::result::Result<Self, ferricml::api::ModelError>
-impl<S, E> ferricml::pipeline::StagedPipeline<S, E> where S: ferricml::pipeline::TransformerStack + ferricml::pipeline::PersistedStack, E: ferricml::api::Estimator + ferricml::pipeline::ModelArtifact
-pub fn ferricml::pipeline::StagedPipeline<S, E>::from_artifact(&[u8], [u8; 32], [u8; 32]) -> core::result::Result<Self, ferricml::artifact::ArtifactError>
-pub fn ferricml::pipeline::StagedPipeline<S, E>::to_artifact(&self, [u8; 32], [u8; 32]) -> core::result::Result<alloc::vec::Vec<u8>, ferricml::artifact::ArtifactError>
 impl<S, E> ferricml::pipeline::StagedPipeline<S, E> where S: ferricml::pipeline::TransformerStack, E: ferricml::api::Estimator
 pub const fn ferricml::pipeline::StagedPipeline<S, E>::estimator(&self) -> &E
 pub fn ferricml::pipeline::StagedPipeline<S, E>::into_parts(self) -> (S, E)
@@ -2538,8 +2697,13 @@ pub fn ferricml::pipeline::StagedPipeline<S, E>::with_transformed<R>(&self, &fer
 pub fn ferricml::pipeline::StagedPipeline<S, E>::workspace_len(&self, usize) -> core::result::Result<usize, ferricml::api::ModelError>
 impl<S, E> ferricml::api::Estimator for ferricml::pipeline::StagedPipeline<S, E> where S: ferricml::pipeline::TransformerStack, E: ferricml::api::Estimator
 pub fn ferricml::pipeline::StagedPipeline<S, E>::n_features_in(&self) -> usize
-impl<S, E> ferricml::api::HasCapabilities for ferricml::pipeline::StagedPipeline<S, E> where S: ferricml::pipeline::TransformerStack + ferricml::pipeline::PersistedStack, E: ferricml::api::Estimator + ferricml::pipeline::ModelArtifact
+impl<S, E> ferricml::api::HasCapabilities for ferricml::pipeline::StagedPipeline<S, E> where S: ferricml::pipeline::TransformerStack, E: ferricml::api::Estimator + ferricml::api::HasCapabilities
 pub const ferricml::pipeline::StagedPipeline<S, E>::CAPABILITIES: ferricml::api::Capabilities
+impl<S, E> ferricml::artifact::StageArtifact for ferricml::pipeline::StagedPipeline<S, E> where S: ferricml::pipeline::TransformerStack + ferricml::pipeline::PersistedStack, E: ferricml::api::Estimator + ferricml::artifact::ModelArtifact
+pub const ferricml::pipeline::StagedPipeline<S, E>::ARTIFACT_KIND: u16
+pub const ferricml::pipeline::StagedPipeline<S, E>::STAGE_TAG: u16
+pub fn ferricml::pipeline::StagedPipeline<S, E>::from_artifact(&[u8], [u8; 32], [u8; 32]) -> core::result::Result<Self, ferricml::artifact::ArtifactError>
+pub fn ferricml::pipeline::StagedPipeline<S, E>::to_artifact(&self, [u8; 32], [u8; 32]) -> core::result::Result<alloc::vec::Vec<u8>, ferricml::artifact::ArtifactError>
 impl<S: core::clone::Clone, E: core::clone::Clone> core::clone::Clone for ferricml::pipeline::StagedPipeline<S, E>
 pub fn ferricml::pipeline::StagedPipeline<S, E>::clone(&self) -> ferricml::pipeline::StagedPipeline<S, E>
 impl<S: core::cmp::PartialEq, E: core::cmp::PartialEq> core::cmp::PartialEq for ferricml::pipeline::StagedPipeline<S, E>
@@ -2547,75 +2711,34 @@ pub fn ferricml::pipeline::StagedPipeline<S, E>::eq(&self, &ferricml::pipeline::
 impl<S: core::cmp::PartialEq, E: core::cmp::PartialEq> core::marker::StructuralPartialEq for ferricml::pipeline::StagedPipeline<S, E>
 impl<S: core::fmt::Debug, E: core::fmt::Debug> core::fmt::Debug for ferricml::pipeline::StagedPipeline<S, E>
 pub fn ferricml::pipeline::StagedPipeline<S, E>::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
-pub trait ferricml::pipeline::ModelArtifact: core::marker::Sized
-pub const ferricml::pipeline::ModelArtifact::MODEL_TAG: u16
-pub fn ferricml::pipeline::ModelArtifact::from_model_artifact(&[u8], [u8; 32]) -> core::result::Result<Self, ferricml::artifact::ArtifactError>
-pub fn ferricml::pipeline::ModelArtifact::to_model_artifact(&self, [u8; 32]) -> core::result::Result<alloc::vec::Vec<u8>, ferricml::artifact::ArtifactError>
-impl ferricml::pipeline::ModelArtifact for ferricml::ensemble::HistGradientBoostingRegressor
-pub const ferricml::ensemble::HistGradientBoostingRegressor::MODEL_TAG: u16
-pub fn ferricml::ensemble::HistGradientBoostingRegressor::from_model_artifact(&[u8], [u8; 32]) -> core::result::Result<Self, ferricml::artifact::ArtifactError>
-pub fn ferricml::ensemble::HistGradientBoostingRegressor::to_model_artifact(&self, [u8; 32]) -> core::result::Result<alloc::vec::Vec<u8>, ferricml::artifact::ArtifactError>
-impl ferricml::pipeline::ModelArtifact for ferricml::ensemble::RandomForestRegressor
-pub const ferricml::ensemble::RandomForestRegressor::MODEL_TAG: u16
-pub fn ferricml::ensemble::RandomForestRegressor::from_model_artifact(&[u8], [u8; 32]) -> core::result::Result<Self, ferricml::artifact::ArtifactError>
-pub fn ferricml::ensemble::RandomForestRegressor::to_model_artifact(&self, [u8; 32]) -> core::result::Result<alloc::vec::Vec<u8>, ferricml::artifact::ArtifactError>
-impl ferricml::pipeline::ModelArtifact for ferricml::linear_model::LinearRegression
-pub const ferricml::linear_model::LinearRegression::MODEL_TAG: u16
-pub fn ferricml::linear_model::LinearRegression::from_model_artifact(&[u8], [u8; 32]) -> core::result::Result<Self, ferricml::artifact::ArtifactError>
-pub fn ferricml::linear_model::LinearRegression::to_model_artifact(&self, [u8; 32]) -> core::result::Result<alloc::vec::Vec<u8>, ferricml::artifact::ArtifactError>
-impl ferricml::pipeline::ModelArtifact for ferricml::linear_model::LogisticRegression
-pub const ferricml::linear_model::LogisticRegression::MODEL_TAG: u16
-pub fn ferricml::linear_model::LogisticRegression::from_model_artifact(&[u8], [u8; 32]) -> core::result::Result<Self, ferricml::artifact::ArtifactError>
-pub fn ferricml::linear_model::LogisticRegression::to_model_artifact(&self, [u8; 32]) -> core::result::Result<alloc::vec::Vec<u8>, ferricml::artifact::ArtifactError>
-impl ferricml::pipeline::ModelArtifact for ferricml::linear_model::Ridge
-pub const ferricml::linear_model::Ridge::MODEL_TAG: u16
-pub fn ferricml::linear_model::Ridge::from_model_artifact(&[u8], [u8; 32]) -> core::result::Result<Self, ferricml::artifact::ArtifactError>
-pub fn ferricml::linear_model::Ridge::to_model_artifact(&self, [u8; 32]) -> core::result::Result<alloc::vec::Vec<u8>, ferricml::artifact::ArtifactError>
 pub trait ferricml::pipeline::PersistedStack: core::marker::Sized
 pub const ferricml::pipeline::PersistedStack::STAGE_TAGS: &'static [u16]
 pub fn ferricml::pipeline::PersistedStack::decode_stages(&[&[u8]], [u8; 32], [u8; 32]) -> core::result::Result<Self, ferricml::artifact::ArtifactError>
 pub fn ferricml::pipeline::PersistedStack::encode_stages(&self, [u8; 32], [u8; 32]) -> core::result::Result<alloc::vec::Vec<alloc::vec::Vec<u8>>, ferricml::artifact::ArtifactError>
-impl<A, B, C> ferricml::pipeline::PersistedStack for (A, B, C) where A: ferricml::pipeline::StageArtifact, B: ferricml::pipeline::StageArtifact, C: ferricml::pipeline::StageArtifact
+impl<A, B, C> ferricml::pipeline::PersistedStack for (A, B, C) where A: ferricml::artifact::StageArtifact, B: ferricml::artifact::StageArtifact, C: ferricml::artifact::StageArtifact
 pub const (A, B, C)::STAGE_TAGS: &'static [u16]
 pub fn (A, B, C)::decode_stages(&[&[u8]], [u8; 32], [u8; 32]) -> core::result::Result<Self, ferricml::artifact::ArtifactError>
 pub fn (A, B, C)::encode_stages(&self, [u8; 32], [u8; 32]) -> core::result::Result<alloc::vec::Vec<alloc::vec::Vec<u8>>, ferricml::artifact::ArtifactError>
-impl<A, B> ferricml::pipeline::PersistedStack for (A, B) where A: ferricml::pipeline::StageArtifact, B: ferricml::pipeline::StageArtifact
+impl<A, B> ferricml::pipeline::PersistedStack for (A, B) where A: ferricml::artifact::StageArtifact, B: ferricml::artifact::StageArtifact
 pub const (A, B)::STAGE_TAGS: &'static [u16]
 pub fn (A, B)::decode_stages(&[&[u8]], [u8; 32], [u8; 32]) -> core::result::Result<Self, ferricml::artifact::ArtifactError>
 pub fn (A, B)::encode_stages(&self, [u8; 32], [u8; 32]) -> core::result::Result<alloc::vec::Vec<alloc::vec::Vec<u8>>, ferricml::artifact::ArtifactError>
-pub trait ferricml::pipeline::StageArtifact: core::marker::Sized
-pub const ferricml::pipeline::StageArtifact::STAGE_TAG: u16
-pub fn ferricml::pipeline::StageArtifact::from_stage_artifact(&[u8], [u8; 32], [u8; 32]) -> core::result::Result<Self, ferricml::artifact::ArtifactError>
-pub fn ferricml::pipeline::StageArtifact::to_stage_artifact(&self, [u8; 32], [u8; 32]) -> core::result::Result<alloc::vec::Vec<u8>, ferricml::artifact::ArtifactError>
-impl ferricml::pipeline::StageArtifact for ferricml::preprocessing::MaxAbsScaler
-pub const ferricml::preprocessing::MaxAbsScaler::STAGE_TAG: u16
-pub fn ferricml::preprocessing::MaxAbsScaler::from_stage_artifact(&[u8], [u8; 32], [u8; 32]) -> core::result::Result<Self, ferricml::artifact::ArtifactError>
-pub fn ferricml::preprocessing::MaxAbsScaler::to_stage_artifact(&self, [u8; 32], [u8; 32]) -> core::result::Result<alloc::vec::Vec<u8>, ferricml::artifact::ArtifactError>
-impl ferricml::pipeline::StageArtifact for ferricml::preprocessing::MinMaxScaler
-pub const ferricml::preprocessing::MinMaxScaler::STAGE_TAG: u16
-pub fn ferricml::preprocessing::MinMaxScaler::from_stage_artifact(&[u8], [u8; 32], [u8; 32]) -> core::result::Result<Self, ferricml::artifact::ArtifactError>
-pub fn ferricml::preprocessing::MinMaxScaler::to_stage_artifact(&self, [u8; 32], [u8; 32]) -> core::result::Result<alloc::vec::Vec<u8>, ferricml::artifact::ArtifactError>
-impl ferricml::pipeline::StageArtifact for ferricml::preprocessing::RobustScaler
-pub const ferricml::preprocessing::RobustScaler::STAGE_TAG: u16
-pub fn ferricml::preprocessing::RobustScaler::from_stage_artifact(&[u8], [u8; 32], [u8; 32]) -> core::result::Result<Self, ferricml::artifact::ArtifactError>
-pub fn ferricml::preprocessing::RobustScaler::to_stage_artifact(&self, [u8; 32], [u8; 32]) -> core::result::Result<alloc::vec::Vec<u8>, ferricml::artifact::ArtifactError>
-impl ferricml::pipeline::StageArtifact for ferricml::preprocessing::StandardScaler
-pub const ferricml::preprocessing::StandardScaler::STAGE_TAG: u16
-pub fn ferricml::preprocessing::StandardScaler::from_stage_artifact(&[u8], [u8; 32], [u8; 32]) -> core::result::Result<Self, ferricml::artifact::ArtifactError>
-pub fn ferricml::preprocessing::StandardScaler::to_stage_artifact(&self, [u8; 32], [u8; 32]) -> core::result::Result<alloc::vec::Vec<u8>, ferricml::artifact::ArtifactError>
 pub trait ferricml::pipeline::TransformerStack
+pub const ferricml::pipeline::TransformerStack::STAGES_PERSIST: bool
 pub fn ferricml::pipeline::TransformerStack::n_features_in(&self) -> usize
 pub fn ferricml::pipeline::TransformerStack::n_features_out(&self) -> usize
 pub fn ferricml::pipeline::TransformerStack::transform_into<'workspace>(&self, &ferricml::data::MatrixView<'_>, &'workspace mut [f32]) -> core::result::Result<ferricml::data::MatrixView<'workspace>, ferricml::api::ModelError>
 pub fn ferricml::pipeline::TransformerStack::validate_handoff(&self) -> core::result::Result<(), ferricml::api::ModelError>
 pub fn ferricml::pipeline::TransformerStack::workspace_len(&self, usize) -> core::result::Result<usize, ferricml::api::ModelError>
-impl<A, B, C> ferricml::pipeline::TransformerStack for (A, B, C) where A: ferricml::api::Transformer, B: ferricml::api::Transformer, C: ferricml::api::Transformer
+impl<A, B, C> ferricml::pipeline::TransformerStack for (A, B, C) where A: ferricml::api::Transformer + ferricml::api::HasCapabilities, B: ferricml::api::Transformer + ferricml::api::HasCapabilities, C: ferricml::api::Transformer + ferricml::api::HasCapabilities
+pub const (A, B, C)::STAGES_PERSIST: bool
 pub fn (A, B, C)::n_features_in(&self) -> usize
 pub fn (A, B, C)::n_features_out(&self) -> usize
 pub fn (A, B, C)::transform_into<'workspace>(&self, &ferricml::data::MatrixView<'_>, &'workspace mut [f32]) -> core::result::Result<ferricml::data::MatrixView<'workspace>, ferricml::api::ModelError>
 pub fn (A, B, C)::validate_handoff(&self) -> core::result::Result<(), ferricml::api::ModelError>
 pub fn (A, B, C)::workspace_len(&self, usize) -> core::result::Result<usize, ferricml::api::ModelError>
-impl<A, B> ferricml::pipeline::TransformerStack for (A, B) where A: ferricml::api::Transformer, B: ferricml::api::Transformer
+impl<A, B> ferricml::pipeline::TransformerStack for (A, B) where A: ferricml::api::Transformer + ferricml::api::HasCapabilities, B: ferricml::api::Transformer + ferricml::api::HasCapabilities
+pub const (A, B)::STAGES_PERSIST: bool
 pub fn (A, B)::n_features_in(&self) -> usize
 pub fn (A, B)::n_features_out(&self) -> usize
 pub fn (A, B)::transform_into<'workspace>(&self, &ferricml::data::MatrixView<'_>, &'workspace mut [f32]) -> core::result::Result<ferricml::data::MatrixView<'workspace>, ferricml::api::ModelError>
@@ -2720,7 +2843,6 @@ impl core::marker::Copy for ferricml::preprocessing::FunctionTransformerParams
 pub struct ferricml::preprocessing::MaxAbsScaler
 impl ferricml::preprocessing::MaxAbsScaler
 pub fn ferricml::preprocessing::MaxAbsScaler::fit(&ferricml::data::MatrixView<'_>, ferricml::preprocessing::MaxAbsScalerParams) -> core::result::Result<Self, ferricml::api::ModelError>
-pub fn ferricml::preprocessing::MaxAbsScaler::from_artifact(&[u8], [u8; 32], [u8; 32]) -> core::result::Result<Self, ferricml::artifact::ArtifactError>
 pub const fn ferricml::preprocessing::MaxAbsScaler::get_params(&self) -> &ferricml::preprocessing::MaxAbsScalerParams
 pub fn ferricml::preprocessing::MaxAbsScaler::inverse_transform(&self, &ferricml::data::MatrixView<'_>) -> core::result::Result<ferricml::data::DenseMatrix, ferricml::api::ModelError>
 pub fn ferricml::preprocessing::MaxAbsScaler::inverse_transform_into<'output>(&self, &ferricml::data::MatrixView<'_>, &'output mut [f32]) -> core::result::Result<ferricml::data::MatrixView<'output>, ferricml::api::ModelError>
@@ -2728,7 +2850,6 @@ pub fn ferricml::preprocessing::MaxAbsScaler::max_abs(&self) -> &[f64]
 pub const fn ferricml::preprocessing::MaxAbsScaler::n_features_in(&self) -> usize
 pub const fn ferricml::preprocessing::MaxAbsScaler::n_features_out(&self) -> usize
 pub fn ferricml::preprocessing::MaxAbsScaler::scales(&self) -> &[f64]
-pub fn ferricml::preprocessing::MaxAbsScaler::to_artifact(&self, [u8; 32], [u8; 32]) -> core::result::Result<alloc::vec::Vec<u8>, ferricml::artifact::ArtifactError>
 pub fn ferricml::preprocessing::MaxAbsScaler::transform(&self, &ferricml::data::MatrixView<'_>) -> core::result::Result<ferricml::data::DenseMatrix, ferricml::api::ModelError>
 pub fn ferricml::preprocessing::MaxAbsScaler::transform_into<'output>(&self, &ferricml::data::MatrixView<'_>, &'output mut [f32]) -> core::result::Result<ferricml::data::MatrixView<'output>, ferricml::api::ModelError>
 impl core::clone::Clone for ferricml::preprocessing::MaxAbsScaler
@@ -2749,10 +2870,11 @@ impl ferricml::api::Transformer for ferricml::preprocessing::MaxAbsScaler
 pub fn ferricml::preprocessing::MaxAbsScaler::n_features_out(&self) -> usize
 pub fn ferricml::preprocessing::MaxAbsScaler::transform(&self, &ferricml::data::MatrixView<'_>) -> core::result::Result<ferricml::data::DenseMatrix, ferricml::api::ModelError>
 pub fn ferricml::preprocessing::MaxAbsScaler::transform_into<'output>(&self, &ferricml::data::MatrixView<'_>, &'output mut [f32]) -> core::result::Result<ferricml::data::MatrixView<'output>, ferricml::api::ModelError>
-impl ferricml::pipeline::StageArtifact for ferricml::preprocessing::MaxAbsScaler
+impl ferricml::artifact::StageArtifact for ferricml::preprocessing::MaxAbsScaler
+pub const ferricml::preprocessing::MaxAbsScaler::ARTIFACT_KIND: u16
 pub const ferricml::preprocessing::MaxAbsScaler::STAGE_TAG: u16
-pub fn ferricml::preprocessing::MaxAbsScaler::from_stage_artifact(&[u8], [u8; 32], [u8; 32]) -> core::result::Result<Self, ferricml::artifact::ArtifactError>
-pub fn ferricml::preprocessing::MaxAbsScaler::to_stage_artifact(&self, [u8; 32], [u8; 32]) -> core::result::Result<alloc::vec::Vec<u8>, ferricml::artifact::ArtifactError>
+pub fn ferricml::preprocessing::MaxAbsScaler::from_artifact(&[u8], [u8; 32], [u8; 32]) -> core::result::Result<Self, ferricml::artifact::ArtifactError>
+pub fn ferricml::preprocessing::MaxAbsScaler::to_artifact(&self, [u8; 32], [u8; 32]) -> core::result::Result<alloc::vec::Vec<u8>, ferricml::artifact::ArtifactError>
 pub struct ferricml::preprocessing::MaxAbsScalerParams
 impl core::clone::Clone for ferricml::preprocessing::MaxAbsScalerParams
 pub fn ferricml::preprocessing::MaxAbsScalerParams::clone(&self) -> ferricml::preprocessing::MaxAbsScalerParams
@@ -2770,7 +2892,6 @@ impl ferricml::preprocessing::MinMaxScaler
 pub fn ferricml::preprocessing::MinMaxScaler::data_max(&self) -> &[f64]
 pub fn ferricml::preprocessing::MinMaxScaler::data_min(&self) -> &[f64]
 pub fn ferricml::preprocessing::MinMaxScaler::fit(&ferricml::data::MatrixView<'_>, ferricml::preprocessing::MinMaxScalerParams) -> core::result::Result<Self, ferricml::api::ModelError>
-pub fn ferricml::preprocessing::MinMaxScaler::from_artifact(&[u8], [u8; 32], [u8; 32]) -> core::result::Result<Self, ferricml::artifact::ArtifactError>
 pub const fn ferricml::preprocessing::MinMaxScaler::get_params(&self) -> &ferricml::preprocessing::MinMaxScalerParams
 pub fn ferricml::preprocessing::MinMaxScaler::inverse_transform(&self, &ferricml::data::MatrixView<'_>) -> core::result::Result<ferricml::data::DenseMatrix, ferricml::api::ModelError>
 pub fn ferricml::preprocessing::MinMaxScaler::inverse_transform_into<'output>(&self, &ferricml::data::MatrixView<'_>, &'output mut [f32]) -> core::result::Result<ferricml::data::MatrixView<'output>, ferricml::api::ModelError>
@@ -2778,7 +2899,6 @@ pub const fn ferricml::preprocessing::MinMaxScaler::n_features_in(&self) -> usiz
 pub const fn ferricml::preprocessing::MinMaxScaler::n_features_out(&self) -> usize
 pub fn ferricml::preprocessing::MinMaxScaler::offsets(&self) -> &[f64]
 pub fn ferricml::preprocessing::MinMaxScaler::scales(&self) -> &[f64]
-pub fn ferricml::preprocessing::MinMaxScaler::to_artifact(&self, [u8; 32], [u8; 32]) -> core::result::Result<alloc::vec::Vec<u8>, ferricml::artifact::ArtifactError>
 pub fn ferricml::preprocessing::MinMaxScaler::transform(&self, &ferricml::data::MatrixView<'_>) -> core::result::Result<ferricml::data::DenseMatrix, ferricml::api::ModelError>
 pub fn ferricml::preprocessing::MinMaxScaler::transform_into<'output>(&self, &ferricml::data::MatrixView<'_>, &'output mut [f32]) -> core::result::Result<ferricml::data::MatrixView<'output>, ferricml::api::ModelError>
 impl core::clone::Clone for ferricml::preprocessing::MinMaxScaler
@@ -2799,10 +2919,11 @@ impl ferricml::api::Transformer for ferricml::preprocessing::MinMaxScaler
 pub fn ferricml::preprocessing::MinMaxScaler::n_features_out(&self) -> usize
 pub fn ferricml::preprocessing::MinMaxScaler::transform(&self, &ferricml::data::MatrixView<'_>) -> core::result::Result<ferricml::data::DenseMatrix, ferricml::api::ModelError>
 pub fn ferricml::preprocessing::MinMaxScaler::transform_into<'output>(&self, &ferricml::data::MatrixView<'_>, &'output mut [f32]) -> core::result::Result<ferricml::data::MatrixView<'output>, ferricml::api::ModelError>
-impl ferricml::pipeline::StageArtifact for ferricml::preprocessing::MinMaxScaler
+impl ferricml::artifact::StageArtifact for ferricml::preprocessing::MinMaxScaler
+pub const ferricml::preprocessing::MinMaxScaler::ARTIFACT_KIND: u16
 pub const ferricml::preprocessing::MinMaxScaler::STAGE_TAG: u16
-pub fn ferricml::preprocessing::MinMaxScaler::from_stage_artifact(&[u8], [u8; 32], [u8; 32]) -> core::result::Result<Self, ferricml::artifact::ArtifactError>
-pub fn ferricml::preprocessing::MinMaxScaler::to_stage_artifact(&self, [u8; 32], [u8; 32]) -> core::result::Result<alloc::vec::Vec<u8>, ferricml::artifact::ArtifactError>
+pub fn ferricml::preprocessing::MinMaxScaler::from_artifact(&[u8], [u8; 32], [u8; 32]) -> core::result::Result<Self, ferricml::artifact::ArtifactError>
+pub fn ferricml::preprocessing::MinMaxScaler::to_artifact(&self, [u8; 32], [u8; 32]) -> core::result::Result<alloc::vec::Vec<u8>, ferricml::artifact::ArtifactError>
 pub struct ferricml::preprocessing::MinMaxScalerParams
 impl ferricml::preprocessing::MinMaxScalerParams
 pub const fn ferricml::preprocessing::MinMaxScalerParams::clip_enabled(&self) -> bool
@@ -2866,7 +2987,6 @@ pub struct ferricml::preprocessing::RobustScaler
 impl ferricml::preprocessing::RobustScaler
 pub fn ferricml::preprocessing::RobustScaler::centers(&self) -> &[f64]
 pub fn ferricml::preprocessing::RobustScaler::fit(&ferricml::data::MatrixView<'_>, ferricml::preprocessing::RobustScalerParams) -> core::result::Result<Self, ferricml::api::ModelError>
-pub fn ferricml::preprocessing::RobustScaler::from_artifact(&[u8], [u8; 32], [u8; 32]) -> core::result::Result<Self, ferricml::artifact::ArtifactError>
 pub const fn ferricml::preprocessing::RobustScaler::get_params(&self) -> &ferricml::preprocessing::RobustScalerParams
 pub fn ferricml::preprocessing::RobustScaler::inverse_transform(&self, &ferricml::data::MatrixView<'_>) -> core::result::Result<ferricml::data::DenseMatrix, ferricml::api::ModelError>
 pub fn ferricml::preprocessing::RobustScaler::inverse_transform_into<'output>(&self, &ferricml::data::MatrixView<'_>, &'output mut [f32]) -> core::result::Result<ferricml::data::MatrixView<'output>, ferricml::api::ModelError>
@@ -2874,7 +2994,6 @@ pub const fn ferricml::preprocessing::RobustScaler::n_features_in(&self) -> usiz
 pub const fn ferricml::preprocessing::RobustScaler::n_features_out(&self) -> usize
 pub fn ferricml::preprocessing::RobustScaler::scales(&self) -> &[f64]
 pub fn ferricml::preprocessing::RobustScaler::spreads(&self) -> &[f64]
-pub fn ferricml::preprocessing::RobustScaler::to_artifact(&self, [u8; 32], [u8; 32]) -> core::result::Result<alloc::vec::Vec<u8>, ferricml::artifact::ArtifactError>
 pub fn ferricml::preprocessing::RobustScaler::transform(&self, &ferricml::data::MatrixView<'_>) -> core::result::Result<ferricml::data::DenseMatrix, ferricml::api::ModelError>
 pub fn ferricml::preprocessing::RobustScaler::transform_into<'output>(&self, &ferricml::data::MatrixView<'_>, &'output mut [f32]) -> core::result::Result<ferricml::data::MatrixView<'output>, ferricml::api::ModelError>
 impl core::clone::Clone for ferricml::preprocessing::RobustScaler
@@ -2895,10 +3014,11 @@ impl ferricml::api::Transformer for ferricml::preprocessing::RobustScaler
 pub fn ferricml::preprocessing::RobustScaler::n_features_out(&self) -> usize
 pub fn ferricml::preprocessing::RobustScaler::transform(&self, &ferricml::data::MatrixView<'_>) -> core::result::Result<ferricml::data::DenseMatrix, ferricml::api::ModelError>
 pub fn ferricml::preprocessing::RobustScaler::transform_into<'output>(&self, &ferricml::data::MatrixView<'_>, &'output mut [f32]) -> core::result::Result<ferricml::data::MatrixView<'output>, ferricml::api::ModelError>
-impl ferricml::pipeline::StageArtifact for ferricml::preprocessing::RobustScaler
+impl ferricml::artifact::StageArtifact for ferricml::preprocessing::RobustScaler
+pub const ferricml::preprocessing::RobustScaler::ARTIFACT_KIND: u16
 pub const ferricml::preprocessing::RobustScaler::STAGE_TAG: u16
-pub fn ferricml::preprocessing::RobustScaler::from_stage_artifact(&[u8], [u8; 32], [u8; 32]) -> core::result::Result<Self, ferricml::artifact::ArtifactError>
-pub fn ferricml::preprocessing::RobustScaler::to_stage_artifact(&self, [u8; 32], [u8; 32]) -> core::result::Result<alloc::vec::Vec<u8>, ferricml::artifact::ArtifactError>
+pub fn ferricml::preprocessing::RobustScaler::from_artifact(&[u8], [u8; 32], [u8; 32]) -> core::result::Result<Self, ferricml::artifact::ArtifactError>
+pub fn ferricml::preprocessing::RobustScaler::to_artifact(&self, [u8; 32], [u8; 32]) -> core::result::Result<alloc::vec::Vec<u8>, ferricml::artifact::ArtifactError>
 pub struct ferricml::preprocessing::RobustScalerParams
 impl ferricml::preprocessing::RobustScalerParams
 pub const fn ferricml::preprocessing::RobustScalerParams::centering_enabled(&self) -> bool
@@ -2921,7 +3041,6 @@ pub struct ferricml::preprocessing::StandardScaler
 impl ferricml::preprocessing::StandardScaler
 pub fn ferricml::preprocessing::StandardScaler::fit(&ferricml::data::MatrixView<'_>, ferricml::preprocessing::StandardScalerParams) -> core::result::Result<Self, ferricml::api::ModelError>
 pub fn ferricml::preprocessing::StandardScaler::fit_weighted(&ferricml::data::MatrixView<'_>, &ferricml::data::SampleWeights, ferricml::preprocessing::StandardScalerParams) -> core::result::Result<Self, ferricml::api::ModelError>
-pub fn ferricml::preprocessing::StandardScaler::from_artifact(&[u8], [u8; 32], [u8; 32]) -> core::result::Result<Self, ferricml::artifact::ArtifactError>
 pub const fn ferricml::preprocessing::StandardScaler::get_params(&self) -> &ferricml::preprocessing::StandardScalerParams
 pub fn ferricml::preprocessing::StandardScaler::inverse_transform(&self, &ferricml::data::MatrixView<'_>) -> core::result::Result<ferricml::data::DenseMatrix, ferricml::api::ModelError>
 pub fn ferricml::preprocessing::StandardScaler::inverse_transform_into<'output>(&self, &ferricml::data::MatrixView<'_>, &'output mut [f32]) -> core::result::Result<ferricml::data::MatrixView<'output>, ferricml::api::ModelError>
@@ -2929,7 +3048,6 @@ pub fn ferricml::preprocessing::StandardScaler::means(&self) -> &[f64]
 pub const fn ferricml::preprocessing::StandardScaler::n_features_in(&self) -> usize
 pub const fn ferricml::preprocessing::StandardScaler::n_features_out(&self) -> usize
 pub fn ferricml::preprocessing::StandardScaler::scales(&self) -> &[f64]
-pub fn ferricml::preprocessing::StandardScaler::to_artifact(&self, [u8; 32], [u8; 32]) -> core::result::Result<alloc::vec::Vec<u8>, ferricml::artifact::ArtifactError>
 pub fn ferricml::preprocessing::StandardScaler::transform(&self, &ferricml::data::MatrixView<'_>) -> core::result::Result<ferricml::data::DenseMatrix, ferricml::api::ModelError>
 pub fn ferricml::preprocessing::StandardScaler::transform_into<'output>(&self, &ferricml::data::MatrixView<'_>, &'output mut [f32]) -> core::result::Result<ferricml::data::MatrixView<'output>, ferricml::api::ModelError>
 pub fn ferricml::preprocessing::StandardScaler::variances(&self) -> &[f64]
@@ -2951,10 +3069,11 @@ impl ferricml::api::Transformer for ferricml::preprocessing::StandardScaler
 pub fn ferricml::preprocessing::StandardScaler::n_features_out(&self) -> usize
 pub fn ferricml::preprocessing::StandardScaler::transform(&self, &ferricml::data::MatrixView<'_>) -> core::result::Result<ferricml::data::DenseMatrix, ferricml::api::ModelError>
 pub fn ferricml::preprocessing::StandardScaler::transform_into<'output>(&self, &ferricml::data::MatrixView<'_>, &'output mut [f32]) -> core::result::Result<ferricml::data::MatrixView<'output>, ferricml::api::ModelError>
-impl ferricml::pipeline::StageArtifact for ferricml::preprocessing::StandardScaler
+impl ferricml::artifact::StageArtifact for ferricml::preprocessing::StandardScaler
+pub const ferricml::preprocessing::StandardScaler::ARTIFACT_KIND: u16
 pub const ferricml::preprocessing::StandardScaler::STAGE_TAG: u16
-pub fn ferricml::preprocessing::StandardScaler::from_stage_artifact(&[u8], [u8; 32], [u8; 32]) -> core::result::Result<Self, ferricml::artifact::ArtifactError>
-pub fn ferricml::preprocessing::StandardScaler::to_stage_artifact(&self, [u8; 32], [u8; 32]) -> core::result::Result<alloc::vec::Vec<u8>, ferricml::artifact::ArtifactError>
+pub fn ferricml::preprocessing::StandardScaler::from_artifact(&[u8], [u8; 32], [u8; 32]) -> core::result::Result<Self, ferricml::artifact::ArtifactError>
+pub fn ferricml::preprocessing::StandardScaler::to_artifact(&self, [u8; 32], [u8; 32]) -> core::result::Result<alloc::vec::Vec<u8>, ferricml::artifact::ArtifactError>
 pub struct ferricml::preprocessing::StandardScalerParams
 impl ferricml::preprocessing::StandardScalerParams
 pub const fn ferricml::preprocessing::StandardScalerParams::mean_enabled(&self) -> bool
@@ -3079,7 +3198,6 @@ pub fn ferricml::ranking::PairwiseLinearRanker::coefficients(&self) -> &[f32]
 pub fn ferricml::ranking::PairwiseLinearRanker::compare(&self, &ferricml::data::MatrixView<'_>, ferricml::ranking::PairIndex) -> core::result::Result<ferricml::ranking::PairOutcome, ferricml::ranking::PairwiseError>
 pub fn ferricml::ranking::PairwiseLinearRanker::compare_into(&self, &ferricml::data::MatrixView<'_>, &[ferricml::ranking::PairIndex], &mut [ferricml::ranking::PairOutcome]) -> core::result::Result<(), ferricml::ranking::PairwiseError>
 pub fn ferricml::ranking::PairwiseLinearRanker::fit(&ferricml::data::MatrixView<'_>, &[ferricml::ranking::PairwiseObservation], ferricml::ranking::PairwiseLinearRankerParams) -> core::result::Result<Self, ferricml::ranking::PairwiseError>
-pub fn ferricml::ranking::PairwiseLinearRanker::from_artifact(&[u8], [u8; 32]) -> core::result::Result<Self, ferricml::artifact::ArtifactError>
 pub const fn ferricml::ranking::PairwiseLinearRanker::get_params(&self) -> &ferricml::ranking::PairwiseLinearRankerParams
 pub fn ferricml::ranking::PairwiseLinearRanker::n_features_in(&self) -> usize
 pub fn ferricml::ranking::PairwiseLinearRanker::n_iter(&self) -> usize
@@ -3088,7 +3206,6 @@ pub fn ferricml::ranking::PairwiseLinearRanker::pair_margins_into(&self, &ferric
 pub fn ferricml::ranking::PairwiseLinearRanker::score_items(&self, &ferricml::data::MatrixView<'_>) -> core::result::Result<alloc::vec::Vec<f32>, ferricml::ranking::PairwiseError>
 pub fn ferricml::ranking::PairwiseLinearRanker::score_items_into(&self, &ferricml::data::MatrixView<'_>, &mut [f32]) -> core::result::Result<(), ferricml::ranking::PairwiseError>
 pub fn ferricml::ranking::PairwiseLinearRanker::score_one(&self, &[f32]) -> core::result::Result<f32, ferricml::ranking::PairwiseError>
-pub fn ferricml::ranking::PairwiseLinearRanker::to_artifact(&self, [u8; 32]) -> core::result::Result<alloc::vec::Vec<u8>, ferricml::artifact::ArtifactError>
 impl core::clone::Clone for ferricml::ranking::PairwiseLinearRanker
 pub fn ferricml::ranking::PairwiseLinearRanker::clone(&self) -> ferricml::ranking::PairwiseLinearRanker
 impl core::cmp::PartialEq for ferricml::ranking::PairwiseLinearRanker
@@ -3103,6 +3220,11 @@ pub const ferricml::ranking::PairwiseLinearRanker::CAPABILITIES: ferricml::api::
 impl ferricml::api::HasParams for ferricml::ranking::PairwiseLinearRanker
 pub type ferricml::ranking::PairwiseLinearRanker::Params = ferricml::ranking::PairwiseLinearRankerParams
 pub fn ferricml::ranking::PairwiseLinearRanker::get_params(&self) -> &Self::Params
+impl ferricml::artifact::ModelArtifact for ferricml::ranking::PairwiseLinearRanker
+pub const ferricml::ranking::PairwiseLinearRanker::ARTIFACT_KIND: u16
+pub const ferricml::ranking::PairwiseLinearRanker::MODEL_TAG: u16
+pub fn ferricml::ranking::PairwiseLinearRanker::from_artifact(&[u8], [u8; 32]) -> core::result::Result<Self, ferricml::artifact::ArtifactError>
+pub fn ferricml::ranking::PairwiseLinearRanker::to_artifact(&self, [u8; 32]) -> core::result::Result<alloc::vec::Vec<u8>, ferricml::artifact::ArtifactError>
 pub struct ferricml::ranking::PairwiseLinearRankerParams
 impl ferricml::ranking::PairwiseLinearRankerParams
 pub const fn ferricml::ranking::PairwiseLinearRankerParams::c(&self) -> f32
@@ -3175,7 +3297,6 @@ pub fn ferricml::tree::DecisionTreeClassifier::fit(&ferricml::data::MatrixView<'
 pub fn ferricml::tree::DecisionTreeClassifier::fit_multiclass(&ferricml::data::MatrixView<'_>, &ferricml::data::ClassTargets, ferricml::tree::DecisionTreeClassifierParams) -> core::result::Result<Self, ferricml::api::ModelError>
 pub fn ferricml::tree::DecisionTreeClassifier::fit_multiclass_weighted(&ferricml::data::MatrixView<'_>, &ferricml::data::ClassTargets, &ferricml::data::SampleWeights, ferricml::tree::DecisionTreeClassifierParams) -> core::result::Result<Self, ferricml::api::ModelError>
 pub fn ferricml::tree::DecisionTreeClassifier::fit_weighted(&ferricml::data::MatrixView<'_>, &ferricml::data::BinaryTargets, &ferricml::data::SampleWeights, ferricml::tree::DecisionTreeClassifierParams) -> core::result::Result<Self, ferricml::api::ModelError>
-pub fn ferricml::tree::DecisionTreeClassifier::from_artifact(&[u8], [u8; 32]) -> core::result::Result<Self, ferricml::artifact::ArtifactError>
 pub fn ferricml::tree::DecisionTreeClassifier::get_params(&self) -> &ferricml::tree::DecisionTreeClassifierParams
 pub fn ferricml::tree::DecisionTreeClassifier::n_features_in(&self) -> usize
 pub fn ferricml::tree::DecisionTreeClassifier::predict(&self, &ferricml::data::MatrixView<'_>) -> core::result::Result<alloc::vec::Vec<u8>, ferricml::api::ModelError>
@@ -3190,7 +3311,6 @@ pub fn ferricml::tree::DecisionTreeClassifier::predict_proba(&self, &ferricml::d
 pub fn ferricml::tree::DecisionTreeClassifier::predict_proba_into(&self, &ferricml::data::MatrixView<'_>, &mut [f32]) -> core::result::Result<(), ferricml::api::ModelError>
 pub fn ferricml::tree::DecisionTreeClassifier::predict_proba_one(&self, &[f32]) -> core::result::Result<alloc::vec::Vec<f32>, ferricml::api::ModelError>
 pub fn ferricml::tree::DecisionTreeClassifier::predict_proba_one_into(&self, &[f32], &mut [f32]) -> core::result::Result<(), ferricml::api::ModelError>
-pub fn ferricml::tree::DecisionTreeClassifier::to_artifact(&self, [u8; 32]) -> core::result::Result<alloc::vec::Vec<u8>, ferricml::artifact::ArtifactError>
 impl core::clone::Clone for ferricml::tree::DecisionTreeClassifier
 pub fn ferricml::tree::DecisionTreeClassifier::clone(&self) -> ferricml::tree::DecisionTreeClassifier
 impl core::cmp::PartialEq for ferricml::tree::DecisionTreeClassifier
@@ -3214,6 +3334,11 @@ pub fn ferricml::tree::DecisionTreeClassifier::predict_class_proba(&self, &ferri
 pub fn ferricml::tree::DecisionTreeClassifier::predict_class_proba_into(&self, &ferricml::data::MatrixView<'_>, u8, &mut [f32]) -> core::result::Result<(), ferricml::api::ModelError>
 pub fn ferricml::tree::DecisionTreeClassifier::predict_proba(&self, &ferricml::data::MatrixView<'_>) -> core::result::Result<alloc::vec::Vec<f32>, ferricml::api::ModelError>
 pub fn ferricml::tree::DecisionTreeClassifier::predict_proba_into(&self, &ferricml::data::MatrixView<'_>, &mut [f32]) -> core::result::Result<(), ferricml::api::ModelError>
+impl ferricml::artifact::ModelArtifact for ferricml::tree::DecisionTreeClassifier
+pub const ferricml::tree::DecisionTreeClassifier::ARTIFACT_KIND: u16
+pub const ferricml::tree::DecisionTreeClassifier::MODEL_TAG: u16
+pub fn ferricml::tree::DecisionTreeClassifier::from_artifact(&[u8], [u8; 32]) -> core::result::Result<Self, ferricml::artifact::ArtifactError>
+pub fn ferricml::tree::DecisionTreeClassifier::to_artifact(&self, [u8; 32]) -> core::result::Result<alloc::vec::Vec<u8>, ferricml::artifact::ArtifactError>
 pub struct ferricml::tree::DecisionTreeClassifierParams
 impl ferricml::tree::DecisionTreeClassifierParams
 pub const fn ferricml::tree::DecisionTreeClassifierParams::max_depth(&self) -> core::option::Option<usize>
@@ -3242,13 +3367,11 @@ pub struct ferricml::tree::DecisionTreeRegressor
 impl ferricml::tree::DecisionTreeRegressor
 pub fn ferricml::tree::DecisionTreeRegressor::fit(&ferricml::data::MatrixView<'_>, &ferricml::data::RegressionTargets, ferricml::tree::DecisionTreeRegressorParams) -> core::result::Result<Self, ferricml::api::ModelError>
 pub fn ferricml::tree::DecisionTreeRegressor::fit_weighted(&ferricml::data::MatrixView<'_>, &ferricml::data::RegressionTargets, &ferricml::data::SampleWeights, ferricml::tree::DecisionTreeRegressorParams) -> core::result::Result<Self, ferricml::api::ModelError>
-pub fn ferricml::tree::DecisionTreeRegressor::from_artifact(&[u8], [u8; 32]) -> core::result::Result<Self, ferricml::artifact::ArtifactError>
 pub fn ferricml::tree::DecisionTreeRegressor::get_params(&self) -> &ferricml::tree::DecisionTreeRegressorParams
 pub fn ferricml::tree::DecisionTreeRegressor::n_features_in(&self) -> usize
 pub fn ferricml::tree::DecisionTreeRegressor::predict(&self, &ferricml::data::MatrixView<'_>) -> core::result::Result<alloc::vec::Vec<f32>, ferricml::api::ModelError>
 pub fn ferricml::tree::DecisionTreeRegressor::predict_into(&self, &ferricml::data::MatrixView<'_>, &mut [f32]) -> core::result::Result<(), ferricml::api::ModelError>
 pub fn ferricml::tree::DecisionTreeRegressor::predict_one(&self, &[f32]) -> core::result::Result<f32, ferricml::api::ModelError>
-pub fn ferricml::tree::DecisionTreeRegressor::to_artifact(&self, [u8; 32]) -> core::result::Result<alloc::vec::Vec<u8>, ferricml::artifact::ArtifactError>
 impl core::clone::Clone for ferricml::tree::DecisionTreeRegressor
 pub fn ferricml::tree::DecisionTreeRegressor::clone(&self) -> ferricml::tree::DecisionTreeRegressor
 impl core::cmp::PartialEq for ferricml::tree::DecisionTreeRegressor
@@ -3266,6 +3389,11 @@ pub fn ferricml::tree::DecisionTreeRegressor::get_params(&self) -> &Self::Params
 impl ferricml::api::Regressor for ferricml::tree::DecisionTreeRegressor
 pub fn ferricml::tree::DecisionTreeRegressor::predict(&self, &ferricml::data::MatrixView<'_>) -> core::result::Result<alloc::vec::Vec<f32>, ferricml::api::ModelError>
 pub fn ferricml::tree::DecisionTreeRegressor::predict_into(&self, &ferricml::data::MatrixView<'_>, &mut [f32]) -> core::result::Result<(), ferricml::api::ModelError>
+impl ferricml::artifact::ModelArtifact for ferricml::tree::DecisionTreeRegressor
+pub const ferricml::tree::DecisionTreeRegressor::ARTIFACT_KIND: u16
+pub const ferricml::tree::DecisionTreeRegressor::MODEL_TAG: u16
+pub fn ferricml::tree::DecisionTreeRegressor::from_artifact(&[u8], [u8; 32]) -> core::result::Result<Self, ferricml::artifact::ArtifactError>
+pub fn ferricml::tree::DecisionTreeRegressor::to_artifact(&self, [u8; 32]) -> core::result::Result<alloc::vec::Vec<u8>, ferricml::artifact::ArtifactError>
 pub struct ferricml::tree::DecisionTreeRegressorParams
 impl ferricml::tree::DecisionTreeRegressorParams
 pub const fn ferricml::tree::DecisionTreeRegressorParams::max_depth(&self) -> core::option::Option<usize>

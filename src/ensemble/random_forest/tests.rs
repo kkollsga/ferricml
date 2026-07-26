@@ -2,7 +2,8 @@ use super::super::forest::model::Forest;
 use super::*;
 use crate::api::ModelError;
 use crate::artifact::{
-    ArtifactError, RANDOM_FOREST_CLASSIFIER_ARTIFACT_KIND, RANDOM_FOREST_REGRESSOR_ARTIFACT_KIND,
+    ArtifactError, ModelArtifact, RANDOM_FOREST_CLASSIFIER_ARTIFACT_KIND,
+    RANDOM_FOREST_REGRESSOR_ARTIFACT_KIND,
 };
 use crate::data::{BinaryTargets, ClassTargets, DenseMatrix, RegressionTargets, SampleWeights};
 use crate::ensemble::HistGradientBoostingRegressor;

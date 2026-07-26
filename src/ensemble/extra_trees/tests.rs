@@ -2,6 +2,7 @@ use super::*;
 use crate::api::ModelError;
 use crate::artifact::{
     ArtifactError, EXTRA_TREES_CLASSIFIER_ARTIFACT_KIND, EXTRA_TREES_REGRESSOR_ARTIFACT_KIND,
+    ModelArtifact,
 };
 use crate::data::{BinaryTargets, ClassTargets, DenseMatrix, RegressionTargets, SampleWeights};
 use crate::ensemble::{

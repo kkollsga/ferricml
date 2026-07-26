@@ -19,8 +19,8 @@ use crate::api::{
 };
 use crate::artifact::{
     ArtifactError, ArtifactPayloadWriter, HIST_GRADIENT_BOOSTING_REGRESSOR_ARTIFACT_KIND,
-    MIN_ENCODED_TREE_BYTES, SchemaRole, decode_component, decode_logical_tree, decode_v2_envelope,
-    encode_component, encode_logical_tree, encode_v2_envelope,
+    MIN_ENCODED_TREE_BYTES, ModelArtifact, SchemaRole, decode_component, decode_logical_tree,
+    decode_v2_envelope, encode_component, encode_logical_tree, encode_v2_envelope,
 };
 use crate::data::{MatrixView, RegressionTargets, SampleWeights};
 use crate::loss::{BoostingObjective, Objective, SquaredError};
@@ -367,9 +367,13 @@ impl HistGradientBoostingRegressor {
     ) -> Result<(), ModelError> {
         <Self as Regressor>::predict_into(self, data, output)
     }
+}
+
+impl ModelArtifact for HistGradientBoostingRegressor {
+    const ARTIFACT_KIND: u16 = HIST_GRADIENT_BOOSTING_REGRESSOR_ARTIFACT_KIND;
 
     /// Encodes the fitted baseline, parameters, and canonical logical trees.
-    pub fn to_artifact(&self, schema: [u8; 32]) -> Result<Vec<u8>, ArtifactError> {
+    fn to_artifact(&self, schema: [u8; 32]) -> Result<Vec<u8>, ArtifactError> {
         let n_features =
             u32::try_from(self.n_features_in).map_err(|_| ArtifactError::InvalidPayload)?;
         let max_iter =
@@ -422,7 +426,7 @@ impl HistGradientBoostingRegressor {
             )?);
         }
         encode_v2_envelope(
-            HIST_GRADIENT_BOOSTING_REGRESSOR_ARTIFACT_KIND,
+            Self::ARTIFACT_KIND,
             ARTIFACT_PAYLOAD_VERSION,
             &[(SchemaRole::Input, schema)],
             &payload,
@@ -430,10 +434,10 @@ impl HistGradientBoostingRegressor {
     }
 
     /// Decodes and validates logical trees before building runtime state.
-    pub fn from_artifact(bytes: &[u8], schema: [u8; 32]) -> Result<Self, ArtifactError> {
+    fn from_artifact(bytes: &[u8], schema: [u8; 32]) -> Result<Self, ArtifactError> {
         let mut envelope = decode_v2_envelope(
             bytes,
-            HIST_GRADIENT_BOOSTING_REGRESSOR_ARTIFACT_KIND,
+            Self::ARTIFACT_KIND,
             ARTIFACT_PAYLOAD_VERSION,
             &[(SchemaRole::Input, schema)],
         )?;

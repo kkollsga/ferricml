@@ -1,10 +1,14 @@
 # Model artifact envelope
 
-FerricML writes artifact envelope version 2 for fitted logistic, linear, ridge,
-histogram-gradient-boosting regression and classification, random-forest
-regression and classification, standard-scaler, and supported typed pipeline
-models. It continues to read the legacy version-1
-logistic format. The private packed forest representation remains outside the
+FerricML writes artifact envelope version 2 for every fitted type that
+implements `artifact::ModelArtifact` (an estimator, bound to the one feature
+schema it was fitted on) or `artifact::StageArtifact` (a transformer or
+composition, bound to the schema it consumes and the one it produces).
+Implementing one of those traits *is* declaring persistence: the encoder, the
+estimator kind, and the identity a composed payload records are supplied
+together, so a fitted type cannot have one without the others.
+
+It continues to read the legacy version-1 logistic format. The private packed forest representation remains outside the
 persistence contract: forests persist as backend-neutral logical trees, and no
 byte sequence produced from packed forest nodes is a compatibility promise.
 
@@ -129,6 +133,17 @@ and the block together. Every declared count is checked against the bytes
 present before anything is reserved, every distribution entry must be a finite
 `0..=1`, and each decoded tree re-enters the same topology and class-topology
 validators fitting uses.
+
+`Lasso` and `ElasticNet` each have their own never-reused estimator kind. Their
+state components carry the fitted coefficients and intercept, the penalty the
+fit was given, the iteration budget, the convergence tolerance, and the number
+of coordinate-descent sweeps the fit actually used. The sweep count and the
+elastic net's mixing weight are stored rather than re-derived: both are readable
+on a fitted model, so a reader that recomputed either could return a model that
+no longer equals the one written. Decode re-applies every bound a fit enforces —
+a non-negative penalty, a positive tolerance, a non-zero iteration budget, a
+mixing weight in `0..=1` — plus one only a reader can check, that the recorded
+sweep count does not exceed the budget it claims to have run under.
 
 `AnyRegressor` and `AnyClassifier` artifacts are dispatch envelopes rather than
 model formats. They

@@ -408,6 +408,53 @@ def forest_core_sits_below_the_ensembles_that_consume_it(root: Path) -> list[str
     ]
 
 
+# The two traits that *are* the persistence contract. Both must exist for the
+# rule below to mean anything, so their absence is itself a finding.
+PERSISTENCE_TRAIT_MARKERS = ("pub trait ModelArtifact", "pub trait StageArtifact")
+
+
+def persistence_is_declared_only_through_the_trait(root: Path) -> list[str]:
+    """Persisting is implementing the trait, never writing an inherent method.
+
+    A fitted type used to declare persistence twice: once by writing an inherent
+    `to_artifact`, and again by being listed as composable. The second
+    declaration was a separate act of remembering, and seven estimators shipped
+    a working encoder without it — invisible to the type system, and dropping
+    every composition that ended in one out of the conformance battery.
+
+    Implementing `ModelArtifact` or `StageArtifact` now *is* writing the
+    encoder, so there is no second place to omit a type from. That only stays
+    true while the inherent form cannot come back, and it is exactly the form
+    that would come back: a new estimator's author writes the encoder where the
+    other methods are. A trait implementation spells its methods `fn`; only an
+    inherent one spells them `pub fn`, which makes the difference a rule can
+    see.
+    """
+    source = root / "src"
+    contract = "\n".join(
+        path.read_text() for path in sorted((source / "artifact").rglob("*.rs"))
+    )
+    missing = [
+        marker for marker in PERSISTENCE_TRAIT_MARKERS if marker not in contract
+    ]
+    if missing:
+        return [
+            f"persistence contract is missing from src/artifact: {sorted(missing)}"
+        ]
+    findings = []
+    for path in sorted(source.rglob("*.rs")):
+        for number, line in enumerate(path.read_text().splitlines(), start=1):
+            stripped = line.strip()
+            for method in ("to_artifact", "from_artifact"):
+                if stripped.startswith(f"pub fn {method}("):
+                    findings.append(
+                        f"persistence declared as an inherent method rather than "
+                        f"through the trait: {path.relative_to(root)}:{number} "
+                        f"defines `pub fn {method}`"
+                    )
+    return findings
+
+
 RULES: tuple[tuple[str, Callable[[Path], list[str]]], ...] = (
     ("crate-root-lib-only", crate_root_is_lib_only),
     ("obsolete-root-implementations", obsolete_root_implementations_are_gone),
@@ -430,6 +477,7 @@ RULES: tuple[tuple[str, Callable[[Path], list[str]]], ...] = (
     ("tree-below-estimators", tree_sits_below_the_estimators_that_consume_it),
     ("tree-family-private", tree_family_stays_private),
     ("forest-core-below-facades", forest_core_sits_below_the_ensembles_that_consume_it),
+    ("persistence-through-the-trait", persistence_is_declared_only_through_the_trait),
 )
 
 
@@ -445,7 +493,11 @@ def write_clean_tree(root: Path) -> Path:
     source = root / "src"
     for relative, text in {
         "lib.rs": "pub mod artifact;\npub mod ensemble;\nmod numeric;\n",
-        "artifact/mod.rs": "//! artifact\npub(crate) use self::inner::Thing;\n",
+        "artifact/mod.rs": "//! artifact\npub(crate) use self::inner::Thing;\nmod contract;\n",
+        "artifact/contract.rs": (
+            "//! contract\npub trait ModelArtifact { fn to_artifact(&self); }\n"
+            "pub trait StageArtifact { fn to_artifact(&self); }\n"
+        ),
         "ensemble/mod.rs": "//! ensemble\nmod random_forest;\npub use random_forest::Forest;\n",
         "ensemble/random_forest/mod.rs": "//! forest\nuse crate::tree::grow_tree;\n",
         "ensemble/forest/mod.rs": "//! forest core\nmod training;\n",
@@ -634,6 +686,14 @@ SYNTHETIC_VIOLATIONS: tuple[tuple[str, Callable[[Path], None], str], ...] = (
         "tree-family-private",
         lambda root: append(root / "src" / "tree" / "mod.rs", "pub mod grower;\n"),
         "tree facade exposes child module",
+    ),
+    (
+        "persistence-through-the-trait",
+        lambda root: append(
+            root / "src" / "preprocessing" / "standard_scaler" / "mod.rs",
+            "impl StandardScaler {\n    pub fn to_artifact(&self) -> Vec<u8> { Vec::new() }\n}\n",
+        ),
+        "persistence declared as an inherent method rather than through the trait",
     ),
     (
         "forest-core-below-facades",

@@ -1,5 +1,5 @@
 use crate::artifact::{
-    ANY_CLASSIFIER_ARTIFACT_KIND, ArtifactError, ArtifactPayloadWriter, SchemaRole,
+    ANY_CLASSIFIER_ARTIFACT_KIND, ArtifactError, ArtifactPayloadWriter, ModelArtifact, SchemaRole,
     decode_component, decode_v2_envelope, encode_component, encode_v2_envelope,
 };
 use crate::data::MatrixView;
@@ -144,6 +144,10 @@ impl AnyClassifier {
             Self::HistGradientBoosting(model) => Some(model),
         }
     }
+}
+
+impl ModelArtifact for AnyClassifier {
+    const ARTIFACT_KIND: u16 = ANY_CLASSIFIER_ARTIFACT_KIND;
 
     /// Encodes the selected runtime variant and its complete model artifact.
     ///
@@ -153,7 +157,7 @@ impl AnyClassifier {
     /// estimator's payload, and a variant that carries more than one payload
     /// schema of its own — as logistic regression does — keeps choosing between
     /// them itself.
-    pub fn to_artifact(&self, schema: [u8; 32]) -> Result<Vec<u8>, ArtifactError> {
+    fn to_artifact(&self, schema: [u8; 32]) -> Result<Vec<u8>, ArtifactError> {
         let (variant, model) = match self {
             Self::RandomForest(model) => (VARIANT_RANDOM_FOREST, model.to_artifact(schema)?),
             Self::LogisticRegression(model) => {
@@ -177,7 +181,7 @@ impl AnyClassifier {
             &model,
         )?);
         encode_v2_envelope(
-            ANY_CLASSIFIER_ARTIFACT_KIND,
+            Self::ARTIFACT_KIND,
             ANY_CLASSIFIER_PAYLOAD_VERSION,
             &[(SchemaRole::Input, schema)],
             &payload,
@@ -190,10 +194,10 @@ impl AnyClassifier {
     /// schema-bound, and validated exactly as it would be on its own. A variant
     /// tag that disagrees with the nested payload is rejected by that
     /// estimator's kind check rather than silently reinterpreted.
-    pub fn from_artifact(bytes: &[u8], schema: [u8; 32]) -> Result<Self, ArtifactError> {
+    fn from_artifact(bytes: &[u8], schema: [u8; 32]) -> Result<Self, ArtifactError> {
         let mut envelope = decode_v2_envelope(
             bytes,
-            ANY_CLASSIFIER_ARTIFACT_KIND,
+            Self::ARTIFACT_KIND,
             ANY_CLASSIFIER_PAYLOAD_VERSION,
             &[(SchemaRole::Input, schema)],
         )?;

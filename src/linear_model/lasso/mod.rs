@@ -5,8 +5,19 @@ use crate::api::{
     Capabilities, Estimator, HasCapabilities, HasParams, ModelError, Regressor,
     validate_prediction, validate_scalar_row,
 };
+use crate::artifact::{
+    ArtifactCursor, ArtifactError, ArtifactPayloadWriter, LASSO_ARTIFACT_KIND,
+    MODEL_ARTIFACT_VERSION, ModelArtifact, SchemaRole, artifact_version, decode_component,
+    decode_v2_envelope, encode_component, encode_v2_envelope,
+};
 use crate::data::{MatrixView, RegressionTargets, SampleWeights};
 use crate::loss::ElasticNetPenalty;
+
+const MAX_ARTIFACT_FEATURES: usize = 1_000_000;
+const PAYLOAD_VERSION: u16 = 1;
+const STATE_COMPONENT_KIND: u16 = 1;
+const STATE_COMPONENT_VERSION: u16 = 1;
+const FIXED_PAYLOAD_BYTES: usize = 8 * 4;
 
 /// Parameters for [`Lasso`].
 #[derive(Clone, Debug, PartialEq)]
@@ -252,10 +263,131 @@ impl Estimator for Lasso {
 }
 
 impl HasCapabilities for Lasso {
-    /// Weighted fitting only. There is no artifact schema for this estimator
-    /// yet, and declaring one it does not have would be worse than declaring
-    /// none.
-    const CAPABILITIES: Capabilities = Capabilities::NONE.with_sample_weights(true);
+    /// Weighted fitting and persistence.
+    const CAPABILITIES: Capabilities = Capabilities::NONE
+        .with_sample_weights(true)
+        .with_artifact(true);
+}
+
+impl ModelArtifact for Lasso {
+    const ARTIFACT_KIND: u16 = LASSO_ARTIFACT_KIND;
+
+    /// Encodes the fitted sparse coefficient vector and the penalty it came
+    /// from.
+    ///
+    /// The sweep count is stored rather than recomputed. It is fitted state a
+    /// caller can read through [`Lasso::n_iter`], so a decoded model that
+    /// re-derived it would not equal the model that was written.
+    fn to_artifact(&self, schema: [u8; 32]) -> Result<Vec<u8>, ArtifactError> {
+        if self.n_features_in > MAX_ARTIFACT_FEATURES {
+            return Err(ArtifactError::InvalidPayload);
+        }
+        let n_features =
+            u32::try_from(self.n_features_in).map_err(|_| ArtifactError::InvalidPayload)?;
+        let max_iter =
+            u32::try_from(self.params.max_iter).map_err(|_| ArtifactError::InvalidPayload)?;
+        let sweeps = u32::try_from(self.sweeps).map_err(|_| ArtifactError::InvalidPayload)?;
+        let mut state =
+            ArtifactPayloadWriter::with_capacity(FIXED_PAYLOAD_BYTES + self.coefficients.len() * 4);
+        state.u32(n_features);
+        state.f32(self.params.alpha);
+        state.u32(u32::from(self.params.fit_intercept));
+        state.u32(max_iter);
+        state.f32(self.params.tol);
+        state.u32(sweeps);
+        state.f32(self.intercept);
+        state.u32(n_features);
+        for &coefficient in &self.coefficients {
+            state.f32(coefficient);
+        }
+        let component = encode_component(
+            STATE_COMPONENT_KIND,
+            STATE_COMPONENT_VERSION,
+            &state.finish(),
+        )?;
+        encode_v2_envelope(
+            Self::ARTIFACT_KIND,
+            PAYLOAD_VERSION,
+            &[(SchemaRole::Input, schema)],
+            &component,
+        )
+    }
+
+    /// Decodes a lasso model after checking integrity and feature identity.
+    fn from_artifact(bytes: &[u8], schema: [u8; 32]) -> Result<Self, ArtifactError> {
+        let version = artifact_version(bytes)?;
+        if version != MODEL_ARTIFACT_VERSION {
+            return Err(ArtifactError::UnsupportedVersion { found: version });
+        }
+        let mut envelope = decode_v2_envelope(
+            bytes,
+            Self::ARTIFACT_KIND,
+            PAYLOAD_VERSION,
+            &[(SchemaRole::Input, schema)],
+        )?;
+        let component =
+            decode_component(&mut envelope, STATE_COMPONENT_KIND, STATE_COMPONENT_VERSION)?;
+        if !envelope.is_empty() {
+            return Err(ArtifactError::TrailingBytes);
+        }
+        Self::decode_payload(component)
+    }
+}
+
+impl Lasso {
+    fn decode_payload(mut cursor: ArtifactCursor<'_>) -> Result<Self, ArtifactError> {
+        let n_features_in = cursor.u32()? as usize;
+        let alpha = cursor.f32()?;
+        let fit_intercept = match cursor.u32()? {
+            0 => false,
+            1 => true,
+            _ => return Err(ArtifactError::InvalidPayload),
+        };
+        let max_iter = cursor.u32()? as usize;
+        let tol = cursor.f32()?;
+        let sweeps = cursor.u32()? as usize;
+        let intercept = cursor.f32()?;
+        let coefficient_count = cursor.u32()? as usize;
+        // Every bound a fit enforces, re-enforced here: bytes are never
+        // trusted to describe a model a fit could have produced. A sweep count
+        // above the iteration budget is the one that only a decoder can see.
+        if n_features_in == 0
+            || n_features_in > MAX_ARTIFACT_FEATURES
+            || coefficient_count != n_features_in
+            || !alpha.is_finite()
+            || alpha < 0.0
+            || max_iter == 0
+            || !tol.is_finite()
+            || tol <= 0.0
+            || sweeps > max_iter
+            || !intercept.is_finite()
+        {
+            return Err(ArtifactError::InvalidPayload);
+        }
+        let mut coefficients = Vec::with_capacity(cursor.bounded_capacity(coefficient_count, 4));
+        for _ in 0..coefficient_count {
+            let value = cursor.f32()?;
+            if !value.is_finite() {
+                return Err(ArtifactError::InvalidPayload);
+            }
+            coefficients.push(value);
+        }
+        if !cursor.is_empty() {
+            return Err(ArtifactError::TrailingBytes);
+        }
+        Ok(Self {
+            n_features_in,
+            params: LassoParams {
+                alpha,
+                fit_intercept,
+                max_iter,
+                tol,
+            },
+            coefficients,
+            intercept,
+            sweeps,
+        })
+    }
 }
 
 impl HasParams for Lasso {
@@ -279,6 +411,7 @@ impl Regressor for Lasso {
 
 #[cfg(test)]
 mod tests {
+    use super::super::ElasticNet;
     use super::*;
     use crate::data::DenseMatrix;
 
@@ -414,7 +547,68 @@ mod tests {
     #[test]
     fn the_declared_capabilities_match_the_entry_points_that_exist() {
         assert!(Lasso::CAPABILITIES.sample_weights());
-        assert!(!Lasso::CAPABILITIES.artifact());
+        assert!(Lasso::CAPABILITIES.artifact());
         assert!(!Lasso::CAPABILITIES.multiclass());
+    }
+
+    #[test]
+    fn a_fitted_model_round_trips_through_its_artifact_and_predicts_identically() {
+        const SCHEMA: [u8; 32] = [7; 32];
+        let (data, targets) = problem();
+        let model = Lasso::fit(
+            &data.as_view(),
+            &targets,
+            LassoParams::default().with_alpha(0.05).with_tol(1.0e-8),
+        )
+        .expect("fit");
+        // A penalty that actually zeroes a coefficient, so the sparse vector
+        // the artifact exists to carry is the one being round-tripped.
+        assert!(model.n_zero_coefficients() >= 1);
+
+        let bytes = model.to_artifact(SCHEMA).expect("encode");
+        assert_eq!(bytes, model.to_artifact(SCHEMA).expect("re-encode"));
+
+        let restored = Lasso::from_artifact(&bytes, SCHEMA).expect("decode");
+        assert_eq!(restored, model);
+        assert_eq!(restored.n_iter(), model.n_iter());
+        assert_eq!(
+            restored.predict(&data.as_view()).expect("predict"),
+            model.predict(&data.as_view()).expect("predict")
+        );
+    }
+
+    #[test]
+    fn a_decoder_refuses_another_schema_and_another_estimators_bytes() {
+        const SCHEMA: [u8; 32] = [7; 32];
+        const OTHER: [u8; 32] = [9; 32];
+        let (data, targets) = problem();
+        let model = Lasso::fit(
+            &data.as_view(),
+            &targets,
+            LassoParams::default().with_alpha(0.05).with_tol(1.0e-8),
+        )
+        .expect("fit");
+        let bytes = model.to_artifact(SCHEMA).expect("encode");
+
+        assert_eq!(
+            Lasso::from_artifact(&bytes, OTHER),
+            Err(ArtifactError::FeatureSchemaMismatch)
+        );
+
+        let mut corrupted = bytes.clone();
+        let last = corrupted.len() - 40;
+        corrupted[last] ^= 1;
+        assert_eq!(
+            Lasso::from_artifact(&corrupted, SCHEMA),
+            Err(ArtifactError::ChecksumMismatch)
+        );
+
+        // The kind is what keeps the two penalized readers off each other's
+        // bytes: their payload layouts differ by one word, so a reader that
+        // trusted the layout alone would misread every field after it.
+        assert_eq!(
+            ElasticNet::from_artifact(&bytes, SCHEMA).unwrap_err(),
+            ArtifactError::UnsupportedModelKind { found: 69 }
+        );
     }
 }
