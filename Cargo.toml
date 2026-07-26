@@ -16,7 +16,8 @@ categories = ["algorithms", "science"]
 # samples still work. Every piece of documentation-site machinery lives outside
 # `docs/` and is excluded here instead.
 # `scripts/check_packaged_crate.sh` asserts both halves of that rule against the
-# extracted archive.
+# extracted archive, and reads the list below rather than repeating it, so this
+# is the one place a development-only path has to be named.
 exclude = [
     "/.cargo",
     "/.github",

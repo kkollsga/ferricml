@@ -24,7 +24,9 @@ gate:
 	cargo clippy --locked --all-targets -- -D warnings
 	cargo test --locked
 	$(PYTHON) scripts/check_root_dependency_isolation.py
+	$(PYTHON) scripts/check_root_dependency_isolation.py --self-test
 	$(PYTHON) scripts/check_reference_isolation.py
+	$(PYTHON) scripts/check_reference_isolation.py --self-test
 	$(PYTHON) scripts/check_source_layout.py
 	$(PYTHON) scripts/check_source_layout.py --self-test
 	$(PYTHON) scripts/check_documentation_truth.py
@@ -32,6 +34,7 @@ gate:
 	$(PYTHON) scripts/check_accessor_pairing.py
 	$(PYTHON) scripts/check_accessor_pairing.py --self-test
 	$(PYTHON) scripts/check_release_workflow.py
+	$(PYTHON) scripts/check_release_workflow.py --self-test
 	$(PYTHON) scripts/rust_api_profiles.py self-test
 	$(PYTHON) scripts/performance_history.py self-test
 	$(MAKE) package-check

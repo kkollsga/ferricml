@@ -116,6 +116,12 @@ impl CompactTree {
         }
     }
 
+    /// Adds this tree's scaled predictions into a running per-row raw score.
+    ///
+    /// The `f32` accumulation is deliberate even when a boosting *fit* drives
+    /// it: rule 3 of the accumulation policy in `src/numeric/mod.rs` outranks
+    /// rule 1 at exactly this site, and that module states why widening the
+    /// running score would be a defect rather than an improvement.
     pub(crate) fn add_predictions(&self, data: &MatrixView<'_>, scale: f32, output: &mut [f32]) {
         debug_assert_eq!(data.rows(), output.len());
         for (row, slot) in data.iter_rows().zip(output) {
