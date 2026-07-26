@@ -174,6 +174,28 @@ impl PackedTree {
             // increase is also why this loop terminates. The `debug_assert!` in
             // `from_build_nodes` re-checks the packed form afterwards; it is a
             // redundant post-condition, not the check this relies on.
+            //
+            // The `debug_assert!` below is not the check this relies on either,
+            // and it is not what detects a violation: `get_unchecked` carries
+            // its own debug-mode precondition check, so an out-of-range index
+            // already aborts a debug build with `unsafe precondition(s)
+            // violated`. Measured, by removing these two lines under an injected
+            // topology fault and watching the standard library report it
+            // instead. What these add is *which* invariant broke and with what
+            // values, at the point of the read.
+            //
+            // The half that was genuinely missing was neither: it was a test
+            // that predicts. This reasoning is a composition — a decode-time
+            // validator licensing a prediction-time read — and no assertion here
+            // composes it, because an assertion on a line nothing executes is
+            // not coverage. The hostile-artifact sweep in
+            // `tests/artifact_hardening.rs` runs it now, and floors how much of
+            // it it runs.
+            debug_assert!(
+                index < self.nodes.len(),
+                "packed branch token {index} is outside a {}-node tree",
+                self.nodes.len()
+            );
             let node = unsafe { self.nodes.get_unchecked(index) };
             // SAFETY: the feature index is within `row`. The same validator
             // rejects any branch whose `feature` is not `< n_features`, and the
@@ -181,9 +203,19 @@ impl PackedTree {
             // width — the decoded `n_features_in` on the artifact path — which
             // public prediction validates `row` against before traversal. A
             // hostile artifact therefore cannot declare a narrow width and pack
-            // wide feature indices behind it.
-            let value =
-                unsafe { *row.get_unchecked((node.feature_and_flags & FEATURE_MASK) as usize) };
+            // wide feature indices behind it — the clause of this chain that is
+            // reachable from bytes an attacker wrote, and the one the sweep
+            // demonstrably catches: handing the validator a width the model does
+            // not report fails the sweep here with `packed feature 9 is outside
+            // a 1-wide row`. The `debug_assert!` below is the same naming
+            // measure as the one above, on this half of the chain.
+            let feature = (node.feature_and_flags & FEATURE_MASK) as usize;
+            debug_assert!(
+                feature < row.len(),
+                "packed feature {feature} is outside a {}-wide row",
+                row.len()
+            );
+            let value = unsafe { *row.get_unchecked(feature) };
             if value <= node.threshold {
                 if node.feature_and_flags & LEFT_IS_LEAF != 0 {
                     return f32::from_bits(node.left);

@@ -52,11 +52,35 @@ pub(crate) fn sort_for_quantiles(scratch: &mut [f64]) {
 
 /// Evaluates one percentile of an ascending-sorted sample.
 ///
-/// `sorted` must be non-empty and ascending — [`sort_for_quantiles`] is how a
-/// caller gets there — and `percentile` must lie in `[0, 100]`. Both are
-/// caller obligations rather than checks, because every caller in the crate
+/// Three obligations, all the caller's: `sorted` is non-empty, `sorted` is
+/// ascending under [`f64::total_cmp`] — [`sort_for_quantiles`] is how a caller
+/// gets there — and `percentile` is a non-NaN value in `[0, 100]`. They are
+/// obligations rather than typed errors because every caller in the crate
 /// validates its percentile range once at its own public boundary and then
-/// evaluates per column.
+/// evaluates per column, against a buffer it has itself just sorted.
+///
+/// *Which build each one is checked in* follows the rule
+/// `MatrixView::from_validated_parts` already sets for the same situation: an
+/// O(1) invariant is asserted in every build, and an invariant whose check
+/// would repeat the O(n) work that establishes it is a `debug_assert!`. This
+/// function is three consumers' shared primitive, so leaving the rule implicit
+/// would mean deciding it separately three times.
+///
+/// * **Non-empty — asserted in every build.** Below, `len() - 1` on an empty
+///   sample wraps wherever overflow checks are off, and the arbitrary index
+///   that follows is the difference between a named failure and reading
+///   whatever happens to be nearby.
+/// * **`percentile` in `[0, 100]` — asserted in every build.** Out of range,
+///   the saturating cast below clamps the index while the fraction keeps the
+///   out-of-range remainder, so the two stop describing the same position:
+///   `Q(-10)` of `[0, 1, 2, 10]` evaluated to `0.7`, which is not an error
+///   value but a plausible quantile of that very sample. A NaN percentile
+///   returned NaN. Both are measured, and both are why this one does not wait
+///   for a debug build.
+/// * **Ascending — `debug_assert!`ed.** This is the one obligation whose check
+///   is the scan that establishes it, so it cannot ride along beside the work
+///   the way the other two do. A debug check is what fits; before this, the
+///   obligation the doc named loudest was the only one with nothing behind it.
 ///
 /// The general expression is applied uniformly, including at `p = 50`. Some
 /// implementations special-case the median at even `n` to the average of the
@@ -65,10 +89,19 @@ pub(crate) fn sort_for_quantiles(scratch: &mut [f64]) {
 /// reports and the difference is carried by comparison tolerances rather than
 /// by a branch.
 pub(crate) fn quantile_sorted(sorted: &[f64], percentile: f64, rule: QuantileRule) -> f64 {
-    debug_assert!(!sorted.is_empty(), "a quantile needs at least one value");
-    debug_assert!(
+    assert!(!sorted.is_empty(), "a quantile needs at least one value");
+    assert!(
         (0.0..=100.0).contains(&percentile),
         "percentile {percentile} is outside 0..=100"
+    );
+    // `total_cmp` rather than `<=` so "ascending" means ascending under the
+    // order `sort_for_quantiles` imposes, and not a second, weaker order that
+    // a buffer straight out of that sort could fail.
+    debug_assert!(
+        sorted
+            .windows(2)
+            .all(|pair| pair[0].total_cmp(&pair[1]).is_le()),
+        "the sample is not ascending, so its order statistics are not its own"
     );
     match rule {
         QuantileRule::Linear => linear(sorted, percentile),
@@ -78,9 +111,6 @@ pub(crate) fn quantile_sorted(sorted: &[f64], percentile: f64, rule: QuantileRul
 /// Hyndman–Fan type 7, evaluated exactly as [`QuantileRule::Linear`] states it.
 fn linear(sorted: &[f64], percentile: f64) -> f64 {
     let last = sorted.len() - 1;
-    if last == 0 {
-        return sorted[0];
-    }
     let position = (percentile / 100.0) * last as f64;
     let lower = position.floor();
     let fraction = position - lower;
@@ -88,6 +118,13 @@ fn linear(sorted: &[f64], percentile: f64) -> f64 {
     // exact; the bound is re-checked rather than assumed, because a rounded
     // `position` of exactly `last` must read the final order statistic instead
     // of indexing past it.
+    //
+    // This guard is also the whole of the one-element case: `last` is `0`, so
+    // every percentile takes it and returns `x[0]`, bit for bit, `-0.0`
+    // included. There was an `n == 1` early return above saying the same thing
+    // first. It is gone — nothing could observe which of the two answered, so
+    // it was not a guard but a second description of this one, and a second
+    // description is a thing that can come to disagree.
     let index = lower as usize;
     if index >= last {
         return sorted[last];
@@ -234,6 +271,63 @@ mod tests {
         );
         assert_eq!(linear_at(&sample, 0.0), sample[0], "the sweep starts low");
         assert_eq!(previous, sample[sample.len() - 1], "and ends at the top");
+    }
+
+    /// Each precondition fails loudly, in the build its documentation names.
+    ///
+    /// A precondition with no falsifier is prose. These are the falsifiers, and
+    /// the second is the one that matters most: without its assertion the call
+    /// returned `0.7`, which is `x[0] + 0.7 * (x[1] - x[0])` — a number
+    /// indistinguishable from a real quantile of the same sample, produced by
+    /// the saturating cast clamping the index to `0` while the fraction kept
+    /// the out-of-range remainder. A wrong number that looks right is worse
+    /// than a panic, which is why it does not wait for a debug build.
+    mod preconditions {
+        use super::*;
+
+        #[test]
+        #[should_panic = "a quantile needs at least one value"]
+        fn an_empty_sample_fails_instead_of_wrapping_its_length() {
+            let _ = linear_at(&[], 50.0);
+        }
+
+        #[test]
+        #[should_panic = "percentile -10 is outside"]
+        fn a_percentile_below_the_range_fails_instead_of_returning_a_plausible_one() {
+            let _ = linear_at(&[0.0, 1.0, 2.0, 10.0], -10.0);
+        }
+
+        #[test]
+        #[should_panic = "percentile 110 is outside"]
+        fn a_percentile_above_the_range_fails_instead_of_saturating_onto_the_maximum() {
+            let _ = linear_at(&[0.0, 1.0, 2.0, 10.0], 110.0);
+        }
+
+        #[test]
+        #[should_panic = "percentile NaN is outside"]
+        fn a_nan_percentile_fails_instead_of_returning_nan() {
+            let _ = linear_at(&[0.0, 1.0, 2.0, 10.0], f64::NAN);
+        }
+
+        /// Sortedness is the debug-only obligation, so its falsifier is too.
+        #[test]
+        #[cfg(debug_assertions)]
+        #[should_panic = "not ascending"]
+        fn a_descending_sample_fails_in_a_debug_build() {
+            let _ = linear_at(&[1.0, 0.0], 50.0);
+        }
+
+        /// And the check reads the sort's own order, not a weaker one.
+        ///
+        /// `[0.0, -0.0]` is non-decreasing under `<=` and *descending* under
+        /// `total_cmp`, so a check written with `<=` would accept a buffer
+        /// `sort_for_quantiles` would never produce.
+        #[test]
+        #[cfg(debug_assertions)]
+        #[should_panic = "not ascending"]
+        fn signed_zeros_out_of_total_order_fail_too() {
+            let _ = linear_at(&[0.0, -0.0], 50.0);
+        }
     }
 
     #[test]
