@@ -2,24 +2,36 @@
 name = "ferricml"
 version = "0.2.0"
 edition = "2024"
-# Measured rather than assumed, on 2026-07-26, against this committed
-# `Cargo.lock`. Both halves of the floor were located by installing the
-# candidate toolchains and building:
+# Measured rather than assumed, against this committed `Cargo.lock`, by
+# installing the candidate toolchains and building.
 #
-#   1.85 / 1.86  Cargo refuses to resolve: `nalgebra 0.34.2` declares
-#                `rust-version = "1.87.0"`, the highest in the locked graph.
-#   1.87         Resolves, then fails to compile the crate's own source with 16
-#                instances of `error[E0658]: let expressions in this position
-#                are unstable`, over 15 sites in `src/tree`, `src/linear_model`,
-#                `src/ensemble`, and `src/preprocessing`. `let` chains
-#                stabilized in 1.88 on edition 2024, so the crate's source is
-#                what sets the floor, not the dependency graph.
-#   1.88         Builds and passes the full default test suite.
+# Measured first on 2026-07-26, when the floor had two independent causes: the
+# crate's own source, and `nalgebra 0.34.2` declaring `rust-version = "1.87.0"`,
+# the highest in the graph at the time. **Re-measured on 2026-07-27 after
+# `nalgebra` was replaced by `faer`, and only one cause is left.** The
+# dependency barrier is gone — `faer` needs 1.84 and the highest floor now in
+# the graph is `generativity` at 1.85 — so 1.85 and 1.86 resolve today where
+# they previously could not, and every candidate below 1.88 now fails the same
+# way and for the same reason:
 #
-# `1.85` — the first toolchain carrying `edition = "2024"` at all — is therefore
-# the floor this crate *could* have had, not the floor it has. The
-# `msrv` CI lane in `.github/workflows/ci.yml` builds and tests on exactly this
-# version so raising it has to be a decision rather than an accident.
+#   1.85 / 1.86 / 1.87   Resolve, then fail to compile the crate's own source
+#                        with `error[E0658]: let expressions in this position
+#                        are unstable`, over 15 sites in `src/tree`,
+#                        `src/linear_model`, `src/ensemble` and
+#                        `src/preprocessing`. `let` chains stabilized in 1.88 on
+#                        edition 2024.
+#   1.88                 Builds and passes the full default test suite.
+#
+# So the floor is the crate's own source, entirely and now solely. `1.85` — the
+# first toolchain carrying `edition = "2024"` at all — is the floor this crate
+# *could* have, and the 15 `let`-chain sites are the whole distance between the
+# two. The `msrv` CI lane in `.github/workflows/ci.yml` builds and tests on
+# exactly the declared version, reading it from this file rather than repeating
+# it, so raising the floor has to be a decision rather than an accident.
+#
+# Note that once a floor is declared, Cargo refuses an older toolchain before
+# compiling, so re-measuring this needs `--ignore-rust-version` to get past the
+# declaration and reach the real evidence.
 #
 # Build and test agree on 1.88; clippy does not, and the lane deliberately does
 # not run it. `clippy::nonminimal_bool` reports
