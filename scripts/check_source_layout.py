@@ -163,6 +163,14 @@ def rng_definition_lives_only_in_numeric(root: Path) -> list[str]:
 
     Both markers have to be present for this rule to mean anything, so their
     absence is itself a finding rather than a silently vacuous pass.
+
+    Two boundaries are deliberate. The scan covers `src/` and not `tests/`:
+    the integration crates cannot see a `pub(crate)` generator, and their
+    SplitMix64 copies drive fixture generation and artifact fuzzing rather than
+    a fitted model, so a seed there means one thing to one test. The markers are
+    textual, so a duplicate written as some *other* generator would pass — this
+    rule closes the copy-the-shared-one path, which is the one that produces two
+    streams claiming to be one, not every conceivable source of randomness.
     """
     source = root / "src"
     numeric = tree_text(source / "numeric")
