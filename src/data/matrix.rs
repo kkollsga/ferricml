@@ -31,6 +31,25 @@ fn validate_finite(values: &[f32]) -> Result<(), DataError> {
 /// A `MatrixView` is small and [`Copy`]. Constructing it checks the dimensions,
 /// exact buffer length, and finiteness of every element. Row and element access
 /// after construction is allocation-free.
+///
+/// This is what estimators accept. A view can be built directly over a slice a
+/// caller already owns, which is the path that avoids copying data into a
+/// [`DenseMatrix`] purely to hand it to a model:
+///
+/// ```
+/// use ferricml::data::MatrixView;
+///
+/// let buffer = vec![0.0_f32, 1.0, 2.0, 3.0];
+/// let view = MatrixView::new(&buffer, 2, 2)?;
+///
+/// assert_eq!(view.row(0), Some(&[0.0, 1.0][..]));
+/// assert_eq!(view.get(1, 1), Some(3.0));
+///
+/// // It is `Copy`, so passing it to several calls costs nothing.
+/// let same = view;
+/// assert_eq!(same, view);
+/// # Ok::<(), ferricml::data::DataError>(())
+/// ```
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct MatrixView<'a> {
     values: &'a [f32],
@@ -110,6 +129,48 @@ impl<'a> MatrixView<'a> {
 }
 
 /// An owned, validated contiguous row-major matrix.
+///
+/// This is the input every FerricML estimator fits and predicts on. Values are
+/// stored row-major: element `(row, column)` is at flat index
+/// `row * columns + column`, so a row is contiguous and iterating rows never
+/// allocates.
+///
+/// Construction is where validation happens. Shape, exact buffer length and
+/// finiteness are all checked before the matrix exists, so an estimator that
+/// holds one is not re-checking them per row, and a malformed input is rejected
+/// before any training work or allocation begins.
+///
+/// ```
+/// use ferricml::data::DenseMatrix;
+///
+/// // Three rows of two features, written out row by row.
+/// let data = DenseMatrix::new(vec![1.0, 2.0, 3.0, 4.0, 5.0, 6.0], 3, 2)?;
+///
+/// assert_eq!(data.row(1), Some(&[3.0, 4.0][..]));
+/// assert_eq!(data.get(2, 0), Some(5.0));
+/// assert_eq!(data.iter_rows().count(), 3);
+/// # Ok::<(), ferricml::data::DataError>(())
+/// ```
+///
+/// An invalid shape or a non-finite value is a typed error naming what was
+/// wrong and where, never a panic and never a silently repaired input:
+///
+/// ```
+/// use ferricml::data::{DataError, DenseMatrix};
+///
+/// assert_eq!(
+///     DenseMatrix::new(vec![1.0, 2.0, 3.0], 2, 2),
+///     Err(DataError::LengthMismatch { expected: 4, actual: 3 }),
+/// );
+/// assert_eq!(
+///     DenseMatrix::new(vec![1.0, f32::NAN], 1, 2),
+///     Err(DataError::NonFiniteValue { index: 1 }),
+/// );
+/// ```
+///
+/// Estimators take a borrowed [`MatrixView`] rather than the owned matrix, so
+/// one allocation serves fitting, prediction and scoring: pass
+/// [`as_view`](DenseMatrix::as_view).
 #[derive(Clone, Debug, PartialEq)]
 pub struct DenseMatrix {
     values: Vec<f32>,

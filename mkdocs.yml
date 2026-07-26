@@ -79,6 +79,9 @@ extra:
 
 nav:
   - Home: index.md
+  - Getting started:
+      - Install and quickstart: guide/quickstart.md
+      - Data and targets: guide/data.md
   - Contracts:
       - API and growth: api-and-growth.md
       - Frozen reference semantics: reference-semantics.md

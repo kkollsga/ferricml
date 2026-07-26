@@ -53,6 +53,12 @@ mod doc_pages {
     #[doc = include_str!("../docs/index.md")]
     mod index {}
 
+    #[doc = include_str!("../docs/guide/quickstart.md")]
+    mod guide_quickstart {}
+
+    #[doc = include_str!("../docs/guide/data.md")]
+    mod guide_data {}
+
     #[doc = include_str!("../docs/api-and-growth.md")]
     mod api_and_growth {}
 
