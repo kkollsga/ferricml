@@ -99,7 +99,8 @@ split. `LeaveOneOut` holds out one sample per split.
 `KFold` and `StratifiedKFold` validate before returning lazy, exact-size fold
 iterators. Fold sizes differ by at most one. Stratification accepts arbitrary
 `u8` labels and requires enough members of every observed class to place that
-class in every requested partition.
+class in every requested partition; each class is dealt round-robin across the
+folds.
 
 `GroupKFold` takes one group identifier per row and assigns whole groups to
 folds, so no group is ever on both sides of a split. It needs no seed: groups
@@ -108,6 +109,18 @@ holding the fewest rows. Fold sizes are then as even as whole groups allow.
 `RepeatedKFold` runs shuffled K-fold `n_repeats` times, deriving each repeat's
 shuffle seed from the configured one, and yields every fold of every repeat in
 order.
+
+**Fold membership is not a parity claim.** What a splitter promises is its
+defining property — stratified class proportions, whole groups on one side,
+no future row in a training window — together with exact reproducibility from
+the stated inputs. *Which* fold a given row lands in is this crate's own
+assignment order. `StratifiedKFold` deals each class round-robin where another
+library assigns contiguous blocks of the same stratum, and `GroupKFold` breaks
+a tie between two equally light folds by the rule stated above where another
+library breaks it in a way it never states; both produce a correct partition
+with matching per-fold class rates and matching fold sizes, over different
+rows. Comparing fold contents across libraries is therefore comparing something
+neither one promises, and a difference there is not a defect in either.
 
 `GroupShuffleSplit` draws whole groups at random for each of `n_splits`
 independent holdouts, so no group is ever on both sides of a split. It is not a

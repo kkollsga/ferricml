@@ -239,7 +239,27 @@ rather than allocating something it cannot hold.
 
 `LogisticSolver::Lbfgs` never forms that system. Its storage is linear in the
 parameter count, so it accepts far larger multiclass problems. Select it when
-the exact path refuses.
+the exact path refuses — **and select it on a large or strongly penalized
+binary problem too, where the default is simply the expensive one.** Newton
+accumulates and factorizes a `parameters x parameters` system over every row,
+so its per-iteration cost grows as `rows * parameters^2` against the
+matrix-free path's `rows * parameters`, and a smaller `C` buys more iterations
+to pay it on. Fitting 50,000 rows by 50 columns, same data, same `tol`, same
+`max_iter`, both arms this crate (Apple M4, release, median of five after one
+warmup):
+
+| `C` | `tol` | `Newton` | `Lbfgs` |
+|---|---|---|---|
+| 1.0 | 1e-4 | 68.3 ms | 16.6 ms |
+| 0.1 | 1e-4 | 83.7 ms | 16.6 ms |
+| 1.0 | 1e-8 | 83.5 ms | 25.6 ms |
+| 0.1 | 1e-8 | **375.4 ms** | **25.4 ms** |
+
+Three to fifteen times, for coefficients agreeing to six decimals at `1e-8`.
+The advantage belongs to the shape and not to the solver in general: at
+5,000 x 20 the same comparison is 2.8 ms against 1.8 ms, and on small data the
+exact step's single-digit iteration count wins outright. That is why this is a
+reason to select `Lbfgs`, not a reason to move the default.
 
 ```rust
 use ferricml::api::HasParams;

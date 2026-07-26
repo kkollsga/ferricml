@@ -207,6 +207,43 @@ Randomized splitting is also available on a standalone tree, through
 `Splitter::Random` — it is one typed parameter rather than two more public types
 and two more permanent artifact names.
 
+### Extra-trees need more members, and `MaxFeatures` decides how many
+
+Removing the threshold search removes the thing that made each member stable.
+An extra-trees member is a **higher-variance** estimator than a random-forest
+member, so more of the ensemble's quality is waiting on the averaging — and the
+narrower `max_features` is, the more of it there is to wait for. This is the
+design working, not a defect, but the default `n_estimators` will not always be
+enough to collect it.
+
+Measured on 2,000 training and 1,000 held-out rows over 10 columns with a
+nonlinear binary target, five data seeds, accuracy as the five-seed mean. First,
+across ten values of the forest's own `random_state` at 50 members:
+
+| Estimator | `MaxFeatures` | mean | sd | range |
+|---|---|---|---|---|
+| `ExtraTreesClassifier` | `Sqrt` (3 of 10) | 0.7716 | 0.0036 | 0.7650 – 0.7782 |
+| `ExtraTreesClassifier` | `All` | 0.7787 | 0.0031 | 0.7734 – 0.7828 |
+| `RandomForestClassifier` | `Sqrt` | 0.7790 | 0.0038 | 0.7752 – 0.7882 |
+
+At `Sqrt` the extra-trees ensemble is still 0.007 short of the other two at 50
+members, and the choice of `random_state` alone moves the result by 0.013 — a
+range wider than the shortfall. Second, holding `random_state` at its default
+`0` and adding members:
+
+| `n_estimators` | 25 | 50 | 100 | 200 | 400 | 800 |
+|---|---|---|---|---|---|---|
+| `ExtraTreesClassifier`, `Sqrt` | 0.7648 | 0.7650 | 0.7704 | 0.7764 | 0.7746 | 0.7784 |
+| `RandomForestClassifier`, `Sqrt` | 0.7768 | 0.7756 | 0.7780 | 0.7792 | 0.7850 | 0.7828 |
+
+The extra-trees row climbs to the level the other two reach at 50; the random
+forest starts there. So the practical rule: **when you narrow `max_features` on
+an extra-trees model, widen `n_estimators` with it**, and read a single-seed
+comparison at 50 members as one draw from a distribution rather than as a
+quality verdict. Setting `MaxFeatures::All` is the other way to spend the same
+budget — it reaches the asymptote at 50 members and is what
+`ExtraTreesRegressor` already defaults to.
+
 ## Boosting: trees in sequence
 
 A forest grows trees independently and averages them. Boosting grows them in

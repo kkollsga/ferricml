@@ -628,6 +628,19 @@ impl Iterator for KFoldIter {
 impl ExactSizeIterator for KFoldIter {}
 
 /// Deterministic label-stratified K-fold splitter configuration.
+///
+/// Each observed class is dealt round-robin across the folds, so every fold
+/// receives that class's members in near-equal number and the per-fold class
+/// proportions track the whole dataset's. **What is claimed is the
+/// stratification, not the membership.** Which fold a given row lands in is
+/// this splitter's own round-robin assignment and is not a parity claim
+/// against any other library: a library that fills folds with contiguous
+/// blocks of each stratum instead produces the same per-fold class rates from
+/// entirely different rows. Both are correct stratified partitions, and a
+/// cross-library comparison of fold *contents* is comparing something neither
+/// splitter promises. Assignment is reproducible from the labels, `n_splits`,
+/// `shuffle`, and `random_state` alone, which is the property cross-validation
+/// actually rests on.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct StratifiedKFold {
     n_splits: usize,
