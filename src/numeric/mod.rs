@@ -745,19 +745,98 @@ mod tests {
     /// the wide one's. A renormalizing second pass is a line no mutation of the
     /// present code can propose, so only an assertion that the residual is real
     /// keeps this contract from being silently "improved" away.
+    ///
+    /// # Why "at least one inexact row" was not enough
+    ///
+    /// This guard previously asserted only that *some* row missed one. That is
+    /// weaker than a reader assumes: a renormalizer that absorbs the residual
+    /// into a single element re-rounds when it writes that element back, so a
+    /// handful of rows still miss one and `inexact > 0` still holds. Measured
+    /// over the probe below, five renormalizing spellings — assigning or
+    /// adjusting the last element, the first, or the largest, and dividing the
+    /// whole row by its sum a second time — all left **8% or fewer** rows
+    /// inexact, against 21.7% for the real function. So the guard now asserts a
+    /// *rate*, and adds a second, exact property no rate can state: that no
+    /// column is privileged. Together they are an either/or trap. A
+    /// renormalizer that drives the residual out entirely fails the rate; one
+    /// that leaves a residual behind does so by moving a particular element,
+    /// and fails the symmetry.
     #[test]
     fn softmax_f32_rows_are_not_renormalized_and_may_miss_one_by_rounding() {
+        // Two sweeps of one shape. The wide one is the original magnitude
+        // coverage, where most rows saturate to an exact `[1, 0, ..]` and no
+        // residual is possible; the narrow one keeps every column carrying
+        // mass, which is where a division residual actually shows.
+        let mut rows = Vec::new();
+        for divisor in [7.0_f32, 50.0] {
+            for step in -400..=400 {
+                let value = step as f32 / divisor;
+                rows.push([value, -value, value / 3.0, 0.0, 1.0 - value]);
+            }
+        }
+
         let mut worst = 0.0_f32;
         let mut inexact = 0_usize;
-        for step in -400..=400 {
-            let value = step as f32 / 7.0;
-            let row = softmax_f32(&[value, -value, value / 3.0, 0.0, 1.0 - value]);
+        for scores in &rows {
+            let row = softmax_f32(scores);
             let sum = row.iter().sum::<f32>();
             worst = worst.max((sum - 1.0).abs());
             inexact += usize::from(sum != 1.0);
         }
         assert!(worst <= 8.0 * f32::EPSILON, "row-sum deviation {worst}");
-        assert!(inexact > 0, "the residual is real, not hypothetical");
+        assert!(
+            inexact * 8 >= rows.len(),
+            "only {inexact} of {} rows kept a division residual; a renormalized \
+             row sums to exactly one, so a low rate is the shape of a second pass",
+            rows.len()
+        );
+
+        /// The change this guard exists to refuse: force an exact row sum by
+        /// absorbing the residual into the last element.
+        fn fix_up_last(row: &[f32]) -> Vec<f32> {
+            let mut row = row.to_vec();
+            let last = row.len() - 1;
+            let residual = 1.0 - row.iter().sum::<f32>();
+            row[last] += residual;
+            row
+        }
+
+        // On a two-element row the total is one `f32` addition, which is exactly
+        // commutative, so reversing the scores must reverse the probabilities
+        // bit for bit. Plain division has no distinguished column and satisfies
+        // that; absorbing a residual into a positional element does not.
+        let mut residual_pairs = 0_usize;
+        let mut fixup_asymmetries = 0_usize;
+        for step in -400..=400 {
+            let scores = [step as f32 / 50.0, 1.0 - step as f32 / 150.0];
+            let forward = softmax_f32(&scores);
+            let swapped = softmax_f32(&[scores[1], scores[0]]);
+            let reversed = swapped.iter().rev().copied().collect::<Vec<_>>();
+            assert_eq!(
+                forward, reversed,
+                "reversing the scores {scores:?} did not reverse the row"
+            );
+
+            residual_pairs += usize::from(forward.iter().sum::<f32>() != 1.0);
+            let fixed_reversed = fix_up_last(&swapped)
+                .iter()
+                .rev()
+                .copied()
+                .collect::<Vec<_>>();
+            fixup_asymmetries += usize::from(fix_up_last(&forward) != fixed_reversed);
+        }
+        // Both halves of "the property could have been violated": the pairs do
+        // carry residuals for a renormalizer to absorb, and absorbing them
+        // really does break the equality asserted above.
+        assert!(
+            residual_pairs > 0,
+            "no two-element row missed one, so the symmetry above was free"
+        );
+        assert!(
+            fixup_asymmetries > 0,
+            "fixing up the last element left every reversed pair equal, so the \
+             symmetry above does not discriminate against renormalization"
+        );
     }
 
     #[test]
