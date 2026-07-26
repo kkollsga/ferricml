@@ -161,12 +161,35 @@ pub enum ModelError {
     /// The linear solver encountered a non-positive-definite system, or an
     /// iterative solver could not make progress from its current iterate.
     LinearSolveFailed,
-    /// An iterative solver exhausted `max_iter` without meeting its tolerance.
+    /// An iterative solver stopped short of its `tol`.
     ///
     /// Reported instead of returning the last iterate, because an unconverged
     /// model is indistinguishable from a converged one once it is fitted.
+    ///
+    /// # Why neither this sentence nor the message names a cause
+    ///
+    /// Two different things stop a solver short of `tol`, and both report
+    /// here. The `max_iter` budget can run out. Or the solver can reach a point
+    /// where no step it can represent improves the objective — an L-BFGS
+    /// line-search bracket that collapsed, a Newton backtracking search that
+    /// found no descending step — which is the observable form of a `tol` below
+    /// the objective's own numerical resolution, near `1e-9` for a log-loss of
+    /// order one. To a caller both mean the same thing, that the fit is not
+    /// converged, which is why one variant carries both. Naming either cause
+    /// would make the message false on the other, and naming the budget sent
+    /// callers to raise `max_iter` — the one parameter that cannot help a fit
+    /// whose budget was never the constraint.
+    ///
+    /// # What separates them
+    ///
+    /// `iterations` does, in one direction. It never exceeds the `max_iter`
+    /// that was set, so `iterations < max_iter` proves the budget was not the
+    /// constraint and the remedy is a looser `tol`. Equality does not prove the
+    /// converse, because a step can fail to descend on the last iteration the
+    /// budget allowed. Inequality is therefore decisive and equality leaves
+    /// both possible.
     SolverDidNotConverge {
-        /// Iterations performed before the budget ran out.
+        /// Iterations completed before the solver stopped.
         iterations: usize,
     },
     /// A scalar-valued operation was asked of a model that produces a vector.
@@ -338,9 +361,12 @@ impl fmt::Display for ModelError {
                 write!(f, "prediction for row {row} is not finite")
             }
             Self::LinearSolveFailed => f.write_str("linear solve failed during optimization"),
+            // Neither cause is named: the same variant reports an exhausted
+            // budget and a step that could no longer descend, and a sentence
+            // naming one of them is false wherever the other applies.
             Self::SolverDidNotConverge { iterations } => write!(
                 f,
-                "solver reached max_iter after {iterations} iterations without converging"
+                "solver stopped after {iterations} iterations without meeting tol"
             ),
             Self::MulticlassOutput { columns } => write!(
                 f,

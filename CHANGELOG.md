@@ -137,6 +137,34 @@ and releases use [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   regeneration — but `n_iter` falls on 96 of the region's 385 previously-fitted
   designs as the better-conditioned solve converges sooner, and coefficients on
   ill-conditioned designs move to their centred representative.
+
+- `ModelError::SolverDidNotConverge` renders as "solver stopped after `{n}`
+  iterations without meeting tol", instead of "solver reached max_iter after
+  `{n}` iterations without converging". The old sentence named a cause the
+  variant cannot know. Measured on a 12x2 binary logistic fit under L-BFGS with
+  `C = 0.1`, `tol = 1e-12` and `max_iter = 500`, it rendered as *"solver reached
+  max_iter after 9 iterations without converging"* — a budget of five hundred
+  with nine of them used, and the same shape as the 50000x50 report it was found
+  on.
+
+  The mechanism is that one variant has always carried two stopping causes.
+  L-BFGS maps both an exhausted budget and a collapsed line-search bracket onto
+  it, and the two Newton paths break out of their loop when backtracking finds
+  no descending step, so three of the five construction sites can report far
+  below their budget. A collapsed bracket is the observable form of a `tol`
+  below the objective's own numerical resolution, near `1e-9` for a log-loss of
+  order one, which makes raising `max_iter` — the one action the old sentence
+  pointed at — the one action that cannot help.
+
+  **No mapping and no refusal changed**: to a caller both causes mean the fit is
+  not converged, which is why one variant reports both. What changed is the
+  sentence and the field's documentation, which now state only what is true at
+  every site. The causes stay separable from `iterations`, in one direction:
+  it never exceeds the `max_iter` that was set, so `iterations < max_iter`
+  proves the budget was not the constraint and the remedy is a looser `tol`,
+  while equality leaves both possible. That is now documented on the variant,
+  and `tests/solver_refusal_message.rs` renders a refusal at every construction
+  site and fails on a message that names either cause.
 ### Added
 
 - `PolynomialFeatures`, the first transformer whose output is wider than its
