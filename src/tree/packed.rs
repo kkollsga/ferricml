@@ -160,13 +160,28 @@ impl PackedTree {
         }
         let mut index = 0usize;
         loop {
-            // SAFETY: `from_build_nodes` validates every branch token against
-            // the immutable packed buffer before the model becomes observable.
-            // Each non-leaf child therefore remains a valid node index.
+            // SAFETY: `index` is in bounds. Every packed buffer is produced by
+            // `pack_topology`, which calls `validate_build_topology`
+            // unconditionally — in release as in debug, on fitted and decoded
+            // trees alike, since `from_logical_nodes` funnels into
+            // `from_build_nodes` too. That validator rejects the tree unless
+            // each node is reached from the root exactly once and every node is
+            // reached (so the structure is a tree: no cycle, no shared subtree,
+            // no unreachable record) and every branch has `left == index + 1`,
+            // `right > left` and `right < build.len()`. Packing is a
+            // pre-order relabelling of exactly those nodes, so each branch token
+            // written below is an index into this buffer, and the strict
+            // increase is also why this loop terminates. The `debug_assert!` in
+            // `from_build_nodes` re-checks the packed form afterwards; it is a
+            // redundant post-condition, not the check this relies on.
             let node = unsafe { self.nodes.get_unchecked(index) };
-            // SAFETY: construction validates every encoded feature against the
-            // fitted width, and public prediction validates `row` to that width
-            // before entering tree traversal.
+            // SAFETY: the feature index is within `row`. The same validator
+            // rejects any branch whose `feature` is not `< n_features`, and the
+            // width it is given is the one the model then reports as its fitted
+            // width — the decoded `n_features_in` on the artifact path — which
+            // public prediction validates `row` against before traversal. A
+            // hostile artifact therefore cannot declare a narrow width and pack
+            // wide feature indices behind it.
             let value =
                 unsafe { *row.get_unchecked((node.feature_and_flags & FEATURE_MASK) as usize) };
             if value <= node.threshold {

@@ -1,9 +1,16 @@
 //! The crate's shared deterministic pseudo-random source.
 //!
 //! One SplitMix64 generator serves every module that needs reproducible
-//! randomness — bootstrap sampling and feature subsetting in the forests
-//! today, permutation-based inspection next — so a seed means the same thing
-//! everywhere and no consumer has to reach into another module's internals.
+//! randomness — bootstrap sampling and feature subsetting in the forests,
+//! permutation-based inspection, and every shuffled dataset split — so a seed
+//! means the same thing everywhere and no consumer has to reach into another
+//! module's internals.
+//!
+//! "One" is literal, and `rng-single-source` in `scripts/check_source_layout.py`
+//! keeps it that way: a second definition outside this module fails the gate.
+//! `model_selection::split` carried a character-identical private copy until
+//! 2026-07-26, documented as an independent stream while emitting the same
+//! values for the same seed — the shape rule 6 exists to forbid.
 //!
 //! The stream is part of FerricML's determinism contract: for a given seed the
 //! sequence of `next_u64` values, and therefore every fitted artifact derived
@@ -63,6 +70,22 @@ fn mix64(mut value: u64) -> u64 {
 
 pub(crate) fn derive_tree_seed(global_seed: u64, tree_index: u64) -> u64 {
     mix64(global_seed ^ tree_index.wrapping_mul(0xd1b5_4a32_d192_ed03))
+}
+
+/// Derives one repetition's seed from a configured seed.
+///
+/// Repeated K-fold and grouped shuffle splitting both draw a sequence of
+/// independent partitions from one number, and both need consecutive seeds and
+/// consecutive repetitions not to produce overlapping streams — so the index is
+/// mixed rather than added.
+///
+/// It lives here beside [`derive_tree_seed`] rather than in the splitters for
+/// the reason rule 6 gives: a seed has to mean the same thing everywhere, and a
+/// module deriving its own seeds from its own copy of the mixer is the same
+/// defect as a module defining its own generator. Splitters call this and
+/// nothing else; the mixing function itself stays private to this file.
+pub(crate) fn derive_repetition_seed(global_seed: u64, repetition: u64) -> u64 {
+    mix64(global_seed ^ mix64(repetition ^ 0x9e37_79b9_7f4a_7c15))
 }
 
 #[cfg(test)]
@@ -180,6 +203,48 @@ mod tests {
                 16161299606447644327,
             ]
         );
+    }
+
+    /// Seeds captured from `model_selection::split::repeat_seed` *before* the
+    /// split module's private duplicate of this generator was deleted. They are
+    /// the proof that folding the two streams into one moved no partition:
+    /// every repeated K-fold and grouped shuffle split starts from one of
+    /// these numbers.
+    #[test]
+    fn derived_repetition_seeds_match_the_pre_unification_split_generator() {
+        assert_eq!(
+            (0..6)
+                .map(|i| derive_repetition_seed(0, i))
+                .collect::<Vec<_>>(),
+            vec![
+                5197578548964807871,
+                4922461756044938104,
+                16576549522093199164,
+                15916886550466581944,
+                16438634200498821406,
+                14037225222889099931,
+            ]
+        );
+        assert_eq!(
+            (0..6)
+                .map(|i| derive_repetition_seed(0xdead_beef, i))
+                .collect::<Vec<_>>(),
+            vec![
+                948475220252533093,
+                14531754899820632363,
+                8025580981012917048,
+                6004716973091366453,
+                14508645644872444640,
+                618719326021940468,
+            ]
+        );
+
+        // Consecutive configured seeds must not shift the same sequence by one
+        // repetition — the property the double mix exists for, asserted rather
+        // than described.
+        assert_eq!(derive_repetition_seed(4, 0), 1257538232492452125);
+        assert_eq!(derive_repetition_seed(8, 0), 2834716988604184534);
+        assert_ne!(derive_repetition_seed(4, 1), derive_repetition_seed(5, 0));
     }
 
     /// The unit draw is part of the same frozen determinism contract the

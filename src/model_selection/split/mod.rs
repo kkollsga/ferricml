@@ -4,6 +4,8 @@ use std::collections::BinaryHeap;
 use std::error::Error;
 use std::fmt;
 
+use crate::numeric::{OwnedRng, derive_repetition_seed};
+
 mod group_shuffle;
 mod grouped;
 mod repeated;
@@ -450,7 +452,7 @@ pub fn train_test_split(samples: usize, params: HoldoutParams) -> Result<Split, 
 
     let mut order = (0..samples).collect::<Vec<_>>();
     let mut test_membership = vec![0_u8; samples];
-    let mut rng = StableRng::new(params.random_state);
+    let mut rng = OwnedRng::new(params.random_state);
     for index in (train_count..samples).rev() {
         let other = rng.index(index + 1);
         order.swap(index, other);
@@ -499,7 +501,7 @@ pub fn stratified_train_test_split(
     let mut test_membership = vec![0_u8; samples];
     if params.shuffle {
         let mut order = (0..samples).collect::<Vec<_>>();
-        let mut rng = StableRng::new(params.random_state);
+        let mut rng = OwnedRng::new(params.random_state);
         for position in (1..samples).rev() {
             let other = rng.index(position + 1);
             order.swap(position, other);
@@ -694,7 +696,7 @@ impl StratifiedKFold {
             buckets[label as usize].push(index);
         }
         if self.shuffle {
-            let mut rng = StableRng::new(self.random_state);
+            let mut rng = OwnedRng::new(self.random_state);
             for bucket in &mut buckets {
                 shuffle_with_rng(bucket, &mut rng);
             }
@@ -892,59 +894,24 @@ impl PartialOrd for QuotaCandidate {
 
 /// Derives one repetition's shuffle seed from a configured seed.
 ///
-/// Repeated K-fold and grouped shuffle splitting both draw a sequence of
-/// independent partitions from one number, and both need consecutive seeds and
-/// consecutive repetitions not to produce overlapping streams — so the index is
-/// mixed rather than added, and the derivation is stated once here rather than
-/// once per splitter.
+/// A thin name over [`derive_repetition_seed`], which owns the derivation for
+/// the reason `numeric`'s rule 6 gives: seeds mean one thing crate-wide. This
+/// module deliberately holds no generator and no mixing constant of its own —
+/// it did until 2026-07-26, and the copy was byte-identical to the shared
+/// stream while its doc comment claimed independence.
 fn repeat_seed(random_state: u64, repetition: usize) -> u64 {
-    mix64(random_state ^ mix64(repetition as u64 ^ 0x9e37_79b9_7f4a_7c15))
+    derive_repetition_seed(random_state, repetition as u64)
 }
 
 fn stable_shuffle(values: &mut [usize], seed: u64) {
-    shuffle_with_rng(values, &mut StableRng::new(seed));
+    shuffle_with_rng(values, &mut OwnedRng::new(seed));
 }
 
-fn shuffle_with_rng(values: &mut [usize], rng: &mut StableRng) {
+fn shuffle_with_rng(values: &mut [usize], rng: &mut OwnedRng) {
     for index in (1..values.len()).rev() {
         let other = rng.index(index + 1);
         values.swap(index, other);
     }
-}
-
-/// Private SplitMix64 stream with rejection-sampled bounded indices. This is
-/// deliberately independent from fitted-model random streams.
-struct StableRng {
-    state: u64,
-}
-
-impl StableRng {
-    fn new(seed: u64) -> Self {
-        Self { state: seed }
-    }
-
-    fn next_u64(&mut self) -> u64 {
-        self.state = self.state.wrapping_add(0x9e37_79b9_7f4a_7c15);
-        mix64(self.state)
-    }
-
-    fn index(&mut self, upper: usize) -> usize {
-        debug_assert!(upper > 0);
-        let bound = upper as u64;
-        let reject_below = bound.wrapping_neg() % bound;
-        loop {
-            let value = self.next_u64();
-            if value >= reject_below {
-                return (value % bound) as usize;
-            }
-        }
-    }
-}
-
-fn mix64(mut value: u64) -> u64 {
-    value = (value ^ (value >> 30)).wrapping_mul(0xbf58_476d_1ce4_e5b9);
-    value = (value ^ (value >> 27)).wrapping_mul(0x94d0_49bb_1331_11eb);
-    value ^ (value >> 31)
 }
 
 #[cfg(test)]

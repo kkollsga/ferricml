@@ -82,7 +82,7 @@ mod quantile;
 mod rng;
 
 pub(crate) use quantile::{QuantileRule, quantile_sorted, sort_for_quantiles};
-pub(crate) use rng::{OwnedRng, derive_tree_seed};
+pub(crate) use rng::{OwnedRng, derive_repetition_seed, derive_tree_seed};
 
 /// Logistic sigmoid over `f64`.
 ///

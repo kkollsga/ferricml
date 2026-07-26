@@ -108,7 +108,12 @@ serial.
 
 **Integer and index behaviour.** The shared generator (`src/numeric/rng.rs`) is
 SplitMix64 over `u64` with rejection-sampled bounds, so its stream does not
-depend on pointer width; a frozen-stream test pins the exact values. Every
+depend on pointer width; a frozen-stream test pins the exact values. "Shared"
+is singular and checkable: every seeded path in the crate — forest bootstrap
+sampling, feature subsetting, permutation inspection, and every shuffled
+dataset split — draws from that one generator, and the `rng-single-source`
+layout rule fails the gate if a second definition appears outside
+`src/numeric/`. Every
 count the artifact format admits — feature widths, node counts, tree counts —
 is bounded far below `2^32`, so no `as usize` conversion behaves differently on
 a 32-bit target.
