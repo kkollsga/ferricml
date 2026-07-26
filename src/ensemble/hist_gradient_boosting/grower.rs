@@ -591,7 +591,7 @@ mod tests {
     #[test]
     fn grows_deterministic_compact_preorder_tree() {
         let data = data();
-        let binner = Binner::fit(&data.as_view(), 8).unwrap();
+        let binner = Binner::fit(&data.as_view(), 8, None).unwrap();
         let binned = binner.transform(&data.as_view()).unwrap();
         let residuals = [-2.0, -2.0, -2.0, -2.0, 3.0, 3.0, 3.0, 3.0];
         let first =
@@ -616,7 +616,7 @@ mod tests {
     #[test]
     fn equal_gain_splits_choose_the_first_feature() {
         let data = DenseMatrix::new(vec![0.0, 0.0, 0.0, 0.0, 1.0, 1.0, 1.0, 1.0], 4, 2).unwrap();
-        let binner = Binner::fit(&data.as_view(), 4).unwrap();
+        let binner = Binner::fit(&data.as_view(), 4, None).unwrap();
         let binned = binner.transform(&data.as_view()).unwrap();
         let tree = grow_tree::<SquaredError>(
             &binned,
@@ -637,7 +637,7 @@ mod tests {
     #[test]
     fn depth_leaf_and_regularization_controls_are_enforced() {
         let data = data();
-        let binner = Binner::fit(&data.as_view(), 4).unwrap();
+        let binner = Binner::fit(&data.as_view(), 4, None).unwrap();
         let binned = binner.transform(&data.as_view()).unwrap();
         let residuals = [-4.0, -3.0, -2.0, -1.0, 1.0, 2.0, 3.0, 4.0];
         let tree = grow_tree::<SquaredError>(
@@ -662,7 +662,7 @@ mod tests {
     #[test]
     fn a_varying_hessian_leaf_divides_by_its_own_curvature() {
         let data = data();
-        let binner = Binner::fit(&data.as_view(), 8).unwrap();
+        let binner = Binner::fit(&data.as_view(), 8, None).unwrap();
         let binned = binner.transform(&data.as_view()).unwrap();
         // Deliberately unequal raw scores, so `p(1 - p)` differs per row.
         let raws = [-2.0_f64, -1.0, 0.0, 1.0, 2.0, 3.0, 0.5, -0.5];
@@ -735,7 +735,7 @@ mod tests {
 
         let features = [0.0_f32, 1.0, 2.0, 3.0];
         let data = DenseMatrix::new(features.to_vec(), 4, 1).unwrap();
-        let binner = Binner::fit(&data.as_view(), 4).unwrap();
+        let binner = Binner::fit(&data.as_view(), 4, None).unwrap();
         let binned = binner.transform(&data.as_view()).unwrap();
         let gradients = (0..4).map(|row| statistic(row).0).collect::<Vec<_>>();
         let hessians = (0..4).map(|row| statistic(row).1).collect::<Vec<_>>();
@@ -757,7 +757,7 @@ mod tests {
             .map(|&row| features[row])
             .collect::<Vec<_>>();
         let repeated_data = DenseMatrix::new(repeated_features, repeated_rows.len(), 1).unwrap();
-        let repeated_binner = Binner::fit(&repeated_data.as_view(), 4).unwrap();
+        let repeated_binner = Binner::fit(&repeated_data.as_view(), 4, None).unwrap();
         let repeated_binned = repeated_binner.transform(&repeated_data.as_view()).unwrap();
         let repeated_gradients = repeated_rows
             .iter()
@@ -799,7 +799,7 @@ mod tests {
     #[test]
     fn a_varying_hessian_grower_validates_its_curvature_slice() {
         let data = data();
-        let binner = Binner::fit(&data.as_view(), 8).unwrap();
+        let binner = Binner::fit(&data.as_view(), 8, None).unwrap();
         let binned = binner.transform(&data.as_view()).unwrap();
         assert_eq!(
             grow_tree::<BinaryLogLoss>(
@@ -837,7 +837,7 @@ mod tests {
     #[test]
     fn validates_residuals_and_growth_configuration() {
         let data = data();
-        let binner = Binner::fit(&data.as_view(), 4).unwrap();
+        let binner = Binner::fit(&data.as_view(), 4, None).unwrap();
         let binned = binner.transform(&data.as_view()).unwrap();
         assert_eq!(
             grow_tree::<SquaredError>(&binned, &binner, scalar(&[1.0]), config()),

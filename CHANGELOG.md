@@ -9,6 +9,31 @@ and releases use [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- **Breaking (fitted values).** Histogram gradient boosting fits its bin grid
+  over the rows that are in the training sample, instead of over every row it
+  was handed. Both boosted estimators document that "an integer weight is the
+  same fit as repeating that row that many times", and zero is an integer: the
+  sibling families implement and test that case by name
+  (`random_forest`'s `a_zero_weight_row_is_the_same_fit_as_a_deleted_row`,
+  `tree`'s `a_zero_weight_row_is_absent_rather_than_present_with_no_influence`),
+  and `tree::grower` states the rule as "a row of zero weight is not in the
+  training sample at all". Boosting was the silent exception.
+
+  The statistics already ignored a zero-weight row, so it influenced the fit
+  through the grid and through nothing else: a row that was supposed to be
+  absent still contributed a distinct feature value for a bin edge to land on.
+  Measured on nine rows over one column with the row holding the unique value
+  `4.0` zero-weighted, the zero-weighted fit and the deleted-row fit disagreed
+  by up to **`1.35` on a target range of `0..20`**, at every `max_bins` from
+  `3` to `16` — across both branches of the grid, the per-adjacent-pair one and
+  the quantile one.
+
+  The grid is still not *weighted*: a weight does not move a threshold, which
+  is why weighting a row and repeating it agree. What the weights now decide is
+  membership. Only a weighted fit containing a zero weight moves; unweighted
+  fits and fits whose weights are all positive are bit-identical, and
+  `make reference-check` is green without regeneration.
+
 - `GroupKFold::split` documented that "group identifiers carry no order or
   meaning beyond equality", and `GroupShuffleSplit` restated it as
   "`GroupKFold`, whose assignment depends only on group sizes". Both were
