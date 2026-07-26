@@ -10,13 +10,25 @@ pub enum ArtifactError {
     /// The artifact magic does not identify FerricML.
     InvalidMagic,
     /// The artifact version is unsupported.
-    UnsupportedVersion { found: u16 },
+    UnsupportedVersion {
+        /// Envelope version read from the artifact.
+        found: u16,
+    },
     /// The estimator payload version is unsupported.
-    UnsupportedPayloadVersion { found: u16 },
+    UnsupportedPayloadVersion {
+        /// Payload version read from the artifact.
+        found: u16,
+    },
     /// Required envelope flags are not understood by this reader.
-    UnsupportedRequiredFlags { found: u16 },
+    UnsupportedRequiredFlags {
+        /// The required-flag bits read from the artifact.
+        found: u16,
+    },
     /// The model kind is unsupported by the requested decoder.
-    UnsupportedModelKind { found: u16 },
+    UnsupportedModelKind {
+        /// Model-kind code read from the artifact.
+        found: u16,
+    },
     /// The SHA-256 integrity footer does not match the payload.
     ChecksumMismatch,
     /// The embedded feature schema differs from the caller's requirement.
@@ -26,7 +38,12 @@ pub enum ArtifactError {
     /// Bytes remain after the complete model payload.
     TrailingBytes,
     /// The encoded artifact exceeds the hard reader limit.
-    SizeLimitExceeded { limit: usize, actual: usize },
+    SizeLimitExceeded {
+        /// Hard byte limit the reader enforces.
+        limit: usize,
+        /// Byte length the artifact actually has.
+        actual: usize,
+    },
     /// The fitted model holds state this artifact schema cannot represent.
     ///
     /// Encoding refuses instead of writing bytes that would decode as a

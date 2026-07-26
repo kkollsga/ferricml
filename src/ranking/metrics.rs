@@ -10,11 +10,21 @@ use super::PairOutcome;
 #[non_exhaustive]
 pub enum RankingMetricError {
     /// Expected and predicted inputs have different lengths.
-    LengthMismatch { expected: usize, actual: usize },
+    LengthMismatch {
+        /// Length of the expected-score input.
+        expected: usize,
+        /// Length of the predicted-score input.
+        actual: usize,
+    },
     /// A metric received no usable observations.
     Empty,
     /// A score is NaN or infinite.
-    NonFiniteScore { input: usize, index: usize },
+    NonFiniteScore {
+        /// Which input held the offending score: `0` expected, `1` predicted.
+        input: usize,
+        /// Zero-based position of that score within its input.
+        index: usize,
+    },
     /// The metric denominator is zero.
     Undefined,
 }

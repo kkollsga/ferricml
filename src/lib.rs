@@ -3,6 +3,12 @@
 //! FerricML focuses first on linear models and random forests, with stable
 //! estimator semantics and fast, allocation-conscious inference.
 
+// Every public item carries rustdoc, down to the fields of an error variant.
+// `warn` rather than `deny` on purpose: the gate and CI compile with
+// `-D warnings`, so the property is enforced here, while a future rustc that
+// widens the lint cannot turn a downstream consumer's build red.
+#![warn(missing_docs)]
+
 pub mod api;
 pub mod artifact;
 pub mod calibration;
