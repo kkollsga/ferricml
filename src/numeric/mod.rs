@@ -352,38 +352,81 @@ mod tests {
         // Saturation is asymmetric, and both boundaries are contractual.
         // `1.0` appears as soon as `exp(-value)` falls below half an epsilon;
         // `0.0` only once `exp(value)` underflows, which is far further out.
-        assert!(sigmoid_f64(36.0) < 1.0);
-        assert_eq!(sigmoid_f64(37.0), 1.0);
-        assert!(sigmoid_f64(-700.0) > 0.0);
-        assert_eq!(sigmoid_f64(-800.0), 0.0);
+        //
+        // Each bracket is a tenth wide around the arithmetic boundary —
+        // `-ln(eps/2)` and the `exp` underflow point — rather than a unit wide
+        // some distance away from it. The zero-side brackets used to be
+        // `-700`/`-800` and `-80`/`-200`, which a hard-coded early cutoff
+        // satisfied: `if value < -720.0 { return 0.0 }` saturates `f64` some
+        // 45 units before the true boundary at -745.13, and the `f32` pair
+        // accepted a cutoff at -100 against a boundary at -103.97. Both are
+        // refused here. The margin is still many orders of magnitude wider
+        // than any plausible `exp` error, so the brackets pin the boundary
+        // without pinning the libm.
+        assert!(sigmoid_f64(36.7) < 1.0, "f64 saturates to one too early");
+        assert_eq!(sigmoid_f64(36.8), 1.0, "f64 saturates to one too late");
+        assert!(sigmoid_f64(-745.1) > 0.0, "f64 saturates to zero too early");
+        assert_eq!(sigmoid_f64(-745.2), 0.0, "f64 saturates to zero too late");
 
-        assert!(sigmoid_f32(16.0) < 1.0);
-        assert_eq!(sigmoid_f32(17.0), 1.0);
-        assert!(sigmoid_f32(-80.0) > 0.0);
-        assert_eq!(sigmoid_f32(-200.0), 0.0);
+        assert!(sigmoid_f32(16.6) < 1.0, "f32 saturates to one too early");
+        assert_eq!(sigmoid_f32(16.7), 1.0, "f32 saturates to one too late");
+        assert!(sigmoid_f32(-103.9) > 0.0, "f32 saturates to zero too early");
+        assert_eq!(sigmoid_f32(-104.0), 0.0, "f32 saturates to zero too late");
 
         // The complement of a saturated value is exact rather than negative.
-        assert_eq!(1.0 - sigmoid_f64(37.0), 0.0);
-        assert_eq!(1.0 - sigmoid_f32(17.0), 0.0);
+        assert_eq!(1.0 - sigmoid_f64(36.8), 0.0);
+        assert_eq!(1.0 - sigmoid_f32(16.7), 0.0);
     }
 
+    /// The fold is the whole implementation, and the argument's shape does not
+    /// change it.
+    ///
+    /// This test used to close with `sum_in_order(t) == sum_in_order(t)` over
+    /// one iterator shape — two calls to a pure function on equal arguments,
+    /// which no change to this file can make disagree. The property worth
+    /// having is the one the generic signature puts at risk instead: the helper
+    /// takes `impl IntoIterator`, so every argument shape is a separately
+    /// monomorphized body, and a reduction specialized on a known length —
+    /// pairwise over a slice, sequential otherwise — would leave the shapes
+    /// disagreeing with each other and with the fold below.
     #[test]
-    fn sum_in_order_matches_a_sequential_fold_and_is_repeatable() {
-        let terms = (0..1_000)
-            .map(|step| f64::from(step) * 0.1 - 37.5)
-            .collect::<Vec<_>>();
+    fn sum_in_order_matches_a_sequential_fold_at_every_iterator_shape() {
+        // The ramp alone sums exactly: measured against it, a pairwise
+        // reduction agrees with a sequential fold bit for bit, so the
+        // comparison below would have proven nothing about grouping. The large
+        // leading term is what makes every later addition round, and therefore
+        // what makes any regrouping observable at all.
+        let mut terms = vec![1.0e16_f64];
+        terms.extend((0..1_000).map(|step| f64::from(step) * 0.1 - 37.5));
         let expected = terms
             .iter()
             .copied()
             .fold(-0.0_f64, |total, term| total + term);
-        assert_eq!(
-            sum_in_order(terms.iter().copied()).to_bits(),
-            expected.to_bits()
-        );
-        assert_eq!(
-            sum_in_order(terms.iter().copied()).to_bits(),
-            sum_in_order(terms.iter().copied()).to_bits()
-        );
+
+        // A borrowed exact-size iterator, an owning one, a chain of two halves
+        // whose boundary a pairwise reduction would not choose, and one whose
+        // `size_hint` upper bound is `None` and so admits no length-dependent
+        // path at all.
+        let mut draining = terms.iter().copied();
+        let shapes: [(&str, f64); 4] = [
+            ("borrowed", sum_in_order(terms.iter().copied())),
+            ("owned", sum_in_order(terms.clone())),
+            (
+                "chained",
+                sum_in_order(terms[..377].iter().chain(&terms[377..]).copied()),
+            ),
+            (
+                "unhinted",
+                sum_in_order(std::iter::from_fn(move || draining.next())),
+            ),
+        ];
+        for (shape, total) in shapes {
+            assert_eq!(
+                total.to_bits(),
+                expected.to_bits(),
+                "the {shape} iterator did not reduce as a sequential fold"
+            );
+        }
     }
 
     #[test]
@@ -421,13 +464,36 @@ mod tests {
         assert_eq!(sum_in_order(descending), 1.0);
     }
 
+    /// The running total is `f64` the whole way, not an `f32` one returned wide.
+    ///
+    /// The widening in the caller's `f64::from` is the caller's, so
+    /// `widened > 1.0` — what this used to assert — holds for any accumulation
+    /// that stays in `f64`, and its companion assertion about the `f32` fold
+    /// never called the function at all. What the helper itself owns is the
+    /// *width* of the accumulator, so the sum is now pinned bit for bit and the
+    /// contrast with the narrow fold is drawn through the helper's own result.
+    /// The falsifier is exact: an accumulator that round-tripped through `f32`
+    /// — `f64::from((total + term) as f32)` — returns `1.0` and fails both.
     #[test]
-    fn sum_in_order_widens_narrow_terms_without_an_intermediate_rounding() {
-        let terms = [1.0_f32, f32::EPSILON / 4.0, f32::EPSILON / 4.0];
+    fn sum_in_order_accumulates_in_f64_rather_than_the_term_width() {
+        // Two terms of half an `f32` epsilon: each on its own is invisible to
+        // an `f32` accumulator, and together they are exactly one epsilon —
+        // representable in both widths, so the divergence is the accumulator's
+        // and not the terms'.
+        let terms = [1.0_f32, f32::EPSILON / 2.0, f32::EPSILON / 2.0];
         let widened = sum_in_order(terms.iter().map(|&term| f64::from(term)));
-        assert!(widened > 1.0, "f64 accumulation keeps the small terms");
+        assert_eq!(
+            widened.to_bits(),
+            (1.0 + f64::from(f32::EPSILON)).to_bits(),
+            "both half-epsilon terms have to survive the accumulation, exactly"
+        );
         let narrow = terms.iter().fold(0.0_f32, |total, &term| total + term);
-        assert_eq!(narrow, 1.0, "f32 accumulation would have dropped them");
+        assert_eq!(narrow, 1.0, "an f32 accumulation drops both of them");
+        assert_ne!(
+            widened as f32, narrow,
+            "the widening has to still be visible after narrowing back, or the \
+             fitted value it feeds would be the f32 one"
+        );
     }
 
     fn naive_log_sum_exp(values: &[f64]) -> f64 {
@@ -866,11 +932,25 @@ mod tests {
     #[test]
     fn log_sum_exp_is_monotone_in_each_argument() {
         let mut previous = f64::NEG_INFINITY;
+        let mut ascents = 0_usize;
         for step in -1_000..=1_000 {
             let value = log_sum_exp(&[0.0, f64::from(step) / 10.0]);
             assert!(value >= previous, "monotonicity at step {step}");
             assert!(value >= 0.0, "softplus stays non-negative at step {step}");
+            ascents += usize::from(previous.is_finite() && value > previous);
             previous = value;
         }
+        // Both anchors, because a `log_sum_exp` that returned a constant is
+        // non-decreasing and non-negative too: the sweep has to rise somewhere,
+        // and it has to arrive at the value softplus takes there rather than at
+        // any rising sequence. `ln(1 + exp(-100))` is `0` and `softplus(100)` is
+        // `100`, both to the last bit, because the small term underflows the
+        // sum in each case.
+        assert!(
+            ascents > 0,
+            "the sweep never rose, so monotonicity was free"
+        );
+        assert_eq!(log_sum_exp(&[0.0, -100.0]), 0.0);
+        assert_eq!(previous, 100.0);
     }
 }

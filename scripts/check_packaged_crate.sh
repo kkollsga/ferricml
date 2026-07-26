@@ -51,6 +51,67 @@ if [[ "$asserted" -eq 0 ]]; then
   exit 1
 fi
 
+# The exclusion list above says what must not ship, which is a list somebody
+# has to remember to extend: a development directory nobody excluded ships
+# silently, and no assertion above can fail because of it. This is the other
+# direction, and it fails by default. The archive's top level is a small,
+# stable set, so it is written down here and every entry of the extract has to
+# be in it. The exclusions stay as the convenience that keeps the archive
+# small; this list is the contract.
+#
+# Both directions are checked. An entry in the archive that is not allowlisted
+# is weight every consumer downloads for no reason — or a leak. An allowlisted
+# entry that no archive contains is a stale line that would let the real thing
+# stop shipping unnoticed, which is how `docs/` would go missing from a crate
+# whose doctests compile it.
+allowed_top_level=(
+  .cargo_vcs_info.json
+  .gitignore
+  Cargo.lock
+  Cargo.toml
+  Cargo.toml.orig
+  CHANGELOG.md
+  LICENSE
+  README.md
+  docs
+  src
+)
+
+shipped=0
+while IFS= read -r entry; do
+  shipped=$((shipped + 1))
+  permitted=0
+  for candidate in "${allowed_top_level[@]}"; do
+    if [[ "$entry" == "$candidate" ]]; then
+      permitted=1
+      break
+    fi
+  done
+  if [[ "$permitted" -eq 0 ]]; then
+    echo "packaged crate ships an unexpected top-level entry: $entry" >&2
+    echo "Every path in the archive is downloaded by everyone who depends on ferricml." >&2
+    echo "If '$entry' belongs in the published crate, add it to allowed_top_level in" >&2
+    echo "scripts/check_packaged_crate.sh and say why in the same commit. If it does" >&2
+    echo "not — and a development directory does not — add it to package.exclude in" >&2
+    echo "Cargo.toml, which is where the archive is kept small." >&2
+    exit 1
+  fi
+done < <(ls -A "$package_root/ferricml")
+
+for candidate in "${allowed_top_level[@]}"; do
+  if [[ ! -e "$package_root/ferricml/$candidate" ]]; then
+    echo "allowlisted top-level entry is absent from the archive: $candidate" >&2
+    echo "The allowlist is the contract, so an entry no archive contains is either a" >&2
+    echo "stale line to delete or something that stopped shipping and should not have." >&2
+    exit 1
+  fi
+done
+
+if [[ "$shipped" -ne "${#allowed_top_level[@]}" ]]; then
+  echo "the archive has $shipped top-level entries and the allowlist has ${#allowed_top_level[@]}" >&2
+  exit 1
+fi
+
 # The narrative documentation ships, because it is the crate's only offline
 # documentation and because `src/lib.rs` compiles those pages as doctests. What
 # must never ship with it is documentation-*site* machinery: build config, the
@@ -81,4 +142,5 @@ CARGO_TARGET_DIR="$package_root/target" cargo run \
   --quiet
 
 echo "packaged crate: ${asserted} of ${excluded} excluded paths exist here and are absent from the archive"
+echo "packaged crate: all ${shipped} top-level entries are allowlisted, and every allowlisted entry shipped"
 echo "packaged crate: external fit/predict consumer passed for ferricml ${version}"

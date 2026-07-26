@@ -58,6 +58,10 @@ use sha2::{Digest, Sha256};
 use std::alloc::{GlobalAlloc, Layout, System};
 use std::cell::Cell;
 
+mod support;
+
+use support::api_profile::{self, PERSISTENCE_TRAITS};
+
 // ---------------------------------------------------------------------------
 // Peak-allocation meter
 // ---------------------------------------------------------------------------
@@ -358,7 +362,15 @@ fn accepted<T>(
     }
 }
 
-type Decoder = (&'static str, fn(&[u8]) -> Outcome);
+/// One decoder under fuzz: the short name the corpus fixtures refer to, the
+/// implementing type as `tests/api-baselines/rust/ferricml-default.txt` spells
+/// it, and the decode-and-re-encode entry point.
+///
+/// The middle field is not decoration. It is what closes this table against the
+/// frozen API profile in
+/// [`every_persistence_impl_receives_hostile_bytes_and_no_entry_is_stale`], so
+/// a persistable estimator cannot be added without one line here.
+type Decoder = (&'static str, &'static str, fn(&[u8]) -> Outcome);
 
 type StagedTwo = StagedPipeline<(MinMaxScaler, StandardScaler), Ridge>;
 type StagedThree = StagedPipeline<(MinMaxScaler, StandardScaler, MaxAbsScaler), Ridge>;
@@ -373,176 +385,349 @@ type StagedBoosting = StagedPipeline<(MinMaxScaler, StandardScaler), HistGradien
 
 fn decoders() -> Vec<Decoder> {
     let table: Vec<Decoder> = vec![
-        ("logistic", |bytes| {
-            accepted(
-                LogisticRegression::from_artifact(bytes, INPUT_SCHEMA),
-                |m| m.to_artifact(INPUT_SCHEMA),
-            )
-        }),
-        ("linear", |bytes| {
-            accepted(LinearRegression::from_artifact(bytes, INPUT_SCHEMA), |m| {
-                m.to_artifact(INPUT_SCHEMA)
-            })
-        }),
-        ("ridge", |bytes| {
+        (
+            "logistic",
+            "ferricml::linear_model::LogisticRegression",
+            |bytes| {
+                accepted(
+                    LogisticRegression::from_artifact(bytes, INPUT_SCHEMA),
+                    |m| m.to_artifact(INPUT_SCHEMA),
+                )
+            },
+        ),
+        (
+            "linear",
+            "ferricml::linear_model::LinearRegression",
+            |bytes| {
+                accepted(LinearRegression::from_artifact(bytes, INPUT_SCHEMA), |m| {
+                    m.to_artifact(INPUT_SCHEMA)
+                })
+            },
+        ),
+        ("ridge", "ferricml::linear_model::Ridge", |bytes| {
             accepted(Ridge::from_artifact(bytes, INPUT_SCHEMA), |m| {
                 m.to_artifact(INPUT_SCHEMA)
             })
         }),
-        ("lasso", |bytes| {
+        ("lasso", "ferricml::linear_model::Lasso", |bytes| {
             accepted(Lasso::from_artifact(bytes, INPUT_SCHEMA), |m| {
                 m.to_artifact(INPUT_SCHEMA)
             })
         }),
-        ("elastic-net", |bytes| {
-            accepted(ElasticNet::from_artifact(bytes, INPUT_SCHEMA), |m| {
-                m.to_artifact(INPUT_SCHEMA)
-            })
-        }),
-        ("standard-scaler", |bytes| {
-            accepted(
-                StandardScaler::from_artifact(bytes, INPUT_SCHEMA, TRANSFORMED_SCHEMA),
-                |m| m.to_artifact(INPUT_SCHEMA, TRANSFORMED_SCHEMA),
-            )
-        }),
-        ("min-max-scaler", |bytes| {
-            accepted(
-                MinMaxScaler::from_artifact(bytes, INPUT_SCHEMA, TRANSFORMED_SCHEMA),
-                |m| m.to_artifact(INPUT_SCHEMA, TRANSFORMED_SCHEMA),
-            )
-        }),
-        ("max-abs-scaler", |bytes| {
-            accepted(
-                MaxAbsScaler::from_artifact(bytes, INPUT_SCHEMA, TRANSFORMED_SCHEMA),
-                |m| m.to_artifact(INPUT_SCHEMA, TRANSFORMED_SCHEMA),
-            )
-        }),
-        ("robust-scaler", |bytes| {
-            accepted(
-                RobustScaler::from_artifact(bytes, INPUT_SCHEMA, TRANSFORMED_SCHEMA),
-                |m| m.to_artifact(INPUT_SCHEMA, TRANSFORMED_SCHEMA),
-            )
-        }),
-        ("pipeline-logistic", |bytes| {
-            accepted(
-                Pipeline::<StandardScaler, LogisticRegression>::from_artifact(
-                    bytes,
-                    INPUT_SCHEMA,
-                    TRANSFORMED_SCHEMA,
-                ),
-                |m| m.to_artifact(INPUT_SCHEMA, TRANSFORMED_SCHEMA),
-            )
-        }),
-        ("pipeline-linear", |bytes| {
-            accepted(
-                Pipeline::<StandardScaler, LinearRegression>::from_artifact(
-                    bytes,
-                    INPUT_SCHEMA,
-                    TRANSFORMED_SCHEMA,
-                ),
-                |m| m.to_artifact(INPUT_SCHEMA, TRANSFORMED_SCHEMA),
-            )
-        }),
-        ("pipeline-ridge", |bytes| {
-            accepted(
-                Pipeline::<StandardScaler, Ridge>::from_artifact(
-                    bytes,
-                    INPUT_SCHEMA,
-                    TRANSFORMED_SCHEMA,
-                ),
-                |m| m.to_artifact(INPUT_SCHEMA, TRANSFORMED_SCHEMA),
-            )
-        }),
-        ("pairwise-ranker", |bytes| {
-            accepted(
-                PairwiseLinearRanker::from_artifact(bytes, INPUT_SCHEMA),
-                |m| m.to_artifact(INPUT_SCHEMA),
-            )
-        }),
-        ("hist-gradient-boosting", |bytes| {
-            accepted(
-                HistGradientBoostingRegressor::from_artifact(bytes, INPUT_SCHEMA),
-                |m| m.to_artifact(INPUT_SCHEMA),
-            )
-        }),
-        ("hist-gradient-boosting-classifier", |bytes| {
-            accepted(
-                HistGradientBoostingClassifier::from_artifact(bytes, INPUT_SCHEMA),
-                |m| m.to_artifact(INPUT_SCHEMA),
-            )
-        }),
-        ("random-forest", |bytes| {
-            accepted(
-                RandomForestRegressor::from_artifact(bytes, INPUT_SCHEMA),
-                |m| m.to_artifact(INPUT_SCHEMA),
-            )
-        }),
-        ("random-forest-classifier", |bytes| {
-            accepted(
-                RandomForestClassifier::from_artifact(bytes, INPUT_SCHEMA),
-                |m| m.to_artifact(INPUT_SCHEMA),
-            )
-        }),
-        ("extra-trees", |bytes| {
-            accepted(
-                ExtraTreesRegressor::from_artifact(bytes, INPUT_SCHEMA),
-                |m| m.to_artifact(INPUT_SCHEMA),
-            )
-        }),
-        ("extra-trees-classifier", |bytes| {
-            accepted(
-                ExtraTreesClassifier::from_artifact(bytes, INPUT_SCHEMA),
-                |m| m.to_artifact(INPUT_SCHEMA),
-            )
-        }),
-        ("decision-tree", |bytes| {
-            accepted(
-                DecisionTreeRegressor::from_artifact(bytes, INPUT_SCHEMA),
-                |m| m.to_artifact(INPUT_SCHEMA),
-            )
-        }),
-        ("decision-tree-classifier", |bytes| {
-            accepted(
-                DecisionTreeClassifier::from_artifact(bytes, INPUT_SCHEMA),
-                |m| m.to_artifact(INPUT_SCHEMA),
-            )
-        }),
-        ("any-regressor", |bytes| {
+        (
+            "elastic-net",
+            "ferricml::linear_model::ElasticNet",
+            |bytes| {
+                accepted(ElasticNet::from_artifact(bytes, INPUT_SCHEMA), |m| {
+                    m.to_artifact(INPUT_SCHEMA)
+                })
+            },
+        ),
+        (
+            "standard-scaler",
+            "ferricml::preprocessing::StandardScaler",
+            |bytes| {
+                accepted(
+                    StandardScaler::from_artifact(bytes, INPUT_SCHEMA, TRANSFORMED_SCHEMA),
+                    |m| m.to_artifact(INPUT_SCHEMA, TRANSFORMED_SCHEMA),
+                )
+            },
+        ),
+        (
+            "min-max-scaler",
+            "ferricml::preprocessing::MinMaxScaler",
+            |bytes| {
+                accepted(
+                    MinMaxScaler::from_artifact(bytes, INPUT_SCHEMA, TRANSFORMED_SCHEMA),
+                    |m| m.to_artifact(INPUT_SCHEMA, TRANSFORMED_SCHEMA),
+                )
+            },
+        ),
+        (
+            "max-abs-scaler",
+            "ferricml::preprocessing::MaxAbsScaler",
+            |bytes| {
+                accepted(
+                    MaxAbsScaler::from_artifact(bytes, INPUT_SCHEMA, TRANSFORMED_SCHEMA),
+                    |m| m.to_artifact(INPUT_SCHEMA, TRANSFORMED_SCHEMA),
+                )
+            },
+        ),
+        (
+            "robust-scaler",
+            "ferricml::preprocessing::RobustScaler",
+            |bytes| {
+                accepted(
+                    RobustScaler::from_artifact(bytes, INPUT_SCHEMA, TRANSFORMED_SCHEMA),
+                    |m| m.to_artifact(INPUT_SCHEMA, TRANSFORMED_SCHEMA),
+                )
+            },
+        ),
+        (
+            "pipeline-logistic",
+            "ferricml::pipeline::Pipeline<ferricml::preprocessing::StandardScaler, ferricml::linear_model::LogisticRegression>",
+            |bytes| {
+                accepted(
+                    Pipeline::<StandardScaler, LogisticRegression>::from_artifact(
+                        bytes,
+                        INPUT_SCHEMA,
+                        TRANSFORMED_SCHEMA,
+                    ),
+                    |m| m.to_artifact(INPUT_SCHEMA, TRANSFORMED_SCHEMA),
+                )
+            },
+        ),
+        (
+            "pipeline-linear",
+            "ferricml::pipeline::Pipeline<ferricml::preprocessing::StandardScaler, ferricml::linear_model::LinearRegression>",
+            |bytes| {
+                accepted(
+                    Pipeline::<StandardScaler, LinearRegression>::from_artifact(
+                        bytes,
+                        INPUT_SCHEMA,
+                        TRANSFORMED_SCHEMA,
+                    ),
+                    |m| m.to_artifact(INPUT_SCHEMA, TRANSFORMED_SCHEMA),
+                )
+            },
+        ),
+        (
+            "pipeline-ridge",
+            "ferricml::pipeline::Pipeline<ferricml::preprocessing::StandardScaler, ferricml::linear_model::Ridge>",
+            |bytes| {
+                accepted(
+                    Pipeline::<StandardScaler, Ridge>::from_artifact(
+                        bytes,
+                        INPUT_SCHEMA,
+                        TRANSFORMED_SCHEMA,
+                    ),
+                    |m| m.to_artifact(INPUT_SCHEMA, TRANSFORMED_SCHEMA),
+                )
+            },
+        ),
+        (
+            "pairwise-ranker",
+            "ferricml::ranking::PairwiseLinearRanker",
+            |bytes| {
+                accepted(
+                    PairwiseLinearRanker::from_artifact(bytes, INPUT_SCHEMA),
+                    |m| m.to_artifact(INPUT_SCHEMA),
+                )
+            },
+        ),
+        (
+            "hist-gradient-boosting",
+            "ferricml::ensemble::HistGradientBoostingRegressor",
+            |bytes| {
+                accepted(
+                    HistGradientBoostingRegressor::from_artifact(bytes, INPUT_SCHEMA),
+                    |m| m.to_artifact(INPUT_SCHEMA),
+                )
+            },
+        ),
+        (
+            "hist-gradient-boosting-classifier",
+            "ferricml::ensemble::HistGradientBoostingClassifier",
+            |bytes| {
+                accepted(
+                    HistGradientBoostingClassifier::from_artifact(bytes, INPUT_SCHEMA),
+                    |m| m.to_artifact(INPUT_SCHEMA),
+                )
+            },
+        ),
+        (
+            "random-forest",
+            "ferricml::ensemble::RandomForestRegressor",
+            |bytes| {
+                accepted(
+                    RandomForestRegressor::from_artifact(bytes, INPUT_SCHEMA),
+                    |m| m.to_artifact(INPUT_SCHEMA),
+                )
+            },
+        ),
+        (
+            "random-forest-classifier",
+            "ferricml::ensemble::RandomForestClassifier",
+            |bytes| {
+                accepted(
+                    RandomForestClassifier::from_artifact(bytes, INPUT_SCHEMA),
+                    |m| m.to_artifact(INPUT_SCHEMA),
+                )
+            },
+        ),
+        (
+            "extra-trees",
+            "ferricml::ensemble::ExtraTreesRegressor",
+            |bytes| {
+                accepted(
+                    ExtraTreesRegressor::from_artifact(bytes, INPUT_SCHEMA),
+                    |m| m.to_artifact(INPUT_SCHEMA),
+                )
+            },
+        ),
+        (
+            "extra-trees-classifier",
+            "ferricml::ensemble::ExtraTreesClassifier",
+            |bytes| {
+                accepted(
+                    ExtraTreesClassifier::from_artifact(bytes, INPUT_SCHEMA),
+                    |m| m.to_artifact(INPUT_SCHEMA),
+                )
+            },
+        ),
+        (
+            "decision-tree",
+            "ferricml::tree::DecisionTreeRegressor",
+            |bytes| {
+                accepted(
+                    DecisionTreeRegressor::from_artifact(bytes, INPUT_SCHEMA),
+                    |m| m.to_artifact(INPUT_SCHEMA),
+                )
+            },
+        ),
+        (
+            "decision-tree-classifier",
+            "ferricml::tree::DecisionTreeClassifier",
+            |bytes| {
+                accepted(
+                    DecisionTreeClassifier::from_artifact(bytes, INPUT_SCHEMA),
+                    |m| m.to_artifact(INPUT_SCHEMA),
+                )
+            },
+        ),
+        ("any-regressor", "ferricml::api::AnyRegressor", |bytes| {
             accepted(AnyRegressor::from_artifact(bytes, INPUT_SCHEMA), |m| {
                 m.to_artifact(INPUT_SCHEMA)
             })
         }),
-        ("any-classifier", |bytes| {
+        ("any-classifier", "ferricml::api::AnyClassifier", |bytes| {
             accepted(AnyClassifier::from_artifact(bytes, INPUT_SCHEMA), |m| {
                 m.to_artifact(INPUT_SCHEMA)
             })
         }),
-        ("staged-two", |bytes| {
-            accepted(
-                StagedTwo::from_artifact(bytes, INPUT_SCHEMA, TRANSFORMED_SCHEMA),
-                |m| m.to_artifact(INPUT_SCHEMA, TRANSFORMED_SCHEMA),
-            )
-        }),
-        ("staged-three", |bytes| {
-            accepted(
-                StagedThree::from_artifact(bytes, INPUT_SCHEMA, TRANSFORMED_SCHEMA),
-                |m| m.to_artifact(INPUT_SCHEMA, TRANSFORMED_SCHEMA),
-            )
-        }),
-        ("staged-forest", |bytes| {
-            accepted(
-                StagedForest::from_artifact(bytes, INPUT_SCHEMA, TRANSFORMED_SCHEMA),
-                |m| m.to_artifact(INPUT_SCHEMA, TRANSFORMED_SCHEMA),
-            )
-        }),
-        ("staged-boosting", |bytes| {
-            accepted(
-                StagedBoosting::from_artifact(bytes, INPUT_SCHEMA, TRANSFORMED_SCHEMA),
-                |m| m.to_artifact(INPUT_SCHEMA, TRANSFORMED_SCHEMA),
-            )
-        }),
+        (
+            "staged-two",
+            "ferricml::pipeline::StagedPipeline<(ferricml::preprocessing::MinMaxScaler, ferricml::preprocessing::StandardScaler), ferricml::linear_model::Ridge>",
+            |bytes| {
+                accepted(
+                    StagedTwo::from_artifact(bytes, INPUT_SCHEMA, TRANSFORMED_SCHEMA),
+                    |m| m.to_artifact(INPUT_SCHEMA, TRANSFORMED_SCHEMA),
+                )
+            },
+        ),
+        (
+            "staged-three",
+            "ferricml::pipeline::StagedPipeline<(ferricml::preprocessing::MinMaxScaler, ferricml::preprocessing::StandardScaler, ferricml::preprocessing::MaxAbsScaler), ferricml::linear_model::Ridge>",
+            |bytes| {
+                accepted(
+                    StagedThree::from_artifact(bytes, INPUT_SCHEMA, TRANSFORMED_SCHEMA),
+                    |m| m.to_artifact(INPUT_SCHEMA, TRANSFORMED_SCHEMA),
+                )
+            },
+        ),
+        (
+            "staged-forest",
+            "ferricml::pipeline::StagedPipeline<(ferricml::preprocessing::MinMaxScaler, ferricml::preprocessing::StandardScaler), ferricml::ensemble::RandomForestRegressor>",
+            |bytes| {
+                accepted(
+                    StagedForest::from_artifact(bytes, INPUT_SCHEMA, TRANSFORMED_SCHEMA),
+                    |m| m.to_artifact(INPUT_SCHEMA, TRANSFORMED_SCHEMA),
+                )
+            },
+        ),
+        (
+            "staged-boosting",
+            "ferricml::pipeline::StagedPipeline<(ferricml::preprocessing::MinMaxScaler, ferricml::preprocessing::StandardScaler), ferricml::ensemble::HistGradientBoostingRegressor>",
+            |bytes| {
+                accepted(
+                    StagedBoosting::from_artifact(bytes, INPUT_SCHEMA, TRANSFORMED_SCHEMA),
+                    |m| m.to_artifact(INPUT_SCHEMA, TRANSFORMED_SCHEMA),
+                )
+            },
+        ),
     ];
     table
+}
+
+// ---------------------------------------------------------------------------
+// The decoder table, closed against the frozen API profile
+// ---------------------------------------------------------------------------
+
+/// Every type that persists is fuzzed, and nothing here fuzzes a type that does
+/// not persist.
+///
+/// The table above is hand-maintained, and until this test it was closed
+/// against nothing: a twenty-fifth persistable estimator that correctly
+/// declared `Capabilities::artifact` *and* implemented `ModelArtifact` would
+/// pass `tests/capability_snapshot.rs` while silently never receiving a hostile
+/// byte. That is the shape of the defect that left seven estimators
+/// unpersistable — a list someone has to remember to extend — in a new place.
+///
+/// The closure is two-directional because the two failures are different
+/// defects. An impl with no decoder is an unfuzzed reader of untrusted bytes;
+/// a decoder naming a type that implements neither persistence trait is a
+/// fixture kept alive past the code it covered, which reads as coverage and is
+/// not.
+#[test]
+fn every_persistence_impl_receives_hostile_bytes_and_no_entry_is_stale() {
+    let closure = api_profile::close_against_persistence(&PERSISTENCE_TRAITS, &decoder_targets());
+    assert!(
+        closure.unlisted.is_empty(),
+        "these types implement a persistence trait and no decoder here hands \
+         them hostile bytes: {:#?}",
+        closure.unlisted
+    );
+    assert!(
+        closure.stale.is_empty(),
+        "these decoder entries name a type that implements neither persistence \
+         trait, so they cover nothing: {:#?}",
+        closure.stale
+    );
+}
+
+/// The implementing type of every decoder in the table.
+fn decoder_targets() -> Vec<&'static str> {
+    decoders().iter().map(|(_, target, _)| *target).collect()
+}
+
+/// The closure must be able to fail, in both of its directions.
+///
+/// A closure test that has only ever seen a clean tree proves the tree is
+/// clean, not that the check works. Both halves are therefore driven through
+/// the same function the test above uses, over a table doctored the two ways it
+/// can go wrong.
+#[test]
+fn the_decoder_closure_detects_a_missing_entry_and_a_stale_one() {
+    let complete = decoder_targets();
+    assert!(
+        complete.contains(&"ferricml::linear_model::Ridge"),
+        "the entry the missing-entry half removes has to be there to remove"
+    );
+
+    let without_ridge: Vec<&str> = complete
+        .iter()
+        .copied()
+        .filter(|target| *target != "ferricml::linear_model::Ridge")
+        .collect();
+    let missing = api_profile::close_against_persistence(&PERSISTENCE_TRAITS, &without_ridge);
+    assert_eq!(missing.unlisted, vec!["ferricml::linear_model::Ridge"]);
+    assert!(
+        missing.stale.is_empty(),
+        "removing an entry is not staleness"
+    );
+
+    // `DummyRegressor` is the anchor for the other direction because its lack
+    // of persistence is a documented decision rather than a gap: a baseline is
+    // refitted, never restored. A decoder for it could not exist.
+    let mut with_a_ghost = complete.clone();
+    with_a_ghost.push("ferricml::dummy::DummyRegressor");
+    let stale = api_profile::close_against_persistence(&PERSISTENCE_TRAITS, &with_a_ghost);
+    assert_eq!(stale.stale, vec!["ferricml::dummy::DummyRegressor"]);
+    assert!(stale.unlisted.is_empty(), "adding an entry hides nothing");
+
+    // And the closure is closed on the real table, which is what the two
+    // doctored runs above are the falsifiers for.
+    assert!(api_profile::close_against_persistence(&PERSISTENCE_TRAITS, &complete).is_closed());
 }
 
 // ---------------------------------------------------------------------------
@@ -1507,7 +1692,7 @@ struct Reach {
 }
 
 fn check(label: &str, decoder: &Decoder, bytes: &[u8], novel: bool, reach: &mut Reach) {
-    let (name, decode) = *decoder;
+    let (name, _, decode) = *decoder;
     let (outcome, peak) = measure_peak(|| decode(bytes));
     let budget = ALLOC_BASE_BYTES + ALLOC_INPUT_FACTOR * bytes.len();
     let length = bytes.len();
@@ -3322,9 +3507,9 @@ fn the_frozen_adversarial_corpus_decodes_exactly_as_recorded() {
             check(case.name, decoder, &frozen, false, &mut reach);
         }
 
-        let (_, decode) = *decoders
+        let (_, _, decode) = *decoders
             .iter()
-            .find(|(name, _)| *name == case.decoder)
+            .find(|(name, ..)| *name == case.decoder)
             .unwrap_or_else(|| panic!("{}: no decoder named {}", case.name, case.decoder));
         match decode(&frozen) {
             Outcome::Rejected(error) => {

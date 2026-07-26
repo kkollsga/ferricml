@@ -41,6 +41,13 @@
 use std::fs;
 use std::path::PathBuf;
 
+mod support;
+
+use support::api_profile::{
+    MODEL_ARTIFACT, PersistenceImpl, STAGE_ARTIFACT, baseline_dir, covers, impl_target,
+    persistence_impl, persistence_impls, profile_lines,
+};
+
 use ferricml::api::{AnyClassifier, AnyRegressor, Capabilities, HasCapabilities};
 use ferricml::calibration::{CalibratedClassifier, IsotonicRegression, PlattCalibrator};
 use ferricml::dummy::{DummyClassifier, DummyRegressor};
@@ -233,13 +240,6 @@ fn rendered() -> String {
     text
 }
 
-fn baseline_dir() -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("tests")
-        .join("api-baselines")
-        .join("rust")
-}
-
 fn snapshot_path() -> PathBuf {
     baseline_dir().join("ferricml-capabilities.txt")
 }
@@ -268,17 +268,15 @@ fn declared_capability_values_match_their_snapshot() {
 // ------------------------------------------------- completeness against the
 // ------------------------------------------------- frozen public API profile
 
-/// A generic parameter position in a declaration site, as a match-anything.
-const WILDCARD: char = '\u{0}';
+/// The trait whose implementations owe a snapshot row.
+const HAS_CAPABILITIES: &str = "ferricml::api::HasCapabilities";
 
 /// Every `impl … HasCapabilities for …` target in the API baseline, as a
 /// pattern whose generic parameters match anything.
 fn declaration_sites() -> Vec<String> {
-    let baseline = fs::read_to_string(baseline_dir().join("ferricml-default.txt"))
-        .expect("read the frozen public API profile");
     let mut sites: Vec<String> = Vec::new();
-    for line in baseline.lines() {
-        let Some(site) = declaration_site(line) else {
+    for line in profile_lines() {
+        let Some(site) = declaration_site(&line) else {
             continue;
         };
         if !sites.contains(&site) {
@@ -294,119 +292,7 @@ fn declaration_sites() -> Vec<String> {
 }
 
 fn declaration_site(line: &str) -> Option<String> {
-    let line = line.trim();
-    let rest = line.strip_prefix("impl")?;
-    // Generic parameters, if the impl has any: `<C: Trait>` or `<S, E>`.
-    let (parameters, rest) = if let Some(inner) = rest.strip_prefix('<') {
-        let end = matching_angle(inner)?;
-        (parameter_names(&inner[..end]), &inner[end + 1..])
-    } else {
-        (Vec::new(), rest)
-    };
-    let target = rest
-        .trim_start()
-        .strip_prefix("ferricml::api::HasCapabilities for ")?;
-    let target = target.split(" where ").next().unwrap_or(target).trim();
-    Some(wildcard_pattern(target, &parameters))
-}
-
-/// Index of the `>` closing an already-opened `<`.
-fn matching_angle(text: &str) -> Option<usize> {
-    let mut depth = 0_usize;
-    for (index, character) in text.char_indices() {
-        match character {
-            '<' => depth += 1,
-            '>' if depth == 0 => return Some(index),
-            '>' => depth -= 1,
-            _ => {}
-        }
-    }
-    None
-}
-
-/// The declared names in `C: Trait, S, E`, ignoring their bounds.
-fn parameter_names(parameters: &str) -> Vec<String> {
-    let mut names = Vec::new();
-    let mut depth = 0_usize;
-    let mut current = String::new();
-    for character in parameters.chars() {
-        match character {
-            '<' | '(' => {
-                depth += 1;
-                current.push(character);
-            }
-            '>' | ')' => {
-                depth = depth.saturating_sub(1);
-                current.push(character);
-            }
-            ',' if depth == 0 => {
-                names.push(current.clone());
-                current.clear();
-            }
-            _ => current.push(character),
-        }
-    }
-    names.push(current);
-    names
-        .into_iter()
-        .filter_map(|name| {
-            let name = name.split(':').next()?.trim().to_owned();
-            (!name.is_empty()).then_some(name)
-        })
-        .collect()
-}
-
-/// Replaces whole-identifier occurrences of the impl's generic parameters with
-/// a wildcard, so `StagedPipeline<S, E>` covers any concrete instantiation.
-fn wildcard_pattern(target: &str, parameters: &[String]) -> String {
-    let mut pattern = String::new();
-    let mut identifier = String::new();
-    for character in target.chars() {
-        if character.is_alphanumeric() || character == '_' {
-            identifier.push(character);
-            continue;
-        }
-        push_identifier(&mut pattern, &identifier, parameters);
-        identifier.clear();
-        pattern.push(character);
-    }
-    push_identifier(&mut pattern, &identifier, parameters);
-    pattern
-}
-
-fn push_identifier(pattern: &mut String, identifier: &str, parameters: &[String]) {
-    if identifier.is_empty() {
-        return;
-    }
-    // A path segment such as `ferricml` is never a bare generic parameter,
-    // because a parameter is only ever a whole identifier between separators.
-    if parameters.iter().any(|parameter| parameter == identifier) && !pattern.ends_with("::") {
-        pattern.push(WILDCARD);
-    } else {
-        pattern.push_str(identifier);
-    }
-}
-
-/// Whether a concrete type name satisfies a wildcard pattern.
-fn covers(pattern: &str, name: &str) -> bool {
-    let segments: Vec<&str> = pattern.split(WILDCARD).collect();
-    if segments.len() == 1 {
-        return pattern == name;
-    }
-    let Some(mut rest) = name.strip_prefix(segments[0]) else {
-        return false;
-    };
-    let last = segments.len() - 1;
-    for (index, segment) in segments.iter().enumerate().skip(1) {
-        if index == last {
-            return segment.is_empty() || rest.ends_with(segment);
-        }
-        match rest.find(segment) {
-            Some(position) => rest = &rest[position + segment.len()..],
-            None => return false,
-        }
-    }
-    true
+    impl_target(line, HAS_CAPABILITIES).map(|(target, _)| target)
 }
 
 /// Every declaration the frozen API profile records has a value in the
@@ -447,53 +333,6 @@ fn every_declaration_site_in_the_api_profile_has_a_snapshot_row() {
 // ------------------------------------------------- the persistence contract,
 // ------------------------------------------------- closed against the same two files
 
-/// The two traits that *are* persistence, as the API profile spells them.
-const PERSISTENCE_TRAITS: [&str; 2] = [
-    "ferricml::artifact::ModelArtifact",
-    "ferricml::artifact::StageArtifact",
-];
-
-/// Every persistence-trait implementation target in the API baseline, paired
-/// with whether the impl is generic — that is, whether it applies to *some*
-/// instantiations rather than to a named type.
-fn persistence_impls() -> Vec<(String, bool)> {
-    let baseline = fs::read_to_string(baseline_dir().join("ferricml-default.txt"))
-        .expect("read the frozen public API profile");
-    let mut impls: Vec<(String, bool)> = Vec::new();
-    for line in baseline.lines() {
-        let Some(entry) = persistence_impl(line) else {
-            continue;
-        };
-        if !impls.contains(&entry) {
-            impls.push(entry);
-        }
-    }
-    assert!(
-        !impls.is_empty(),
-        "no persistence impls were found in the API profile, so this check \
-         would pass vacuously"
-    );
-    impls
-}
-
-fn persistence_impl(line: &str) -> Option<(String, bool)> {
-    let line = line.trim();
-    let rest = line.strip_prefix("impl")?;
-    let (parameters, rest) = if let Some(inner) = rest.strip_prefix('<') {
-        let end = matching_angle(inner)?;
-        (parameter_names(&inner[..end]), &inner[end + 1..])
-    } else {
-        (Vec::new(), rest)
-    };
-    let rest = rest.trim_start();
-    let target = PERSISTENCE_TRAITS
-        .iter()
-        .find_map(|name| rest.strip_prefix(&format!("{name} for ")))?;
-    let target = target.split(" where ").next().unwrap_or(target).trim();
-    let generic = !parameters.is_empty();
-    Some((wildcard_pattern(target, &parameters), generic))
-}
-
 /// Whether a capability row declares persistence.
 fn declares_artifact(capabilities: Capabilities) -> bool {
     capabilities.artifact()
@@ -523,7 +362,11 @@ fn declared_persistence_and_the_persistence_traits_agree_in_both_directions() {
         .iter()
         .filter(|(_, capabilities)| declares_artifact(*capabilities))
         .map(|(name, _)| *name)
-        .filter(|name| !impls.iter().any(|(pattern, _)| covers(pattern, name)))
+        .filter(|name| {
+            !impls
+                .iter()
+                .any(|candidate| covers(&candidate.target, name))
+        })
         .collect();
     assert!(
         undeclared.is_empty(),
@@ -533,8 +376,8 @@ fn declared_persistence_and_the_persistence_traits_agree_in_both_directions() {
 
     let unpersisted: Vec<&String> = impls
         .iter()
-        .filter(|(_, generic)| !generic)
-        .map(|(pattern, _)| pattern)
+        .filter(|candidate| !candidate.generic)
+        .map(|candidate| &candidate.target)
         .filter(|pattern| {
             !rows.iter().any(|(name, capabilities)| {
                 covers(pattern, name) && declares_artifact(*capabilities)
@@ -562,7 +405,11 @@ fn the_persistence_closure_detects_a_missing_impl_and_an_undeclared_one() {
     .expect("a concrete persistence impl parses");
     assert_eq!(
         concrete,
-        ("ferricml::linear_model::Ridge".to_owned(), false)
+        PersistenceImpl {
+            trait_path: MODEL_ARTIFACT,
+            target: "ferricml::linear_model::Ridge".to_owned(),
+            generic: false,
+        }
     );
 
     let generic = persistence_impl(
@@ -570,9 +417,13 @@ fn the_persistence_closure_detects_a_missing_impl_and_an_undeclared_one() {
          where S: ferricml::pipeline::TransformerStack",
     )
     .expect("a generic persistence impl parses");
-    assert!(generic.1, "a parameterized impl is recognized as generic");
+    assert_eq!(generic.trait_path, STAGE_ARTIFACT);
+    assert!(
+        generic.generic,
+        "a parameterized impl is recognized as generic"
+    );
     assert!(covers(
-        &generic.0,
+        &generic.target,
         "ferricml::pipeline::StagedPipeline<(ferricml::preprocessing::MinMaxScaler, \
          ferricml::preprocessing::StandardScaler), ferricml::linear_model::Ridge>"
     ));
@@ -585,14 +436,14 @@ fn the_persistence_closure_detects_a_missing_impl_and_an_undeclared_one() {
     assert!(
         !impls
             .iter()
-            .any(|(pattern, _)| covers(pattern, "ferricml::dummy::DummyRegressor")),
+            .any(|candidate| covers(&candidate.target, "ferricml::dummy::DummyRegressor")),
         "a type with no persistence must match no impl; this assertion is what \
          keeps the missing-impl direction non-vacuous"
     );
     assert!(
         impls
             .iter()
-            .any(|(pattern, _)| covers(pattern, "ferricml::linear_model::Ridge"))
+            .any(|candidate| covers(&candidate.target, "ferricml::linear_model::Ridge"))
     );
 
     // Neither a non-persistence impl nor a non-impl line is mistaken for one.

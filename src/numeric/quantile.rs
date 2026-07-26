@@ -140,7 +140,11 @@ mod tests {
     #[test]
     fn the_robust_scaling_statistics_match_the_worked_examples() {
         // Each row is (sample, Q25, Q50, Q75). The centre and the spread a
-        // robust scaler removes are read straight off these three values.
+        // robust scaler removes are read straight off these three values — the
+        // spread is `Q75 - Q25` and carries no assertion of its own here,
+        // because with both quartiles already pinned by exact equality their
+        // difference cannot come out any other way. Asserting it as well would
+        // read like a fourth check and be arithmetic restating the two above.
         let rows: [(&[f64], f64, f64, f64); 3] = [
             (&[0.0, 1.0], 0.25, 0.5, 0.75),
             (&[0.0, 1.0, 10.0], 0.5, 1.0, 5.5),
@@ -150,12 +154,7 @@ mod tests {
             assert_eq!(linear_at(sample, 25.0), lower, "Q25 of {sample:?}");
             assert_eq!(linear_at(sample, 50.0), median, "Q50 of {sample:?}");
             assert_eq!(linear_at(sample, 75.0), upper, "Q75 of {sample:?}");
-            assert_eq!(upper - lower, spread(sample), "spread of {sample:?}");
         }
-    }
-
-    fn spread(sample: &[f64]) -> f64 {
-        linear_at(sample, 75.0) - linear_at(sample, 25.0)
     }
 
     #[test]
@@ -191,28 +190,50 @@ mod tests {
     fn repeated_values_collapse_the_interpolation_onto_themselves() {
         // A tied bracket has nothing to interpolate between, so the fraction
         // cannot move the result off the tie.
+        // All three quartiles land inside the tie, so the interquartile range a
+        // robust scaler would divide by is zero while the column is anything
+        // but constant. That consequence is the point of the row; it is left as
+        // prose because `Q75 - Q25` over two values already pinned to `5.0` is
+        // their difference and cannot report anything they did not.
         let sample = [0.0, 5.0, 5.0, 5.0, 5.0, 5.0, 5.0, 5.0, 100.0];
         assert_eq!(linear_at(&sample, 25.0), 5.0);
         assert_eq!(linear_at(&sample, 50.0), 5.0);
         assert_eq!(linear_at(&sample, 75.0), 5.0);
-        assert_eq!(
-            spread(&sample),
-            0.0,
-            "an interquartile range can be zero \
-             without the column being constant"
-        );
     }
 
+    /// The sweep rises, stalls exactly where the sample is tied, and lands on
+    /// the extrema.
+    ///
+    /// A non-decreasing sweep on its own is a weak thing to assert: a `linear`
+    /// that returned `sorted[0]` at every percentile satisfies it, and so does
+    /// one that returned any constant. So the sweep also counts its ascents,
+    /// which such an implementation cannot produce, and bounds them from above,
+    /// which an implementation that interpolated across the tied bracket rather
+    /// than collapsing onto it cannot satisfy. The two anchors then pin the
+    /// sweep to *this* sample instead of to any rising sequence.
     #[test]
     fn quantiles_are_monotone_in_the_percentile() {
+        // Nine values with one tied pair, so 1/8 of the percentile range —
+        // 125 of the 1000 steps — is a bracket with nothing to interpolate.
         let sample = [-7.5, -0.25, 0.0, 0.0, 1.0, 3.5, 12.0, 900.0, 1e6];
         let mut previous = f64::NEG_INFINITY;
+        let mut ascents = 0_usize;
         for step in 0..=1_000 {
             let percentile = f64::from(step) / 10.0;
             let value = linear_at(&sample, percentile);
             assert!(value >= previous, "Q({percentile}) = {value} fell back");
+            ascents += usize::from(previous.is_finite() && value > previous);
             previous = value;
         }
+        assert_eq!(
+            ascents, 875,
+            "the sweep rose at {ascents} of its 1000 steps; every step but the \
+             125 inside the tied bracket has to rise, so a constant or \
+             order-statistic result is short and an interpolation across the \
+             tie is long"
+        );
+        assert_eq!(linear_at(&sample, 0.0), sample[0], "the sweep starts low");
+        assert_eq!(previous, sample[sample.len() - 1], "and ends at the top");
     }
 
     #[test]
