@@ -1,6 +1,6 @@
-use ferricml::api::{AnyRegressor, ModelError, Regressor};
+use ferricml::api::{AnyRegressor, Classifier, Estimator, ModelError, Regressor};
 use ferricml::data::{
-    BinaryTargets, ClassTargets, ClassificationTargets, DenseMatrix, RegressionTargets,
+    BinaryTargets, ClassTargets, ClassificationTargets, DenseMatrix, MatrixView, RegressionTargets,
 };
 use ferricml::ensemble::{
     HistGradientBoostingRegressor, HistGradientBoostingRegressorParams, RandomForestClassifier,
@@ -17,6 +17,11 @@ use ferricml::model_selection::{
     ClassificationScorer, RegressionScore, RegressionScorer, ScorableClassifier, ScoringError,
 };
 use ferricml::tree::MaxFeatures;
+
+#[path = "support/rng.rs"]
+mod rng;
+
+use rng::TestRng;
 
 /// Four columns: a dominant signal, a weak signal, a constant, and a copy of
 /// the constant. Only the first two can carry information.
@@ -587,4 +592,378 @@ fn a_caller_defined_score_is_inspected_through_the_same_contract() {
     assert_eq!(custom.ranked(), built_in.ranked());
     assert!(custom.means()[0] > 0.0);
     assert_eq!(custom.means()[2], 0.0);
+}
+
+// ---------------------------------------------------------------------------
+// Permutation importance against an oracle.
+//
+// Every test above fits a real estimator and then asserts an ordering, which
+// can only ever say "this looks right". A model whose dependence on each column
+// is a *construction* rather than a fit turns those into exact statements: a
+// column the model cannot read must score exactly zero, and — with the targets
+// set to the model's own predictions, so the unpermuted score is exactly
+// perfect — a column it does read must score strictly positive.
+// ---------------------------------------------------------------------------
+
+/// A regressor that reads exactly the columns it is told to.
+struct SubsetLinear {
+    n_features_in: usize,
+    used: Vec<usize>,
+    weights: Vec<f64>,
+}
+
+impl SubsetLinear {
+    fn value(&self, row: &[f32]) -> f32 {
+        let mut total = 0.0_f64;
+        for (&column, &weight) in self.used.iter().zip(&self.weights) {
+            total += weight * f64::from(row[column]);
+        }
+        total as f32
+    }
+}
+
+impl Estimator for SubsetLinear {
+    fn n_features_in(&self) -> usize {
+        self.n_features_in
+    }
+}
+
+impl Regressor for SubsetLinear {
+    fn predict_into(&self, data: &MatrixView<'_>, output: &mut [f32]) -> Result<(), ModelError> {
+        if data.columns() != self.n_features_in {
+            return Err(ModelError::FeatureDimension {
+                expected: self.n_features_in,
+                actual: data.columns(),
+            });
+        }
+        if output.len() != data.rows() {
+            return Err(ModelError::OutputLength {
+                expected: data.rows(),
+                actual: output.len(),
+            });
+        }
+        for (row, slot) in data.iter_rows().zip(output) {
+            *slot = self.value(row);
+        }
+        Ok(())
+    }
+}
+
+/// The same construction as a label-only classifier.
+struct SubsetThreshold {
+    inner: SubsetLinear,
+    classes: [u8; 2],
+}
+
+impl Estimator for SubsetThreshold {
+    fn n_features_in(&self) -> usize {
+        self.inner.n_features_in()
+    }
+}
+
+impl Classifier for SubsetThreshold {
+    fn classes(&self) -> &[u8] {
+        &self.classes
+    }
+
+    fn predict_into(&self, data: &MatrixView<'_>, output: &mut [u8]) -> Result<(), ModelError> {
+        if data.columns() != self.n_features_in() {
+            return Err(ModelError::FeatureDimension {
+                expected: self.n_features_in(),
+                actual: data.columns(),
+            });
+        }
+        if output.len() != data.rows() {
+            return Err(ModelError::OutputLength {
+                expected: data.rows(),
+                actual: output.len(),
+            });
+        }
+        for (row, slot) in data.iter_rows().zip(output) {
+            *slot = u8::from(self.inner.value(row) > 0.0);
+        }
+        Ok(())
+    }
+}
+
+/// One randomized inspection problem.
+struct SubsetCase {
+    data: DenseMatrix,
+    model: SubsetLinear,
+    /// Whether each column can change a prediction at all: read by the model,
+    /// carrying a non-zero weight, and not constant down the batch.
+    effective: Vec<bool>,
+    /// The column held constant, when the case has one.
+    constant: Option<usize>,
+    params: PermutationImportanceParams,
+}
+
+fn subset_case(seed: u64) -> SubsetCase {
+    let mut rng = TestRng::new(seed);
+    let rows = rng.between(24, 48);
+    let columns = rng.between(2, 6);
+
+    // A non-empty proper subset, so every case has both a read column and an
+    // ignored one.
+    let mut used = Vec::new();
+    while used.is_empty() || used.len() == columns {
+        used = (0..columns).filter(|_| rng.flag()).collect();
+    }
+    let weights = used
+        .iter()
+        .map(|_| rng.range(-4.0, 4.0))
+        .collect::<Vec<_>>();
+    // Sometimes hold one column constant, which cannot matter even when read.
+    let constant = if rng.below(3) == 0 {
+        Some(rng.below(columns))
+    } else {
+        None
+    };
+
+    let mut values = Vec::with_capacity(rows * columns);
+    for _ in 0..rows {
+        for column in 0..columns {
+            values.push(if constant == Some(column) {
+                0.75
+            } else {
+                rng.range_f32(-3.0, 3.0)
+            });
+        }
+    }
+
+    let effective = (0..columns)
+        .map(|column| {
+            constant != Some(column)
+                && used
+                    .iter()
+                    .zip(&weights)
+                    .any(|(&index, &weight)| index == column && weight != 0.0)
+        })
+        .collect();
+
+    SubsetCase {
+        data: DenseMatrix::new(values, rows, columns).expect("generated shape"),
+        model: SubsetLinear {
+            n_features_in: columns,
+            used,
+            weights,
+        },
+        effective,
+        constant,
+        params: PermutationImportanceParams::default()
+            .with_n_repeats(rng.between(1, 6))
+            .with_random_state(rng.next_u64()),
+    }
+}
+
+#[test]
+fn a_column_the_model_cannot_read_scores_exactly_zero_and_one_it_reads_scores_positive() {
+    let mut checked_zero = 0_usize;
+    let mut checked_positive = 0_usize;
+    let mut constant_columns = 0_usize;
+    let mut smallest_positive = f64::INFINITY;
+    let mut worst_nonzero_on_an_ignored_column = 0.0_f64;
+    let mut into_mismatches = 0_usize;
+    let mut cases = 0_usize;
+
+    for seed in 0..96_u64 {
+        let case = subset_case(0x1a5b_0003_u64.wrapping_add(seed.wrapping_mul(0x9e37_79b9)));
+        // The targets are the model's own predictions, so the unpermuted score
+        // is exactly zero error and every reported loss is the permuted score
+        // itself rather than a difference of two approximations.
+        let predictions = case
+            .model
+            .predict(&case.data.as_view())
+            .expect("batch prediction");
+        let targets = RegressionTargets::new(predictions).expect("finite predictions");
+
+        let importance = permutation_importance_regressor(
+            &case.model,
+            &case.data.as_view(),
+            &targets,
+            RegressionScorer::MeanSquaredError,
+            case.params,
+        )
+        .expect("inspection");
+
+        let columns = case.data.columns();
+        let mut means = vec![0.0; columns];
+        let mut std_devs = vec![0.0; columns];
+        permutation_importance_regressor_into(
+            &case.model,
+            &case.data.as_view(),
+            &targets,
+            RegressionScorer::MeanSquaredError,
+            case.params,
+            &mut means,
+            &mut std_devs,
+        )
+        .expect("inspection");
+        if means
+            .iter()
+            .zip(importance.means())
+            .any(|(left, right)| left.to_bits() != right.to_bits())
+            || std_devs
+                .iter()
+                .zip(importance.std_devs())
+                .any(|(left, right)| left.to_bits() != right.to_bits())
+        {
+            into_mismatches += 1;
+        }
+
+        for column in 0..columns {
+            let mean = importance.means()[column];
+            if case.effective[column] {
+                checked_positive += 1;
+                smallest_positive = smallest_positive.min(mean);
+                assert!(
+                    mean > 0.0,
+                    "seed {seed} column {column} is read by the model but scored {mean}"
+                );
+            } else {
+                checked_zero += 1;
+                worst_nonzero_on_an_ignored_column =
+                    worst_nonzero_on_an_ignored_column.max(mean.abs());
+                assert_eq!(
+                    mean, 0.0,
+                    "seed {seed} column {column} cannot change a prediction but scored {mean}"
+                );
+                assert_eq!(
+                    importance.std_devs()[column],
+                    0.0,
+                    "seed {seed} column {column} scored a spread over identical repeats"
+                );
+            }
+        }
+        if case.constant.is_some() {
+            constant_columns += 1;
+        }
+
+        // `ranked` must be the means in descending order with ties by index.
+        let ranked = importance.ranked();
+        for pair in ranked.windows(2) {
+            let (left, right) = (pair[0], pair[1]);
+            assert!(
+                importance.means()[left] > importance.means()[right]
+                    || (importance.means()[left] == importance.means()[right] && left < right),
+                "seed {seed}: ranked order {ranked:?} disagrees with {:?}",
+                importance.means()
+            );
+        }
+        cases += 1;
+    }
+
+    println!(
+        "inspection: {cases} constructed models, {checked_zero} unreadable columns all \
+         exactly zero (worst |mean| = {worst_nonzero_on_an_ignored_column:e}), \
+         {checked_positive} readable columns all positive (smallest = {smallest_positive:e})"
+    );
+    println!(
+        "inspection: allocating and `_into` forms disagreed in {into_mismatches} of {cases} \
+         cases; {constant_columns} cases held a column constant"
+    );
+
+    assert_eq!(into_mismatches, 0, "the two forms must agree bit for bit");
+    assert!(
+        checked_zero > 0 && checked_positive > 0,
+        "both arms must run"
+    );
+    // Non-vacuity: "exactly zero" must not be what this reports by default.
+    // Every readable column scored above zero, and the smallest of them is the
+    // margin between the two claims.
+    assert!(
+        smallest_positive > 0.0,
+        "no readable column produced a positive score"
+    );
+}
+
+#[test]
+fn the_classifier_entry_point_answers_the_same_construction() {
+    let mut checked_zero = 0_usize;
+    let mut checked_positive = 0_usize;
+    let mut readable_but_unmoved = 0_usize;
+    let mut into_mismatches = 0_usize;
+    let mut cases = 0_usize;
+
+    for seed in 0..64_u64 {
+        let case = subset_case(0x1a5c_0004_u64.wrapping_add(seed.wrapping_mul(0x9e37_79b9)));
+        let model = SubsetThreshold {
+            inner: case.model,
+            classes: [0, 1],
+        };
+        let labels = model
+            .predict(&case.data.as_view())
+            .expect("batch prediction");
+        if labels.iter().all(|&label| label == labels[0]) {
+            // One observed class is not a two-class problem; skip rather than
+            // pretend the case was informative.
+            continue;
+        }
+        let targets = BinaryTargets::new(labels).expect("two observed classes");
+
+        let importance = permutation_importance_classifier(
+            ScorableClassifier::labels_only(&model),
+            &case.data.as_view(),
+            &targets,
+            ClassificationScorer::Accuracy,
+            case.params,
+        )
+        .expect("inspection");
+
+        let columns = case.data.columns();
+        let mut means = vec![0.0; columns];
+        let mut std_devs = vec![0.0; columns];
+        permutation_importance_classifier_into(
+            ScorableClassifier::labels_only(&model),
+            &case.data.as_view(),
+            &targets,
+            ClassificationScorer::Accuracy,
+            case.params,
+            &mut means,
+            &mut std_devs,
+        )
+        .expect("inspection");
+        if means
+            .iter()
+            .zip(importance.means())
+            .any(|(left, right)| left.to_bits() != right.to_bits())
+            || std_devs
+                .iter()
+                .zip(importance.std_devs())
+                .any(|(left, right)| left.to_bits() != right.to_bits())
+        {
+            into_mismatches += 1;
+        }
+
+        for column in 0..columns {
+            let mean = importance.means()[column];
+            if case.effective[column] {
+                if mean > 0.0 {
+                    checked_positive += 1;
+                } else {
+                    readable_but_unmoved += 1;
+                }
+            } else {
+                checked_zero += 1;
+                assert_eq!(
+                    mean, 0.0,
+                    "seed {seed} column {column} cannot change a label but scored {mean}"
+                );
+            }
+        }
+        cases += 1;
+    }
+
+    println!(
+        "inspection classifier: {cases} constructed models, {checked_zero} unreadable columns \
+         all exactly zero, {checked_positive} readable columns scored positive and \
+         {readable_but_unmoved} left the labels unchanged, {into_mismatches} `_into` \
+         disagreements"
+    );
+    assert_eq!(into_mismatches, 0, "the two forms must agree bit for bit");
+    assert!(checked_zero > 0, "no unreadable column was checked");
+    assert!(
+        checked_positive > 0,
+        "no readable column degraded accuracy, so the zero claim is not discriminating"
+    );
 }
