@@ -24,6 +24,17 @@
 //!   an artifact cannot be malleable — two distinct byte strings decoding to
 //!   one model would mean the reader accepts a non-canonical encoding.
 //!
+//! Oracles only fire on inputs that reach them, so the sweep also measures
+//! itself. It measures the mutator directly — every strategy has to change the
+//! bytes it is given, and change them into more than one thing — and it decides
+//! *depth* by modelling the version-2 envelope rather than by classifying
+//! outcomes at the top, because outcome counts have been measured to invert: an
+//! unmutated artifact is a valid artifact, so a mutator that stopped mutating
+//! would raise the acceptance count. `the_reach_floors_fail_when_any_one_
+//! mutation_strategy_dies` kills each strategy in turn and requires the floors
+//! to say so, and `the_envelope_model_agrees_with_the_real_decoder` holds the
+//! depth model to the decoder it models.
+//!
 //! No fuzzing dependency is involved: the generator is the crate's own
 //! SplitMix64 stream, restated here because `src/numeric/rng.rs` is private.
 
@@ -57,6 +68,7 @@ use ferricml::tree::{
 use sha2::{Digest, Sha256};
 use std::alloc::{GlobalAlloc, Layout, System};
 use std::cell::Cell;
+use std::collections::HashSet;
 
 mod support;
 
@@ -1678,20 +1690,325 @@ const ROUNDS: usize = 6;
 /// Fixed so the whole sweep is reproducible from the file alone.
 const FUZZ_SEED: u64 = 0xf3_77_1c_a1_5e_ed_00_01;
 
-/// How far one candidate got, so the sweep can prove it is not inert.
-#[derive(Default)]
-struct Reach {
-    candidates: usize,
-    /// Rejections that can only be reached after the integrity footer passed.
-    past_checksum: usize,
-    /// Candidates some decoder accepted as a model.
-    accepted: usize,
-    /// Accepted candidates that are *not* one of the fitted seeds — the
-    /// mutants that reached a complete, valid, different model.
-    novel: usize,
+// ---------------------------------------------------------------------------
+// Where a candidate actually got: the envelope model
+// ---------------------------------------------------------------------------
+//
+// The question a fuzz harness has to answer about itself is whether the bytes
+// it generates get *deep enough* to exercise the decoders, and outcome counts
+// taken at the top of the stack are a proxy for that which has been measured
+// to invert: an unmutated artifact is a valid artifact, so a mutator that
+// stopped mutating would raise the acceptance count rather than lower it.
+//
+// So reach is not inferred from the outcome. It is decided by modelling the one
+// boundary that separates the envelope from everything under it, and the model
+// is answerable to the real decoder in
+// `the_envelope_model_agrees_with_the_real_decoder`.
+
+/// The version-2 envelope identity one decoder accepts.
+///
+/// It is *read off a seed the decoder accepted*, never declared. A declared
+/// table would be a second place to be wrong, and wrong in the silent
+/// direction: a kind number here drifting away from the kind the decoder wants
+/// would make every reach floor below measure zero against bytes that reach
+/// perfectly well.
+#[derive(Clone)]
+struct EnvelopeIdentity {
+    kind: u16,
+    payload_version: u16,
+    /// The schema records as the accepted seed carries them — role, per-record
+    /// flags, and hash, concatenated.
+    schemas: Vec<u8>,
 }
 
-fn check(label: &str, decoder: &Decoder, bytes: &[u8], novel: bool, reach: &mut Reach) {
+/// Reads the envelope identity out of a well-formed version-2 artifact.
+fn envelope_identity(bytes: &[u8]) -> EnvelopeIdentity {
+    let schema_bytes = usize::from(u16_at(bytes, 20)) * SCHEMA_RECORD_BYTES;
+    EnvelopeIdentity {
+        kind: u16_at(bytes, 10),
+        payload_version: u16_at(bytes, 12),
+        schemas: bytes[V2_HEADER_BYTES..V2_HEADER_BYTES + schema_bytes].to_vec(),
+    }
+}
+
+/// One candidate byte string, with the decoder-independent half of the envelope
+/// check done once rather than once per decoder.
+struct Candidate<'a> {
+    bytes: &'a [u8],
+    /// Long enough to hold an envelope, and inside the reader's hard limit.
+    framed: bool,
+    /// The SHA-256 footer matches, so the envelope gets past `ChecksumMismatch`.
+    sealed: bool,
+}
+
+impl<'a> Candidate<'a> {
+    fn new(bytes: &'a [u8]) -> Self {
+        let framed = bytes.len() >= V2_HEADER_BYTES + CHECKSUM_BYTES
+            && bytes.len() <= ferricml::artifact::MAX_MODEL_ARTIFACT_BYTES;
+        let sealed = framed && {
+            let split = bytes.len() - CHECKSUM_BYTES;
+            Sha256::digest(&bytes[..split])[..] == bytes[split..]
+        };
+        Self {
+            bytes,
+            framed,
+            sealed,
+        }
+    }
+
+    /// Whether the version-2 envelope hands this candidate's payload to the
+    /// payload parser underneath it.
+    ///
+    /// Every condition here is one `decode_v2_envelope` in
+    /// `src/artifact/envelope.rs` checks *before* it returns a payload cursor,
+    /// in the order it checks them. `true` therefore means the payload parser
+    /// really ran on these bytes — which is exactly the fact the counter this
+    /// replaces claimed to establish and could not, because all three error
+    /// variants it counted are raised by the envelope itself.
+    ///
+    /// The model is deliberately one-sided. A decoder whose payload version
+    /// selects among several schemas has more than one accepting envelope and
+    /// this knows the one its seed used, so `false` can under-count real reach.
+    /// Every floor built on it reads a lower bound, so under-counting is the
+    /// safe direction.
+    fn hands_over_payload_to(&self, identity: &EnvelopeIdentity) -> bool {
+        if !self.framed || !self.sealed {
+            return false;
+        }
+        let bytes = self.bytes;
+        let split = bytes.len() - CHECKSUM_BYTES;
+        if bytes[..8] != *MAGIC || u16_at(bytes, 8) != 2 {
+            return false;
+        }
+        if u16_at(bytes, 10) != identity.kind || u16_at(bytes, 12) != identity.payload_version {
+            return false;
+        }
+        // Required flags, then the reserved word after the schema count: both
+        // must be zero or the envelope stops before the schema loop.
+        if u16_at(bytes, 14) != 0 || u16_at(bytes, 22) != 0 {
+            return false;
+        }
+        if usize::from(u16_at(bytes, 20)) * SCHEMA_RECORD_BYTES != identity.schemas.len() {
+            return false;
+        }
+        let payload_start = V2_HEADER_BYTES + identity.schemas.len();
+        if payload_start > split || bytes[V2_HEADER_BYTES..payload_start] != identity.schemas[..] {
+            return false;
+        }
+        // The declared payload length has to consume the checksummed region
+        // exactly: short is `Truncated`, long is `TrailingBytes`, and neither
+        // reaches a parser.
+        let payload_len = u32_at(bytes, 16) as usize;
+        payload_start.checked_add(payload_len) == Some(split)
+    }
+}
+
+/// Applies one edit to a copy of an artifact and reseals it, so the case under
+/// test is the edited field rather than the checksum.
+fn edited(seed: &[u8], edit: impl FnOnce(&mut Vec<u8>)) -> Vec<u8> {
+    let mut bytes = seed.to_vec();
+    edit(&mut bytes);
+    reseal(&mut bytes);
+    bytes
+}
+
+/// The envelope model has to be answerable to the envelope.
+///
+/// `Candidate::hands_over_payload_to` is this file's restatement of
+/// `decode_v2_envelope`, and a restatement only ever run against bytes it
+/// agrees with proves nothing. Every field the real envelope checks before it
+/// returns a payload cursor is perturbed here, on a one-schema decoder and a
+/// two-schema one: the model must say the payload parser was not reached, *and*
+/// the decoder must reject with the error that field raises. If the envelope
+/// gains a check the model does not know about, the model starts over-counting
+/// reach and this test is what says so.
+///
+/// The two positive controls are what stop the model from being vacuously
+/// false, and the second one is the claim the counter this replaces made
+/// falsely: a payload-level rejection, from bytes the envelope demonstrably
+/// handed over.
+#[test]
+fn the_envelope_model_agrees_with_the_real_decoder() {
+    let corpus = seed_corpus();
+    let table = decoders();
+    // One schema and two, because the schema loop is the part of the envelope
+    // whose length depends on the decoder.
+    for name in ["ridge", "standard-scaler"] {
+        let seed = &corpus
+            .iter()
+            .find(|(seed_name, _)| *seed_name == name)
+            .unwrap_or_else(|| panic!("no {name} seed"))
+            .1;
+        let (_, _, decode) = *table
+            .iter()
+            .find(|(decoder_name, ..)| *decoder_name == name)
+            .unwrap_or_else(|| panic!("no {name} decoder"));
+        let identity = envelope_identity(seed);
+        let payload_start = V2_HEADER_BYTES + identity.schemas.len();
+
+        assert!(
+            Candidate::new(seed).hands_over_payload_to(&identity),
+            "{name}: the model rejects the artifact its own identity came from"
+        );
+        assert!(
+            matches!(decode(seed), Outcome::Accepted(_)),
+            "{name}: the seed has to decode"
+        );
+
+        // The payload's first component header, flipped and resealed: the
+        // envelope is untouched, so this is a rejection only a reached payload
+        // parser can produce.
+        let deep = edited(seed, |bytes| bytes[payload_start] ^= 0x01);
+        assert!(
+            Candidate::new(&deep).hands_over_payload_to(&identity),
+            "{name}: editing a payload byte must not change what the envelope does"
+        );
+        match decode(&deep) {
+            Outcome::Rejected(error) => assert_eq!(
+                error,
+                ArtifactError::InvalidPayload,
+                "{name}: a corrupt component kind is a payload-parser rejection"
+            ),
+            Outcome::Accepted(_) => panic!("{name}: a corrupt component kind was accepted"),
+        }
+
+        let kind = identity.kind;
+        let payload_version = identity.payload_version;
+        let cases: Vec<(&str, Vec<u8>, ArtifactError)> = vec![
+            (
+                "magic",
+                edited(seed, |bytes| bytes[0] ^= 0x01),
+                ArtifactError::InvalidMagic,
+            ),
+            (
+                "envelope version",
+                edited(seed, |bytes| {
+                    bytes[8..10].copy_from_slice(&3_u16.to_le_bytes());
+                }),
+                ArtifactError::UnsupportedVersion { found: 3 },
+            ),
+            (
+                "kind",
+                edited(seed, |bytes| {
+                    bytes[10..12].copy_from_slice(&(kind + 1).to_le_bytes());
+                }),
+                ArtifactError::UnsupportedModelKind { found: kind + 1 },
+            ),
+            (
+                "payload version",
+                edited(seed, |bytes| {
+                    bytes[12..14].copy_from_slice(&(payload_version + 1).to_le_bytes());
+                }),
+                ArtifactError::UnsupportedPayloadVersion {
+                    found: payload_version + 1,
+                },
+            ),
+            (
+                "required flags",
+                edited(seed, |bytes| {
+                    bytes[14..16].copy_from_slice(&1_u16.to_le_bytes());
+                }),
+                ArtifactError::UnsupportedRequiredFlags { found: 1 },
+            ),
+            (
+                "declared payload one byte too long",
+                edited(seed, |bytes| {
+                    let declared = u32_at(bytes, 16) + 1;
+                    bytes[16..20].copy_from_slice(&declared.to_le_bytes());
+                }),
+                ArtifactError::Truncated,
+            ),
+            (
+                "declared payload one byte too short",
+                edited(seed, |bytes| {
+                    let declared = u32_at(bytes, 16) - 1;
+                    bytes[16..20].copy_from_slice(&declared.to_le_bytes());
+                }),
+                ArtifactError::TrailingBytes,
+            ),
+            (
+                "schema count",
+                edited(seed, |bytes| {
+                    let count = u16_at(bytes, 20) + 1;
+                    bytes[20..22].copy_from_slice(&count.to_le_bytes());
+                }),
+                ArtifactError::InvalidPayload,
+            ),
+            (
+                "reserved word after the schema count",
+                edited(seed, |bytes| {
+                    bytes[22..24].copy_from_slice(&1_u16.to_le_bytes());
+                }),
+                ArtifactError::InvalidPayload,
+            ),
+            (
+                "schema role",
+                edited(seed, |bytes| {
+                    bytes[24..26].copy_from_slice(&9_u16.to_le_bytes());
+                }),
+                ArtifactError::InvalidPayload,
+            ),
+            (
+                "schema hash",
+                edited(seed, |bytes| bytes[28] ^= 0x01),
+                ArtifactError::FeatureSchemaMismatch,
+            ),
+            (
+                "one byte short",
+                edited(seed, |bytes| {
+                    bytes.truncate(bytes.len() - 1);
+                }),
+                ArtifactError::Truncated,
+            ),
+            (
+                "one byte long",
+                edited(seed, |bytes| bytes.push(0)),
+                ArtifactError::TrailingBytes,
+            ),
+            // The one case that must not be resealed, because the footer is
+            // what it tests.
+            (
+                "checksum",
+                {
+                    let mut bytes = seed.clone();
+                    let last = bytes.len() - 1;
+                    bytes[last] ^= 0x01;
+                    bytes
+                },
+                ArtifactError::ChecksumMismatch,
+            ),
+        ];
+
+        for (case, bytes, expected) in cases {
+            assert!(
+                !Candidate::new(&bytes).hands_over_payload_to(&identity),
+                "{name}/{case}: the model says the payload parser was reached"
+            );
+            match decode(&bytes) {
+                Outcome::Rejected(error) => assert_eq!(
+                    error, expected,
+                    "{name}/{case}: the envelope rejected for a different reason"
+                ),
+                Outcome::Accepted(_) => panic!("{name}/{case}: the envelope accepted it"),
+            }
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// What the sweep counts
+// ---------------------------------------------------------------------------
+
+/// One decode, as the floors see it.
+struct Probe {
+    accepted: bool,
+    /// The envelope handed these bytes to the payload parser underneath it.
+    reached_payload: bool,
+}
+
+/// Runs one decoder over one candidate under both always-on oracles, and
+/// reports only whether it was accepted.
+fn decode_under_oracles(label: &str, decoder: &Decoder, bytes: &[u8]) -> bool {
     let (name, _, decode) = *decoder;
     let (outcome, peak) = measure_peak(|| decode(bytes));
     let budget = ALLOC_BASE_BYTES + ALLOC_INPUT_FACTOR * bytes.len();
@@ -1701,18 +2018,8 @@ fn check(label: &str, decoder: &Decoder, bytes: &[u8], novel: bool, reach: &mut 
         "{label}/{name}: decoding {length} bytes allocated {peak} bytes, budget {budget}"
     );
     match outcome {
-        // These three are only reachable once the checksum, magic, version,
-        // kind, and schema identities have all been accepted, so counting them
-        // proves mutants really are reaching the payload parsers.
-        Outcome::Rejected(
-            ArtifactError::InvalidPayload
-            | ArtifactError::TrailingBytes
-            | ArtifactError::UnsupportedPayloadVersion { .. },
-        ) => reach.past_checksum += 1,
-        Outcome::Rejected(_) => {}
+        Outcome::Rejected(_) => false,
         Outcome::Accepted(reencoded) => {
-            reach.accepted += 1;
-            reach.novel += usize::from(novel);
             // A version-1 logistic artifact is deliberately re-encoded as
             // version 2, so only current-format acceptances owe canonicity.
             if length >= 10 && bytes[..8] == *MAGIC && u16_at(bytes, 8) == 2 {
@@ -1726,7 +2033,277 @@ fn check(label: &str, decoder: &Decoder, bytes: &[u8], novel: bool, reach: &mut 
                     ),
                 }
             }
+            true
         }
+    }
+}
+
+/// The same decode, plus the one thing the floors need to know about it.
+fn probe(
+    label: &str,
+    decoder: &Decoder,
+    identity: &EnvelopeIdentity,
+    candidate: &Candidate<'_>,
+) -> Probe {
+    Probe {
+        accepted: decode_under_oracles(label, decoder, candidate.bytes),
+        reached_payload: candidate.hands_over_payload_to(identity),
+    }
+}
+
+/// Everything one sweep measured about itself.
+///
+/// The split between "the mutator" and "the reach" is the point. The first
+/// group measures the mutator directly — did it change the bytes, and did it
+/// change them into more than one thing — and cannot be satisfied by a mutator
+/// that has stopped working. The second group measures how deep the *changed*
+/// bytes got.
+#[derive(Clone)]
+struct Reach {
+    candidates: usize,
+    /// Candidates each strategy produced.
+    produced: Vec<usize>,
+    /// ... that differ from the seed they were derived from.
+    changed: Vec<usize>,
+    /// ... distinct byte strings among them.
+    distinct: Vec<usize>,
+    /// Decoders whose payload parser received bytes from each strategy that
+    /// are not any seed in the corpus.
+    strategy_reach: Vec<usize>,
+    /// The same count, per decoder.
+    decoder_reach: Vec<usize>,
+    /// Changed bytes a payload parser rejected — work that only happens below
+    /// the envelope.
+    payload_rejected: usize,
+    /// Changed bytes a payload parser accepted as a complete, valid, different
+    /// model, which is what puts the malleability oracle to work.
+    payload_accepted: usize,
+    /// Every acceptance, of anything, by anything.
+    ///
+    /// Reported and never floored. This is the number that rises as the mutator
+    /// dies — a no-op candidate is a valid artifact and its own decoder takes
+    /// it — so a floor on it rewards the failure it looks like it guards. The
+    /// quantity that has to be capped is the no-op rate itself, which
+    /// `changed` above measures at its source.
+    accepted: usize,
+}
+
+impl Reach {
+    fn new(strategies: usize, decoders: usize) -> Self {
+        Self {
+            candidates: 0,
+            produced: vec![0; strategies],
+            changed: vec![0; strategies],
+            distinct: vec![0; strategies],
+            strategy_reach: vec![0; strategies],
+            decoder_reach: vec![0; decoders],
+            payload_rejected: 0,
+            payload_accepted: 0,
+            accepted: 0,
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// The floors
+// ---------------------------------------------------------------------------
+
+/// The sweep has to keep generating work at all.
+const MIN_CANDIDATES: usize = 500;
+/// Share of a strategy's candidates that must differ from their seed.
+///
+/// A strategy that returns the seed has died, and a dead strategy is invisible
+/// in every outcome count: the seed is a valid artifact, so it decodes, and the
+/// death reads as success. This is the floor that measures the mutator instead
+/// of inferring it. Measured range across the ten strategies is 83%-100%.
+const MIN_CHANGED_PERCENT: usize = 75;
+/// Share of a strategy's candidates that must be distinct byte strings.
+///
+/// A strategy collapsed onto one output is as dead as one that changes nothing,
+/// and the no-op cap alone would not see it. Measured range is 91%-100%.
+const MIN_DISTINCT_PERCENT: usize = 80;
+/// Mutated byte strings each envelope-capable strategy must push through the
+/// envelope into a payload parser.
+///
+/// Measured range over the eight is 8-130; the floor is set at the bottom of
+/// that because its job is to catch a strategy that has stopped reaching depth,
+/// not to pin the exact number a fixed seed happens to produce.
+const MIN_STRATEGY_PAYLOAD_REACH: usize = 5;
+/// ... and that each decoder's own payload parser must receive.
+///
+/// Measured range over the twenty-seven decoders is 6-56. This is the floor
+/// that would fail if a decoder stopped being reached at all, which is the
+/// thing the sweep's coverage claim rests on and had never been measured.
+const MIN_DECODER_PAYLOAD_REACH: usize = 3;
+/// Payload-parser rejections of mutated bytes, across the sweep. Measured 595.
+const MIN_PAYLOAD_REJECTIONS: usize = 100;
+/// Mutated byte strings that became a complete, valid, different model, which
+/// is what puts the malleability oracle to work. Measured 37.
+const MIN_PAYLOAD_ACCEPTANCES: usize = 5;
+
+/// The strategies whose products cannot survive the envelope, with the reason.
+///
+/// Both change the artifact's length without touching the payload-length field,
+/// so the declared payload no longer consumes the checksummed region and the
+/// envelope stops at `Truncated` or `TrailingBytes`. That is legitimate
+/// adversarial work against the envelope's own bounds, and it is why these two
+/// are excused from the reach floor rather than deleted — but being excused is
+/// stated here, once, instead of being invisible in an aggregate.
+const ENVELOPE_BOUND_STRATEGIES: [&str; 2] = ["truncate", "extend"];
+
+/// Every floor, in one function, so the neuter test below asks the gate's
+/// question rather than a paraphrase of it.
+fn floor_violations(reach: &Reach, decoders: &[Decoder]) -> Vec<String> {
+    let mut violations = Vec::new();
+    if reach.candidates < MIN_CANDIDATES {
+        violations.push(format!(
+            "the sweep shrank to {} candidates",
+            reach.candidates
+        ));
+    }
+    for (strategy, name) in STRATEGIES.iter().enumerate() {
+        let produced = reach.produced[strategy];
+        let changed = reach.changed[strategy];
+        if changed * 100 < produced * MIN_CHANGED_PERCENT {
+            violations.push(format!(
+                "the {name} strategy returned its seed unchanged for {} of {produced} candidates",
+                produced - changed
+            ));
+        }
+        let distinct = reach.distinct[strategy];
+        if distinct * 100 < produced * MIN_DISTINCT_PERCENT {
+            violations.push(format!(
+                "the {name} strategy produced only {distinct} distinct byte strings \
+                 in {produced} candidates"
+            ));
+        }
+        if ENVELOPE_BOUND_STRATEGIES.contains(name) {
+            continue;
+        }
+        if reach.strategy_reach[strategy] < MIN_STRATEGY_PAYLOAD_REACH {
+            violations.push(format!(
+                "the {name} strategy got mutated bytes into a payload parser only {} times",
+                reach.strategy_reach[strategy]
+            ));
+        }
+    }
+    for (index, (name, _, _)) in decoders.iter().enumerate() {
+        if reach.decoder_reach[index] < MIN_DECODER_PAYLOAD_REACH {
+            violations.push(format!(
+                "the {name} payload parser received mutated bytes only {} times",
+                reach.decoder_reach[index]
+            ));
+        }
+    }
+    if reach.payload_rejected < MIN_PAYLOAD_REJECTIONS {
+        violations.push(format!(
+            "payload parsers rejected mutated bytes only {} times",
+            reach.payload_rejected
+        ));
+    }
+    if reach.payload_accepted < MIN_PAYLOAD_ACCEPTANCES {
+        violations.push(format!(
+            "only {} mutants built a complete model no seed already encodes; the \
+             malleability oracle is barely running",
+            reach.payload_accepted
+        ));
+    }
+    violations
+}
+
+// ---------------------------------------------------------------------------
+// Running the sweep
+// ---------------------------------------------------------------------------
+
+/// The corpus, the decoders, and the envelope each decoder accepts, built once
+/// so the neuter test can run the sweep a dozen times without refitting.
+struct Campaign {
+    corpus: Vec<(&'static str, Vec<u8>)>,
+    decoders: Vec<Decoder>,
+    identities: Vec<EnvelopeIdentity>,
+}
+
+impl Campaign {
+    fn new() -> Self {
+        let corpus = seed_corpus();
+        let decoders = decoders();
+        let identities = decoders
+            .iter()
+            .map(|decoder| {
+                let (name, _, decode) = *decoder;
+                let accepted = corpus
+                    .iter()
+                    .map(|(_, bytes)| bytes)
+                    .filter(|bytes| bytes.len() >= 10 && bytes[..8] == *MAGIC)
+                    .filter(|bytes| u16_at(bytes, 8) == 2)
+                    .find(|bytes| matches!(decode(bytes), Outcome::Accepted(_)));
+                // A decoder with no accepting seed has no known-reachable
+                // envelope, so nothing the sweep throws at it could be shown to
+                // have reached its payload parser. That is a coverage hole, not
+                // a measurement inconvenience, so it fails here.
+                let bytes = accepted.unwrap_or_else(|| {
+                    panic!(
+                        "no version-2 seed in the corpus decodes as {name}, so its \
+                         payload parser is never known to be reached"
+                    )
+                });
+                envelope_identity(bytes)
+            })
+            .collect();
+        Self {
+            corpus,
+            decoders,
+            identities,
+        }
+    }
+
+    /// One sweep. `alive[s]` false makes strategy `s` return its seed unchanged
+    /// — the exact shape a mutation strategy takes when it stops working.
+    fn run(&self, alive: &[bool], rounds: usize) -> Reach {
+        let mut rng = Rng::new(FUZZ_SEED);
+        let mut reach = Reach::new(STRATEGIES.len(), self.decoders.len());
+        let mut seen: Vec<HashSet<Vec<u8>>> = vec![HashSet::new(); STRATEGIES.len()];
+
+        for (seed_name, seed) in &self.corpus {
+            for (strategy, strategy_name) in STRATEGIES.iter().enumerate() {
+                for round in 0..rounds {
+                    let bytes = if alive[strategy] {
+                        mutate(&mut rng, strategy, seed, &self.corpus)
+                    } else {
+                        seed.clone()
+                    };
+                    reach.candidates += 1;
+                    reach.produced[strategy] += 1;
+                    reach.changed[strategy] += usize::from(bytes != *seed);
+                    seen[strategy].insert(bytes.clone());
+                    // "Mutated" means the byte string is not in the corpus at
+                    // all, not merely that it differs from the one seed it came
+                    // from: a mutation that lands on another fitted artifact
+                    // proves nothing about depth.
+                    let mutated = self.corpus.iter().all(|(_, fitted)| *fitted != bytes);
+                    let label = format!("{seed_name}/{strategy_name}/{round}");
+                    let candidate = Candidate::new(&bytes);
+                    for (index, decoder) in self.decoders.iter().enumerate() {
+                        let probe = probe(&label, decoder, &self.identities[index], &candidate);
+                        reach.accepted += usize::from(probe.accepted);
+                        if !(mutated && probe.reached_payload) {
+                            continue;
+                        }
+                        reach.strategy_reach[strategy] += 1;
+                        reach.decoder_reach[index] += 1;
+                        if probe.accepted {
+                            reach.payload_accepted += 1;
+                        } else {
+                            reach.payload_rejected += 1;
+                        }
+                    }
+                }
+            }
+        }
+        for (strategy, outputs) in seen.iter().enumerate() {
+            reach.distinct[strategy] = outputs.len();
+        }
+        reach
     }
 }
 
@@ -1737,74 +2314,111 @@ fn rounds() -> usize {
         .unwrap_or(ROUNDS)
 }
 
+fn report(reach: &Reach, decoders: &[Decoder]) -> String {
+    let mut lines = vec![format!(
+        "fuzz sweep: {} candidates, {} payload-parser rejections of mutated bytes, \
+         {} mutated bytes accepted as a different model, {} acceptances in total \
+         (uncounted: a dead mutator raises this one)",
+        reach.candidates, reach.payload_rejected, reach.payload_accepted, reach.accepted
+    )];
+    for (strategy, name) in STRATEGIES.iter().enumerate() {
+        lines.push(format!(
+            "  {name:16} produced {:4}  changed {:4}  distinct {:4}  payload reach {:5}",
+            reach.produced[strategy],
+            reach.changed[strategy],
+            reach.distinct[strategy],
+            reach.strategy_reach[strategy]
+        ));
+    }
+    for (index, (name, _, _)) in decoders.iter().enumerate() {
+        lines.push(format!(
+            "  decoder {name:34} payload reach {:5}",
+            reach.decoder_reach[index]
+        ));
+    }
+    lines.join("\n")
+}
+
 #[test]
 fn every_decoder_survives_structured_mutation() {
-    let corpus = seed_corpus();
-    let decoders = decoders();
-    let mut rng = Rng::new(FUZZ_SEED);
-    let mut reach = Reach::default();
+    let campaign = Campaign::new();
+    let alive = [true; STRATEGIES.len()];
+    let reach = campaign.run(&alive, rounds());
+    println!("{}", report(&reach, &campaign.decoders));
+    let violations = floor_violations(&reach, &campaign.decoders);
+    assert!(violations.is_empty(), "{}", violations.join("\n"));
+}
+
+/// A harness that cannot detect its own mutator dying will eventually have a
+/// dead mutator.
+///
+/// This is the reviewer's neuter experiment turned into an assertion. Every
+/// strategy is killed in turn — a killed strategy returns its seed, which is
+/// what a strategy that stops working actually does — and the floors above must
+/// reject each one *by name*, so a run cannot pass this test by failing some
+/// unrelated floor. The all-dead run is the easy case and comes last; the
+/// single-strategy runs are the real bar, because the floors this replaces
+/// passed with nine of ten strategies dead.
+#[test]
+fn the_reach_floors_fail_when_any_one_mutation_strategy_dies() {
+    let campaign = Campaign::new();
     let rounds = rounds();
 
-    for (seed_name, seed) in &corpus {
-        for (strategy, strategy_name) in STRATEGIES.iter().enumerate() {
-            for round in 0..rounds {
-                let bytes = mutate(&mut rng, strategy, seed, &corpus);
-                reach.candidates += 1;
-                let label = format!("{seed_name}/{strategy_name}/{round}");
-                let novel = corpus.iter().all(|(_, fitted)| *fitted != bytes);
-                for decoder in &decoders {
-                    check(&label, decoder, &bytes, novel, &mut reach);
-                }
-            }
-        }
+    let all = [true; STRATEGIES.len()];
+    let live = campaign.run(&all, rounds);
+    let control = floor_violations(&live, &campaign.decoders);
+    assert!(
+        control.is_empty(),
+        "the floors have to pass with a working mutator, or killing one proves \
+         nothing: {}",
+        control.join("\n")
+    );
+
+    for (dead, name) in STRATEGIES.iter().enumerate() {
+        let mut alive = all;
+        alive[dead] = false;
+        let reach = campaign.run(&alive, rounds);
+        let violations = floor_violations(&reach, &campaign.decoders);
+        assert!(
+            violations.iter().any(|line| line.contains(name)),
+            "killing the {name} strategy raised no floor naming it: {violations:#?}\n{}",
+            report(&reach, &campaign.decoders)
+        );
     }
 
-    // A fuzzer nobody can see failing is worthless. These floors say the sweep
-    // still generates work, still gets past the integrity footer, and still
-    // produces inputs a decoder is willing to accept; a mutator that decayed
-    // into producing garbage nothing parses would trip them.
-    println!(
-        "fuzz sweep: {} candidates, {} decoder rejections past the checksum, \
-         {} acceptances ({} of models no seed contains)",
-        reach.candidates, reach.past_checksum, reach.accepted, reach.novel
-    );
+    let none = [false; STRATEGIES.len()];
+    let reach = campaign.run(&none, rounds);
+    let violations = floor_violations(&reach, &campaign.decoders);
+    for name in STRATEGIES {
+        assert!(
+            violations.iter().any(|line| line.contains(name)),
+            "a completely dead mutator raised no floor naming {name}:\n{}",
+            report(&reach, &campaign.decoders)
+        );
+    }
+    // And this test is still reproducing the defect it exists for: the count
+    // that moves the *wrong* way must still move the wrong way, so that no
+    // future floor can be built on it by accident.
     assert!(
-        reach.candidates >= 500,
-        "the sweep shrank to {} candidates",
-        reach.candidates
-    );
-    assert!(
-        reach.past_checksum >= 200,
-        "only {} mutants reached a payload parser",
-        reach.past_checksum
-    );
-    assert!(
-        reach.accepted >= 10,
-        "only {} mutants were accepted as models",
-        reach.accepted
-    );
-    assert!(
-        reach.novel >= 5,
-        "only {} mutants built a model no seed already encodes; the sweep is \
-         only re-testing its own corpus",
-        reach.novel
+        reach.accepted > live.accepted,
+        "the dead-mutator run accepted {} against the live run's {}; acceptance \
+         is supposed to rise as the mutator dies, and a floor on it is the \
+         defect this test guards",
+        reach.accepted,
+        live.accepted
     );
 }
 
 #[test]
 fn valid_artifacts_decode_within_the_allocation_budget() {
-    let decoders = decoders();
-    let mut reach = Reach::default();
-    for (name, bytes) in seed_corpus() {
-        for decoder in &decoders {
-            check(name, decoder, &bytes, false, &mut reach);
+    let campaign = Campaign::new();
+    let mut accepted = 0;
+    for (name, bytes) in &campaign.corpus {
+        for decoder in &campaign.decoders {
+            accepted += usize::from(decode_under_oracles(name, decoder, bytes));
         }
     }
-    assert!(
-        reach.accepted >= 20,
-        "only {} valid artifacts decoded",
-        reach.accepted
-    );
+    assert!(accepted >= 20, "only {accepted} valid artifacts decoded");
 }
 
 // ---------------------------------------------------------------------------
@@ -3485,7 +4099,6 @@ fn refresh_the_adversarial_corpus() {
 fn the_frozen_adversarial_corpus_decodes_exactly_as_recorded() {
     let decoders = decoders();
     let cases = corpus();
-    let mut reach = Reach::default();
 
     for case in &cases {
         let frozen = std::fs::read(corpus_path(case.name)).unwrap_or_else(|error| {
@@ -3504,7 +4117,7 @@ fn the_frozen_adversarial_corpus_decodes_exactly_as_recorded() {
         // The allocation bound is checked for every decoder, because a hostile
         // artifact aimed at one reader can still be handed to another.
         for decoder in &decoders {
-            check(case.name, decoder, &frozen, false, &mut reach);
+            decode_under_oracles(case.name, decoder, &frozen);
         }
 
         let (_, _, decode) = *decoders

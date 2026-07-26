@@ -812,6 +812,24 @@ and releases use [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- The artifact fuzz sweep's reach floors now detect their own mutator dying.
+  They previously could not: with the mutator completely disabled three of the
+  four floors still passed, and with nine of ten mutation strategies disabled
+  all four did. One floor was anti-correlated with mutator health — an
+  unmutated artifact is a valid artifact, so acceptances *rose* from 137 to
+  2160 as the mutator died, and a floor on that number rewarded the failure it
+  was supposed to catch. The floors now measure the mutator directly, requiring
+  each strategy to change the bytes it is given and to produce distinct
+  outputs, and measure depth by modelling the version-2 envelope instead of by
+  classifying outcomes at the top of the stack, so "these bytes reached a
+  payload parser" is decided rather than inferred. Per-decoder reach is floored
+  too, which measures the coverage claim the sweep rests on for the first time.
+  `the_reach_floors_fail_when_any_one_mutation_strategy_dies` kills each of the
+  ten strategies in turn and requires a floor naming it to fail, and
+  `the_envelope_model_agrees_with_the_real_decoder` holds the depth model to
+  the decoder it models over every envelope field. The comment claiming the old
+  counter proved payload-parser reach was false — all three error variants it
+  counted are raised by the envelope itself — and is gone.
 - Every one of the crate's 29 capability declarations now carries a doc comment
   saying what it claims and, where a capability is deliberately absent, why —
   up from 8. Four of them contradicted the declaration they sat above and are
