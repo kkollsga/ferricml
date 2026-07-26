@@ -81,9 +81,11 @@ pub(super) fn fit_elastic_net_dense(
     let columns = data.columns();
     let total_weight = sample_weights.map_or(rows as f64, SampleWeights::total);
     let preprocessed = preprocess(data, targets, sample_weights, fit_intercept);
-    // Column-major, so one coordinate's column is contiguous.
+    // Column-major with no padding, so one coordinate's column is contiguous.
+    // `PreprocessedDense` declares that layout and a test in `least_squares.rs`
+    // pins it from both ends; it is not a property borrowed from a dependency.
     let design = preprocessed.matrix.as_slice();
-    let mut residual = preprocessed.targets.iter().copied().collect::<Vec<_>>();
+    let mut residual = preprocessed.targets.clone();
 
     // A coordinate's unpenalized curvature, in the objective's own scaling.
     // Constant once the design is built, so the sweep computes it never.

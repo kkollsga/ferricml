@@ -59,7 +59,22 @@ codegen-units = 1
 default = []
 
 [dependencies]
-nalgebra = { version = "0.34", default-features = false, features = ["std"] }
+# The crate's one dense linear-algebra backend, and not a preference: it
+# replaced `nalgebra 0.34.2`, whose `svd(true, true)` returns a decomposition
+# that does not reconstruct its own input on exactly-rank-deficient tall
+# designs. See the changelog entry for the measurement.
+#
+# `default-features = false` keeps the sparse, `rand` and `npy` graph out; `std`
+# is what enables the runtime CPU-feature detection the kernels dispatch on.
+#
+# `rayon` is deliberately absent, and that is a verified choice rather than an
+# omission: `faer::Par::Seq`, `set_global_parallelism` and every decomposition
+# FerricML needs compile and run with exactly the features named here, so the
+# crate pins sequential execution without ever linking a thread pool. Cargo
+# feature unification can still switch `rayon` on from elsewhere in a consumer's
+# graph, which is why `least_squares.rs` pins `Par::Seq` at each fit rather than
+# inferring it from this line.
+faer = { version = "0.24.4", default-features = false, features = ["std"] }
 sha2 = "0.10"
 
 [dev-dependencies]

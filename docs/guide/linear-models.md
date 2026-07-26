@@ -37,11 +37,19 @@ assert!((model.coefficients()[0] - 2.0).abs() < 1e-4);
 # Ok::<(), Box<dyn std::error::Error>>(())
 ```
 
-Fitting uses a deterministic SVD, so a rank-deficient or underdetermined input
-does not fail and does not pick a coefficient vector arbitrarily. It returns the
+Fitting takes a thin SVD, so a rank-deficient or underdetermined input does not
+fail and does not pick a coefficient vector arbitrarily. It returns the
 **minimum-norm** solution: with two identical columns, the effect is split
 evenly between them rather than assigned to whichever the arithmetic reached
 first. That is what makes the fit reproducible on a degenerate design.
+
+Degenerate designs are also where a decomposition is easiest to get wrong, so
+the crate checks rather than assumes. The linear-model tests sweep exactly
+rank-deficient tall designs and assert on each one that the returned
+coefficients zero the normal-equation gradient — that they really are a
+least-squares solution — because a previous backend produced coefficients that
+did not, on this exact shape, while still reporting the right rank and still
+splitting the duplicated pair evenly.
 
 ```rust
 use ferricml::data::{DenseMatrix, RegressionTargets};

@@ -9,6 +9,79 @@ and releases use [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- **Breaking (fitted values). `LinearRegression` returns a least-squares
+  solution on exactly rank-deficient designs, where it previously often did
+  not.** The SVD this crate depended on returns a factorization that does not
+  reconstruct its own input on such designs, and the coefficients derived from
+  it were consequently not least squares in any sense: they did not zero the
+  normal-equation gradient.
+
+  **The defect, measured.** Tall designs with one exactly duplicated column,
+  300 draws per shape, comparing each decomposition against its own input:
+  55/300 failed to reconstruct at 64x3, 121/300 at 256x6, and 146/300 at
+  1024x6, with a worst *relative* reconstruction error of 18.5 — not a rounding
+  discrepancy but a wrong answer. The failures are quiet by construction. The
+  factors come back orthonormal, the singular values look plausible, and the
+  reported rank is correct on every draw measured, so nothing short of
+  reconstructing the input or checking the gradient can see it.
+
+  **What FerricML now asserts.** `least_squares.rs` sweeps that defect class —
+  three shapes, 75 draws — and checks three independent properties per draw:
+  the scaled normal-equation gradient vanishes, the rank is the true one, and
+  the duplicated pair splits evenly. Only the gradient check catches this: run
+  against the previous backend it fails on **27 of 75** draws with a worst
+  scaled gradient of 5.4e-2 against a 1e-12 limit, while the rank and
+  minimum-norm checks pass on all 75. A test that had asserted rank or
+  even-splitting alone would have watched this ship.
+
+  **The fix is the backend.** `nalgebra 0.34.2` is replaced by
+  `faer 0.24.4`, which is correct on the same corpus: 0 failures in 3600
+  decompositions, worst relative reconstruction error 2.7e-14. FerricML now has
+  two runtime dependencies, `faer` and `sha2`, and there is one code path — no
+  Cargo feature selects a backend and none is planned. `LinearRegression`'s
+  minimum-norm promise is now a promise the crate keeps rather than one it
+  states.
+
+  **The reference fixtures do not move, and that was measured rather than
+  hoped.** Instrumenting every numeric assertion in `tests/reference_semantics.rs`
+  and running both backends single-threaded gives **446 deviations that are
+  identical value for value**, worst case 91% of tolerance under each. No
+  fixture was regenerated.
+
+  **What did move is a guarantee, and it moved for a good reason.**
+  `docs/determinism.md` had `LinearRegression` (artifact kind 2) and `Ridge`
+  (kind 3) in tier 1, byte-identical on every IEEE-754 target. They are now
+  **tier M — identical per machine**, a new named scope, because the new
+  kernels select instructions from the CPU features they detect at run time and
+  no target triple bounds that. Read the tier-1 listing as having been wrong
+  rather than as having been true and then weakened: tier 1's evidence is a
+  search of `src/` plus the accumulation policy, and no dense decomposition has
+  ever lived in `src/` under either backend. The claim never covered the code
+  that computed those two models. Refitting still reproduces the model, there is
+  still no thread-count axis — the backend's parallelism is pinned to `Par::Seq`
+  at every fit and its `rayon` feature is never enabled — and every predict path
+  remains a hand-written row loop in `src/`, so inference is unaffected.
+
+  Rule 2 of the accumulation policy in `src/numeric/mod.rs` gains a matching
+  exception. It is scoped to the calls that enter the backend from
+  `least_squares.rs` and to its **first** clause only: a blocked kernel reorders
+  a reduction for speed by construction, while the second clause — no order that
+  depends on how work was scheduled — stands unamended and is what the
+  sequential pin buys. Turning the SVD back into coefficients is written out in
+  ascending index order through `sum_in_order` rather than delegated, so the
+  exempt region ends at the factorization.
+
+  Two smaller things fall out. The centered design is now a plain
+  `Vec<f64>` that FerricML owns, declared column-major with no padding, instead
+  of a backend matrix type: `coordinate_descent` slices that buffer by column,
+  a padded or transposed layout would silently fit a different model rather
+  than fail to compile, and a new test pins the layout from both ends. And
+  `docs/security.md` withdraws its claim that replacing the numerical backend
+  "would carry disproportionate numerical and compatibility risk" — exactly
+  backwards, as it turned out; `RUSTSEC-2024-0436`'s unmaintained `paste` is
+  reached through the new backend too, so that conclusion survives on a
+  different fact than the one it rested on.
+
 - **Breaking (predicted class).** `DummyClassifier` picks its majority class by
   comparing the class **counts**, instead of the `f32` frequencies narrowed from
   them. `class_priors` is an `f32` view of a ratio of `usize` counts, and

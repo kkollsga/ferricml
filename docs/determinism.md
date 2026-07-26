@@ -11,7 +11,7 @@ Nothing here is aspirational. Where a claim is verified, the verifying test is
 named. Where it is not verifiable from a single machine, it says so rather than
 asserting.
 
-## The three tiers
+## The tiers
 
 **Tier 1 — identical on every target.** The fitted artifact is byte-identical
 on any target with IEEE-754 `binary32` and `binary64`, for identical data,
@@ -19,14 +19,18 @@ parameters, seed, and thread count. This covers:
 
 | Estimator | Artifact kind |
 |---|---|
-| `LinearRegression` | 2 |
-| `Ridge` | 3 |
 | `Lasso`, `ElasticNet` | — |
 | `StandardScaler`, `MinMaxScaler`, `MaxAbsScaler` | 4, 14, 15 |
 | `RandomForestRegressor`, `RandomForestClassifier` | 10, — |
 | `HistGradientBoostingRegressor` | 9 |
 | `StagedPipeline` and the scaler pipelines over the above | 5–7, 16 |
 | `DummyClassifier`, `DummyRegressor` | — |
+
+`Lasso` and `ElasticNet` are on this list and `LinearRegression` is not, which
+is worth reading rather than skimming: the penalized pair share
+`least_squares::preprocess` with the unpenalized one but solve by coordinate
+descent, which is FerricML's own code reducing through `sum_in_order` in
+ascending index order. They reach no decomposition.
 
 **Tier 2 — identical on the targets FerricML tests.** The fitted artifact is
 byte-identical on `x86_64-unknown-linux-gnu` and `aarch64-apple-darwin`, and
@@ -66,10 +70,67 @@ grower, and only the objective evaluates a transcendental. Its fitted bytes are
 **no longer frozen** — see "What establishes each claim" below for what that
 does and does not still guarantee.
 
+**Tier M — identical per machine.** The fitted artifact is byte-identical for
+identical data, parameters, seed, and thread count on one machine running one
+binary. FerricML makes no cross-target claim for it and no cross-machine claim
+either, not even between two machines of the same target triple. This covers
+every model whose fitting reaches a dense matrix decomposition:
+
+| Estimator | Artifact kind | Decomposition |
+|---|---|---|
+| `LinearRegression` | 2 | thin SVD of the centered design |
+| `Ridge` | 3 | Cholesky of the regularized Gram matrix, and the SVD above when `alpha` is exactly `0` |
+| Any `StagedPipeline` or scaler pipeline ending in either | 5–7, 16 | as above |
+
+**It is lettered rather than numbered on purpose.** Numbering it `3` would
+redefine a term this document already uses for something that is not an artifact
+claim at all, and numbering it `4` would sort an artifact tier after a
+non-artifact one. The letter says what it is: the scope is a *machine*.
+
 **Tier 3 — per runner only.** Wall-clock timings, throughput, and every
 benchmark number FerricML records. These are a property of one registered
 machine and are never compared across runners; the project's performance
 protocol owns them. Nothing in tier 3 is part of the artifact contract.
+
+## Why tier M is not tier 1, and was not before either
+
+**Why not tier 1 now.** Tier 1 rests on two arguments, and the decomposition is
+outside the reach of both. The arithmetic argument is checked by searching
+`src/` for operations beyond `+ - * /` and `sqrt`; that search cannot see inside
+a dependency. The evaluation-order argument is `src/numeric/mod.rs` rule 2, and
+its first clause — no reduction reordered for speed — is violated by any blocked
+kernel by construction, which is why rule 2 now carries an explicit exception
+naming exactly what it licenses and what it still refuses.
+
+**Why not tier 2 either.** Tier 2's scope is a *target*, and that works because
+the thing tier 2 is scoped against, a libm, is chosen by the platform, so naming
+the platforms bounds the divergence. A kernel that dispatches on the CPU features
+it detects at **run time** is not bounded by a target triple: one
+`x86_64-unknown-linux-gnu` binary can select different kernels on two
+`x86_64-unknown-linux-gnu` machines. The backend's dependency graph carries
+`pulp` and `raw-cpuid` precisely to do that detection. Tier M names the scope
+that is actually true, which is the machine.
+
+**This is a correction, not only a consequence.** These two estimators were
+listed as tier 1 while the previous backend computed their decompositions, and
+that listing was already overstated — not because that backend dispatched at run
+time, but because tier 1's *evidence* never reached the code in question. Both
+of its arguments are scoped to `src/`, and no dense decomposition has ever lived
+in `src/`. So a reader who checked tier 1 the way this document says to check it
+would have found nothing about the SVD either way. Replacing the backend did not
+create the gap; it made the gap observable, by moving the divergence from
+"between two targets, unmeasured" to "between two machines of one target". The
+honest statement of what changed is that the claim is now correct rather than
+that the guarantee is now weaker.
+
+**What tier M still guarantees**, and it is the part callers need most often.
+Refitting reproduces the model. There is no thread-count axis: the backend's
+global parallelism is pinned to `Par::Seq` at every fit and its `rayon` feature
+is never enabled, so a fit that has never depended on `n_jobs` still does not.
+Decoding is not fitting, so a model fitted on one machine loads identically on
+any other. And the fitted *model* is checked against the reference on every
+gate — `tests/reference_semantics.rs` — so tier M bounds which bytes are
+promised, not whether the numbers are right.
 
 ## Why tier 1 holds
 
@@ -92,6 +153,12 @@ not an IEEE-mandated operation and carries no correct-rounding guarantee, so it
 is now written as an explicit multiplication instead. Re-run that search when
 adding an estimator: a new transcendental on a fitting path moves that
 estimator from tier 1 to tier 2, and this table with it.
+
+**And note what the search cannot reach.** It reads `src/`, so it says nothing
+about arithmetic performed inside a dependency. That is exactly the limit tier M
+exists to state: an estimator whose fitting path leaves `src/` for a numerical
+kernel is not tier 1, however clean the search comes back, because the search
+was never evidence about that code.
 
 **The evaluation order.** The accumulation policy in `src/numeric/mod.rs` is
 the authority, and it is binding on every module. Reductions run in ascending
@@ -226,10 +293,14 @@ restores the cross-platform evidence with them.
 - **Inference is bit-stable on one platform** for a given model and input.
   Across platforms, tier 1 models predict identically; a logistic model's
   probabilities go through `exp` at inference too, so they carry tier 2's scope.
+  Tier M is a statement about *fitting* only — every predict path in the crate
+  is a hand-written row loop in `src/`, reaches no decomposition, and is
+  therefore governed by the rule 2 the exception does not amend. Two machines
+  handed the same fitted linear model return the same predictions.
 
 ## Adding an estimator
 
-Answer three questions and record them here in the same commit:
+Answer four questions and record them here in the same commit:
 
 1. Does any fitting path evaluate something outside `+ - * /` and `sqrt`? If
    yes, the estimator is tier 2 and the operation is named above.
@@ -237,6 +308,13 @@ Answer three questions and record them here in the same commit:
    through `sum_in_order` before proceeding.
 3. Is fitting parallel? If yes, each partition's result must depend only on its
    own index, and results must be combined in index order.
+4. Does the fitting path leave `src/` for a numerical kernel — a decomposition,
+   a solver, any dependency doing floating-point work? If yes, the estimator is
+   tier M, and questions 1 and 2 do not answer it: both are checked by reading
+   `src/`, and neither is evidence about code that is not there. The same
+   question is owed when an *existing* estimator's fitting path is rerouted
+   through a dependency, which is how `LinearRegression` and `Ridge` reached
+   tier M.
 
 Then add the estimator to `tests/artifact_fingerprints.rs`. An estimator with
 no frozen fingerprint has no cross-platform evidence, whatever tier the

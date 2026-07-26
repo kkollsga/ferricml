@@ -32,6 +32,49 @@
 //!    as code: a path that reduces a sequence of `f64` terms names it instead
 //!    of reaching for whichever fold reads well locally, so the guarantee is
 //!    visible at the call site rather than inferred from it.
+//!
+//!    **The dense decomposition backend is exempt from the first clause, and
+//!    from the first clause only.** A blocked kernel reduces a panel at a time
+//!    and combines the partial results at the end, so it reorders a reduction
+//!    for speed by construction; there is no way to reach a competitive dense
+//!    decomposition and keep the ascending row-then-column order this rule
+//!    otherwise fixes. The exemption is scoped to exactly the calls that enter
+//!    `faer` from `src/linear_model/least_squares.rs` — one thin SVD, one
+//!    Cholesky, and the two matrix products that build the Gram system — and to
+//!    nothing else in the crate.
+//!
+//!    **The second clause is not exempt and is not weakened.** Every call
+//!    covered above pins the backend's global parallelism to `Par::Seq` first,
+//!    so its reduction order is a function of the matrix shape and the
+//!    dispatched instruction set alone and never of how work happened to be
+//!    scheduled. That is measured rather than argued: hashing the decomposition
+//!    outputs over seven process launches with `RAYON_NUM_THREADS` in
+//!    {1, 4, 10, unset} gave one hash per decomposition, while the same probe
+//!    under a threaded setting gave different QR and SVD outputs at different
+//!    thread counts. The pin is applied at each fit rather than once at
+//!    start-up, because the setting is process-global and Cargo unifies
+//!    features across a whole dependency graph: a consumer who reaches a
+//!    threaded backend from elsewhere must not be able to move FerricML's
+//!    fitted values without touching FerricML.
+//!
+//!    **The exemption reaches the decomposition and stops there.** Every
+//!    reduction FerricML writes itself stays under the unamended rule —
+//!    [`sum_in_order`], the coordinate sweep, every accumulation in `src/`, and
+//!    specifically the two products that turn an SVD back into coefficients,
+//!    which are written out in ascending index order in `least_squares.rs`
+//!    rather than delegated, precisely so that the exempt region ends at the
+//!    factorization. What the exemption costs is recorded where a caller can
+//!    find it rather than absorbed here: `docs/determinism.md` moves the
+//!    estimators that reach a decomposition out of tier 1 and states, as tier
+//!    M, the scope in which their fitted bytes do reproduce.
+//!
+//!    This is stated at the policy rather than only at the site for the reason
+//!    rule 3's exemption is: it is the scope of a crate-wide guarantee, not a
+//!    local choice. A reader who found the `thin_svd` call and not this
+//!    paragraph could not tell an intended exception from an oversight — and
+//!    less easily than with rule 3, because a blocked kernel behind a
+//!    decomposition call looks like ordinary arithmetic at the call site, where
+//!    rule 3's `f32` accumulation at least looks like a missing widening.
 //! 3. **Inference may accumulate in the storage width** when the number of
 //!    terms is bounded by the fitted model (one term per tree, one per
 //!    boosting iteration, one per feature) and the result is validated finite
