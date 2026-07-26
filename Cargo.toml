@@ -1,6 +1,6 @@
 [package]
 name = "ferricml"
-version = "0.1.2"
+version = "0.2.0"
 edition = "2024"
 description = "A lean, pure-Rust toolkit for classical machine learning"
 license = "MIT"
