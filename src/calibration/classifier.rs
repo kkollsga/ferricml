@@ -19,14 +19,15 @@ use super::{Calibrator, IsotonicRegression, PlattCalibrator, PlattParams};
 /// The score handed to the calibrator is the wrapped model's **positive-class
 /// probability**, taken through
 /// [`predict_class_proba_into`](ProbabilisticClassifier::predict_class_proba_into). That is
-/// the one score every classifier is required to produce, which is what makes
-/// this wrapper work for a model FerricML does not ship. Platt's original
-/// formulation calibrates a raw decision function instead; `decision_function`
-/// is an inherent method of individual estimators rather than part of the
-/// object-safe classifier contract, so a wrapper generic over `C: Classifier`
-/// cannot reach one. A monotone remap of the probability is well defined for
-/// every classifier and is what makes calibrating a forest — the case that
-/// motivates the whole feature — possible at all.
+/// the one score the [`ProbabilisticClassifier`] contract requires, which is
+/// what makes this wrapper work for a model FerricML does not ship. Platt's
+/// original formulation calibrates a raw decision function instead;
+/// `decision_function` is an inherent method of individual estimators rather
+/// than part of the object-safe classifier contract, so a wrapper generic over
+/// `C: ProbabilisticClassifier` cannot reach one. A monotone remap of the
+/// probability is well defined for every classifier that produces one, and is
+/// what makes calibrating a forest — the case that motivates the whole feature
+/// — possible at all.
 ///
 /// # Held-out calibration is the caller's explicit choice
 ///

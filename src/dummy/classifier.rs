@@ -215,8 +215,10 @@ impl HasParams for DummyClassifier {
     }
 }
 
-/// Declares nothing: a baseline is refitted rather than persisted, and has no
-/// weighted entry point.
+/// Declares probabilities and nothing else: a baseline is refitted rather than
+/// persisted, and has no weighted entry point. The probabilities are the fitted
+/// class frequencies, which is a real distribution rather than a squashed
+/// score, so the declaration is earned rather than a formality.
 impl HasCapabilities for DummyClassifier {
     const CAPABILITIES: Capabilities = Capabilities::NONE.with_probability(true);
 }

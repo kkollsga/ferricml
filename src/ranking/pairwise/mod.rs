@@ -45,7 +45,10 @@ impl PairOutcome {
 #[non_exhaustive]
 pub enum PairDataError {
     /// A pair references the same item on both sides.
-    SameItem { index: usize },
+    SameItem {
+        /// The item index given on both sides of the pair.
+        index: usize,
+    },
     /// A pair weight is NaN or infinite.
     NonFiniteWeight,
     /// A pair weight is negative.
@@ -156,16 +159,27 @@ pub enum PairwiseError {
     ZeroTotalPairWeight,
     /// A pair references an item outside the fitted matrix.
     PairIndexOutOfBounds {
+        /// Zero-based position of the offending pair observation.
         pair: usize,
+        /// The item index it referenced.
         item: usize,
+        /// Number of items the fitted matrix holds.
         items: usize,
     },
     /// Expanding pair observations would overflow a matrix dimension.
     PairMatrixOverflow,
     /// Dividing a positive pair weight by its normalization underflowed.
-    PairWeightUnderflow { pair: usize },
+    PairWeightUnderflow {
+        /// Zero-based position of the offending pair observation.
+        pair: usize,
+    },
     /// A finite item difference cannot be represented as `f32`.
-    NonFinitePairDifference { pair: usize, column: usize },
+    NonFinitePairDifference {
+        /// Zero-based position of the offending pair observation.
+        pair: usize,
+        /// Zero-based feature column whose difference is unrepresentable.
+        column: usize,
+    },
     /// The tie threshold is not finite and non-negative.
     InvalidTieThreshold,
     /// A lower-level fitted-model contract failed.

@@ -14,15 +14,38 @@ pub enum ModelError {
     /// The target vector is empty.
     EmptyTargets,
     /// The target count does not match the sample count.
-    TargetLength { rows: usize, targets: usize },
+    TargetLength {
+        /// Number of rows the feature matrix holds.
+        rows: usize,
+        /// Number of targets supplied alongside them.
+        targets: usize,
+    },
     /// The sample-weight count does not match the sample count.
-    SampleWeightLength { rows: usize, weights: usize },
+    SampleWeightLength {
+        /// Number of rows the feature matrix holds.
+        rows: usize,
+        /// Number of sample weights supplied alongside them.
+        weights: usize,
+    },
     /// A feature is NaN or infinite.
-    NonFiniteFeature { row: usize, column: usize },
+    NonFiniteFeature {
+        /// Zero-based row of the first offending value, in row-major order.
+        row: usize,
+        /// Zero-based column of that value.
+        column: usize,
+    },
     /// A binary target is not zero or one.
-    InvalidBinaryTarget { index: usize, value: u8 },
+    InvalidBinaryTarget {
+        /// Zero-based position of the first offending target.
+        index: usize,
+        /// The label found there.
+        value: u8,
+    },
     /// A regression target is NaN or infinite.
-    NonFiniteTarget { index: usize },
+    NonFiniteTarget {
+        /// Zero-based position of the first offending target.
+        index: usize,
+    },
     /// `n_estimators` is zero.
     InvalidEstimatorCount,
     /// `max_depth` is zero.
@@ -32,7 +55,12 @@ pub enum ModelError {
     /// `min_samples_leaf` is zero.
     InvalidMinSamplesLeaf,
     /// A fixed `max_features` count exceeds the fitted feature count.
-    InvalidMaxFeatures { requested: usize, available: usize },
+    InvalidMaxFeatures {
+        /// Feature count the parameter asked each split to consider.
+        requested: usize,
+        /// Feature count the training data actually has.
+        available: usize,
+    },
     /// A fixed `n_jobs` count is zero.
     InvalidJobCount,
     /// The sample count exceeds the internal bootstrap-counter format.
@@ -42,15 +70,38 @@ pub enum ModelError {
     /// A fitted tree exceeds the internal node-index format.
     TreeTooLarge,
     /// Input feature width differs from the fitted width.
-    FeatureDimension { expected: usize, actual: usize },
+    FeatureDimension {
+        /// Feature width the model was fitted on.
+        expected: usize,
+        /// Feature width of the batch supplied.
+        actual: usize,
+    },
     /// A caller-provided output buffer has the wrong length.
-    OutputLength { expected: usize, actual: usize },
+    OutputLength {
+        /// Length the output buffer needs for this batch.
+        expected: usize,
+        /// Length the caller supplied.
+        actual: usize,
+    },
     /// Scaling a finite feature produced a non-finite `f32` output.
-    NonFiniteTransform { row: usize, column: usize },
+    NonFiniteTransform {
+        /// Zero-based row of the first offending output, in row-major order.
+        row: usize,
+        /// Zero-based column of that output.
+        column: usize,
+    },
     /// The requested output matrix dimensions cannot be represented.
-    OutputShapeOverflow { rows: usize, columns: usize },
+    OutputShapeOverflow {
+        /// Row count of the requested output matrix.
+        rows: usize,
+        /// Column count of the requested output matrix.
+        columns: usize,
+    },
     /// A requested class was not observed during fitting.
-    UnknownClass { class: u8 },
+    UnknownClass {
+        /// The label asked for, which is absent from the fitted classes.
+        class: u8,
+    },
     /// A scoped model-training worker panicked.
     WorkerPanicked,
     /// A classifier requiring both binary classes observed only one.
@@ -91,7 +142,10 @@ pub enum ModelError {
     /// Finite training values overflowed an internal `f32` result.
     NumericalOverflow,
     /// A fitted prediction accumulated to NaN or infinity.
-    NonFinitePrediction { row: usize },
+    NonFinitePrediction {
+        /// Zero-based row whose prediction accumulated to NaN or infinity.
+        row: usize,
+    },
     /// The linear solver encountered a non-positive-definite system, or an
     /// iterative solver could not make progress from its current iterate.
     LinearSolveFailed,

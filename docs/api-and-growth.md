@@ -24,14 +24,16 @@ estimator meaning follow the reference contract.
   becomes a second parameter system; it is carried by `HasCapabilities`, a
   generic trait rather than an associated constant on the object-safe
   categories, which must stay dyn-compatible. `decision_function` records
-  whether a fitted classifier exposes a raw, unsquashed score: producing
-  probabilities is required of every `Classifier` and is not what it records.
-  It exists because Rust has no runtime attribute lookup, so a meta-estimator
-  generic over a classifier cannot otherwise discover that the type it holds
-  has one. Note what a tag can and cannot do — it makes the capability
-  discoverable, not callable, because a decision function is an inherent method
-  rather than part of the object-safe contract, so a consumer that must *call*
-  one still needs a bound naming a trait that carries it.
+  whether a fitted classifier exposes a raw, unsquashed score. Producing
+  probabilities is a separate declared capability, carried by
+  `ProbabilisticClassifier` rather than required of every `Classifier`, and is
+  not what `decision_function` records. The tag exists because Rust has no
+  runtime attribute lookup, so a meta-estimator generic over a classifier
+  cannot otherwise discover that the type it holds has one. Note what a tag can
+  and cannot do — it makes the capability discoverable, not callable, because a
+  decision function is an inherent method rather than part of the object-safe
+  contract, so a consumer that must *call* one still needs a bound naming a
+  trait that carries it.
 - `data` owns validated row-major inputs, targets, and sample weights. Sample
   weights are the crate's only weighting concept: no estimator takes a
   `class_weight`, because a per-class weight is a function of the label and so
@@ -121,9 +123,10 @@ estimator meaning follow the reference contract.
   already-fitted calibrator and is itself an ordinary `Classifier`, so it
   reaches the scorer, cross-validation, and permutation-importance paths without
   any of them learning that calibration exists. The score it calibrates is the
-  wrapped model's positive-class probability, which is the one score every
-  classifier is required to produce; that is what lets the wrapper be generic
-  over the public contract rather than over the estimators FerricML ships. The
+  wrapped model's positive-class probability, which is the one score the
+  `ProbabilisticClassifier` contract requires; that is what lets the wrapper be
+  generic over that public contract rather than over the estimators FerricML
+  ships. The
   calibration rows are always a caller-supplied parameter, never the wrapped
   model's own training rows taken implicitly. Predicted labels are the argmax of
   the *calibrated* probabilities, so a row whose probability crosses the
@@ -208,3 +211,44 @@ which concrete parts it holds inside the payload: order, estimator type, and
 stage count are all checked on decode, so one composition never decodes as
 another. `Pipeline`'s three concrete compositions predate that scheme and keep
 their own artifact kinds, so their declarations stay per composition.
+
+## What the documentation checker does not check
+
+Documentation that contradicts behaviour has been this crate's most active
+defect class, so `make gate` runs `scripts/check_documentation_truth.py`. It
+reads prose — rustdoc comments in `src/` and the narrative pages in `docs/`,
+which rustdoc never sees at all — and reports four kinds of claim that stopped
+being true:
+
+- a capability declaration whose doc comment does not name a capability the
+  declaration turns on;
+- a `Type::member` reference to a type this crate declares, where the member
+  does not exist;
+- a generic bound written in prose that the documented item does not carry;
+- a repository path cited in prose that is not there.
+
+Each rule is proven twice by `--self-test`: once against a synthetic violation,
+and once against a tree with the rule's input removed, because a check that
+passes by not looking is the failure mode this crate keeps rediscovering. Two
+historical defects — the "declares nothing" comment above a probability
+declaration, and a documented `CrossValidationError` variant named `Scoring`
+that never existed — are reconstructed there as inputs. Prose about an entity
+that is *supposed* to be absent has to be written that way round, because the
+checker cannot tell a cautionary example from a live reference, and a rule with
+an escape hatch is a rule with a hole in it.
+
+**The blind spots are the point of this section.** The checker verifies that a
+*named entity* exists; it cannot verify a *claim about behaviour*. The five
+`calibration` sentences that told a reader probabilities were required of every
+`Classifier` were plain English, and only the one that spelled the bound as
+`C: Classifier` was mechanically detectable. Completeness claims are worse:
+"the only", "every", "exactly one" and their relatives appear on some 600 prose
+lines here, and no rule can separate a true one from a false one. Requiring
+each to cite its enforcement was considered and rejected on evidence — the two
+completeness defects this crate has actually had, `determinism.md`'s
+cross-platform argument and this page's own claim about the API profile's
+single blind spot, **both cited their evidence correctly** and were wrong about
+what that evidence established. A rule demanding pointers would have passed
+both while flagging hundreds of sound sentences, and a checker that cries wolf
+gets disabled. Those claims are caught by review, and the honest position is
+that they are written down as unchecked rather than presumed safe.

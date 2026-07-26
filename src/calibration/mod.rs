@@ -16,17 +16,18 @@
 //! # Boundaries
 //!
 //! - Calibration reaches a wrapped model only through the public
-//!   [`Classifier`](crate::api::Classifier) contract, so it works for a model
-//!   FerricML does not ship and names no estimator family.
-//!   `scripts/check_source_layout.py` enforces that mechanically.
+//!   [`ProbabilisticClassifier`](crate::api::ProbabilisticClassifier) contract,
+//!   so it works for a model FerricML does not ship and names no estimator
+//!   family. `scripts/check_source_layout.py` enforces that mechanically.
 //! - The score being calibrated is the wrapped model's **positive-class
-//!   probability**, which is the one score every `Classifier` is required to
-//!   produce. Calibrating a raw decision function instead is the classical
-//!   formulation, but `decision_function` is an inherent method of one
-//!   estimator rather than part of the classifier contract, so a generic
-//!   wrapper cannot reach it. [`Capabilities::decision_function`] records which
-//!   types have one, which is what a consumer selecting its behavior at compile
-//!   time reads.
+//!   probability**, which is the one score that contract requires. A classifier
+//!   that declares no probability is outside the wrapper's bound entirely, so
+//!   there is no case where it has to invent one. Calibrating a raw decision
+//!   function instead is the classical formulation, but `decision_function` is
+//!   an inherent method of one estimator rather than part of any classifier
+//!   contract, so a generic wrapper cannot reach it.
+//!   [`Capabilities::decision_function`] records which types have one, which is
+//!   what a consumer selecting its behavior at compile time reads.
 //!
 //! [`Capabilities::decision_function`]: crate::api::Capabilities::decision_function
 //! - The calibration sample is supplied by the caller and is never taken from
