@@ -82,6 +82,18 @@ mod quantile;
 mod rng;
 
 pub(crate) use quantile::{QuantileRule, quantile_sorted, sort_for_quantiles};
+/// The weighted half of the quantile primitive, which has no consumer yet.
+///
+/// `expect` rather than `allow`, deliberately: the lint fires again once these
+/// *are* used, so the attribute cannot outlive the reason for it. Binning is
+/// the first consumer and removes this line.
+#[expect(
+    unused_imports,
+    reason = "weighted binning is the first consumer; it removes this"
+)]
+pub(crate) use quantile::{
+    WeightedQuantileRule, sort_weighted_for_quantiles, weighted_quantile_sorted,
+};
 pub(crate) use rng::{OwnedRng, derive_repetition_seed, derive_tree_seed};
 
 /// Logistic sigmoid over `f64`.
