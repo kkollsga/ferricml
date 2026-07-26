@@ -6,7 +6,7 @@ FerricML is one crate with no default features:
 
 ```toml
 [dependencies]
-ferricml = "0.1"
+ferricml = "0.2"
 ```
 
 Or from the command line:
