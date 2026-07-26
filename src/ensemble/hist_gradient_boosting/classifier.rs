@@ -376,6 +376,9 @@ impl HistGradientBoostingClassifier {
 
     /// Returns one raw decision score per row, allocating the output.
     pub fn decision_function(&self, data: &MatrixView<'_>) -> Result<Vec<f32>, ModelError> {
+        // Before the buffer, not inside `_into` after it. `check_batch` repeats
+        // the same check for callers that reach the `_into` form directly.
+        self.check_batch(data, data.rows(), data.rows())?;
         let mut output = vec![0.0; data.rows()];
         self.decision_function_into(data, &mut output)?;
         Ok(output)

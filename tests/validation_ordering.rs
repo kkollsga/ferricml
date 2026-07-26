@@ -20,11 +20,17 @@
 //! count can only come from the rejected call itself.
 
 use ferricml::api::{Classifier, ProbabilisticClassifier, Regressor, Transformer};
+use ferricml::calibration::{CalibratedClassifier, PlattCalibrator, PlattParams};
 use ferricml::data::{BinaryTargets, ClassTargets, DenseMatrix, RegressionTargets};
 use ferricml::dummy::{
     DummyClassifier, DummyClassifierParams, DummyRegressor, DummyRegressorParams,
 };
-use ferricml::ensemble::{MaxFeatures, RandomForestClassifier, RandomForestClassifierParams};
+use ferricml::ensemble::{
+    HistGradientBoostingClassifier, HistGradientBoostingClassifierParams, MaxFeatures,
+    RandomForestClassifier, RandomForestClassifierParams,
+};
+use ferricml::linear_model::{LogisticRegression, LogisticRegressionParams};
+use ferricml::pipeline::StagedPipeline;
 use ferricml::preprocessing::{StandardScaler, StandardScalerParams};
 use ferricml::ranking::{
     PairIndex, PairOutcome, PairwiseError, PairwiseLinearRanker, PairwiseLinearRankerParams,
@@ -491,5 +497,159 @@ fn the_pairwise_ranker_validates_the_total_weight_before_copying_the_batch() {
     assert_eq!(
         calls, 0,
         "a zero-weight batch cost {calls} allocation(s) before being reported"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Defect-class sweep — the same shape found outside the audit's four sites
+// ---------------------------------------------------------------------------
+//
+// The four findings are instances of one pattern: build the buffer, then call
+// the `_into` primitive that owns the width check. A mechanical sweep of every
+// `vec![…]` in `src/` followed by a call to an `_into` method found six more
+// entry points with that shape, and they are covered here. Two further sites
+// are deliberately left alone and recorded in the phase report, because
+// hoisting their check would duplicate a per-row scan or reorder two errors
+// rather than only their timing.
+
+#[test]
+fn logistic_decision_function_validates_before_allocating() {
+    let model = logistic_regression();
+    let fitted = fitted_width_data();
+    let wrong = wrong_width_data();
+    rejects_before_allocating(
+        || {
+            model.decision_function(&fitted.as_view()).unwrap();
+        },
+        || {
+            assert!(model.decision_function(&wrong.as_view()).is_err());
+        },
+    );
+}
+
+#[test]
+fn boosting_decision_function_validates_before_allocating() {
+    let model = HistGradientBoostingClassifier::fit(
+        &fitted_width_data().as_view(),
+        &binary_targets(),
+        HistGradientBoostingClassifierParams::default().with_max_iter(4),
+    )
+    .unwrap();
+    let fitted = fitted_width_data();
+    let wrong = wrong_width_data();
+    rejects_before_allocating(
+        || {
+            model.decision_function(&fitted.as_view()).unwrap();
+        },
+        || {
+            assert!(model.decision_function(&wrong.as_view()).is_err());
+        },
+    );
+}
+
+fn binary_targets() -> BinaryTargets {
+    BinaryTargets::new((0..12).map(|row| u8::from(row >= 6)).collect()).unwrap()
+}
+
+fn logistic_regression() -> LogisticRegression {
+    LogisticRegression::fit(
+        &fitted_width_data().as_view(),
+        &binary_targets(),
+        LogisticRegressionParams::default(),
+    )
+    .unwrap()
+}
+
+/// Wraps a real classifier, not a dummy: a constant probability makes the
+/// Platt fit degenerate and the fixture would fail for an unrelated reason.
+fn platt_calibrated() -> CalibratedClassifier<LogisticRegression, PlattCalibrator> {
+    CalibratedClassifier::fit_platt(
+        logistic_regression(),
+        &fitted_width_data().as_view(),
+        &binary_targets(),
+        PlattParams::default(),
+    )
+    .unwrap()
+}
+
+/// The calibrated wrapper's `_into` method allocated a scratch buffer first.
+///
+/// This is the one site in the sweep where the rule was broken by a method
+/// that advertises itself as the allocation-free path, so the claim under test
+/// is not only "before the return buffer" but "at all".
+#[test]
+fn calibrated_predict_into_validates_before_allocating_its_scratch_buffer() {
+    let model = platt_calibrated();
+    let fitted = fitted_width_data();
+    let wrong = wrong_width_data();
+    let mut accepted_labels = vec![0_u8; fitted.rows()];
+    let mut rejected_labels = vec![0_u8; wrong.rows()];
+    rejects_before_allocating(
+        || {
+            Classifier::predict_into(&model, &fitted.as_view(), &mut accepted_labels).unwrap();
+        },
+        || {
+            assert!(
+                Classifier::predict_into(&model, &wrong.as_view(), &mut rejected_labels).is_err()
+            );
+        },
+    );
+}
+
+#[test]
+fn calibrated_decision_function_validates_before_allocating() {
+    let model = platt_calibrated();
+    let fitted = fitted_width_data();
+    let wrong = wrong_width_data();
+    rejects_before_allocating(
+        || {
+            model.decision_function(&fitted.as_view()).unwrap();
+        },
+        || {
+            assert!(model.decision_function(&wrong.as_view()).is_err());
+        },
+    );
+}
+
+#[test]
+fn staged_pipeline_transform_validates_before_allocating() {
+    let stages = (standard_scaler(), standard_scaler());
+    let targets = RegressionTargets::new((0..12).map(|row| row as f32).collect()).unwrap();
+    let estimator = DummyRegressor::fit(
+        &fitted_width_data().as_view(),
+        &targets,
+        DummyRegressorParams,
+    )
+    .unwrap();
+    let pipeline = StagedPipeline::new(stages, estimator).unwrap();
+    let fitted = fitted_width_data();
+    let wrong = wrong_width_data();
+    rejects_before_allocating(
+        || {
+            pipeline.transform(&fitted.as_view()).unwrap();
+        },
+        || {
+            assert!(pipeline.transform(&wrong.as_view()).is_err());
+        },
+    );
+}
+
+#[test]
+fn pairwise_score_items_validates_before_allocating() {
+    let items = ranker_items();
+    let ranker = PairwiseLinearRanker::fit(
+        &items.as_view(),
+        &valid_observations(),
+        PairwiseLinearRankerParams::default(),
+    )
+    .unwrap();
+    let wrong = DenseMatrix::new((0..24).map(|value| value as f32).collect(), 12, 2).unwrap();
+    rejects_before_allocating(
+        || {
+            ranker.score_items(&items.as_view()).unwrap();
+        },
+        || {
+            assert!(ranker.score_items(&wrong.as_view()).is_err());
+        },
     );
 }

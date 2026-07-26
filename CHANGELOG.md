@@ -101,6 +101,15 @@ and releases use [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   after. A batch that will be refused no longer pays for a full copy and an
   `O(n log n)` sort first. The errors and the fitted model are unchanged.
 
+- Six further entry points found by sweeping for the same shape check the batch
+  width before allocating rather than after: `LogisticRegression`,
+  `HistGradientBoostingClassifier` and `CalibratedClassifier`'s
+  `decision_function`, `StagedPipeline::transform`,
+  `PairwiseLinearRanker::score_items`, and `CalibratedClassifier`'s
+  `Classifier::predict_into` — which is an `_into` method, so the scratch
+  buffer it no longer allocates for a refused batch was its only allocation.
+  Every error is unchanged in kind and in values.
+
 - **Breaking.** Producing probabilities is no longer required of every
   classifier. `predict_proba`, `predict_proba_into`, `predict_class_proba`, and
   `predict_class_proba_into` move off `api::Classifier` onto a new

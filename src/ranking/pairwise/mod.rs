@@ -377,6 +377,15 @@ impl PairwiseLinearRanker {
 
     /// Scores every item, allocating one raw score per row.
     pub fn score_items(&self, items: &MatrixView<'_>) -> Result<Vec<f32>, PairwiseError> {
+        // Before the buffer, not inside the fitted model's `_into` form after
+        // it, which repeats the check against the same fitted width.
+        if items.columns() != self.n_features_in() {
+            return Err(ModelError::FeatureDimension {
+                expected: self.n_features_in(),
+                actual: items.columns(),
+            }
+            .into());
+        }
         let mut output = vec![0.0; items.rows()];
         self.score_items_into(items, &mut output)?;
         Ok(output)

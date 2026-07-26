@@ -606,6 +606,14 @@ impl LogisticRegression {
     /// returns a row-major matrix of centred scores.
     pub fn decision_function(&self, data: &MatrixView<'_>) -> Result<Vec<f32>, ModelError> {
         let output_len = decision_output_len(data.rows(), self.n_decision_columns())?;
+        // Before the buffer, not inside `_into` after it. Both branches of the
+        // `_into` form repeat the check against the same fitted width.
+        if data.columns() != self.n_features_in {
+            return Err(ModelError::FeatureDimension {
+                expected: self.n_features_in,
+                actual: data.columns(),
+            });
+        }
         let mut output = vec![0.0; output_len];
         self.decision_function_into(data, &mut output)?;
         Ok(output)
