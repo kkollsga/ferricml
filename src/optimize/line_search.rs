@@ -437,6 +437,271 @@ mod tests {
         assert!(outcome.is_err());
     }
 
+    /// A one-dimensional objective family with an analytic derivative.
+    ///
+    /// Written from the closed forms rather than differentiated numerically, so
+    /// the Wolfe check below is against the mathematics and not against another
+    /// piece of this crate.
+    #[derive(Clone, Copy, Debug)]
+    enum Family {
+        /// `0.5 a t^2 + b t`, the case a quasi-Newton unit step is tuned for.
+        Quadratic,
+        /// `a t^4 + c t^2 + b t`, whose curvature grows with the step.
+        Quartic,
+        /// `exp(k t) + b t`, which overflows for a large enough trial.
+        Exponential,
+        /// `sqrt(1 + t^2) + b t`, whose curvature vanishes far from zero, so
+        /// bracketing has to expand a long way before it turns around.
+        Softplus,
+    }
+
+    /// A scalar objective that records every step it is probed at.
+    ///
+    /// `point` is `[0.0]` and `direction` is `[1.0]` at every call site, so the
+    /// trial point *is* the trial step, bit for bit, and the recorded sequence
+    /// needs no reconstruction.
+    struct Recording {
+        family: Family,
+        a: f64,
+        b: f64,
+        c: f64,
+        steps: Vec<f64>,
+    }
+
+    impl Recording {
+        /// Value and derivative at `t`, from the closed form.
+        fn at(&self, t: f64) -> (f64, f64) {
+            match self.family {
+                Family::Quadratic => (0.5 * self.a * t * t + self.b * t, self.a * t + self.b),
+                Family::Quartic => (
+                    self.a * t * t * t * t + self.c * t * t + self.b * t,
+                    4.0 * self.a * t * t * t + 2.0 * self.c * t + self.b,
+                ),
+                Family::Exponential => (
+                    (self.a * t).exp() + self.b * t,
+                    self.a * (self.a * t).exp() + self.b,
+                ),
+                Family::Softplus => (
+                    (1.0 + t * t).sqrt() + self.b * t,
+                    t / (1.0 + t * t).sqrt() + self.b,
+                ),
+            }
+        }
+    }
+
+    impl Problem for Recording {
+        fn dimension(&self) -> usize {
+            1
+        }
+
+        fn value_and_gradient(&mut self, point: &[f64], gradient: &mut [f64]) -> f64 {
+            self.steps.push(point[0]);
+            let (value, derivative) = self.at(point[0]);
+            gradient[0] = derivative;
+            value
+        }
+    }
+
+    /// Runs one search from zero along `+1`, returning the outcome and the
+    /// exact sequence of steps the search probed.
+    fn recorded_search(
+        problem: &mut Recording,
+        initial_step: f64,
+        options: &LbfgsOptions,
+    ) -> (Result<LineSearchOutcome, LineSearchFailure>, Vec<f64>) {
+        let point = [0.0_f64];
+        let direction = [1.0_f64];
+        let (value, slope) = problem.at(0.0);
+        let mut trial_point = [0.0_f64];
+        let mut trial_gradient = [0.0_f64];
+        let mut buffers = LineSearchBuffers {
+            trial_point: &mut trial_point,
+            trial_gradient: &mut trial_gradient,
+        };
+        problem.steps.clear();
+        let outcome = strong_wolfe(
+            problem,
+            &point,
+            &direction,
+            &LineSearchStart {
+                value,
+                slope,
+                initial_step,
+            },
+            &mut buffers,
+            options,
+        );
+        (outcome, problem.steps.clone())
+    }
+
+    /// One randomized objective with a strictly negative slope at zero.
+    fn random_problem(rng: &mut crate::numeric::OwnedRng) -> Recording {
+        let family = [
+            Family::Quadratic,
+            Family::Quartic,
+            Family::Exponential,
+            Family::Softplus,
+        ][rng.index(4)];
+        let (a, b, c) = match family {
+            Family::Quadratic => (
+                10.0_f64.powf(rng.unit_f64() * 6.0 - 3.0),
+                -(10.0_f64.powf(rng.unit_f64() * 4.0 - 2.0)),
+                0.0,
+            ),
+            Family::Quartic => (
+                10.0_f64.powf(rng.unit_f64() * 4.0 - 2.0),
+                -(10.0_f64.powf(rng.unit_f64() * 3.0 - 1.0)),
+                rng.unit_f64() * 4.0 - 1.0,
+            ),
+            // `k + b < 0` is what makes zero a descent point.
+            Family::Exponential => {
+                let k = 0.25 + rng.unit_f64() * 2.0;
+                (k, -(k + 0.05 + rng.unit_f64() * 4.0), 0.0)
+            }
+            // `|b| < 1` is what gives this family a finite minimizer.
+            Family::Softplus => (0.0, -(0.05 + rng.unit_f64() * 0.9), 0.0),
+        };
+        Recording {
+            family,
+            a,
+            b,
+            c,
+            steps: Vec::new(),
+        }
+    }
+
+    /// Whether `step` is exactly the midpoint of two already-observed steps.
+    fn is_midpoint_of_observed(step: f64, observed: &[f64]) -> bool {
+        observed.iter().any(|&low| {
+            observed
+                .iter()
+                .any(|&high| (0.5 * (low + high)).to_bits() == step.to_bits())
+        })
+    }
+
+    /// The two strong-Wolfe conditions, evaluated from the closed form at a
+    /// freshly computed point rather than from anything the search returned.
+    fn wolfe(problem: &Recording, start: (f64, f64), step: f64) -> (bool, bool) {
+        let (value, derivative) = problem.at(step);
+        (
+            value <= start.0 + SUFFICIENT_DECREASE * step * start.1,
+            derivative.abs() <= -CURVATURE * start.1,
+        )
+    }
+
+    /// The experiment for this module: the accepted step satisfies both
+    /// conditions, and the zoom phase reaches it by bisection alone.
+    ///
+    /// Both halves are checked against something outside the search — the
+    /// closed-form objective for the conditions, and the recorded trial
+    /// sequence for the bisection claim, which the module documents as a
+    /// determinism decision rather than a robustness one.
+    #[test]
+    fn the_accepted_step_satisfies_both_wolfe_conditions_and_zoom_only_bisects() {
+        let mut rng = crate::numeric::OwnedRng::new(0x11e5_ea2c_40d0_0001);
+        let options = options();
+        let (mut accepted, mut refused, mut zoomed, mut zoom_trials) = (0_usize, 0, 0, 0_usize);
+        let (mut tiny_step_controls, mut huge_step_controls) = (0_usize, 0_usize);
+        let mut trials = 0_usize;
+
+        for _ in 0..400 {
+            let mut problem = random_problem(&mut rng);
+            let start = problem.at(0.0);
+            assert!(start.1 < 0.0, "zero must be a descent point");
+            let initial_step = 10.0_f64.powf(rng.unit_f64() * 11.0 - 7.0);
+            let (outcome, steps) = recorded_search(&mut problem, initial_step, &options);
+            trials += steps.len();
+
+            // The bracketing phase is the doubling prefix; everything after it
+            // belongs to zoom and must be a midpoint of steps already seen.
+            let mut expected_bracketing = initial_step;
+            let mut bracketing = 0_usize;
+            for &step in &steps {
+                if step.to_bits() != expected_bracketing.to_bits() {
+                    break;
+                }
+                bracketing += 1;
+                expected_bracketing = (expected_bracketing * 2.0).min(MAX_STEP);
+            }
+            if bracketing < steps.len() {
+                zoomed += 1;
+            }
+            let mut observed = vec![0.0_f64];
+            observed.extend_from_slice(&steps[..bracketing]);
+            for (index, &step) in steps.iter().enumerate().skip(bracketing) {
+                assert!(
+                    is_midpoint_of_observed(step, &observed),
+                    "zoom trial {index} at step {step} is not the midpoint of two \
+                     already-probed steps {observed:?}; the phase is documented as \
+                     bisection, whose next trial is a function of the bracket alone"
+                );
+                observed.push(step);
+                zoom_trials += 1;
+            }
+
+            match outcome {
+                Ok(outcome) => {
+                    accepted += 1;
+                    let (decrease, curvature) = wolfe(&problem, start, outcome.step);
+                    assert!(
+                        decrease,
+                        "sufficient decrease fails at the accepted step {}",
+                        outcome.step
+                    );
+                    assert!(
+                        curvature,
+                        "the curvature condition fails at the accepted step {}",
+                        outcome.step
+                    );
+                    assert_eq!(
+                        outcome.value.to_bits(),
+                        problem.at(outcome.step).0.to_bits(),
+                        "the reported value does not describe the accepted step"
+                    );
+                    // Controls. A step small enough leaves the slope at its
+                    // starting value, so the curvature condition must fail
+                    // there; a step large enough must fail sufficient decrease
+                    // on any objective bounded below.
+                    if !wolfe(&problem, start, outcome.step * 1.0e-9).1 {
+                        tiny_step_controls += 1;
+                    }
+                    if !wolfe(&problem, start, 1.0e12).0 {
+                        huge_step_controls += 1;
+                    }
+                }
+                Err(_) => refused += 1,
+            }
+        }
+
+        println!(
+            "line search: {accepted} accepted, {refused} refused, {trials} trials, \
+             {zoomed} searches entered zoom over {zoom_trials} bisection trials"
+        );
+        println!(
+            "line search controls: the curvature condition fails at a 1e-9 step in \
+             {tiny_step_controls} of {accepted} accepted searches, sufficient decrease \
+             fails at step 1e12 in {huge_step_controls}"
+        );
+        assert!(accepted > 200, "only {accepted} of 400 searches accepted");
+        assert!(
+            refused > 0,
+            "no search refused, so the refusal path never ran"
+        );
+        assert!(zoomed > 20, "only {zoomed} searches reached the zoom phase");
+        assert!(zoom_trials > 100, "only {zoom_trials} bisection trials");
+        // Non-vacuity: the Wolfe predicate has to be able to say no.
+        assert_eq!(
+            tiny_step_controls, accepted,
+            "the curvature condition held at a vanishing step, so it is not testing \
+             anything at the accepted one"
+        );
+        assert!(
+            huge_step_controls * 2 > accepted,
+            "sufficient decrease held at step 1e12 in most cases, so the predicate is \
+             not discriminating"
+        );
+    }
+
     impl PartialEq for LineSearchOutcome {
         fn eq(&self, other: &Self) -> bool {
             self.step == other.step && self.value == other.value

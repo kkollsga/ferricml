@@ -261,9 +261,12 @@ pub(super) fn fit_multinomial(
 #[cfg(test)]
 mod tests {
     use super::super::{LogisticRegression, LogisticRegressionParams, LogisticSolver};
+    use super::{BinaryProblem, DesignView, MultinomialProblem, scaled_penalties};
     use crate::api::ModelError;
     use crate::artifact::{ArtifactError, ModelArtifact};
     use crate::data::{BinaryTargets, ClassTargets, DenseMatrix, SampleWeights};
+    use crate::numeric::OwnedRng;
+    use crate::optimize::Problem;
 
     /// A separable-but-not-perfectly-separable binary problem.
     fn binary_problem() -> (DenseMatrix, BinaryTargets, SampleWeights) {
@@ -329,6 +332,231 @@ mod tests {
             .with_solver(solver)
             .with_max_iter(500)
             .with_tol(1.0e-8)
+    }
+
+    // -----------------------------------------------------------------------
+    // The objectives' own gradients, against a central difference of their own
+    // values.
+    //
+    // Everything else about this solver is checked by comparing it with the
+    // Newton path, which minimizes the *same* objective — so a mistake inside
+    // `value_and_gradient` that both paths share would agree with itself. A
+    // finite difference does not: it uses only the objective's value, so it
+    // reconstructs the gradient from something the gradient code never touches.
+    // -----------------------------------------------------------------------
+
+    /// One randomly generated standardized design and its labels.
+    struct ObjectiveCase {
+        design: Vec<f64>,
+        penalties: Vec<f64>,
+        columns: usize,
+        parameter_count: usize,
+        intercept_index: Option<usize>,
+        inverse_total_weight: f64,
+        weights: Option<SampleWeights>,
+        targets: Vec<u8>,
+        class_of_row: Vec<usize>,
+        classes: usize,
+    }
+
+    impl ObjectiveCase {
+        fn random(rng: &mut OwnedRng) -> Self {
+            let rows = 4 + rng.index(17);
+            let columns = 1 + rng.index(4);
+            let fit_intercept = rng.index(2) == 1;
+            let parameter_count = columns + usize::from(fit_intercept);
+            let intercept_index = fit_intercept.then_some(columns);
+
+            let mut design = Vec::with_capacity(rows * parameter_count);
+            for _ in 0..rows {
+                for _ in 0..columns {
+                    design.push(rng.unit_f64() * 4.0 - 2.0);
+                }
+                if fit_intercept {
+                    // The intercept's design entry is the constant one, exactly
+                    // as the fitting path lays it out.
+                    design.push(1.0);
+                }
+            }
+
+            let scales = (0..columns)
+                .map(|_| 0.5 + rng.unit_f64() * 1.5)
+                .collect::<Vec<_>>();
+            let c = 10.0_f32.powf(rng.unit_f64() as f32 * 2.5 - 1.25);
+            let penalties = scaled_penalties(&scales, c);
+
+            let weights = if rng.index(2) == 1 {
+                Some(
+                    SampleWeights::new(
+                        (0..rows)
+                            .map(|_| (0.1 + rng.unit_f64() * 2.9) as f32)
+                            .collect(),
+                    )
+                    .expect("positive finite weights"),
+                )
+            } else {
+                None
+            };
+            let total_weight = weights
+                .as_ref()
+                .map_or(rows as f64, |weights| weights.total());
+
+            let classes = 2 + rng.index(3);
+            Self {
+                design,
+                penalties,
+                columns,
+                parameter_count,
+                intercept_index,
+                inverse_total_weight: 1.0 / total_weight,
+                weights,
+                targets: (0..rows).map(|_| rng.index(2) as u8).collect(),
+                class_of_row: (0..rows).map(|_| rng.index(classes)).collect(),
+                classes,
+            }
+        }
+
+        fn view(&self) -> DesignView<'_> {
+            DesignView {
+                design: &self.design,
+                sample_weights: self.weights.as_ref(),
+                penalties: &self.penalties,
+                columns: self.columns,
+                parameter_count: self.parameter_count,
+                intercept_index: self.intercept_index,
+                inverse_total_weight: self.inverse_total_weight,
+            }
+        }
+    }
+
+    /// Worst relative discrepancy between an objective's own gradient and a
+    /// central difference of its value, over every coordinate.
+    fn worst_central_difference_error<P: Problem>(problem: &mut P, point: &[f64]) -> f64 {
+        let dimension = point.len();
+        let mut analytic = vec![0.0_f64; dimension];
+        let base = problem.value_and_gradient(point, &mut analytic);
+        assert!(base.is_finite(), "objective is not finite at {point:?}");
+        let mut scratch = vec![0.0_f64; dimension];
+        let mut probe = point.to_vec();
+        let mut worst = 0.0_f64;
+        for index in 0..dimension {
+            let step = 1.0e-5 * (1.0 + point[index].abs());
+            probe[index] = point[index] + step;
+            let forward = problem.value_and_gradient(&probe, &mut scratch);
+            probe[index] = point[index] - step;
+            let backward = problem.value_and_gradient(&probe, &mut scratch);
+            probe[index] = point[index];
+            let approximate = (forward - backward) / (2.0 * step);
+            worst =
+                worst.max((approximate - analytic[index]).abs() / (1.0 + analytic[index].abs()));
+        }
+        worst
+    }
+
+    /// An objective whose value is right and whose gradient is not, used to
+    /// prove the check above can fail.
+    struct BiasedGradient<P> {
+        inner: P,
+        index: usize,
+    }
+
+    impl<P: Problem> Problem for BiasedGradient<P> {
+        fn dimension(&self) -> usize {
+            self.inner.dimension()
+        }
+
+        fn value_and_gradient(&mut self, point: &[f64], gradient: &mut [f64]) -> f64 {
+            let value = self.inner.value_and_gradient(point, gradient);
+            gradient[self.index] += 0.01;
+            value
+        }
+    }
+
+    /// The largest relative error a correct gradient may show at this step
+    /// size. A central difference is accurate to about `1e-10` here; anything
+    /// near a sign error, a missing term, or a wrong scale factor is orders of
+    /// magnitude above this.
+    const FINITE_DIFFERENCE_TOLERANCE: f64 = 1.0e-6;
+
+    #[test]
+    fn both_objectives_agree_with_a_central_difference_of_their_own_values() {
+        let mut rng = OwnedRng::new(0x9b1d_0e11_5eed_0003);
+        let (mut binary_points, mut multinomial_points) = (0_usize, 0_usize);
+        let (mut worst_binary, mut worst_multinomial) = (0.0_f64, 0.0_f64);
+        let (mut worst_control, mut controls) = (f64::INFINITY, 0_usize);
+        let mut coordinates = 0_usize;
+
+        for _ in 0..96 {
+            let case = ObjectiveCase::random(&mut rng);
+            for scale in [0.5_f64, 2.0, 6.0] {
+                let point = (0..case.parameter_count)
+                    .map(|_| (rng.unit_f64() * 2.0 - 1.0) * scale)
+                    .collect::<Vec<_>>();
+                let mut problem = BinaryProblem {
+                    view: case.view(),
+                    targets: &case.targets,
+                };
+                worst_binary =
+                    worst_binary.max(worst_central_difference_error(&mut problem, &point));
+                binary_points += 1;
+                coordinates += point.len();
+
+                let stacked = (0..case.classes * case.parameter_count)
+                    .map(|_| (rng.unit_f64() * 2.0 - 1.0) * scale)
+                    .collect::<Vec<_>>();
+                let mut problem = MultinomialProblem {
+                    view: case.view(),
+                    class_of_row: &case.class_of_row,
+                    classes: case.classes,
+                    scores: vec![0.0; case.classes],
+                };
+                worst_multinomial =
+                    worst_multinomial.max(worst_central_difference_error(&mut problem, &stacked));
+                multinomial_points += 1;
+                coordinates += stacked.len();
+            }
+
+            // Control: the same check against a gradient that is wrong in one
+            // coordinate by a hundredth.
+            let point = (0..case.parameter_count)
+                .map(|_| rng.unit_f64() * 2.0 - 1.0)
+                .collect::<Vec<_>>();
+            let mut biased = BiasedGradient {
+                inner: BinaryProblem {
+                    view: case.view(),
+                    targets: &case.targets,
+                },
+                index: rng.index(case.parameter_count),
+            };
+            worst_control = worst_control.min(worst_central_difference_error(&mut biased, &point));
+            controls += 1;
+        }
+
+        println!(
+            "logistic objectives: {binary_points} binary and {multinomial_points} multinomial \
+             points over {coordinates} coordinates; worst relative gradient error \
+             {worst_binary:e} (binary), {worst_multinomial:e} (multinomial)"
+        );
+        println!(
+            "logistic objective control: {controls} deliberately biased gradients, smallest \
+             reported error {worst_control:e} against a tolerance of \
+             {FINITE_DIFFERENCE_TOLERANCE:e}"
+        );
+
+        assert!(
+            worst_binary <= FINITE_DIFFERENCE_TOLERANCE,
+            "binary objective gradient error {worst_binary:e}"
+        );
+        assert!(
+            worst_multinomial <= FINITE_DIFFERENCE_TOLERANCE,
+            "multinomial objective gradient error {worst_multinomial:e}"
+        );
+        // Non-vacuity: every biased gradient has to be caught, or passing above
+        // is not evidence of anything.
+        assert!(
+            worst_control > FINITE_DIFFERENCE_TOLERANCE,
+            "a gradient wrong by 0.01 in one coordinate reported only {worst_control:e}"
+        );
     }
 
     #[test]
