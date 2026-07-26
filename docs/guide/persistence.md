@@ -4,6 +4,15 @@ A fitted FerricML model serializes to a bounded, versioned, checksummed binary
 artifact, and loads back from it. There is no pickle, no `serde` derive on a
 private struct, and no format that changes when an internal layout does.
 
+Persistence lives on two traits, so `to_artifact` and `from_artifact` need one
+of them in scope — the same way `predict` needs `api::Estimator`. Estimators
+implement `artifact::ModelArtifact` and are bound to the one feature schema they
+were fitted on; transformers and pipelines implement `artifact::StageArtifact`
+and are bound to both the schema they consume and the one they produce. If a
+type has these methods at all, it implements the trait: there is no separate
+opt-in, so anything you can save you can also compose into a pipeline and save
+as part of that.
+
 ## The round trip
 
 ```rust

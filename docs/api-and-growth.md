@@ -202,15 +202,26 @@ and `PartialEq` impl row out of the frozen baseline in turn and asserts each
 removal is reported — and asserts the capture command has not quietly gone back
 to omitting them.
 
-Artifact support composes through a bound rather than a list. A
-`StagedPipeline` declares persistence exactly where every stage and its
-estimator really have a schema-bound artifact, so one declaration covers every
-such composition and asking one that cannot persist is a compile error. That is
-possible because a staged composition uses a single artifact kind and records
-which concrete parts it holds inside the payload: order, estimator type, and
-stage count are all checked on decode, so one composition never decodes as
-another. `Pipeline`'s three concrete compositions predate that scheme and keep
-their own artifact kinds, so their declarations stay per composition.
+Artifact support is a trait rather than a list. A fitted type persists exactly
+when it implements `artifact::ModelArtifact` or `artifact::StageArtifact`, and
+implementing one *is* writing the encoder — the estimator kind and the identity
+a composed payload records come with it. There is no second registration to
+remember, which is what previously let seven estimators ship a working encoder
+that the composition layer could not see.
+
+A `StagedPipeline` then *computes* its persistence from its parts rather than
+being gated on them: every stage's declaration and the estimator's, intersected.
+Asking a composition that cannot persist for its bytes is still a compile error,
+because `to_artifact` keeps the bound — but declaring is not, so a composition
+that honestly persists nothing still has a capability vocabulary and is still
+checked by the conformance battery. Gating the *declaration* on the bound had
+conflated "declares no artifact" with "cannot declare anything".
+
+That a composition needs no kind of its own is possible because a staged
+composition uses a single artifact kind and records which concrete parts it
+holds inside the payload: order, estimator type, and stage count are all checked
+on decode, so one composition never decodes as another. `Pipeline`'s three
+concrete compositions predate that scheme and keep their own artifact kinds.
 
 ## What the documentation checker does not check
 
