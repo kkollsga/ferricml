@@ -130,8 +130,11 @@ impl LassoParams {
 ///
 /// # Persistence
 ///
-/// This estimator declares no artifact capability. Its on-disk schema is a
-/// separate contract from its semantics and is not part of this addition.
+/// This estimator persists: it declares [`Capabilities::artifact`](crate::api::Capabilities::artifact) and
+/// implements [`ModelArtifact`], so a fitted `Lasso` encodes to and decodes
+/// from a stable byte string. The on-disk schema stays a separate contract
+/// from the semantics above — a fixture pinning one is not evidence about the
+/// other.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Lasso {
     n_features_in: usize,
@@ -416,7 +419,14 @@ mod tests {
     use crate::data::DenseMatrix;
 
     fn problem() -> (DenseMatrix, RegressionTargets) {
-        // Two informative columns, one pure noise column, one duplicate.
+        // Four independent draws; the target reads columns 0 and 2, so
+        // columns 1 and 3 are pure noise the penalty should remove. There is
+        // deliberately no duplicate column here — this comment used to claim
+        // one, and no test in this module has ever exercised a collinear
+        // design.
+        //
+        // Correlated and near-collinear designs live in `elastic_net`, whose
+        // `correlated_problem` and `near_collinear_problem` build them.
         let rows = 24;
         let columns = 4;
         let mut state = 0x1a5_u64;
