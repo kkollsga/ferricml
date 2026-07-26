@@ -167,6 +167,39 @@ and releases use [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   site and fails on a message that names either cause.
 ### Added
 
+- **A declared minimum supported Rust version: `rust-version = "1.88"`**, plus
+  an `msrv` CI lane that builds and tests on exactly that toolchain. The floor
+  was always real; it was invisible. A consumer on an older toolchain got a wall
+  of edition-2024 parse errors rather than Cargo's "requires rustc 1.88", and
+  nothing stopped a merged patch from raising it silently.
+
+  **Measured, not assumed**, by installing each candidate and building against
+  the committed `Cargo.lock`. 1.85 and 1.86 do not resolve at all: `nalgebra
+  0.34.2` declares `rust-version = "1.87.0"`, the highest in the locked graph.
+  1.87 resolves and then fails to compile FerricML itself, with **16 instances
+  of `error[E0658]: let expressions in this position are unstable` over 15
+  sites** in `src/tree`, `src/linear_model`, `src/ensemble` and
+  `src/preprocessing` — `let` chains stabilized in 1.88 on edition 2024. So the
+  crate's own source sets the floor, one release above what its dependencies
+  ask for and three above what `edition = "2024"` alone would allow.
+
+  **Build and test agree on 1.88; clippy does not, and the lane does not run
+  it.** `clippy::nonminimal_bool` reports
+  `src/preprocessing/robust_scaler/mod.rs:103` on 1.88, 1.90 and 1.92 and stops
+  reporting it on 1.97. Lint output is not a compatibility contract, and pinning
+  the floor to whichever clippy is quietest would raise the version a consumer
+  needs for a reason no consumer can observe.
+
+  **The lane is demonstrated non-vacuous rather than assumed to work.** It reads
+  the floor out of `Cargo.toml` instead of keeping a second copy, because a lane
+  with its own hardcoded version passes happily after someone raises
+  `rust-version` — the one thing it exists to catch. It was then shown to fail
+  in both directions: declaring `1.87` reproduced the 15-site `E0658` wall, and
+  adding an inferred array length (`[u8; _]`, unstable on 1.88 and stable by
+  1.90) failed the lane with `E0658: using _ for array lengths is unstable`
+  **while building cleanly on stable** — a floor raise that every existing gate
+  would have passed.
+
 - `PolynomialFeatures`, the first transformer whose output is wider than its
   input. It claims `degree`, `interaction_only` and `include_bias`, persists as
   artifact kind `46`, and composes as a `StagedPipeline` stage.

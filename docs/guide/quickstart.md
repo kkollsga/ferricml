@@ -19,6 +19,19 @@ There is nothing else to configure. `default = []` is a product boundary rather
 than an accident: enabling no feature is the supported configuration, and the
 crate's own dependencies are a numerical backend and a hash function.
 
+## Supported Rust version
+
+**FerricML requires Rust 1.88 or newer.** That floor is declared as
+`rust-version` in the crate's manifest, so an older toolchain reports which
+version is needed instead of failing part-way through a compile, and CI builds
+and tests the crate on exactly 1.88 so the floor cannot rise unnoticed.
+
+The number was measured rather than chosen. Edition 2024 alone would allow 1.85,
+and the locked dependency graph asks for 1.87; 1.88 is where the crate's own
+source compiles, because it uses `let` chains, which stabilized there. Raising
+the floor is a deliberate, visible change — not something a merged patch can do
+quietly.
+
 ## Fit a regressor
 
 Everything in FerricML follows the same four steps: validate the data, build a
