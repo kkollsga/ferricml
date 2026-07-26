@@ -44,7 +44,7 @@
 //! live in the two closed tables below, beside the kinds they translate. No
 //! estimator anywhere declares a tag. The tables cannot grow: a type whose tag
 //! already equals its kind needs no entry, and every future type gets the
-//! default. Every resulting tag is pinned by number in an integration test, and
+//! default. `tests/artifact_tags.rs` pins every resulting tag by number, and
 //! the adversarial corpus records two of the six as frozen bytes.
 
 use super::ArtifactError;
@@ -102,8 +102,9 @@ pub const fn stage_tag_for_kind(kind: u16) -> u16 {
 /// A type implementing this must also declare
 /// [`Capabilities::artifact`](crate::api::Capabilities::artifact), and a type
 /// declaring that capability must implement this. Neither direction is left to
-/// convention: an integration test closes them against each other through the
-/// frozen public-API and capability snapshots.
+/// convention — `tests/capability_snapshot.rs` closes them against each other,
+/// and `scripts/check_source_layout.py` refuses the inherent form this contract
+/// replaced.
 pub trait ModelArtifact: Sized {
     /// Permanent identity of this estimator in the on-disk envelope.
     const ARTIFACT_KIND: u16;

@@ -444,6 +444,163 @@ fn every_declaration_site_in_the_api_profile_has_a_snapshot_row() {
     );
 }
 
+// ------------------------------------------------- the persistence contract,
+// ------------------------------------------------- closed against the same two files
+
+/// The two traits that *are* persistence, as the API profile spells them.
+const PERSISTENCE_TRAITS: [&str; 2] = [
+    "ferricml::artifact::ModelArtifact",
+    "ferricml::artifact::StageArtifact",
+];
+
+/// Every persistence-trait implementation target in the API baseline, paired
+/// with whether the impl is generic — that is, whether it applies to *some*
+/// instantiations rather than to a named type.
+fn persistence_impls() -> Vec<(String, bool)> {
+    let baseline = fs::read_to_string(baseline_dir().join("ferricml-default.txt"))
+        .expect("read the frozen public API profile");
+    let mut impls: Vec<(String, bool)> = Vec::new();
+    for line in baseline.lines() {
+        let Some(entry) = persistence_impl(line) else {
+            continue;
+        };
+        if !impls.contains(&entry) {
+            impls.push(entry);
+        }
+    }
+    assert!(
+        !impls.is_empty(),
+        "no persistence impls were found in the API profile, so this check \
+         would pass vacuously"
+    );
+    impls
+}
+
+fn persistence_impl(line: &str) -> Option<(String, bool)> {
+    let line = line.trim();
+    let rest = line.strip_prefix("impl")?;
+    let (parameters, rest) = if let Some(inner) = rest.strip_prefix('<') {
+        let end = matching_angle(inner)?;
+        (parameter_names(&inner[..end]), &inner[end + 1..])
+    } else {
+        (Vec::new(), rest)
+    };
+    let rest = rest.trim_start();
+    let target = PERSISTENCE_TRAITS
+        .iter()
+        .find_map(|name| rest.strip_prefix(&format!("{name} for ")))?;
+    let target = target.split(" where ").next().unwrap_or(target).trim();
+    let generic = !parameters.is_empty();
+    Some((wildcard_pattern(target, &parameters), generic))
+}
+
+/// Whether a capability row declares persistence.
+fn declares_artifact(capabilities: Capabilities) -> bool {
+    capabilities.artifact()
+}
+
+/// `Capabilities::artifact` and the persistence traits mean the same thing, and
+/// this is what stops them from drifting apart again.
+///
+/// They were previously maintained independently and disagreed for seven of
+/// twelve estimators: each had a working, fuzz-tested encoder, none was
+/// reachable through the composition contract, and nothing anywhere compared
+/// the two lists. Both directions are checked, because the two failures are
+/// different defects.
+///
+/// The generic-impl asymmetry is deliberate rather than a weakened rule. A
+/// conditional implementation — `StagedPipeline<S, E>` where the parts persist
+/// — applies to some instantiations and not others, so its *existence* says
+/// nothing about a particular named instantiation. It can therefore satisfy a
+/// declaration but cannot compel one; concrete impls, which name exactly one
+/// type, are held to both directions.
+#[test]
+fn declared_persistence_and_the_persistence_traits_agree_in_both_directions() {
+    let impls = persistence_impls();
+    let rows = declarations();
+
+    let undeclared: Vec<&str> = rows
+        .iter()
+        .filter(|(_, capabilities)| declares_artifact(*capabilities))
+        .map(|(name, _)| *name)
+        .filter(|name| !impls.iter().any(|(pattern, _)| covers(pattern, name)))
+        .collect();
+    assert!(
+        undeclared.is_empty(),
+        "these types declare `Capabilities::artifact` but implement neither \
+         persistence trait, so they promise bytes they cannot write: {undeclared:#?}"
+    );
+
+    let unpersisted: Vec<&String> = impls
+        .iter()
+        .filter(|(_, generic)| !generic)
+        .map(|(pattern, _)| pattern)
+        .filter(|pattern| {
+            !rows.iter().any(|(name, capabilities)| {
+                covers(pattern, name) && declares_artifact(*capabilities)
+            })
+        })
+        .collect();
+    assert!(
+        unpersisted.is_empty(),
+        "these types implement a persistence trait but do not declare \
+         `Capabilities::artifact`, so their persistence is invisible to every \
+         caller that asks: {unpersisted:#?}"
+    );
+}
+
+/// The persistence closure must be able to fail, in both of its directions.
+///
+/// Without this it would pass for a tree that happened to be clean and prove
+/// nothing — the same defect the layout checker's self-test exists to prevent,
+/// and the reason this check exists at all.
+#[test]
+fn the_persistence_closure_detects_a_missing_impl_and_an_undeclared_one() {
+    let concrete = persistence_impl(
+        "impl ferricml::artifact::ModelArtifact for ferricml::linear_model::Ridge",
+    )
+    .expect("a concrete persistence impl parses");
+    assert_eq!(
+        concrete,
+        ("ferricml::linear_model::Ridge".to_owned(), false)
+    );
+
+    let generic = persistence_impl(
+        "impl<S, E> ferricml::artifact::StageArtifact for ferricml::pipeline::StagedPipeline<S, E> \
+         where S: ferricml::pipeline::TransformerStack",
+    )
+    .expect("a generic persistence impl parses");
+    assert!(generic.1, "a parameterized impl is recognized as generic");
+    assert!(covers(
+        &generic.0,
+        "ferricml::pipeline::StagedPipeline<(ferricml::preprocessing::MinMaxScaler, \
+         ferricml::preprocessing::StandardScaler), ferricml::linear_model::Ridge>"
+    ));
+
+    // A declaring type with no impl is the seven-estimator defect inverted, and
+    // a covering impl is what clears it.
+    let impls = persistence_impls();
+    assert!(
+        !impls
+            .iter()
+            .any(|(pattern, _)| covers(pattern, "ferricml::linear_model::Lasso")),
+        "Lasso must not be covered while it has no persistence; this assertion \
+         is what makes the missing-impl direction non-vacuous today"
+    );
+    assert!(
+        impls
+            .iter()
+            .any(|(pattern, _)| covers(pattern, "ferricml::linear_model::Ridge"))
+    );
+
+    // Neither a non-persistence impl nor a non-impl line is mistaken for one.
+    assert!(
+        persistence_impl("impl ferricml::api::HasCapabilities for ferricml::linear_model::Ridge")
+            .is_none()
+    );
+    assert!(persistence_impl("pub trait ferricml::artifact::ModelArtifact").is_none());
+}
+
 /// The completeness check must be able to fail.
 ///
 /// Without this, a matcher that silently stopped matching would report a clean
