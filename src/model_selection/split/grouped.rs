@@ -46,8 +46,15 @@ impl GroupKFold {
 
     /// Validates the group labels and returns an iterator over complete splits.
     ///
-    /// One entry per row, naming the group that row belongs to. Group
-    /// identifiers carry no order or meaning beyond equality.
+    /// One entry per row, naming the group that row belongs to.
+    ///
+    /// Identifiers are compared for equality *and* for order: equal-sized
+    /// groups are placed in ascending identifier order, which is the tie-break
+    /// the assignment above names. So the partition is unchanged by any
+    /// renaming that preserves the identifiers' order, and a renaming that
+    /// reverses it can move equal-sized groups between folds. This is stated
+    /// because it used to be documented the other way round, and the test that
+    /// named the property only ever renamed monotonically.
     pub fn split(&self, groups: &[u64]) -> Result<GroupKFoldIter, SplitError> {
         validate_fold_count(groups.len(), self.n_splits)?;
 
@@ -215,14 +222,53 @@ mod tests {
         }
     }
 
+    /// Renaming groups moves nothing *if* the renaming keeps their order.
+    ///
+    /// The previous form of this test renamed with `g -> u32::MAX + 1000g` and
+    /// claimed to establish that "group identifiers carry no order or meaning
+    /// beyond equality". That map is strictly increasing, so it leaves the
+    /// `left.0.cmp(&right.0)` size-tie-break in `split` reading the identifiers
+    /// in exactly the order it read before: the assertion could not fail, and
+    /// the claim it was standing in for is false. Measured over 4,500
+    /// equal-sized-group configurations, an order-*reversing* rename moves
+    /// 3,500 of them — the smallest being `[0, 1]` at two folds, which swaps.
+    ///
+    /// So the property is stated over the renamings that really do preserve it,
+    /// and the reversing case is asserted to be observable rather than left
+    /// unmentioned. Without that second half this test would be back to
+    /// asserting something no input can break.
     #[test]
-    fn assignment_is_deterministic_and_independent_of_group_naming() {
-        let renamed = GROUPS
-            .iter()
-            .map(|group| u64::from(u32::MAX) + group * 1_000)
-            .collect::<Vec<_>>();
-        assert_eq!(test_windows(&GROUPS, 3), test_windows(&renamed, 3));
+    fn an_order_preserving_rename_moves_nothing_and_a_reversing_one_can() {
+        let preserving = |scale: u64, offset: u64| {
+            GROUPS
+                .iter()
+                .map(|group| offset + group * scale)
+                .collect::<Vec<_>>()
+        };
+        for (scale, offset) in [(1, 0), (1_000, u64::from(u32::MAX)), (3, 17)] {
+            let renamed = preserving(scale, offset);
+            for n_splits in 2..=4 {
+                assert_eq!(
+                    test_windows(&GROUPS, n_splits),
+                    test_windows(&renamed, n_splits),
+                    "an order-preserving rename by ({scale}, {offset}) moved the {n_splits}-fold \
+                     partition"
+                );
+            }
+        }
+        // Determinism, which is the other half of the original name.
         assert_eq!(test_windows(&GROUPS, 3), test_windows(&GROUPS, 3));
+
+        // The identifiers are read, so reversing their order is observable.
+        // `[0, 0, 1, 1]` is two groups of two: the size tie is broken by the
+        // identifier and nothing else can decide it.
+        let tied = [0_u64, 0, 1, 1];
+        let reversed = tied
+            .iter()
+            .map(|group| u64::MAX - group)
+            .collect::<Vec<_>>();
+        assert_eq!(test_windows(&tied, 2), vec![vec![0, 1], vec![2, 3]]);
+        assert_eq!(test_windows(&reversed, 2), vec![vec![2, 3], vec![0, 1]]);
     }
 
     #[test]

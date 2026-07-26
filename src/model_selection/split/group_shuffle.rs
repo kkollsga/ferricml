@@ -48,8 +48,10 @@ pub enum TestGroupSize {
 /// the split index, and the first entries become that split's test groups.
 /// Identical parameters therefore reproduce identical membership. Because the
 /// shuffle runs over sorted identifiers, renaming groups can change which of
-/// them is drawn, unlike `GroupKFold`, whose assignment depends only on group
-/// sizes.
+/// them is drawn even when the renaming preserves their order — which is the
+/// difference from [`GroupKFold`](super::GroupKFold), whose assignment reads
+/// the identifiers only to break size ties and is therefore unchanged by any
+/// order-preserving renaming.
 ///
 /// ```
 /// use ferricml::model_selection::{GroupShuffleSplit, TestGroupSize};

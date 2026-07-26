@@ -150,7 +150,8 @@ impl ElasticNetParams {
 ///
 /// As with [`Lasso`](super::Lasso): the penalty applies to raw-scale
 /// coefficients, fitting centers but does not rescale, the intercept is never
-/// penalized, and this estimator declares no artifact capability.
+/// penalized, and the estimator persists through [`ModelArtifact`] under its
+/// own artifact kind.
 #[derive(Clone, Debug, PartialEq)]
 pub struct ElasticNet {
     n_features_in: usize,

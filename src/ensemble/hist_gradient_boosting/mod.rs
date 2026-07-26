@@ -268,7 +268,7 @@ impl HistGradientBoostingRegressor {
     ) -> Result<Self, ModelError> {
         validate_fit(data, targets, sample_weights, &params)?;
         let weights = sample_weights.map(SampleWeights::as_slice);
-        let binner = Binner::fit(data, params.max_bins).map_err(map_boosting_error)?;
+        let binner = Binner::fit(data, params.max_bins, weights).map_err(map_boosting_error)?;
         let binned = binner.transform(data).map_err(map_boosting_error)?;
         let baseline = match sample_weights {
             None => {
@@ -707,6 +707,110 @@ mod tests {
         assert_eq!(
             weighted.to_artifact([5; 32]).unwrap(),
             repeated.to_artifact([5; 32]).unwrap()
+        );
+    }
+
+    /// Zero is an integer weight, and zero copies is a deleted row.
+    ///
+    /// The claim above — "an integer weight is the same fit as repeating that
+    /// row that many times" — is stated for every integer, and the sibling
+    /// families implement and test the `times = 0` case by name
+    /// (`random_forest`'s `a_zero_weight_row_is_the_same_fit_as_a_deleted_row`,
+    /// `tree`'s `a_zero_weight_row_is_absent_rather_than_present_with_no_influence`).
+    /// Boosting used to be the exception, silently: the statistics already
+    /// ignored a zero-weight row, but the bin grid was fitted over every row,
+    /// so a row that was supposed to be absent still placed a bin edge.
+    ///
+    /// The row deleted here holds the value `4.0`, which no other row holds, so
+    /// it is a distinct value the grid loses when the row leaves. Before the
+    /// binner read the weights the two fits disagreed by up to `1.35` on a
+    /// target range of `0..20`, at every `max_bins` in the sweep below; the
+    /// bound is now exact equality of the artifact, which is the same standard
+    /// the repeated-row test above holds.
+    ///
+    /// `max_bins` is swept because the grid has two branches — one threshold
+    /// per adjacent pair while the distinct count fits in `max_bins`, quantiles
+    /// above that — and the divergence has to be closed on both. Nine distinct
+    /// values against `max_bins` of `3` and `4` takes the quantile branch; `16`
+    /// takes the exact one; `8` is the boundary, where deleting a row moves the
+    /// design from the quantile branch to the exact one.
+    #[test]
+    fn a_zero_weight_row_is_the_same_fit_as_a_deleted_row() {
+        let values = (0..9).map(|row| row as f32).collect::<Vec<f32>>();
+        let targets = vec![0.0_f32, 1.0, 2.0, 3.0, 20.0, 5.0, 6.0, 7.0, 8.0];
+        let dropped = 4;
+        let mut weights = vec![1.0_f32; targets.len()];
+        weights[dropped] = 0.0;
+
+        let full = DenseMatrix::new(values.clone(), targets.len(), 1).unwrap();
+        let kept_values = values
+            .iter()
+            .enumerate()
+            .filter(|(row, _)| *row != dropped)
+            .map(|(_, &value)| value)
+            .collect::<Vec<f32>>();
+        let kept_targets = targets
+            .iter()
+            .enumerate()
+            .filter(|(row, _)| *row != dropped)
+            .map(|(_, &value)| value)
+            .collect::<Vec<f32>>();
+        let deleted = DenseMatrix::new(kept_values, kept_targets.len(), 1).unwrap();
+
+        for max_bins in [3_usize, 4, 8, 16] {
+            let params = HistGradientBoostingRegressorParams::default()
+                .with_max_iter(6)
+                .with_max_leaf_nodes(4)
+                .with_max_bins(max_bins)
+                .with_min_samples_leaf(1);
+            let weighted = HistGradientBoostingRegressor::fit_weighted(
+                &full.as_view(),
+                &RegressionTargets::new(targets.clone()).unwrap(),
+                &SampleWeights::new(weights.clone()).unwrap(),
+                params.clone(),
+            )
+            .unwrap();
+            let without = HistGradientBoostingRegressor::fit(
+                &deleted.as_view(),
+                &RegressionTargets::new(kept_targets.clone()).unwrap(),
+                params,
+            )
+            .unwrap();
+            assert_eq!(
+                weighted.baseline(),
+                without.baseline(),
+                "max_bins {max_bins}: the zero-weight row moved the baseline"
+            );
+            assert_eq!(
+                weighted.to_artifact([5; 32]).unwrap(),
+                without.to_artifact([5; 32]).unwrap(),
+                "max_bins {max_bins}: the zero-weight row is still in the training sample"
+            );
+        }
+
+        // Non-vacuity: the row really is load-bearing when it is present, so
+        // the equality above is not two fits that were going to agree anyway.
+        let params = HistGradientBoostingRegressorParams::default()
+            .with_max_iter(6)
+            .with_max_leaf_nodes(4)
+            .with_max_bins(8)
+            .with_min_samples_leaf(1);
+        let present = HistGradientBoostingRegressor::fit(
+            &full.as_view(),
+            &RegressionTargets::new(targets).unwrap(),
+            params.clone(),
+        )
+        .unwrap();
+        let absent = HistGradientBoostingRegressor::fit(
+            &deleted.as_view(),
+            &RegressionTargets::new(kept_targets).unwrap(),
+            params,
+        )
+        .unwrap();
+        assert_ne!(
+            present.to_artifact([5; 32]).unwrap(),
+            absent.to_artifact([5; 32]).unwrap(),
+            "the deleted row changes nothing, so the test above proves nothing"
         );
     }
 

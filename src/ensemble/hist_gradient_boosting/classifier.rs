@@ -287,7 +287,7 @@ impl HistGradientBoostingClassifier {
 
         let weights = sample_weights.map(SampleWeights::as_slice);
         let baseline = fitted_baseline(targets.as_slice(), weights)?;
-        let binner = Binner::fit(data, params.max_bins).map_err(map_boosting_error)?;
+        let binner = Binner::fit(data, params.max_bins, weights).map_err(map_boosting_error)?;
         let binned = binner.transform(data).map_err(map_boosting_error)?;
 
         let mut raw_scores = vec![baseline; data.rows()];

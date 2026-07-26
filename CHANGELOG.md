@@ -9,6 +9,73 @@ and releases use [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- **Breaking (fitted values).** Histogram gradient boosting fits its bin grid
+  over the rows that are in the training sample, instead of over every row it
+  was handed. Both boosted estimators document that "an integer weight is the
+  same fit as repeating that row that many times", and zero is an integer: the
+  sibling families implement and test that case by name
+  (`random_forest`'s `a_zero_weight_row_is_the_same_fit_as_a_deleted_row`,
+  `tree`'s `a_zero_weight_row_is_absent_rather_than_present_with_no_influence`),
+  and `tree::grower` states the rule as "a row of zero weight is not in the
+  training sample at all". Boosting was the silent exception.
+
+  The statistics already ignored a zero-weight row, so it influenced the fit
+  through the grid and through nothing else: a row that was supposed to be
+  absent still contributed a distinct feature value for a bin edge to land on.
+  Measured on nine rows over one column with the row holding the unique value
+  `4.0` zero-weighted, the zero-weighted fit and the deleted-row fit disagreed
+  by up to **`1.35` on a target range of `0..20`**, at every `max_bins` from
+  `3` to `16` — across both branches of the grid, the per-adjacent-pair one and
+  the quantile one.
+
+  The grid is still not *weighted*: a weight does not move a threshold, which
+  is why weighting a row and repeating it agree. What the weights now decide is
+  membership. Only a weighted fit containing a zero weight moves; unweighted
+  fits and fits whose weights are all positive are bit-identical, and
+  `make reference-check` is green without regeneration.
+
+- `GroupKFold::split` documented that "group identifiers carry no order or
+  meaning beyond equality", and `GroupShuffleSplit` restated it as
+  "`GroupKFold`, whose assignment depends only on group sizes". Both were
+  false: the size tie-break is `left.0.cmp(&right.0)`, the identifier itself,
+  so equal-sized groups are ordered by name. Behaviour is unchanged — the
+  documentation was the defect — and both pages now say that identifiers order
+  equal-sized groups, so the partition survives any order-*preserving*
+  renaming and a reversing one can move it.
+
+  The test that named the property renamed with `g -> u32::MAX + 1000g`, which
+  is strictly increasing and therefore left the tie-break reading the same
+  order: it could not fail. Measured over 4,500 equal-sized-group
+  configurations, an order-reversing rename moves 3,500 of them, the smallest
+  being `[0, 1]` at two folds. The test now asserts the invariance over
+  renamings that really preserve it and pins the reversing case as observable.
+
+- `CalibratedClassifier` saturates its calibrated probabilities at the boundary
+  that produces them, instead of forwarding whatever the calibrator returned.
+  `Calibrator::calibrate` documents a result in `0.0..=1.0`, and the wrapper
+  promised probabilities on top of it, but neither promise was enforced
+  anywhere. The trait is open by design, and even the shipped
+  `IsotonicRegression` implements it for *both* of its constructors while only
+  `fit_calibration` averages `0`/`1` labels — one fitted through `Regressor`
+  over unbounded targets is a regression surface, and `CalibratedClassifier::new`
+  accepts it. Measured on such a composition, `predict_proba` returned rows like
+  `[38.71, -37.71]`: **every one of 12 probability slots outside `0.0..=1.0`**,
+  worst excess `37.7`, and `predict` reported class `0` for every row while the
+  class-`1` column read `-37.7`.
+
+  Nothing detected it because a row is written as `[1 - p, p]` and therefore
+  sums to exactly `1.0` for any `p` at all, so the conformance battery's
+  probability obligation — a row-sum check — passes on `[-48.0, 49.0]`. There
+  was no per-slot bound assertion anywhere, and `CalibratedClassifier::new` was
+  called by no test.
+
+  The clamp sits in the one routine every probability path on the wrapper
+  reaches, per rule 5 of the accumulation policy, so `predict_proba`,
+  `predict_class_proba` and `predict` now agree on a bounded value. **No fitted
+  value moves**: it is a no-op for `fit_isotonic` and `fit_platt`, which already
+  produce probabilities in range, and that is asserted bit-for-bit rather than
+  to a tolerance. `make reference-check` is green without regeneration.
+
 - **Breaking (fitted values).** The multinomial Newton path supplies curvature
   for the whole subspace the softmax cannot see, instead of for the one member
   of it that no penalty reaches. Adding the same vector to every class's
