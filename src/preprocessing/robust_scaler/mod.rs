@@ -125,6 +125,32 @@ impl RobustScalerParams {
 /// A column whose spread is merely *small* is real data and is scaled normally;
 /// if that overflows `f32`, the batch is rejected with the offending location
 /// before anything is written, rather than being silently left unscaled.
+///
+/// ```
+/// use ferricml::data::DenseMatrix;
+/// use ferricml::preprocessing::{
+///     RobustScaler, RobustScalerParams, StandardScaler, StandardScalerParams,
+/// };
+///
+/// // Eight ordinary values and one extreme outlier.
+/// let values = vec![1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 1000.0];
+/// let data = DenseMatrix::new(values, 9, 1)?;
+///
+/// let robust = RobustScaler::fit(&data.as_view(), RobustScalerParams::default())?;
+/// let standard = StandardScaler::fit(&data.as_view(), StandardScalerParams::default())?;
+///
+/// // The outlier inflates the standard deviation, so every ordinary value is
+/// // squashed toward zero. The interquartile range barely notices it.
+/// let robust_scaled = robust.transform(&data.as_view())?;
+/// let standard_scaled = standard.transform(&data.as_view())?;
+/// assert!(robust_scaled.as_slice()[0].abs() > standard_scaled.as_slice()[0].abs());
+/// # Ok::<(), Box<dyn std::error::Error>>(())
+/// ```
+///
+/// Quantiles use linear interpolation between the two bracketing order
+/// statistics, applied uniformly including at the median. Small samples do not
+/// contain the value a percentile asks for, so the interpolation rule is a
+/// documented semantic choice rather than an implementation detail.
 #[derive(Clone, Debug, PartialEq)]
 pub struct RobustScaler {
     n_features_in: usize,

@@ -65,6 +65,9 @@ mod doc_pages {
     #[doc = include_str!("../docs/guide/trees-and-forests.md")]
     mod guide_trees_and_forests {}
 
+    #[doc = include_str!("../docs/guide/preprocessing-and-pipelines.md")]
+    mod guide_preprocessing_and_pipelines {}
+
     #[doc = include_str!("../docs/api-and-growth.md")]
     mod api_and_growth {}
 

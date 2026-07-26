@@ -285,7 +285,7 @@ weight is one.
 
 ## Next
 
-- Preprocessing and pipelines — trees do not
+- [Preprocessing and pipelines](preprocessing-and-pipelines.md) — trees do not
   need scaled features, but the models you compare them against do.
 - [Evaluation and model selection](../evaluation-and-model-selection.md) — how
   to tune `n_estimators`, `max_depth` and `learning_rate` honestly.

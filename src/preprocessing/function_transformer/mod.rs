@@ -146,6 +146,37 @@ impl FunctionTransformerParams {
 /// to know whether two transformers *do the same thing*, which is not a
 /// question an address can answer. Compare behaviour instead: transform a batch
 /// with each and compare the outputs.
+///
+/// ```
+/// use ferricml::data::DenseMatrix;
+/// use ferricml::preprocessing::{FunctionTransformer, FunctionTransformerParams};
+///
+/// fn double(value: f32) -> f32 {
+///     value * 2.0
+/// }
+/// fn halve(value: f32) -> f32 {
+///     value / 2.0
+/// }
+///
+/// let data = DenseMatrix::new(vec![1.0, 2.0, 3.0, 4.0], 2, 2)?;
+/// let transformer = FunctionTransformer::fit(
+///     &data.as_view(),
+///     FunctionTransformerParams::default()
+///         .with_func(double)
+///         .with_inverse_func(halve),
+/// )?;
+///
+/// let doubled = transformer.transform(&data.as_view())?;
+/// assert_eq!(doubled.as_slice(), &[2.0, 4.0, 6.0, 8.0]);
+///
+/// let restored = transformer.inverse_transform(&doubled.as_view())?;
+/// assert_eq!(restored.as_slice(), data.as_slice());
+/// # Ok::<(), Box<dyn std::error::Error>>(())
+/// ```
+///
+/// The map is **elementwise**. A transformation that must read a whole row or
+/// column is expressed by implementing [`Transformer`](crate::api::Transformer)
+/// directly, which is the honest way to say the transformation is the caller's.
 #[derive(Clone, Copy, Debug)]
 pub struct FunctionTransformer {
     n_features_in: usize,

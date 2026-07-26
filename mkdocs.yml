@@ -85,6 +85,7 @@ nav:
   - Guided tour:
       - Linear models: guide/linear-models.md
       - Trees and forests: guide/trees-and-forests.md
+      - Preprocessing and pipelines: guide/preprocessing-and-pipelines.md
   - Contracts:
       - API and growth: api-and-growth.md
       - Frozen reference semantics: reference-semantics.md

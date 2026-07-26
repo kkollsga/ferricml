@@ -138,7 +138,8 @@ FerricML states the relationship rather than silently reconciling them.
 when an intercept is requested and never rescales the columns, so a feature
 measured in millimetres is penalized differently from the same feature in
 metres. Scale-free selection comes from putting a `StandardScaler` in front,
-where the transformation is explicit and persists with the model.
+where the transformation is explicit and persists with the model — see
+[preprocessing and pipelines](preprocessing-and-pipelines.md).
 
 ### Convergence is a result, not a hint
 
