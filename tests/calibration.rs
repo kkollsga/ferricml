@@ -102,7 +102,7 @@ fn platt_scaling_agrees_with_a_logistic_fit_of_the_same_one_dimensional_problem(
     // And the maps themselves agree, which is what a caller observes.
     for &score in &scores {
         let calibrated = platt.calibrate(score);
-        let reference = logistic.predict_positive_proba(&[score]).unwrap();
+        let reference = logistic.predict_positive_proba_one(&[score]).unwrap();
         assert!(
             (calibrated - reference).abs() <= 1.0e-4,
             "score {score}: {calibrated} against {reference}"

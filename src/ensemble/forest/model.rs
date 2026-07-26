@@ -318,13 +318,27 @@ impl ClassifierCore {
     /// Defined only for a binary fit. A multiclass fit has no positive class
     /// and reports [`ModelError::MulticlassOutput`] instead of returning one
     /// column of a vector that has no distinguished member.
-    pub(crate) fn predict_positive_proba(&self, row: &[f32]) -> Result<f32, ModelError> {
+    pub(crate) fn predict_positive_proba_one(&self, row: &[f32]) -> Result<f32, ModelError> {
         let trees = self.require_binary_forest()?;
         check_row(row, self.n_features_in)?;
         if self.classes.len() == 1 {
             return Ok(f32::from(self.classes[0]));
         }
         Ok(mean_tree_prediction(trees, row).clamp(0.0, 1.0))
+    }
+
+    /// Predicts every row's positive-class probability, allocating the output.
+    pub(crate) fn predict_positive_proba(
+        &self,
+        data: &MatrixView<'_>,
+    ) -> Result<Vec<f32>, ModelError> {
+        // Before the buffer, not inside `_into` after it, so an unusable
+        // request costs no allocation.
+        self.require_binary_forest()?;
+        check_prediction_data(data, data.rows(), data.rows(), self.n_features_in)?;
+        let mut output = vec![0.0; data.rows()];
+        self.predict_positive_proba_into(data, &mut output)?;
+        Ok(output)
     }
 
     /// Predict every row without allocating.  `output.len()` must equal the

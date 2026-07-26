@@ -420,13 +420,25 @@ impl DecisionTreeClassifier {
     /// Defined only for a binary fit. A multiclass fit has no positive class
     /// and reports [`ModelError::MulticlassOutput`] rather than returning one
     /// column of a vector with no distinguished member.
-    pub fn predict_positive_proba(&self, row: &[f32]) -> Result<f32, ModelError> {
+    pub fn predict_positive_proba_one(&self, row: &[f32]) -> Result<f32, ModelError> {
         let tree = self.require_binary_tree()?;
         check_row(row, self.n_features_in)?;
         if self.classes.len() == 1 {
             return Ok(f32::from(self.classes[0]));
         }
         Ok(positive_probability(tree, row))
+    }
+
+    /// Predicts the positive-class probability for every row, allocating the
+    /// output.
+    pub fn predict_positive_proba(&self, data: &MatrixView<'_>) -> Result<Vec<f32>, ModelError> {
+        // Before the buffer, not inside `_into` after it, so an unusable
+        // request costs no allocation.
+        self.require_binary_tree()?;
+        check_prediction_data(data, data.rows(), data.rows(), self.n_features_in)?;
+        let mut output = vec![0.0; data.rows()];
+        self.predict_positive_proba_into(data, &mut output)?;
+        Ok(output)
     }
 
     /// Predicts the positive-class probability for every row without

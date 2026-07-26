@@ -162,7 +162,10 @@ fn every_into_method_agrees_with_its_allocating_twin() {
         .unwrap();
     for (index, row) in view.iter_rows().enumerate() {
         assert_eq!(model.predict_one(row).unwrap(), into_labels[index]);
-        assert_eq!(model.predict_positive_proba(row).unwrap(), positive[index]);
+        assert_eq!(
+            model.predict_positive_proba_one(row).unwrap(),
+            positive[index]
+        );
         assert_eq!(
             model.predict_proba_one(row).unwrap(),
             into_proba[index * 2..index * 2 + 2]
@@ -355,7 +358,7 @@ fn a_multiclass_fit_has_no_positive_class_to_report() {
         ClassTargets::new((0..view.rows()).map(|row| [3_u8, 7, 10][row % 3]).collect()).unwrap();
     let model = ExtraTreesClassifier::fit_multiclass(&view, &classes, classifier_params()).unwrap();
     assert_eq!(
-        model.predict_positive_proba(view.row(0).unwrap()),
+        model.predict_positive_proba_one(view.row(0).unwrap()),
         Err(ModelError::MulticlassOutput { columns: 3 })
     );
 }

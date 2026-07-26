@@ -290,11 +290,20 @@ macro_rules! forest_classifier {
             /// member.
             ///
             /// [`ModelError::MulticlassOutput`]: crate::api::ModelError::MulticlassOutput
-            pub fn predict_positive_proba(
+            pub fn predict_positive_proba_one(
                 &self,
                 row: &[f32],
             ) -> Result<f32, $crate::api::ModelError> {
-                self.core.predict_positive_proba(row)
+                self.core.predict_positive_proba_one(row)
+            }
+
+            /// Predicts the positive-class probability for every row,
+            /// allocating the output.
+            pub fn predict_positive_proba(
+                &self,
+                data: &$crate::data::MatrixView<'_>,
+            ) -> Result<Vec<f32>, $crate::api::ModelError> {
+                self.core.predict_positive_proba(data)
             }
 
             /// Predicts the positive-class probability for every row without

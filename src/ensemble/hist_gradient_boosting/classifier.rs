@@ -368,7 +368,7 @@ impl HistGradientBoostingClassifier {
     /// Returns the raw, unsquashed decision score for one row.
     ///
     /// Positive scores favour class `1`. The sigmoid of this value is
-    /// [`Self::predict_positive_proba`].
+    /// [`Self::predict_positive_proba_one`].
     pub fn decision_function_one(&self, row: &[f32]) -> Result<f32, ModelError> {
         validate_scalar_row(row, self.n_features_in)?;
         validate_prediction(self.raw_score(row), 0)
@@ -398,8 +398,31 @@ impl HistGradientBoostingClassifier {
     }
 
     /// Predicts the probability of class `1` for one row.
-    pub fn predict_positive_proba(&self, row: &[f32]) -> Result<f32, ModelError> {
+    pub fn predict_positive_proba_one(&self, row: &[f32]) -> Result<f32, ModelError> {
         Ok(sigmoid_f32(self.decision_function_one(row)?))
+    }
+
+    /// Predicts the probability of class `1` per row, allocating the output.
+    pub fn predict_positive_proba(&self, data: &MatrixView<'_>) -> Result<Vec<f32>, ModelError> {
+        // Before the buffer, not inside `_into` after it. `check_batch` repeats
+        // the same check for callers that reach the `_into` form directly.
+        self.check_batch(data, data.rows(), data.rows())?;
+        let mut output = vec![0.0; data.rows()];
+        self.predict_positive_proba_into(data, &mut output)?;
+        Ok(output)
+    }
+
+    /// Writes the probability of class `1` per row into caller-owned storage.
+    pub fn predict_positive_proba_into(
+        &self,
+        data: &MatrixView<'_>,
+        output: &mut [f32],
+    ) -> Result<(), ModelError> {
+        self.decision_function_into(data, output)?;
+        for slot in output {
+            *slot = sigmoid_f32(*slot);
+        }
+        Ok(())
     }
 
     /// Predicts one label.
@@ -407,7 +430,7 @@ impl HistGradientBoostingClassifier {
     /// An exactly balanced probability resolves to class `0`, the lower of the
     /// two labels, matching every other FerricML binary classifier.
     pub fn predict_one(&self, row: &[f32]) -> Result<u8, ModelError> {
-        Ok(u8::from(self.predict_positive_proba(row)? > 0.5))
+        Ok(u8::from(self.predict_positive_proba_one(row)? > 0.5))
     }
 
     /// Predicts one label per row, allocating the output.
@@ -984,7 +1007,7 @@ mod tests {
         for (row_index, row) in data.iter_rows().enumerate() {
             assert_eq!(model.predict_one(row).unwrap(), labels[row_index]);
             assert_eq!(
-                model.predict_positive_proba(row).unwrap(),
+                model.predict_positive_proba_one(row).unwrap(),
                 probabilities[row_index * 2 + 1]
             );
             assert_eq!(model.decision_function_one(row).unwrap(), scores[row_index]);

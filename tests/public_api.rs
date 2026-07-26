@@ -894,7 +894,7 @@ fn boosted_classifier_paths_builders_and_traits_are_stable() {
     );
     let row = matrix.row(0).unwrap();
     assert!(model.decision_function_one(row).unwrap().is_finite());
-    assert!((0.0..=1.0).contains(&model.predict_positive_proba(row).unwrap()));
+    assert!((0.0..=1.0).contains(&model.predict_positive_proba_one(row).unwrap()));
     assert!(model.predict_one(row).unwrap() <= 1);
     assert!(model.baseline().is_finite());
 

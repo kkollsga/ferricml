@@ -1825,7 +1825,7 @@ fn single_class_models_use_one_probability_column() {
             ModelError::UnknownClass { class: absent }
         );
         assert_eq!(
-            model.predict_positive_proba(&[1.5]).unwrap(),
+            model.predict_positive_proba_one(&[1.5]).unwrap(),
             f32::from(label)
         );
     }
@@ -2089,7 +2089,7 @@ fn finite_inputs_that_overflow_are_reported_rather_than_returned() {
         Err(ModelError::NonFiniteFeature { row: 0, column: 0 })
     );
     assert_eq!(
-        logistic.predict_positive_proba(&[f32::NAN]),
+        logistic.predict_positive_proba_one(&[f32::NAN]),
         Err(ModelError::NonFiniteFeature { row: 0, column: 0 })
     );
     assert_eq!(
@@ -2148,5 +2148,157 @@ fn finite_inputs_that_overflow_are_reported_rather_than_returned() {
             .unwrap()
             .iter()
             .all(|value| value.is_finite())
+    );
+}
+
+#[test]
+fn the_positive_probability_family_agrees_across_its_three_shapes() {
+    // The three entry points are named by shape — `_one` for a row, the bare
+    // name for the allocating batch, `_into` for the caller-owned batch — and
+    // this asserts they mean the same thing on every estimator that carries the
+    // concept. Before the rename the bare name *was* the single-row form on all
+    // five, so there was no allocating batch to compare against at all.
+    let data = matrix(
+        &[0.0, 0.0, 1.0, 0.0, 2.0, 1.0, 3.0, 1.0, 4.0, 1.0, 5.0, 0.0],
+        6,
+        2,
+    );
+    let view = data.as_view();
+    let labels = vec![0, 0, 0, 1, 1, 1];
+    let binary = BinaryTargets::new(labels.clone()).unwrap();
+
+    let forest = RandomForestClassifier::fit(
+        &view,
+        &binary,
+        RandomForestClassifierParams::default()
+            .with_n_estimators(3)
+            .with_bootstrap(false)
+            .with_max_features(MaxFeatures::All)
+            .with_random_state(7),
+    )
+    .unwrap();
+    let extra = ExtraTreesClassifier::fit(
+        &view,
+        &binary,
+        ExtraTreesClassifierParams::default()
+            .with_n_estimators(3)
+            .with_max_features(MaxFeatures::All)
+            .with_random_state(7),
+    )
+    .unwrap();
+    let tree = DecisionTreeClassifier::fit(
+        &view,
+        &binary,
+        DecisionTreeClassifierParams::default().with_random_state(7),
+    )
+    .unwrap();
+    let boosted = HistGradientBoostingClassifier::fit(
+        &view,
+        &binary,
+        HistGradientBoostingClassifierParams::default()
+            .with_max_iter(4)
+            .with_min_samples_leaf(1)
+            .with_max_bins(8),
+    )
+    .unwrap();
+    let logistic =
+        LogisticRegression::fit(&view, &binary, LogisticRegressionParams::default()).unwrap();
+
+    macro_rules! check {
+        ($model:expr) => {{
+            let model = &$model;
+            let allocated = model.predict_positive_proba(&view).unwrap();
+            assert_eq!(allocated.len(), view.rows());
+
+            let mut owned = vec![f32::NAN; view.rows()];
+            model
+                .predict_positive_proba_into(&view, &mut owned)
+                .unwrap();
+            assert_eq!(allocated, owned, "batch shapes disagree");
+
+            for (index, row) in view.iter_rows().enumerate() {
+                assert_eq!(
+                    model.predict_positive_proba_one(row).unwrap(),
+                    allocated[index],
+                    "row {index} disagrees with the batch"
+                );
+            }
+
+            // The allocating form rejects a mis-shaped request rather than
+            // sizing a buffer from it first.
+            let narrow = matrix(&[0.0, 1.0], 2, 1);
+            assert_eq!(
+                model.predict_positive_proba(&narrow.as_view()).unwrap_err(),
+                ModelError::FeatureDimension {
+                    expected: 2,
+                    actual: 1
+                }
+            );
+            let mut short = [0.0; 1];
+            assert!(
+                model
+                    .predict_positive_proba_into(&view, &mut short)
+                    .is_err()
+            );
+        }};
+    }
+
+    check!(forest);
+    check!(extra);
+    check!(tree);
+    check!(boosted);
+    check!(logistic);
+
+    // A multiclass fit has no positive class, and says so on every shape of the
+    // request rather than only the one that happens to be reached first.
+    let multiclass = DecisionTreeClassifier::fit_multiclass(
+        &view,
+        &ferricml::data::ClassTargets::new(vec![0, 1, 2, 0, 1, 2]).unwrap(),
+        DecisionTreeClassifierParams::default().with_random_state(7),
+    )
+    .unwrap();
+    let expected = ModelError::MulticlassOutput { columns: 3 };
+    assert_eq!(
+        multiclass.predict_positive_proba(&view).unwrap_err(),
+        expected
+    );
+    assert_eq!(
+        multiclass
+            .predict_positive_proba_one(&[0.0, 0.0])
+            .unwrap_err(),
+        expected
+    );
+    let mut owned = vec![0.0; view.rows()];
+    assert_eq!(
+        multiclass
+            .predict_positive_proba_into(&view, &mut owned)
+            .unwrap_err(),
+        expected
+    );
+    assert!(owned.iter().all(|value| *value == 0.0));
+
+    // The linear model reaches the same refusal through a different guard, so
+    // it is asserted rather than assumed to follow the tree's.
+    let multinomial = LogisticRegression::fit_multiclass(
+        &view,
+        &ferricml::data::ClassTargets::new(vec![0, 1, 2, 0, 1, 2]).unwrap(),
+        LogisticRegressionParams::default(),
+    )
+    .unwrap();
+    assert_eq!(
+        multinomial.predict_positive_proba(&view).unwrap_err(),
+        expected
+    );
+    assert_eq!(
+        multinomial
+            .predict_positive_proba_one(&[0.0, 0.0])
+            .unwrap_err(),
+        expected
+    );
+    assert_eq!(
+        multinomial
+            .predict_positive_proba_into(&view, &mut owned)
+            .unwrap_err(),
+        expected
     );
 }

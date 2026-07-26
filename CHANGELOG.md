@@ -76,6 +76,26 @@ and releases use [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Changed
 
+- **Breaking.** `predict_positive_proba` is now the allocating **batch**
+  method on every classifier that carries a positive class, and the
+  single-row form it used to name is `predict_positive_proba_one`. Callers
+  must rewrite `model.predict_positive_proba(row)` as
+  `model.predict_positive_proba_one(row)`; the argument type changes from
+  `&[f32]` to `&data::MatrixView` and the return from `f32` to `Vec<f32>`, so
+  a missed call site is a compile error rather than a silent reinterpretation.
+  Affects `ensemble::RandomForestClassifier`,
+  `ensemble::ExtraTreesClassifier`,
+  `ensemble::HistGradientBoostingClassifier`,
+  `tree::DecisionTreeClassifier` and `linear_model::LogisticRegression`.
+  The old pairing was the crate's only shape mismatch between an allocating
+  method and its `_into` partner: `predict_positive_proba` took one row while
+  `predict_positive_proba_into` took a matrix, which left the caller-owned
+  batch form with no allocating partner and put a single-row method under the
+  name the batch form owns. Renaming it also gives the batch form the
+  allocating partner it never had, on all five classifiers rather than the two
+  that happened to expose `_into`. Nothing about the fitted models changed and
+  no artifact byte moved.
+
 - **Breaking.** `model_selection::cross_validate_classifier` and
   `model_selection::grid_search_classifier` are generic over the target
   vocabulary, through the new sealed
