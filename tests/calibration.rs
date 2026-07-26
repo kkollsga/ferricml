@@ -337,9 +337,11 @@ fn calibration_preserves_the_ranking_it_recalibrates() {
     .unwrap();
     let calibrated = platt.predict_class_proba(&view, 1).unwrap();
 
-    // A strictly monotone map cannot reorder two rows, so every
-    // threshold-sweeping score is unchanged. This is the sense in which
-    // calibration changes confidence and not ranking.
+    // A *strictly increasing* map cannot reorder two rows, so every
+    // threshold-sweeping score is unchanged. The slope's sign is the whole
+    // condition, which is why it is asserted first rather than assumed:
+    // `a_held_out_fold_that_disagrees_with_the_model_inverts_its_ranking`
+    // holds the other branch.
     assert!(platt.calibrator().slope() > 0.0);
     for (left, right) in (0..raw.len()).zip(1..raw.len()) {
         assert_eq!(
@@ -367,6 +369,98 @@ fn calibration_preserves_the_ranking_it_recalibrates() {
         }
     }
     assert!(roc_auc_score(expected, &stepped).unwrap() <= raw_auc + 1.0e-12);
+}
+
+/// The mean score over positive rows, minus the mean over negative rows.
+fn class_mean_gap(scores: &[f32], targets: &BinaryTargets) -> f64 {
+    let mut sums = [0.0_f64; 2];
+    let mut counts = [0_usize; 2];
+    for (&score, &label) in scores.iter().zip(targets.as_slice()) {
+        sums[usize::from(label)] += f64::from(score);
+        counts[usize::from(label)] += 1;
+    }
+    sums[1] / counts[1] as f64 - sums[0] / counts[0] as f64
+}
+
+#[test]
+fn a_held_out_fold_that_disagrees_with_the_model_inverts_its_ranking() {
+    // The other branch of `calibration_preserves_the_ranking_it_recalibrates`,
+    // and the case the module's own documentation recommends: the calibration
+    // rows are held out, so nothing stops them from disagreeing with the model.
+    // Six rows are enough, and small folds are exactly where this happens.
+    let (train, train_labels) = problem(240, 0x1234_5678);
+    let (holdout, holdout_labels) = problem(6, 0xa);
+    let (evaluation, evaluation_labels) = problem(400, 0x0f0f_1234);
+    let forest = memorising_forest(&train, &train_labels);
+    let view = evaluation.as_view();
+    let expected = evaluation_labels.as_slice();
+    let raw = forest.predict_class_proba(&view, 1).unwrap();
+    let raw_auc = roc_auc_score(expected, &raw).unwrap();
+    assert!(
+        raw_auc > 0.5,
+        "the fixture forest does not rank the evaluation rows: {raw_auc}"
+    );
+
+    // The mechanism, stated before its consequence: on this fold the forest's
+    // positive rows carry a *lower* mean score than its negative rows. The
+    // maximum-likelihood slope takes the sign of that gap and nothing else.
+    let fold_scores = forest.predict_class_proba(&holdout.as_view(), 1).unwrap();
+    let gap = class_mean_gap(&fold_scores, &holdout_labels);
+    assert!(
+        gap < 0.0,
+        "the fold's class mean gap was not negative: {gap}"
+    );
+
+    let platt = CalibratedClassifier::fit_platt(
+        forest.clone(),
+        &holdout.as_view(),
+        &holdout_labels,
+        PlattParams::default(),
+    )
+    .unwrap();
+    assert!(
+        platt.calibrator().slope() < 0.0,
+        "slope {} did not follow the fold's negative mean gap",
+        platt.calibrator().slope()
+    );
+
+    // A strictly decreasing map is still monotone, and it reverses every
+    // pairwise comparison rather than preserving it. Nothing errors: the
+    // calibrated model is a working, silently anti-ranking classifier.
+    let calibrated = platt.predict_class_proba(&view, 1).unwrap();
+    for (left, right) in (0..raw.len()).zip(1..raw.len()) {
+        assert_eq!(
+            raw[left].partial_cmp(&raw[right]),
+            calibrated[left]
+                .partial_cmp(&calibrated[right])
+                .map(std::cmp::Ordering::reverse),
+            "rows {left} and {right} were not inverted"
+        );
+    }
+    let calibrated_auc = roc_auc_score(expected, &calibrated).unwrap();
+    assert!(
+        (calibrated_auc - (1.0 - raw_auc)).abs() <= 1.0e-12,
+        "AUC {calibrated_auc} is not the exact inverse of {raw_auc}"
+    );
+
+    // Isotonic on the same fold pools every observation into one block, so the
+    // map is constant: it loses the ordering rather than inverting it, and the
+    // calibrated AUC is exactly the coin-flip value.
+    let isotonic = CalibratedClassifier::fit_isotonic(
+        forest,
+        &holdout.as_view(),
+        &holdout_labels,
+        IsotonicRegressionParams,
+    )
+    .unwrap();
+    let values = isotonic.calibrator().values();
+    assert!(
+        values.windows(2).all(|pair| pair[0] == pair[1]),
+        "the fold did not pool to a constant map: {values:?}"
+    );
+    let stepped = isotonic.predict_class_proba(&view, 1).unwrap();
+    assert!(stepped.iter().all(|value| *value == stepped[0]));
+    assert_eq!(roc_auc_score(expected, &stepped).unwrap(), 0.5);
 }
 
 #[test]

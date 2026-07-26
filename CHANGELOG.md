@@ -812,6 +812,27 @@ and releases use [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- The documented ranking guarantee on `calibration` is corrected: it claimed
+  that "calibration is monotone, so the **ranking** of any two rows is preserved
+  exactly — a threshold-based score such as ROC AUC is unchanged by
+  calibration", and that is false. Monotone is weaker than ranking-preserving.
+  A `PlattCalibrator` whose fitted slope is negative is a strictly *decreasing*
+  map and takes ROC AUC to `1.0 - auc`; `IsotonicRegression` pools, so distinct
+  scores can tie, and a fold whose labels run opposite to its scores collapses
+  the map to a constant and ROC AUC to `0.5`. Both are reachable through the
+  public API, on the held-out calibration fold the same documentation
+  *requires*. `Calibrator`, `CalibratedClassifier`, `PlattCalibrator::slope`,
+  `IsotonicRegression` and the calibration guide now state the three cases and
+  the condition — a strictly increasing map — under which ROC AUC is unchanged.
+  The doctest that asserted the false general claim asserted it on the benign
+  training-rows case; it now calibrates on held-out rows, asserts the positive
+  slope its conclusion rests on, and scores against labels the model does not
+  reproduce exactly, so the AUC equality could fail if calibration reordered.
+  **Behaviour is unchanged and no fit is rejected.** A negative slope is the
+  exact maximum-likelihood answer for its sample: it carries the sign of that
+  sample's class mean gap, which `PlattCalibrator::slope` now documents as the
+  ranking contract, and the fitted parameters are public so a caller who
+  depends on ranking can check them.
 - Every one of the crate's 29 capability declarations now carries a doc comment
   saying what it claims and, where a capability is deliberately absent, why —
   up from 8. Four of them contradicted the declaration they sat above and are

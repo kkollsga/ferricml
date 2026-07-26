@@ -29,6 +29,18 @@ pub struct IsotonicRegressionParams;
 /// linearly between consecutive pairs and **clamps** to the end values outside
 /// the fitted range, so the map is total, finite, and non-decreasing everywhere.
 ///
+/// # Non-decreasing is weaker than ranking-preserving
+///
+/// Pooling is what makes the map non-decreasing rather than strictly
+/// increasing, and the difference is visible in any threshold-sweeping score.
+/// Two distinct inputs inside one pooled block leave with the same value: the
+/// pair is never *inverted*, but it is tied, and a tied pair no longer
+/// contributes a full correct ordering to ROC AUC. In the extreme — a
+/// calibration sample whose labels run opposite to its scores —
+/// pool-adjacent-violators collapses everything into one block, the map is
+/// constant, and ROC AUC becomes `0.5`. [`values`](Self::values) is how a
+/// caller sees which happened; a single fitted value is that constant map.
+///
 /// # Tie convention, stated rather than inherited
 ///
 /// Observations that share an input value are pooled into their weighted mean

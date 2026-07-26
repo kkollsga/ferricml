@@ -67,8 +67,31 @@ reading if you are implementing one.
 
 A classifier can order rows correctly and still be wrong about *how* confident
 it is. A calibrator is a fitted monotone map of one model score onto a
-probability, so it changes how confident a prediction is without changing which
-way round two rows are ordered.
+probability, so its main job is to change how confident a prediction is.
+
+Monotone is weaker than ranking-preserving, and it is worth being precise about
+the difference before reaching for either calibrator, because both can reach
+the weaker case on a calibration sample you might plausibly supply:
+
+- A **strictly increasing** map preserves the ranking of any two rows exactly,
+  so a threshold-sweeping score such as ROC AUC is unchanged. `PlattCalibrator`
+  is this case exactly when its fitted `slope()` is positive.
+- A **non-decreasing** map may send two distinct scores to one value. It never
+  inverts a pair, but a tied pair no longer contributes a full correct
+  ordering, so ROC AUC is not guaranteed unchanged. `IsotonicRegression` is
+  this case whenever it pools; pooled into one block it is constant and ROC AUC
+  becomes `0.5`.
+- A **decreasing** map is monotone too, and reverses every pairwise comparison:
+  ROC AUC becomes `1.0 - auc`. `PlattCalibrator` is this case when its fitted
+  slope is negative.
+
+A negative Platt slope is not a fitting failure. The fit is the exact
+maximum-likelihood answer, and its sign is the sign of the calibration sample's
+class mean gap — the mean score over its positive rows minus the mean over its
+negative rows. A small held-out fold whose few positive rows happen to score
+low produces one honestly, for a model that ranks well everywhere else. Neither
+calibrator rejects such a sample, because the sample is what it is; the fitted
+parameters are public so that a caller who depends on ranking can check them.
 
 FerricML has two, and they differ in what they assume.
 
@@ -92,8 +115,19 @@ let calibrator = PlattCalibrator::fit(&scores, &labels, PlattParams::default())?
 let high = calibrator.calibrate(3.0);
 assert!(high > 0.5 && high < 1.0);
 
-// Monotone, so it never reorders two rows.
+// A positive slope, so the map is strictly increasing and cannot reorder two
+// rows. The sign belongs to the calibration sample, so it is checked.
+assert!(calibrator.slope() > 0.0);
 assert!(calibrator.calibrate(1.0) < calibrator.calibrate(2.0));
+
+// The mirror-image sample fits the mirror-image map, which inverts every pair.
+let mirrored = PlattCalibrator::fit(
+    &[3.0_f32, 2.0, 1.0, -1.0, -2.0, -3.0],
+    &labels,
+    PlattParams::default(),
+)?;
+assert!(mirrored.slope() < 0.0);
+assert!(mirrored.calibrate(1.0) > mirrored.calibrate(2.0));
 # Ok::<(), Box<dyn std::error::Error>>(())
 ```
 
@@ -132,25 +166,40 @@ let model = LogisticRegression::fit(
 )?;
 let before = model.predict_proba(&data.as_view())?;
 
+// Rows held out of the fit above: the workflow calibration is written for.
+let holdout = DenseMatrix::new(
+    vec![-7.5_f32, -5.5, -3.5, -1.5, 1.5, 3.5, 5.5, 7.5],
+    8,
+    1,
+)?;
+let holdout_labels = BinaryTargets::new(vec![0, 0, 0, 0, 1, 1, 1, 1])?;
 let calibrated = CalibratedClassifier::fit_platt(
     model,
-    &data.as_view(),
-    &labels,
+    &holdout.as_view(),
+    &holdout_labels,
     PlattParams::default(),
 )?;
 let after = calibrated.predict_proba(&data.as_view())?;
 
-// Calibration is monotone, so any threshold-sweeping score is unchanged.
+// This fold fitted a positive slope, so the map is strictly increasing and
+// every threshold-sweeping score is unchanged. That condition is asserted
+// rather than assumed: it is what the guarantee rests on.
+assert!(calibrated.calibrator().slope() > 0.0);
+
+// Scored against labels the model does not reproduce exactly, so both AUCs sit
+// strictly between 0.5 and 1 and would differ if calibration could reorder.
+let noisy = BinaryTargets::new(
+    (0..20).map(|index| u8::from((index >= 10) != (index == 8 || index == 11))).collect(),
+)?;
 let positive_before: Vec<f32> = before.chunks(2).map(|row| row[1]).collect();
 let positive_after: Vec<f32> = after.chunks(2).map(|row| row[1]).collect();
-assert_eq!(
-    roc_auc_score(labels.as_slice(), &positive_before)?,
-    roc_auc_score(labels.as_slice(), &positive_after)?,
-);
+let raw = roc_auc_score(noisy.as_slice(), &positive_before)?;
+assert!(raw > 0.5 && raw < 1.0);
+assert_eq!(raw, roc_auc_score(noisy.as_slice(), &positive_after)?);
 # Ok::<(), Box<dyn std::error::Error>>(())
 ```
 
-Four things about that composition are decisions rather than accidents:
+Five things about that composition are decisions rather than accidents:
 
 - **The calibration rows are always a parameter**, never the wrapped model's own
   training rows taken implicitly. Calibrating on the data the model was fitted
@@ -163,6 +212,12 @@ Four things about that composition are decisions rather than accidents:
   whose probability crosses the decision point does change label. A classifier
   whose labels disagreed with its own probabilities would be a silent wrong
   answer.
+- **The ranking guarantee is conditional, and the condition is reachable.**
+  `calibrator()` exposes the fitted map, so a caller who depends on ranking
+  reads `slope()` for a Platt composition or `values()` for an isotonic one.
+  Nothing is rejected at fit time: an inverting calibration fold is a fact
+  about the fold, and turning it into an error would make honest small folds
+  unfittable.
 - **Capabilities are declared per calibrator, not inherited.** The composition
   owns already-fitted parts, so weighted fitting, persistence and multiclass
   fitting are declared away structurally. Both calibrators declare
