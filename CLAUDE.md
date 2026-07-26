@@ -50,8 +50,9 @@ make gate
 ```
 
 The heavier named entry points are `gate-full`, `api-check`, `api-refresh`,
-`reference-check`, `package-check`, `semver-check`, `bench-self`, and
-`bench-history`. Do not invent substitutes for these contracts.
+`reference-check`, `package-check`, `semver-check`, `mutants`, `bench-self`,
+`bench-history`, `bench-diagnostic`, `docs-env`, `docs-build`, and
+`docs-serve`. Do not invent substitutes for these contracts.
 
 Run heavier checks only when their surface is touched:
 
