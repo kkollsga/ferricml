@@ -831,6 +831,148 @@ and releases use [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- `linear_model::LogisticRegression`'s Newton step is now **damped**, so the
+  default solver is globally convergent instead of only locally so. The exact
+  step minimizes a local quadratic model of the penalized objective; where that
+  model is untrustworthy the step overshoots, the next model is built somewhere
+  worse, and the failure compounds. On a badly scaled near-separable design with
+  a weak penalty, iterates reaching `1e63` were measured. The full step is now
+  accepted whenever it sufficiently decreases the objective and halved until it
+  does otherwise — Armijo backtracking, in the new `optimize::damping` seam that
+  both the binary and the multinomial path consume.
+  <br>
+  **This is a breaking change: some fitted values move.** They move far less than
+  the description suggests, and the measurement is what says so. Over 1,600
+  generated well-conditioned binary designs — every one of which takes more than
+  one Newton step — 1,573 fitted `f32` coefficient sets are bit-identical to the
+  undamped path and no iteration count changes at all; the 27 that move do so
+  because the full step failed sufficient decrease somewhere, which is the case
+  damping exists for. At `f64`, before narrowing, 108 of the 1,600 moved, by a
+  relative displacement of median `4.8e-9` and at most `5.1e-8` — under half an
+  `f32` ulp, which is why only 27 survive narrowing. All 108 are at a local
+  minimum under both arms, and the damped point has the strictly lower objective
+  on 78 of them against 11 the other way. The four designs the frozen reference
+  fixture pins are bit-identical, `make reference-check` passes unchanged, and no
+  fixture constant moves — that file holds the reference implementation's own
+  outputs, so a FerricML solver change cannot move one; what it could break is
+  agreement *with* them, and that is what `reference-check` reports. On the
+  deliberately ill-conditioned regions the
+  move is larger, 342 of 919 binary and 147 of 343 multinomial, which is the
+  population whose old iterates were wrong.
+  <br>
+  What it buys, measured the same way: over a generated ill-conditioned region of
+  972 binary designs the undamped step refused 53 as non-convergent, and the
+  damped step refuses **none**, with all 972 returned at a local minimum of the
+  penalized objective in the caller's own feature space — convergence, not merely
+  the absence of an error. The multinomial region's 22 non-convergence refusals
+  likewise go to zero, and 18 of its 210 collapsed-curvature `LinearSolveFailed`
+  refusals resolve as well, because the damped path never reaches the iterate
+  whose curvature had collapsed. Over a wider and harsher 704-design sweep — column
+  scales to `1e7`, separations to `12`, `C` to `1e12` — there is no
+  non-convergence refusal left at the default budget at all, and 139 fits exhaust
+  it and are accepted on the Newton decrement.
+  <br>
+  The convergence test still reads the **exact** step rather than the damped one.
+  The exact step's size is the second-order estimate of the distance to the
+  minimum; a step shortened because the local model was untrustworthy is evidence
+  about the model, and treating it as convergence would stop the iteration
+  wherever the model was worst.
+  <br>
+  `optimize::line_search`'s strong-Wolfe search was the obvious candidate and was
+  rejected on measurement. Its curvature condition exists to keep L-BFGS's stored
+  inverse-Hessian approximation positive definite, and a Newton path has no such
+  pairs — it refactorizes the exact Hessian every iteration, and that
+  factorization succeeding *is* the certificate. Counted directly: over the 1,600
+  well-conditioned designs the curvature condition rejects the exact step on
+  **none**, so it would move exactly the population sufficient decrease already
+  moves; over the ill-conditioned region it rejects a further 273 of 972 that
+  sufficient decrease alone already rescues. It would move more fitted values for
+  no additional capability.
+  <br>
+  Two tests replace ones whose premise the fix falsified, and both replacements
+  are stronger. `every_binary_fit_in_the_ill_conditioned_region_reaches_its_minimum`
+  asserts the whole region is returned *and* at a local minimum — either half
+  alone is satisfiable by a bad solver — and undamping the step fails it.
+  `an_exhausted_multinomial_budget_that_reached_its_minimum_is_fitted_not_refused`
+  can no longer reach an exhausted budget at the default `max_iter`, because the
+  region now converges in at most 53 of its hundred iterations; it sets the budget
+  to one iteration short of what each fit needs instead, which exercises both
+  answers — 348 of 385 accepted on the decrement and 37 refused — where the
+  previous construction only ever watched acceptances. Deleting the decrement
+  certificate refuses all 385; making it unconditional accepts all 385, and also
+  fails five starved-budget tests.
+  <br>
+  `docs/determinism.md` gains the two `ln` entries this adds to the Newton fitting
+  paths, and the argument that a halving sequence of exact powers of two is a
+  narrower determinism risk than the bisection it sits beside: its next trial does
+  not depend even on a bracket, only on the halving index.
+
+- `calibration::PlattCalibrator` now stores its map in **centred** form, so a fit
+  on a near-constant score column returns the line it solved instead of a
+  narrowing that lost the answer. The map was stored as `slope` and `intercept`
+  and evaluated as `slope * score + intercept`. A calibration sample whose scores
+  are nearly equal identifies its slope only through their spread, so a spread of
+  `1e-6` puts both stored fields near `1e6`, where an `f32` ulp is `0.0625` —
+  while their sum is `O(1)`. Every bit of the cancellation was charged to a
+  quantity six orders of magnitude smaller than its operands. The solve was
+  already correct and already tested to be at the minimum; the storage was not.
+  <br>
+  **This is a breaking change: calibrated probabilities move.** Nothing else
+  does. The centred pair is stored *beside* `slope` and `intercept` rather than
+  replacing them, so both accessors return the same bits they always returned and
+  the public API is byte-identical under `api-check` — `intercept` also stays a
+  single narrowing of the `f64` answer, which is strictly more accurate than
+  recovering it from two already-narrowed fields would have been. What moves is
+  what a caller *evaluates*: `calibrate` and `decision_score` change in their last
+  bits on about a third of scores for well-conditioned samples, and change
+  substantively on the degenerate ones, which is the point. The centre is
+  deliberately not exposed — two `f32` accessors were never enough to reconstruct
+  this map, which is the defect rather than an omission, and a third would invite
+  a caller to rebuild the line by hand and get the cancellation straight back.
+  `decision_score` is the map.
+  <br>
+  Measured over 6,330 fits from the near-constant region, against the same
+  objective solved independently in centred and scaled coordinates at `f64`: the
+  shipped line's log-loss gap above the minimum had median `1.7e-5`, 99th
+  percentile `8.6e-1` and maximum `5.0` nats, and its worst calibrated
+  probability was off by `0.65`. Centred, the same region's gap is median `0`,
+  99th percentile `3.5e-8`, maximum `6.5e-8`, and the worst probability error is
+  `8.3e-8`. On 2,000 well-conditioned samples the two forms are
+  indistinguishable — worst gap `8.3e-8` against `7.8e-8` — so this costs nothing
+  where there was nothing to fix.
+  <br>
+  Storing better-rounded values in the old two fields was not an option, and that
+  is a measurement rather than a judgement: searching +-2 ulp in **both** stored
+  fields, the uncentred form still cannot get its worst case below `4.2` nats,
+  while the centred form's achieved `6.5e-8` is already at its own +-2 ulp floor
+  of `5.8e-8`. The defect is which two numbers are stored. For the same reason the
+  filed "only 1,296 of 7,725 fits are a minimum among their eight one-ulp
+  neighbours" statistic is not the defect and barely moves (1,500 of 6,330 becomes
+  1,720): narrowing an `f64` minimizer lands beside a marginally better grid point
+  whatever the parametrization, and what matters is whether the miss costs `1e-8`
+  nats or `5`.
+  <br>
+  No artifact format changes and no payload version moves, because
+  `PlattCalibrator` has no artifact representation at all — there is no
+  calibration entry in the artifact-kind table, `CalibratedClassifier` documents
+  that it has no artifact kind, and `PairwiseLinearRanker` persists a nested
+  `LogisticRegression` rather than a calibrator. The 128 adversarial artifact
+  fixtures are untouched and `MinMaxScaler`'s emit-a-version-only-when-needed
+  precedent has nothing to apply to.
+  <br>
+  The order of the two narrowings is load-bearing and tested. The centre is
+  narrowed to `f32` first and the stored intercept computed at *that* centre,
+  because evaluation subtracts the stored `f32` centre and nothing else; folding
+  in the `f64` centre instead leaves `slope * (mean64 - mean32)` unaccounted for,
+  which at these slopes is a raw-score error around `0.03`.
+  `a_near_constant_fit_evaluates_the_probability_its_solve_found` fails on that
+  one-line change and on reverting `decision_score` to the uncentred form, and it
+  asserts that the region still reaches slopes of `1e5` so the bound cannot hold
+  vacuously. A companion test pins the arithmetic property the accuracy rests on —
+  that the centring subtraction's error stays *relative* to its own result, at most
+  half an ulp, often exactly zero by Sterbenz's lemma — and counts both the exact
+  and the rounded population so neither half is asserted over an empty set.
+
 - `linear_model::LogisticRegression` no longer returns an unconverged Newton
   iterate as a fitted model, on **either** target shape. `fit` and
   `fit_multiclass` broke out of the iteration when the largest standardized

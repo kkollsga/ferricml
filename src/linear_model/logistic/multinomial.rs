@@ -46,7 +46,8 @@ use super::{
 use crate::api::ModelError;
 use crate::data::{ClassTargets, MatrixView, SampleWeights};
 use crate::loss::{newton_decrement, raw_score};
-use crate::numeric::softmax_in_place;
+use crate::numeric::{log_sum_exp, softmax_in_place};
+use crate::optimize::armijo_backtracking;
 
 /// Largest stacked Newton system the multinomial fit will build.
 ///
@@ -138,7 +139,40 @@ pub(super) fn fit(
     let mut gradient = vec![0.0_f64; parameters];
     let mut hessian = vec![0.0_f64; parameters * parameters];
     let mut update = vec![0.0_f64; parameters];
+    let mut trial = vec![0.0_f64; parameters];
     let mut probabilities = vec![0.0_f64; classes];
+    // The step length's own score row, kept separate from the one the Newton
+    // system accumulates through so neither has to be restored around the other.
+    let mut trial_scores = vec![0.0_f64; classes];
+    // The objective the step length is judged against: the same penalized
+    // cross-entropy the stacked Newton system expands, in the same standardized
+    // coordinates. The centring curvature added to the hessian below is *not*
+    // part of it — that term regularizes a direction the objective genuinely
+    // does not see, and adding it here would make the step length answer to a
+    // quantity the fit does not minimize.
+    let penalized_value = |theta: &[f64], scores: &mut [f64]| -> f64 {
+        let mut total = 0.0_f64;
+        for (row_index, design_row) in design.chunks_exact(parameter_count).enumerate() {
+            for (class, slot) in scores.iter_mut().enumerate() {
+                *slot = raw_score(
+                    &theta[class * parameter_count..(class + 1) * parameter_count],
+                    design_row,
+                    columns,
+                    intercept_index,
+                );
+            }
+            total += sample_weight(sample_weights, row_index)
+                * (log_sum_exp(scores) - scores[class_of_row[row_index]]);
+        }
+        for class in 0..classes {
+            let offset = class * parameter_count;
+            for (column, &penalty) in penalties.iter().enumerate() {
+                total += 0.5 * penalty * theta[offset + column] * theta[offset + column];
+            }
+        }
+        total
+    };
+    let mut value = penalized_value(&theta, &mut trial_scores);
     let mut iterations = 0;
     let mut converged = false;
     // Refuse by default, exactly as the binary path does: only a step the loop
@@ -188,14 +222,20 @@ pub(super) fn fit(
         }
 
         solve_positive_definite(&mut hessian, &gradient, &mut update, parameters)?;
-        let max_update = update
-            .iter()
-            .fold(0.0_f64, |max, value| max.max(value.abs()));
+        let max_update = update.iter().fold(0.0_f64, |max, step| max.max(step.abs()));
         decrement = newton_decrement(&gradient, &update);
-        for (value, &update) in theta.iter_mut().zip(&update) {
-            *value -= update;
-        }
         iterations = iteration + 1;
+        // The full step first, exactly as the binary path takes it, so a fit
+        // whose exact step already descends keeps its iterate sequence.
+        let Some(damped) =
+            armijo_backtracking(&mut theta, &update, &mut trial, value, decrement, |probe| {
+                penalized_value(probe, &mut trial_scores)
+            })
+        else {
+            break;
+        };
+        value = damped.value;
+        // The exact step's size is the convergence test here too.
         if max_update <= f64::from(params.tol) {
             converged = true;
             break;
@@ -1293,50 +1333,99 @@ mod tests {
 
     /// An exhausted multinomial budget that reached the minimum is returned.
     ///
-    /// The multiclass half of the same pair of tests the binary path carries:
-    /// refusing on plain exhaustion would convert every fit counted here into
-    /// a spurious error.
+    /// The multiclass half of the same contract the binary path carries:
+    /// refusing on plain exhaustion would convert every fit counted here into a
+    /// spurious error. What changed with the damped step is *how* the exhausted
+    /// population is reached. This region used to exhaust the default budget on
+    /// 52 of its fits, because the undamped step overshot and never settled;
+    /// damped, the whole region converges in at most 53 iterations of the
+    /// hundred it is given, so the default budget no longer produces an
+    /// exhausted fit at all and asserting that it does would be asserting a
+    /// defect.
+    ///
+    /// The budget is therefore set to one iteration short of what each fit
+    /// needs. The loop then runs out without the tolerance break ever firing,
+    /// which is exactly the state the certificate exists to judge, and the
+    /// construction is stronger than the one it replaces because it exercises
+    /// both answers: 348 of the 385 are accepted because the Newton decrement
+    /// says they are already at the minimum, and 37 are refused because they are
+    /// not. Deleting the certificate refuses all 385; making it unconditional
+    /// accepts all 385.
     #[test]
     fn an_exhausted_multinomial_budget_that_reached_its_minimum_is_fitted_not_refused() {
         let cases = ill_conditioned_neighbourhood();
         let mut fitted = 0_usize;
-        let mut exhausted = 0_usize;
-        let mut refused = 0_usize;
         let mut singular = 0_usize;
+        let mut probed = 0_usize;
+        let mut accepted = 0_usize;
+        let mut refused = 0_usize;
         for (index, (data, targets, params)) in cases.iter().enumerate() {
-            match LogisticRegression::fit_multiclass(&data.as_view(), targets, params.clone()) {
+            let model = match LogisticRegression::fit_multiclass(
+                &data.as_view(),
+                targets,
+                params.clone(),
+            ) {
                 Ok(model) => {
                     fitted += 1;
-                    if model.n_iter() == params.max_iter() {
-                        exhausted += 1;
-                        assert!(
-                            is_a_local_minimum(
-                                data,
-                                &class_positions(targets),
-                                targets.classes().len(),
-                                model.coefficients(),
-                                model.intercepts(),
-                                f64::from(params.c()),
-                            ),
-                            "case {index} exhausted its budget away from the minimum"
-                        );
-                    }
+                    model
                 }
-                Err(ModelError::SolverDidNotConverge { .. }) => refused += 1,
                 // The stacked curvature genuinely collapsed; that is the
                 // neighbouring contract and not what this test is about.
-                Err(ModelError::LinearSolveFailed) => singular += 1,
+                Err(ModelError::LinearSolveFailed) => {
+                    singular += 1;
+                    continue;
+                }
+                Err(other) => panic!("case {index} was refused with {other:?}"),
+            };
+            // Damped, every fit here converges well inside the default budget,
+            // so the acceptance path has to be reached deliberately.
+            assert!(
+                model.n_iter() < params.max_iter(),
+                "case {index} still exhausts its default budget"
+            );
+            if model.n_iter() < 2 {
+                continue;
+            }
+            probed += 1;
+            let short = params.clone().with_max_iter(model.n_iter() - 1);
+            match LogisticRegression::fit_multiclass(&data.as_view(), targets, short.clone()) {
+                Ok(model) => {
+                    accepted += 1;
+                    assert_eq!(model.n_iter(), short.max_iter());
+                    assert!(
+                        is_a_local_minimum(
+                            data,
+                            &class_positions(targets),
+                            targets.classes().len(),
+                            model.coefficients(),
+                            model.intercepts(),
+                            f64::from(params.c()),
+                        ),
+                        "case {index} was accepted at an exhausted budget away from the minimum"
+                    );
+                }
+                Err(ModelError::SolverDidNotConverge { iterations }) => {
+                    assert_eq!(iterations, short.max_iter());
+                    refused += 1;
+                }
                 Err(other) => panic!("case {index} was refused with {other:?}"),
             }
         }
-        // As generated the region is 576 cases: 344 fits, 22 non-convergence
-        // refusals and 210 collapsed-curvature refusals, and 52 of the fits
-        // exhaust the budget and are returned on the certificate.
-        assert_eq!(fitted + refused + singular, cases.len());
+        // As generated the region is 576 cases: 385 fits and 191
+        // collapsed-curvature refusals, with no non-convergence refusal left.
+        assert_eq!(fitted + singular, cases.len());
+        assert_eq!(accepted + refused, probed);
+        // Both answers have to occur, or this constrains the certificate from
+        // one side only.
         assert!(
-            exhausted >= 40 && exhausted * 8 >= fitted,
-            "only {exhausted} of {fitted} multinomial fits exhausted max_iter, so this \
-             region no longer exercises the acceptance path at all"
+            accepted * 4 >= probed * 3,
+            "only {accepted} of {probed} penultimate-budget fits were accepted; a \
+             certificate this strict would refuse fits that are at the minimum"
+        );
+        assert!(
+            refused > 0,
+            "no penultimate-budget fit was refused, so nothing here distinguishes the \
+             certificate from an unconditional yes"
         );
     }
 
