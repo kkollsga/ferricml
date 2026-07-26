@@ -185,6 +185,17 @@ pub enum ModelError {
     InvalidThreshold,
     /// An inverse transformation was requested of a transformer that was not
     /// given one.
+    ///
+    /// This is a typed error rather than a
+    /// [`Capabilities`](super::Capabilities) declaration on purpose, and not
+    /// because the transformer family was skipped when probability production
+    /// became a declared capability. A capability is an associated constant and
+    /// therefore describes a *type*; whether a
+    /// [`FunctionTransformer`](crate::preprocessing::FunctionTransformer)
+    /// inverts is decided per *instance*, by whether `with_inverse_func` was
+    /// called, so no per-type value is true of it. The instance-level question
+    /// is answerable exactly through its params' `inverse_func`, which is an
+    /// `Option`.
     NoInverseFunction,
     /// A multiclass linear fit would need a second-order system larger than the
     /// supported bound, which is `classes * (features + intercept)` parameters.

@@ -114,6 +114,31 @@ implementation detail, and it is carried as a typed parameter at every internal
 call site so a second rule can be added without silently repointing the first
 consumer at it.
 
+**A missing inverse is refused rather than silently applied as the identity.**
+`preprocessing::FunctionTransformer` takes an optional inverse function, and
+asking a transformer that was not given one to invert is
+`api::ModelError::NoInverseFunction`. The reference keeps `inverse_transform`
+present on such a transformer — it answers to both `hasattr` and `dir()` — and
+returns its input unchanged; its `check_inverse` option warns about a *wrong*
+inverse and says nothing about a missing one. Returning the input is
+indistinguishable from a successful recovery of the originals, which is a worse
+failure than a refusal, so this is a deliberate divergence.
+
+Invertibility is deliberately **not** a declared capability, and that is not an
+oversight left over from the probability split. A `Capabilities` field is an
+associated constant, so a declaration is a statement about a fitted *type*.
+Whether a `FunctionTransformer` inverts is a property of the fitted *instance* —
+it is decided by whether `with_inverse_func` was called — so neither `true` nor
+`false` would be true of the type, and a bit would have to be wrong for half of
+them in whichever direction it was set. The instance-level question is already
+answerable exactly, through `get_params().inverse_func()`, which is an `Option`
+rather than a claim. Nor is there anywhere the answer gets erased: the
+probability tag exists for runtime dispatch, where the concrete type is gone by
+construction, and FerricML has no runtime-dispatch transformer type. A consumer
+that *requires* an inverse states that as a bound on a trait, which is a proof
+rather than a tag; the trait is owed to the first such consumer and to nothing
+before it.
+
 **Parameters FerricML does not claim** are recorded as non-claims rather than
 left as gaps, because an unclaimed parameter and a divergent one are different
 things. `RobustScaler` does not offer scaling the quantile spread to the spread
