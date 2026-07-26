@@ -59,8 +59,9 @@ use ferricml::linear_model::{
 };
 use ferricml::pipeline::{Pipeline, StagedPipeline, TransformerStack};
 use ferricml::preprocessing::{
-    MaxAbsScaler, MaxAbsScalerParams, MinMaxScaler, MinMaxScalerParams, RobustScaler,
-    RobustScalerParams, StandardScaler, StandardScalerParams,
+    MaxAbsScaler, MaxAbsScalerParams, MinMaxScaler, MinMaxScalerParams, PolynomialFeatures,
+    PolynomialFeaturesParams, RobustScaler, RobustScalerParams, StandardScaler,
+    StandardScalerParams,
 };
 use ferricml::ranking::{
     PairIndex, PairOutcome, PairwiseLinearRanker, PairwiseLinearRankerParams, PairwiseObservation,
@@ -699,6 +700,22 @@ fn decoders() -> Vec<Decoder> {
             },
         ),
         (
+            "polynomial-features",
+            "ferricml::preprocessing::PolynomialFeatures",
+            |bytes| {
+                accepted(
+                    PolynomialFeatures::from_artifact(bytes, INPUT_SCHEMA, TRANSFORMED_SCHEMA),
+                    |m| m.to_artifact(INPUT_SCHEMA, TRANSFORMED_SCHEMA),
+                )
+            },
+            |bytes| {
+                exercised(
+                    PolynomialFeatures::from_artifact(bytes, INPUT_SCHEMA, TRANSFORMED_SCHEMA),
+                    transform_rows,
+                )
+            },
+        ),
+        (
             "pipeline-logistic",
             "ferricml::pipeline::Pipeline<ferricml::preprocessing::StandardScaler, ferricml::linear_model::LogisticRegression>",
             |bytes| {
@@ -1206,6 +1223,12 @@ fn seed_corpus() -> Vec<(&'static str, Vec<u8>)> {
     let min_max = MinMaxScaler::fit(&data.as_view(), MinMaxScalerParams::default()).unwrap();
     let max_abs = MaxAbsScaler::fit(&data.as_view(), MaxAbsScalerParams).unwrap();
     let robust = RobustScaler::fit(&data.as_view(), RobustScalerParams::default()).unwrap();
+    // The width-changing seed. Its payload is four words and no per-feature
+    // block at all, which is a shape no other decoder in this table has, so a
+    // reader that assumed a trailing per-feature block would only be caught
+    // here.
+    let polynomial =
+        PolynomialFeatures::fit(&data.as_view(), PolynomialFeaturesParams::default()).unwrap();
     let transformed = standard.transform(&data.as_view()).unwrap();
 
     let pipeline_logistic = Pipeline::new(
@@ -1449,6 +1472,12 @@ fn seed_corpus() -> Vec<(&'static str, Vec<u8>)> {
         (
             "robust-scaler",
             robust
+                .to_artifact(INPUT_SCHEMA, TRANSFORMED_SCHEMA)
+                .unwrap(),
+        ),
+        (
+            "polynomial-features",
+            polynomial
                 .to_artifact(INPUT_SCHEMA, TRANSFORMED_SCHEMA)
                 .unwrap(),
         ),
@@ -3245,6 +3274,65 @@ fn corpus() -> Vec<Case> {
                 envelope(14, 2, &SCALER_ROLES, &component(1, 1, &state))
             },
         },
+        // The width-changing decoder. Its payload carries no per-feature block,
+        // so every one of its faults is in the header words or in what they
+        // *imply* — the expansion these four numbers describe is regenerated at
+        // decode rather than stored, which moves the whole class of "a stored
+        // derivation disagrees with the parameters beside it" out of existence
+        // and puts a width computation on the decode path instead.
+        Case {
+            name: "polynomial-features-degree-past-the-ceiling",
+            provenance: "fifty features at degree ten: 75 billion columns, refused at decode",
+            decoder: "polynomial-features",
+            expected: ArtifactError::InvalidPayload,
+            bytes: stated(46, &SCALER_ROLES, &words(&[50, 0, 1, 10, 50])),
+        },
+        Case {
+            name: "polynomial-features-empty-expansion",
+            provenance: "degree zero with the bias cleared, which describes no columns at all",
+            decoder: "polynomial-features",
+            expected: ArtifactError::InvalidPayload,
+            bytes: stated(46, &SCALER_ROLES, &words(&[3, 0, 0, 0, 3])),
+        },
+        Case {
+            name: "polynomial-features-flag-is-not-boolean",
+            provenance: "an interaction flag of 2, which no writer produces",
+            decoder: "polynomial-features",
+            expected: ArtifactError::InvalidPayload,
+            bytes: stated(46, &SCALER_ROLES, &words(&[3, 2, 1, 2, 3])),
+        },
+        Case {
+            name: "polynomial-features-width-disagrees-with-itself",
+            provenance: "the repeated feature count contradicting the first one",
+            decoder: "polynomial-features",
+            expected: ArtifactError::InvalidPayload,
+            bytes: stated(46, &SCALER_ROLES, &words(&[3, 0, 1, 2, 4])),
+        },
+        Case {
+            name: "polynomial-features-truncated-header",
+            provenance: "the repeated feature count missing entirely",
+            decoder: "polynomial-features",
+            expected: ArtifactError::Truncated,
+            bytes: stated(46, &SCALER_ROLES, &words(&[3, 0, 1, 2])),
+        },
+        Case {
+            name: "polynomial-features-trailing-bytes",
+            provenance: "a per-feature block behind a payload that has none",
+            decoder: "polynomial-features",
+            expected: ArtifactError::TrailingBytes,
+            bytes: stated(46, &SCALER_ROLES, &words(&[3, 0, 1, 2, 3, 0])),
+        },
+        Case {
+            name: "polynomial-features-inflated-width-past-the-artifact-bound",
+            provenance: "a feature count above the artifact ceiling, with no bytes behind it",
+            decoder: "polynomial-features",
+            expected: ArtifactError::InvalidPayload,
+            bytes: stated(
+                46,
+                &SCALER_ROLES,
+                &words(&[inflated + 1, 0, 1, 2, inflated + 1]),
+            ),
+        },
         Case {
             name: "robust-scaler-inflated-width",
             provenance: "same shape against the scaler carrying a parameter block",
@@ -4511,6 +4599,13 @@ fn corpus() -> Vec<Case> {
             bytes: elastic_net,
         },
         Case {
+            name: "control-fitted-polynomial-features",
+            provenance: "an unmodified fitted width-changing expansion, which must decode",
+            decoder: "polynomial-features",
+            expected: ArtifactError::InvalidPayload,
+            bytes: seed("polynomial-features"),
+        },
+        Case {
             name: "control-fitted-staged-forest",
             provenance: "an unmodified forest composition carrying estimator tag 4",
             decoder: "staged-forest",
@@ -4551,6 +4646,7 @@ const CONTROL_CASES: &[&str] = &[
     "control-fitted-staged-boosting",
     "control-fitted-lasso",
     "control-fitted-elastic-net",
+    "control-fitted-polynomial-features",
 ];
 
 // ---------------------------------------------------------------------------

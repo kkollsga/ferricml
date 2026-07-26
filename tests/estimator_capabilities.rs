@@ -36,7 +36,7 @@ use ferricml::linear_model::{
 use ferricml::pipeline::{Pipeline, StagedPipeline};
 use ferricml::preprocessing::{
     Binarizer, FunctionTransformer, MaxAbsScaler, MinMaxScaler, MinMaxScalerParams, Normalizer,
-    RobustScaler, StandardScaler, StandardScalerParams,
+    PolynomialFeatures, RobustScaler, StandardScaler, StandardScalerParams,
 };
 use ferricml::ranking::PairwiseLinearRanker;
 use ferricml::tree::{DecisionTreeClassifier, DecisionTreeRegressor};
@@ -101,6 +101,16 @@ fn the_robust_scaler_declares_persistence_but_not_weighted_fitting() {
     // form at all. Declaring weights would mean quietly fitting under a second
     // definition of the same statistic.
     assert_eq!(RobustScaler::CAPABILITIES, PERSISTED_ONLY);
+}
+
+#[test]
+fn the_polynomial_expansion_declares_persistence_but_not_weighted_fitting() {
+    // The expansion learns no statistic at all: it reads its batch's width and
+    // stores that beside its parameters. A per-sample weight moves statistics,
+    // so there is nothing here for one to move — this is the same "nothing to
+    // weight" as the stateless transformers below, arrived at from the other
+    // direction, and it still has fitted state worth persisting.
+    assert_eq!(PolynomialFeatures::CAPABILITIES, PERSISTED_ONLY);
 }
 
 #[test]

@@ -48,7 +48,8 @@ use ferricml::linear_model::{
 use ferricml::preprocessing::{
     Binarizer, BinarizerParams, FunctionTransformer, FunctionTransformerParams, MaxAbsScaler,
     MaxAbsScalerParams, MinMaxScaler, MinMaxScalerParams, Normalizer, NormalizerParams,
-    RobustScaler, RobustScalerParams, StandardScaler, StandardScalerParams,
+    PolynomialFeatures, PolynomialFeaturesParams, RobustScaler, RobustScalerParams, StandardScaler,
+    StandardScalerParams,
 };
 use ferricml::ranking::{
     PairIndex, PairOutcome, PairwiseError, PairwiseLinearRanker, PairwiseLinearRankerParams,
@@ -971,6 +972,32 @@ impl TransformerCase for RobustScalerCase {
     }
 }
 
+/// The width-changing case, and the only transformer in the battery whose
+/// output is not as wide as its input.
+///
+/// Registered at the default `Wide` fixture on purpose: a degree-two expansion
+/// of that shape is the smallest configuration where the battery's shape
+/// obligations — the transformed view's column count, the caller-owned path
+/// agreeing with the allocating one, the workspace handoff — are checked
+/// against a width the input does not already state.
+struct PolynomialFeaturesCase;
+
+impl TransformerCase for PolynomialFeaturesCase {
+    type Model = PolynomialFeatures;
+    const NAME: &'static str = "PolynomialFeatures";
+
+    fn fit(train: &Sample, _holdout: &Sample) -> Result<Self::Model, ModelError> {
+        PolynomialFeatures::fit(&train.view(), PolynomialFeaturesParams::default())
+    }
+
+    fn round_trip(model: &Self::Model) -> RoundTrip<Self::Model> {
+        round_trip(
+            || model.to_artifact(SCHEMA, TRANSFORMED_SCHEMA),
+            |bytes| PolynomialFeatures::from_artifact(bytes, SCHEMA, TRANSFORMED_SCHEMA),
+        )
+    }
+}
+
 /// Stateless, so it supplies no round-trip hook and must declare none.
 struct NormalizerCase;
 
@@ -1693,6 +1720,11 @@ fn max_abs_scaler_conforms() {
 #[test]
 fn robust_scaler_conforms() {
     check_transformer::<RobustScalerCase>();
+}
+
+#[test]
+fn polynomial_features_conforms() {
+    check_transformer::<PolynomialFeaturesCase>();
 }
 
 #[test]

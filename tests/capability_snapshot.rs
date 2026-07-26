@@ -58,8 +58,8 @@ use ferricml::ensemble::{
 use ferricml::linear_model::{ElasticNet, Lasso, LinearRegression, LogisticRegression, Ridge};
 use ferricml::pipeline::{Pipeline, StagedPipeline};
 use ferricml::preprocessing::{
-    Binarizer, FunctionTransformer, MaxAbsScaler, MinMaxScaler, Normalizer, RobustScaler,
-    StandardScaler,
+    Binarizer, FunctionTransformer, MaxAbsScaler, MinMaxScaler, Normalizer, PolynomialFeatures,
+    RobustScaler, StandardScaler,
 };
 use ferricml::ranking::PairwiseLinearRanker;
 use ferricml::tree::{DecisionTreeClassifier, DecisionTreeRegressor};
@@ -207,6 +207,10 @@ fn declarations() -> Vec<(&'static str, Capabilities)> {
         (
             "ferricml::preprocessing::Normalizer",
             Normalizer::CAPABILITIES,
+        ),
+        (
+            "ferricml::preprocessing::PolynomialFeatures",
+            PolynomialFeatures::CAPABILITIES,
         ),
         (
             "ferricml::preprocessing::RobustScaler",
