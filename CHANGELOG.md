@@ -812,6 +812,45 @@ and releases use [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- `calibration::PlattCalibrator::fit` no longer returns an unconverged Newton
+  iterate as a fitted calibrator. It was the last solver in the crate that did:
+  the loop `break`s when the largest parameter update falls to `tol` and
+  otherwise fell through to `Ok`, with only `n_iter` to say the tolerance was
+  never met, while every other iterative solver reports
+  `ModelError::SolverDidNotConverge`. **This is a breaking behaviour change on
+  degenerate calibration samples: a call that previously returned a model can
+  now return an error.** No fitted value moves — a fit that is returned has
+  exactly the parameters it had before, bit for bit.
+  <br>
+  Exhaustion by itself is *not* the new test, and making it the test would have
+  been a worse defect than the one it replaced. `tol` bounds a parameter update
+  in parameter units, and those units have no fixed scale. A calibration sample
+  whose scores are nearly equal identifies its slope only through their spread,
+  so a spread of `1e-6` puts the maximum-likelihood slope near `1e6`; the two-
+  parameter Newton determinant is then a difference of nearly equal products
+  that keeps a median of two significant digits, and the computed step inherits
+  a rounding floor of roughly the parameter magnitude times that lost precision.
+  Measured on the reported sample the floor is `1.9e-5` and does not move after
+  100,000 iterations, while the gradient at that point is `4.6e-12` and the
+  objective is at its minimum to the last bit. Over 7,725 sampled fits from that
+  region, *every one* of the exhausted iterates was at the minimum — worst
+  objective gap `5.1e-9` — so refusing on exhaustion alone would have converted
+  the whole region into spurious errors.
+  <br>
+  The acceptance test at exhaustion is therefore a quantity that does not change
+  with the parameter scale: the Newton decrement, the last step's inner product
+  with the gradient it was computed from, which is twice the objective's own
+  estimate of the distance above the minimum. It accepts all 7,725; a
+  scale-relative step test accepts 7,627 and, applied as the loop's stopping
+  rule instead, moves 24 of 166,925 fits that converge today, which is why the
+  loop's own rule is untouched. `PlattCalibrator::n_iter` may therefore equal
+  `max_iter` on a returned fit, and when it does the fit is at the minimum
+  rather than merely the last thing tried.
+  <br>
+  Two tests pin the rule from both sides over a generated near-constant-score
+  region rather than one fixture: refusing on plain exhaustion fails the one
+  that watches the region fit, and an acceptance that never refuses fails the
+  one that starves the same region of iterations.
 - The artifact fuzz sweep's reach floors now detect their own mutator dying.
   They previously could not: with the mutator completely disabled three of the
   four floors still passed, and with nine of ten mutation strategies disabled

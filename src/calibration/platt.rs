@@ -3,7 +3,7 @@
 use crate::api::ModelError;
 use crate::data::BinaryTargets;
 use crate::loss::{BinaryLogLoss, accumulate_newton_row, raw_score};
-use crate::numeric::sigmoid_f32;
+use crate::numeric::{sigmoid_f32, sum_in_order};
 
 use super::Calibrator;
 
@@ -32,6 +32,10 @@ impl PlattParams {
     }
 
     /// Sets the convergence tolerance on the largest parameter update.
+    ///
+    /// This is an *absolute* bound, and the parameters it bounds have no fixed
+    /// scale, so it is not the only thing [`PlattCalibrator::fit`] consults
+    /// before it accepts an iterate; see that method's convergence section.
     #[must_use]
     pub fn with_tol(mut self, tol: f32) -> Self {
         self.tol = tol;
@@ -120,6 +124,43 @@ impl PlattCalibrator {
     /// Both labels must be observed. A single-class calibration sample gives
     /// the objective no slope to identify and is
     /// [`ModelError::RequiresTwoClasses`].
+    ///
+    /// # Convergence
+    ///
+    /// The iteration stops as soon as the largest parameter update falls to
+    /// `tol`. Exhausting `max_iter` without an iterate that is *at the
+    /// minimum* is [`ModelError::SolverDidNotConverge`], never a returned last
+    /// iterate — the rule the rest of the crate follows.
+    ///
+    /// Exhaustion by itself is not that test, though, and making it the test
+    /// would reject fits that are correct. `tol` bounds a parameter update in
+    /// parameter units, and those units have no fixed scale. A calibration
+    /// sample whose scores are nearly equal identifies its slope only through
+    /// their spread, so a spread of `1e-6` puts the maximum-likelihood slope
+    /// near `1e6`; the Newton system's determinant is then a difference of two
+    /// nearly equal products and keeps only a couple of significant digits, and
+    /// the computed step inherits a rounding floor of roughly the parameter
+    /// magnitude times that lost precision. Measured on such a sample the floor
+    /// sits near `2e-5` and does not move after a hundred thousand iterations,
+    /// so an absolute `tol` of `1e-6` is unreachable however long the solver
+    /// runs — while the gradient at that same point is around `1e-12` and the
+    /// objective is at its minimum to the last bit. Reporting those as failures
+    /// would turn working fits into errors.
+    ///
+    /// So the acceptance test at exhaustion is a quantity that does not change
+    /// with the parameter scale: the Newton decrement, the last step's inner
+    /// product with the gradient it was computed from, which is twice the
+    /// objective's own estimate of how far above the minimum the iterate sits.
+    /// An exhausted budget is accepted when that estimate is within `tol` and
+    /// reported otherwise. [`n_iter`](Self::n_iter) can therefore equal
+    /// `max_iter` on a returned fit, and when it does the fit is at the
+    /// minimum rather than merely the last thing tried.
+    ///
+    /// A fit that reaches such a slope is at the minimum *as solved*, which is
+    /// a separate question from how well two `f32` fields represent it: the map
+    /// is stored as `slope` and `intercept` whose product very nearly cancels,
+    /// and single precision loses accuracy there that no convergence test can
+    /// recover. Reading [`slope`](Self::slope) is the way to notice.
     pub fn fit(
         scores: &[f32],
         targets: &BinaryTargets,
@@ -144,6 +185,11 @@ impl PlattCalibrator {
         let mut gradient = [0.0_f64; PARAMETERS];
         let mut hessian = [0.0_f64; PARAMETERS * PARAMETERS];
         let mut iterations = 0;
+        let mut converged = false;
+        // Refuse by default: only a step the loop actually took can certify an
+        // exhausted budget, and `validate_params` has already guaranteed the
+        // loop below runs at least once.
+        let mut decrement = f64::INFINITY;
         for iteration in 0..params.max_iter {
             gradient.fill(0.0);
             hessian.fill(0.0);
@@ -164,13 +210,23 @@ impl PlattCalibrator {
             let max_update = update
                 .iter()
                 .fold(0.0_f64, |max, value| max.max(value.abs()));
+            decrement = newton_decrement(&gradient, &update);
             for (value, step) in theta.iter_mut().zip(update) {
                 *value -= step;
             }
             iterations = iteration + 1;
             if max_update <= f64::from(params.tol) {
+                converged = true;
                 break;
             }
+        }
+        // The scale-free second chance, applied only where the absolute test
+        // has already failed, so an accepted fit keeps exactly the parameters
+        // it has always had. A non-finite decrement certifies nothing and is
+        // refused by the comparison rather than by a separate branch.
+        let certified = decrement <= f64::from(params.tol);
+        if !converged && !certified {
+            return Err(ModelError::SolverDidNotConverge { iterations });
         }
 
         let slope = theta[0] as f32;
@@ -230,6 +286,10 @@ impl PlattCalibrator {
     }
 
     /// Returns the number of Newton iterations performed.
+    ///
+    /// Equality with `max_iter` is not a warning sign on a returned fit: see
+    /// [`fit`](Self::fit), which reports an exhausted budget rather than
+    /// returning it unless the iterate is at the minimum.
     pub const fn n_iter(&self) -> usize {
         self.iterations
     }
@@ -255,6 +315,25 @@ fn validate_params(params: &PlattParams) -> Result<(), ModelError> {
         return Err(ModelError::InvalidTolerance);
     }
     Ok(())
+}
+
+/// The Newton decrement at the point the given step was computed from.
+///
+/// The step solves `H step = gradient`, so `gradient . step` is
+/// `gradient^T H^-1 gradient`: a non-negative number that is zero exactly at a
+/// stationary point, and that approximates twice the objective's distance
+/// above its minimum wherever the quadratic model holds. It is *affine
+/// invariant* — rescaling the score column rescales the gradient and the step
+/// inversely and leaves the product alone — which is what makes it usable as
+/// an acceptance test on a problem whose parameters can reach `1e6`, where the
+/// step size alone cannot be compared against a fixed number.
+fn newton_decrement(gradient: &[f64; PARAMETERS], update: &[f64; PARAMETERS]) -> f64 {
+    sum_in_order(
+        gradient
+            .iter()
+            .zip(update)
+            .map(|(&gradient, &step)| gradient * step),
+    )
 }
 
 /// Solves the symmetric two-parameter Newton system by its closed form.
@@ -537,6 +616,246 @@ mod tests {
             PlattCalibrator::fit(&scores, &targets, PlattParams::default()),
             Err(ModelError::LinearSolveFailed)
         );
+    }
+
+    /// The same objective's minimizer, reached the well-conditioned way.
+    ///
+    /// Centring and scaling the score column is an affine reparametrization,
+    /// so it does not change the model — it changes only the arithmetic the
+    /// solve runs through. In those coordinates the design column has unit
+    /// spread, the Newton determinant is a difference of well-separated
+    /// products rather than of nearly equal ones, and the iteration reaches
+    /// full double precision in single-digit steps. Mapping the answer back is
+    /// exact algebra. That makes this an independent check on the shipped
+    /// solver rather than a re-run of it.
+    fn conditioned_minimizer(scores: &[f32], targets: &[f64]) -> (f64, f64) {
+        let rows = scores.len() as f64;
+        let mean = scores.iter().map(|&s| f64::from(s)).sum::<f64>() / rows;
+        let variance = scores
+            .iter()
+            .map(|&s| (f64::from(s) - mean).powi(2))
+            .sum::<f64>()
+            / rows;
+        let scale = variance.sqrt();
+        assert!(scale > 0.0, "a constant column has no conditioned form");
+        let centred: Vec<f64> = scores
+            .iter()
+            .map(|&s| (f64::from(s) - mean) / scale)
+            .collect();
+        let mut theta = [0.0_f64; PARAMETERS];
+        for _ in 0..100 {
+            let mut gradient = [0.0_f64; PARAMETERS];
+            let mut hessian = [0.0_f64; PARAMETERS * PARAMETERS];
+            for (&value, &target) in centred.iter().zip(targets) {
+                let design_row = [value, 1.0];
+                let raw = raw_score(&theta, &design_row, 1, Some(1));
+                accumulate_newton_row::<BinaryLogLoss>(
+                    &design_row,
+                    raw,
+                    target,
+                    1.0,
+                    &mut gradient,
+                    &mut hessian,
+                );
+            }
+            let update = solve_symmetric_2x2(&hessian, &gradient).expect("conditioned solve");
+            for (value, step) in theta.iter_mut().zip(update) {
+                *value -= step;
+            }
+            let largest = update.iter().fold(0.0_f64, |max, v| max.max(v.abs()));
+            if largest <= 1.0e-14 * theta.iter().fold(1.0_f64, |max, v| max.max(v.abs())) {
+                break;
+            }
+        }
+        (theta[0] / scale, theta[1] - theta[0] * mean / scale)
+    }
+
+    /// The near-miss neighbourhood of the exactly singular case above.
+    ///
+    /// `a_constant_score_column_is_reported_instead_of_solved` covers a column
+    /// with no spread at all. This is the region just outside it: a spread
+    /// small enough that the fitted slope runs to `1e5`–`1e7` and the Newton
+    /// system's determinant loses most of its significant digits, but large
+    /// enough that the determinant is still positive and the solve proceeds.
+    /// Every case is generated, not listed, because a single fixture stops
+    /// covering the region as soon as the boundary moves.
+    fn near_constant_neighbourhood() -> Vec<(Vec<f32>, BinaryTargets)> {
+        let mut state = 0x0517_2026_0726_0001_u64;
+        let mut next = move || {
+            state = state
+                .wrapping_mul(6_364_136_223_846_793_005)
+                .wrapping_add(1_442_695_040_888_963_407);
+            (state >> 33) as u32
+        };
+        let mut cases = Vec::new();
+        for base in [0.5_f64, 0.0, -3.0, 10.0] {
+            for exponent in 4..=8_i32 {
+                let spread = 10.0_f64.powi(-exponent);
+                for rows in [4_usize, 5, 7, 9, 13, 16] {
+                    for _ in 0..4 {
+                        let scores: Vec<f32> = (0..rows)
+                            .map(|_| {
+                                let unit = f64::from(next()) / f64::from(1_u32 << 31) / 2.0;
+                                (base + spread * (unit - 0.5)) as f32
+                            })
+                            .collect();
+                        let mut labels: Vec<u8> = (0..rows).map(|_| (next() & 1) as u8).collect();
+                        // Both classes have to be present or the sample is
+                        // `RequiresTwoClasses` before the solver is reached.
+                        labels[0] = 1;
+                        labels[rows - 1] = 0;
+                        cases.push((scores, BinaryTargets::new(labels).unwrap()));
+                    }
+                }
+            }
+        }
+        cases
+    }
+
+    /// A fit that is at the minimum is returned even though its budget ran out.
+    ///
+    /// This is the half of the contract that is easy to break by "fixing" the
+    /// other half. The absolute tolerance on the largest parameter update is
+    /// unreachable at this parameter scale — the step's own rounding floor is
+    /// above it — so every one of these samples exhausts `max_iter` while
+    /// sitting exactly on the minimum. Refusing on exhaustion alone would turn
+    /// all of them into errors.
+    ///
+    /// The count of exhausted fits is asserted, not merely reported: if the
+    /// region stopped exhausting `max_iter`, the assertion above it would hold
+    /// for the empty reason and prove nothing. As generated the region yields
+    /// 336 fits and 144 collapsed-curvature refusals, and 127 of the fits —
+    /// over a third — exhaust the budget, against a floor of one quarter.
+    #[test]
+    fn a_near_constant_score_column_that_reaches_its_minimum_is_fitted_not_refused() {
+        let cases = near_constant_neighbourhood();
+        let mut fitted = 0_usize;
+        let mut exhausted = 0_usize;
+        let mut singular = 0_usize;
+        for (index, (scores, targets)) in cases.iter().enumerate() {
+            match PlattCalibrator::fit(scores, targets, PlattParams::default()) {
+                Ok(fit) => {
+                    fitted += 1;
+                    if fit.n_iter() == fit.get_params().max_iter() {
+                        exhausted += 1;
+                    }
+                    assert!(
+                        fit.slope().is_finite() && fit.intercept().is_finite(),
+                        "case {index} fitted a non-finite map: {scores:?}"
+                    );
+                }
+                // The curvature genuinely collapsed; that is the neighbouring
+                // contract and it is not what this test is about.
+                Err(ModelError::LinearSolveFailed) => singular += 1,
+                Err(other) => panic!("case {index} was refused with {other:?}: {scores:?}"),
+            }
+        }
+        assert_eq!(fitted + singular, cases.len());
+        assert!(
+            exhausted * 4 >= fitted,
+            "only {exhausted} of {fitted} fits exhausted max_iter, so this region no \
+             longer exercises the acceptance path at all"
+        );
+    }
+
+    /// And the acceptance is a test rather than a rubber stamp.
+    ///
+    /// The same region, starved of iterations. Every sample here is one the
+    /// previous test watched being accepted at the default budget, so an
+    /// acceptance rule that always said yes would pass that test and fail this
+    /// one — and refusing on plain exhaustion would pass this one and fail
+    /// that one. Neither test alone constrains the rule; together they pin it
+    /// from both sides.
+    ///
+    /// 334 of the 336 are refused. The floor is nine tenths rather than all of
+    /// them because a handful of these samples really do land on the minimum in
+    /// one step, and refusing *those* would be the same mistake in the other
+    /// direction.
+    #[test]
+    fn the_same_region_is_refused_when_the_budget_really_is_too_short() {
+        let cases = near_constant_neighbourhood();
+        let mut reachable = 0_usize;
+        let mut refused = 0_usize;
+        for (scores, targets) in &cases {
+            if PlattCalibrator::fit(scores, targets, PlattParams::default()).is_err() {
+                continue;
+            }
+            reachable += 1;
+            if let Err(error) =
+                PlattCalibrator::fit(scores, targets, PlattParams::default().with_max_iter(1))
+            {
+                assert_eq!(error, ModelError::SolverDidNotConverge { iterations: 1 });
+                refused += 1;
+            }
+        }
+        assert!(reachable > 0, "the region produced no fits to starve");
+        assert!(
+            refused * 10 >= reachable * 9,
+            "only {refused} of {reachable} single-iteration fits were refused; an \
+             acceptance rule this permissive would accept anything"
+        );
+    }
+
+    /// A well-conditioned sample, starved, reports the exact error.
+    ///
+    /// The rate above says the rule discriminates; this says what it reports
+    /// when it does, on a sample with none of the neighbourhood's conditioning
+    /// trouble, and that the same sample fits when given its budget.
+    #[test]
+    fn an_exhausted_budget_reports_the_iterations_it_spent() {
+        let (scores, targets) = sample();
+        for budget in [1_usize, 2] {
+            assert_eq!(
+                PlattCalibrator::fit(
+                    &scores,
+                    &targets,
+                    PlattParams::default().with_max_iter(budget)
+                ),
+                Err(ModelError::SolverDidNotConverge { iterations: budget })
+            );
+        }
+        let fitted = PlattCalibrator::fit(&scores, &targets, PlattParams::default())
+            .expect("the same sample fits with its default budget");
+        assert!(fitted.n_iter() < fitted.get_params().max_iter());
+    }
+
+    /// The filed reproduction, pinned to the exact parameters it has always
+    /// produced.
+    ///
+    /// Accepting an exhausted budget was the whole point of the acceptance
+    /// test, and the reason it is applied *after* the loop rather than as the
+    /// loop's own stopping rule is that a scale-relative stopping rule stops
+    /// earlier and returns different bits. Measured over 166,925 fits that
+    /// converge today, breaking on `max|step| <= tol * max(1, max|theta|)`
+    /// moved 24 of them. This test is what refuses that trade: it fails if the
+    /// loop's stopping rule is loosened, and it fails if the acceptance is
+    /// removed.
+    #[test]
+    fn the_reported_near_constant_case_fits_the_parameters_it_always_did() {
+        let scores = [0.4999987_f32, 0.49999943, 0.50000125, 0.50000066];
+        let targets = BinaryTargets::new(vec![1, 1, 0, 0]).unwrap();
+        let fitted = PlattCalibrator::fit(&scores, &targets, PlattParams::default())
+            .expect("a converged iterate whose step floor is above tol is still a fit");
+        assert_eq!(fitted.n_iter(), 100);
+        assert_eq!(fitted.slope().to_bits(), (-1_055_545.6_f32).to_bits());
+        assert_eq!(fitted.intercept().to_bits(), 527_772.8_f32.to_bits());
+
+        // And those parameters are the maximum-likelihood answer, established
+        // independently: the same objective solved in centred and scaled score
+        // coordinates, where the determinant does not cancel and the iteration
+        // converges in single digits, agrees with the accepted fit to the last
+        // bit of both fields.
+        //
+        // A finite difference cannot make this point and must not be
+        // substituted for it. At a parameter of `1e6` even a *relative* step of
+        // `1e-6` moves the raw scores by more than single precision can
+        // represent in `slope * score + intercept`, so a difference quotient
+        // here measures the storage, not the solve — which is exactly how this
+        // fit was first mistaken for a non-stationary one.
+        let corrected = corrected_targets(&targets);
+        let (slope, intercept) = conditioned_minimizer(&scores, &corrected);
+        assert_eq!(fitted.slope().to_bits(), (slope as f32).to_bits());
+        assert_eq!(fitted.intercept().to_bits(), (intercept as f32).to_bits());
     }
 
     #[test]
