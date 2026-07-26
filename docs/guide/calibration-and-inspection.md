@@ -165,8 +165,10 @@ Four things about that composition are decisions rather than accidents:
   answer.
 - **Capabilities are declared per calibrator, not inherited.** The composition
   owns already-fitted parts, so weighted fitting, persistence and multiclass
-  fitting are declared away structurally — while a Platt composition genuinely
-  gains a `decision_function` the wrapped model may never have had.
+  fitting are declared away structurally. Both calibrators declare
+  probabilities — producing a calibrated probability is what the wrapper is
+  for — and a Platt composition additionally gains a `decision_function` the
+  wrapped model may never have had.
 
 ## Permutation importance: what the model uses
 

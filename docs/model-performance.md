@@ -51,8 +51,12 @@ was therefore met without a performance-specific implementation change.
 
 The same run measured 64x7 caller-owned prediction at 6.27 microseconds for 32
 rows and 279 microseconds for 1,024 rows, and fitting at 77.7 milliseconds.
-Machine-readable results and raw Criterion output remain in the local
-`dev-docs/bench/results/` and `dev-docs/bench/out/` lifecycle tiers.
+Two artefacts back those numbers, and both are maintainer-side development
+evidence rather than shipped content: a machine-readable result record naming
+the runner, toolchain and measurement configuration, which is what
+`make bench-history` compares a later release against, and the raw Criterion
+measurement tree it was summarised from. Neither is packaged with the crate,
+and neither is required to build or test it.
 
 ## Compatible history
 

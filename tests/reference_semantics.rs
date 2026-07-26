@@ -588,13 +588,32 @@ fn joint_multinomial_logistic_matches_frozen_reference_outputs() {
     }
     // And probability rows sum to one only within the frozen tolerance; the
     // contract is explicitly not exact summation.
-    for row in probabilities.chunks_exact(3) {
+    let train_probabilities = model.predict_proba(&train.as_view()).unwrap();
+    let mut inexact = 0;
+    for row in probabilities
+        .chunks_exact(3)
+        .chain(train_probabilities.chunks_exact(3))
+    {
         let sum = row.iter().sum::<f32>();
         assert!(
             (sum - 1.0).abs() <= 3.0 * f32::EPSILON,
             "row {row:?} sums to {sum}"
         );
+        inexact += usize::from(sum != 1.0);
     }
+    // The other half of the recorded divergence, and the half the tolerance
+    // above cannot state: rows are **not renormalised**. A renormalising
+    // implementation satisfies every assertion so far — it lands exactly on
+    // 1.0, which is well inside the tolerance — so without this the divergence
+    // could become silently false. The probe widens to the training rows
+    // purely to give the property enough rows to show on; both matrices are
+    // existing fixtures.
+    assert!(
+        inexact > 0,
+        "every probability row summed to exactly 1.0, which is what \
+         renormalising would produce; the divergence records that FerricML \
+         does not renormalise"
+    );
 }
 
 #[test]

@@ -51,9 +51,9 @@ grower, and only the objective evaluates a transcendental. Its fitted bytes are
 does and does not still guarantee.
 
 **Tier 3 — per runner only.** Wall-clock timings, throughput, and every
-`dev-docs/bench/` number. These are a property of one registered machine and
-are never compared across runners; the performance protocol in `CLAUDE.md` owns
-them. Nothing in tier 3 is part of the artifact contract.
+benchmark number FerricML records. These are a property of one registered
+machine and are never compared across runners; the project's performance
+protocol owns them. Nothing in tier 3 is part of the artifact contract.
 
 ## Why tier 1 holds
 

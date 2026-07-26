@@ -135,8 +135,14 @@ impl HasParams for DummyRegressor {
     }
 }
 
-/// Declares nothing: a baseline is refitted rather than persisted, and has no
-/// weighted entry point.
+/// Declares nothing, and that is the complete and intended declaration.
+///
+/// The same sentence above `DummyClassifier` was a defect, because that
+/// estimator does produce probabilities; the wording is kept here deliberately
+/// rather than left looking like the correction was missed. `DummyRegressor`
+/// predicts a scalar and has no probability to declare, its baseline is
+/// refitted rather than persisted, and it has no weighted entry point — so
+/// every capability in the vocabulary is genuinely absent.
 impl HasCapabilities for DummyRegressor {
     const CAPABILITIES: Capabilities = Capabilities::NONE;
 }
