@@ -73,16 +73,46 @@ impl<'a> MatrixView<'a> {
         })
     }
 
-    /// Builds a view over storage whose shape and values were already
-    /// validated by a crate-owned producer.
+    /// Builds a view over storage a crate-owned producer has just written and
+    /// proved finite.
+    ///
+    /// # Obligation
+    ///
+    /// This is the crate's only way to reach a `MatrixView` without paying for
+    /// [`MatrixView::new`]'s scan, so it carries the whole finiteness
+    /// guarantee that every estimator relies on. It must therefore be called
+    /// *by* the loop that established the guarantee, never by a caller that
+    /// believes some earlier code established it — the difference is what
+    /// makes the invariant structural rather than conventional.
+    ///
+    /// The shape half of the invariant is asserted in every build: it is O(1),
+    /// and a view whose declared shape disagrees with its buffer hands out
+    /// wrong rows silently rather than failing. The finiteness half stays a
+    /// `debug_assert!` because it is O(rows × columns) and would repeat, in
+    /// full, the scan the caller directly above it has just completed.
     pub(crate) fn from_validated_parts(values: &'a [f32], rows: usize, columns: usize) -> Self {
-        debug_assert_eq!(values.len(), rows.saturating_mul(columns));
+        assert!(rows != 0 && columns != 0, "validated matrix shape is empty");
+        assert_eq!(
+            values.len(),
+            rows.saturating_mul(columns),
+            "validated matrix shape does not describe its buffer"
+        );
         debug_assert!(values.iter().all(|value| value.is_finite()));
         Self {
             values,
             rows,
             columns,
         }
+    }
+
+    /// Copies this view into an owned matrix without revalidating it.
+    ///
+    /// The values come from a `MatrixView`, so the owned matrix inherits the
+    /// view's construction-time guarantees instead of restating them. This is
+    /// how an allocating entry point turns a borrowed result into an owned one
+    /// without having to trust whoever filled the underlying buffer.
+    pub(crate) fn to_dense(self) -> DenseMatrix {
+        DenseMatrix::from_validated_parts(self.values.to_vec(), self.rows, self.columns)
     }
 
     /// Returns the number of rows.
@@ -196,10 +226,19 @@ impl DenseMatrix {
     /// Builds an owned matrix from storage already validated through a
     /// [`MatrixView`].
     ///
-    /// This is crate-private so safe external transformer implementations must
-    /// still validate their output before returning it.
+    /// Carries the same obligation as
+    /// [`MatrixView::from_validated_parts`], enforced the same way: the shape
+    /// in every build because it is O(1), the finiteness in debug builds
+    /// because repeating it would cost a second full pass over data a caller
+    /// has already proved finite.
     pub(crate) fn from_validated_parts(values: Vec<f32>, rows: usize, columns: usize) -> Self {
-        debug_assert_eq!(values.len(), rows.saturating_mul(columns));
+        assert!(rows != 0 && columns != 0, "validated matrix shape is empty");
+        assert_eq!(
+            values.len(),
+            rows.saturating_mul(columns),
+            "validated matrix shape does not describe its buffer"
+        );
+        debug_assert!(values.iter().all(|value| value.is_finite()));
         Self {
             values,
             rows,

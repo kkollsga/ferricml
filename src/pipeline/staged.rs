@@ -149,9 +149,7 @@ where
         }
         let mut workspace = vec![0.0; self.workspace_len(data.rows())?];
         let transformed = self.stages.transform_into(data, &mut workspace)?;
-        let (rows, columns) = (transformed.rows(), transformed.columns());
-        let values = transformed.as_slice().to_vec();
-        Ok(DenseMatrix::from_validated_parts(values, rows, columns))
+        Ok(transformed.to_dense())
     }
 
     /// Runs an operation on a fully transformed batch without allocating or
