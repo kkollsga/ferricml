@@ -43,6 +43,40 @@ jobs:
       - name: Diff exact public API surface
         run: make api-check
 
+  msrv:
+    name: Minimum supported Rust version
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+      # Read the floor out of Cargo.toml rather than repeating it here. A lane
+      # with its own hardcoded copy of the version passes happily after someone
+      # raises `rust-version`, which is the one thing it exists to catch.
+      - name: Resolve the declared floor
+        id: floor
+        run: |
+          set -euo pipefail
+          version="$(cargo metadata --locked --format-version 1 --no-deps \
+            | python3 -c 'import json,sys; print(json.load(sys.stdin)["packages"][0]["rust_version"])')"
+          if [ -z "$version" ] || [ "$version" = "None" ]; then
+            echo "ferricml declares no rust-version; the floor is unguarded" >&2
+            exit 1
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "Declared MSRV: $version"
+      - name: Install the declared floor
+        run: rustup toolchain install "${{ steps.floor.outputs.version }}" --profile minimal
+      # Build and test only. Clippy and rustfmt are deliberately absent: their
+      # output moves between releases independently of what a consumer can
+      # compile, so linting here would pin the floor to whichever toolchain the
+      # lints happen to like. `make gate-full` on the `rust` job owns lint.
+      - name: Build and test on the declared floor
+        run: |
+          set -euo pipefail
+          toolchain="${{ steps.floor.outputs.version }}"
+          cargo "+$toolchain" build --locked --all-targets
+          cargo "+$toolchain" test --locked
+
   reference-contract:
     name: Frozen reference semantics
     runs-on: ubuntu-latest

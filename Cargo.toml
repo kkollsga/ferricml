@@ -2,6 +2,32 @@
 name = "ferricml"
 version = "0.2.0"
 edition = "2024"
+# Measured rather than assumed, on 2026-07-26, against this committed
+# `Cargo.lock`. Both halves of the floor were located by installing the
+# candidate toolchains and building:
+#
+#   1.85 / 1.86  Cargo refuses to resolve: `nalgebra 0.34.2` declares
+#                `rust-version = "1.87.0"`, the highest in the locked graph.
+#   1.87         Resolves, then fails to compile the crate's own source with 16
+#                instances of `error[E0658]: let expressions in this position
+#                are unstable`, over 15 sites in `src/tree`, `src/linear_model`,
+#                `src/ensemble`, and `src/preprocessing`. `let` chains
+#                stabilized in 1.88 on edition 2024, so the crate's source is
+#                what sets the floor, not the dependency graph.
+#   1.88         Builds and passes the full default test suite.
+#
+# `1.85` — the first toolchain carrying `edition = "2024"` at all — is therefore
+# the floor this crate *could* have had, not the floor it has. The
+# `msrv` CI lane in `.github/workflows/ci.yml` builds and tests on exactly this
+# version so raising it has to be a decision rather than an accident.
+#
+# Build and test agree on 1.88; clippy does not, and the lane deliberately does
+# not run it. `clippy::nonminimal_bool` reports
+# `src/preprocessing/robust_scaler/mod.rs:103` on 1.88, 1.90 and 1.92 and stops
+# reporting it on 1.97. Lint output is not a compatibility contract, and pinning
+# the floor to whichever clippy is quietest would raise the version a consumer
+# needs for no reason a consumer can observe.
+rust-version = "1.88"
 description = "A lean, pure-Rust toolkit for classical machine learning"
 license = "MIT"
 repository = "https://github.com/kkollsga/ferricml"
