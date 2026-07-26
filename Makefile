@@ -80,6 +80,14 @@ semver-check:
 ## rebuilds the crate once per mutant — so it sits with the other named heavy
 ## entry points. Surviving mutants land in dev-docs/temp/mutants/mutants.out/,
 ## and are a hypothesis list rather than a defect list: rank them before acting.
+##
+## Runs from the primary checkout as well as from a worktree. It did not until
+## 2026-07-26: cargo-mutants copies the tree per build job and does not honour
+## .gitignore by default, so the copy pulled in gitignored local experiment
+## inputs and died with ENOSPC wherever those exist. `.cargo/mutants.toml`
+## settles that; see its comment. Do not replace it with an instruction to run
+## the command somewhere else — a measurement whose procedure depends on which
+## checkout you happened to be standing in does not reproduce.
 mutants:
 	@command -v cargo-mutants >/dev/null || { \
 		echo "cargo-mutants is not installed; run \`cargo install cargo-mutants --locked\`" >&2; \
