@@ -42,10 +42,33 @@ gate:
 
 ## Complete Rust gate. Public API, reference, and performance checks remain
 ## separately named because they require pinned tools or reference environments.
+##
+## Rustdoc runs twice, over the published surface and then over the private one.
+## The second form is not decoration: it was never run by any gate, and on
+## 2026-07-26 it reported seven intra-doc issues — one genuinely broken link and
+## six redundant explicit targets — that had accumulated unnoticed in
+## `optimize`, `api/any`, `model_selection`, `pipeline` and `preprocessing`. The
+## crate had already learnt this lesson on the public form: four broken links
+## naming a method set and a variant that never existed sat in `src/` for a day
+## because nothing denied rustdoc warnings, and the answer was to run the check
+## rather than to ask people to remember. Private items are what a contributor
+## reads to change the crate, so a rotted link there costs the same reading time
+## as a public one.
+##
+## Both forms run because neither is a superset in the direction that matters.
+## Measured, rather than assumed: a public item linking to a private one is
+## reported by *both* — so `private_intra_doc_links` is not the difference — but
+## the public form documents no private item and therefore cannot see a link
+## *inside* one, which is exactly where all seven of the above lived. Keeping the
+## published form as its own invocation also keeps a failure attributable: a
+## warning that only the private form reports is a contributor-facing defect,
+## and one both report is a reader-facing one.
 gate-full: gate
 	cargo clippy --locked --all-features --all-targets -- -D warnings
 	cargo test --locked --all-features
 	RUSTDOCFLAGS="-D warnings" cargo doc --locked --no-deps --all-features
+	RUSTDOCFLAGS="-D warnings" cargo doc --locked --no-deps --all-features \
+		--document-private-items
 
 ## Compare the public Rust surface with its exact snapshot. The profile records
 ## derived impls, so dropping a derive from a public type fails here; the

@@ -175,7 +175,7 @@ impl FunctionTransformerParams {
 /// ```
 ///
 /// The map is **elementwise**. A transformation that must read a whole row or
-/// column is expressed by implementing [`Transformer`](crate::api::Transformer)
+/// column is expressed by implementing [`Transformer`]
 /// directly, which is the honest way to say the transformation is the caller's.
 #[derive(Clone, Copy, Debug)]
 pub struct FunctionTransformer {

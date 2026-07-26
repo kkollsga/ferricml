@@ -59,7 +59,7 @@ pub(super) const MAX_NEWTON_PARAMETERS: usize = 2_048;
 /// Largest stacked system the matrix-free multinomial fit will accept.
 ///
 /// The same 32 MiB storage budget, applied to what
-/// [`LogisticSolver::Lbfgs`](super::LogisticSolver::Lbfgs) actually allocates.
+/// [`LogisticSolver::Lbfgs`] actually allocates.
 /// Its workspace is `4 + 2 * memory` `f64` per parameter — four working vectors
 /// plus one iterate difference and one gradient difference per stored
 /// correction pair — which is 20 `f64`, or 160 bytes, at the default memory.

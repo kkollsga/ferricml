@@ -11,7 +11,7 @@
 //! The stack trait below is the composition contract, so it lives with the
 //! composition. The per-type persistence contracts it builds on —
 //! [`ModelArtifact`](crate::artifact::ModelArtifact) and
-//! [`StageArtifact`](crate::artifact::StageArtifact) — live in
+//! [`StageArtifact`] — live in
 //! [`crate::artifact`], because a fitted type persists whether or not it is
 //! ever composed.
 

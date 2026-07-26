@@ -116,7 +116,7 @@ impl AnyClassifier {
     ///
     /// **This is deliberately fallible, and `AnyClassifier` deliberately does
     /// not implement
-    /// [`ProbabilisticClassifier`](crate::api::ProbabilisticClassifier).**
+    /// [`ProbabilisticClassifier`].**
     ///
     /// Runtime dispatch is the one place in the crate where the concrete type
     /// is erased by construction, so it is the one place a probability
@@ -288,7 +288,7 @@ impl Estimator for AnyClassifier {
 /// the capability snapshot and **not** a breaking change — precisely because
 /// this type answers the probability question through
 /// [`AnyClassifier::as_probabilistic`] rather than by implementing
-/// [`ProbabilisticClassifier`](crate::api::ProbabilisticClassifier).
+/// [`ProbabilisticClassifier`].
 impl HasCapabilities for AnyClassifier {
     const CAPABILITIES: Capabilities = RandomForestClassifier::CAPABILITIES
         .intersection(LogisticRegression::CAPABILITIES)
