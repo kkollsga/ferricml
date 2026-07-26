@@ -71,6 +71,28 @@ impl PlattParams {
 /// The per-sample objective accepts a fractional target unchanged, because it
 /// is written in raw-score space as `softplus(raw) - target * raw`; nothing
 /// about it assumed an integral label.
+///
+/// ```
+/// use ferricml::calibration::{Calibrator, PlattCalibrator, PlattParams};
+/// use ferricml::data::BinaryTargets;
+///
+/// // Scores that separate the classes perfectly. With raw labels this
+/// // problem has no finite maximum-likelihood solution; Platt's
+/// // prior-corrected targets are what keep the fit finite.
+/// let scores = [-3.0_f32, -2.0, -1.0, 1.0, 2.0, 3.0];
+/// let labels = BinaryTargets::new(vec![0, 0, 0, 1, 1, 1])?;
+///
+/// let calibrator = PlattCalibrator::fit(&scores, &labels, PlattParams::default())?;
+///
+/// // A probability, never the exact certainty calibration exists to remove.
+/// let high = calibrator.calibrate(3.0);
+/// assert!(high > 0.5 && high < 1.0);
+/// assert!(calibrator.calibrate(-3.0) < 0.5);
+///
+/// // The map is monotone, so it never reorders two rows.
+/// assert!(calibrator.calibrate(1.0) < calibrator.calibrate(2.0));
+/// # Ok::<(), Box<dyn std::error::Error>>(())
+/// ```
 #[derive(Clone, Debug, PartialEq)]
 pub struct PlattCalibrator {
     slope: f32,

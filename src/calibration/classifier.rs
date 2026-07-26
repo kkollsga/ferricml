@@ -46,6 +46,50 @@ use super::{Calibrator, IsotonicRegression, PlattCalibrator, PlattParams};
 /// row whose calibrated probability crosses `0.5` does change label, which is
 /// the point of correcting an overconfident model. A classifier whose labels
 /// disagreed with its own probabilities would be a silent wrong answer.
+///
+/// ```
+/// use ferricml::api::{Classifier, ProbabilisticClassifier};
+/// use ferricml::calibration::{CalibratedClassifier, PlattParams};
+/// use ferricml::data::{BinaryTargets, DenseMatrix};
+/// use ferricml::linear_model::{LogisticRegression, LogisticRegressionParams};
+/// use ferricml::metrics::roc_auc_score;
+///
+/// let values: Vec<f32> = (0..20).map(|index| index as f32 - 10.0).collect();
+/// let labels: Vec<u8> = (0..20).map(|index| u8::from(index >= 10)).collect();
+/// let data = DenseMatrix::new(values, 20, 1)?;
+/// let labels = BinaryTargets::new(labels)?;
+///
+/// let model = LogisticRegression::fit(
+///     &data.as_view(),
+///     &labels,
+///     LogisticRegressionParams::default(),
+/// )?;
+/// let before = model.predict_proba(&data.as_view())?;
+///
+/// // Calibration rows are always supplied explicitly, never taken from the
+/// // wrapped model's own training rows implicitly.
+/// let calibrated = CalibratedClassifier::fit_platt(
+///     model,
+///     &data.as_view(),
+///     &labels,
+///     PlattParams::default(),
+/// )?;
+/// let after = calibrated.predict_proba(&data.as_view())?;
+///
+/// // The composition is an ordinary Classifier, so it reaches scoring,
+/// // cross-validation and permutation importance unchanged.
+/// assert_eq!(calibrated.classes(), &[0, 1]);
+///
+/// // Calibration is monotone, so it moves probabilities without reordering
+/// // rows: any threshold-sweeping score is unchanged.
+/// let positive_before: Vec<f32> = before.chunks(2).map(|row| row[1]).collect();
+/// let positive_after: Vec<f32> = after.chunks(2).map(|row| row[1]).collect();
+/// assert_eq!(
+///     roc_auc_score(labels.as_slice(), &positive_before)?,
+///     roc_auc_score(labels.as_slice(), &positive_after)?,
+/// );
+/// # Ok::<(), Box<dyn std::error::Error>>(())
+/// ```
 #[derive(Clone, Debug, PartialEq)]
 pub struct CalibratedClassifier<C, K> {
     inner: C,

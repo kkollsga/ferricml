@@ -86,6 +86,8 @@ nav:
       - Linear models: guide/linear-models.md
       - Trees and forests: guide/trees-and-forests.md
       - Preprocessing and pipelines: guide/preprocessing-and-pipelines.md
+      - Calibration and inspection: guide/calibration-and-inspection.md
+      - Saving and loading models: guide/persistence.md
   - Contracts:
       - API and growth: api-and-growth.md
       - Frozen reference semantics: reference-semantics.md

@@ -15,6 +15,29 @@ pub struct DummyRegressorParams;
 ///
 /// This is the quality floor a real regressor has to beat, and the value an
 /// R² of zero corresponds to by definition.
+///
+/// ```
+/// use ferricml::data::{DenseMatrix, RegressionTargets};
+/// use ferricml::dummy::{DummyRegressor, DummyRegressorParams};
+/// use ferricml::metrics::r2_score;
+///
+/// let data = DenseMatrix::new(vec![0.0, 1.0, 2.0, 3.0], 4, 1)?;
+/// let targets = RegressionTargets::new(vec![1.0, 2.0, 3.0, 4.0])?;
+///
+/// let baseline = DummyRegressor::fit(
+///     &data.as_view(),
+///     &targets,
+///     DummyRegressorParams::default(),
+/// )?;
+///
+/// // The training mean, for every row.
+/// let predictions = baseline.predict(&data.as_view())?;
+/// assert_eq!(predictions, vec![2.5, 2.5, 2.5, 2.5]);
+///
+/// // Which is exactly what an R-squared of zero means.
+/// assert!(r2_score(targets.as_slice(), &predictions)?.abs() < 1e-6);
+/// # Ok::<(), Box<dyn std::error::Error>>(())
+/// ```
 #[derive(Clone, Debug, PartialEq)]
 pub struct DummyRegressor {
     n_features_in: usize,

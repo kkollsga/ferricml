@@ -17,6 +17,31 @@ pub struct DummyClassifierParams;
 /// Probabilities are the observed class frequencies, so they are identical for
 /// every row and sum to one. This is the quality floor a real classifier has to
 /// beat: matching it means the features contributed nothing.
+///
+/// ```
+/// use ferricml::api::{Classifier, ProbabilisticClassifier};
+/// use ferricml::data::{BinaryTargets, DenseMatrix};
+/// use ferricml::dummy::{DummyClassifier, DummyClassifierParams};
+///
+/// // Three of class 0, one of class 1.
+/// let data = DenseMatrix::new(vec![0.0, 1.0, 2.0, 3.0], 4, 1)?;
+/// let labels = BinaryTargets::new(vec![0, 0, 0, 1])?;
+///
+/// let baseline = DummyClassifier::fit(
+///     &data.as_view(),
+///     &labels,
+///     DummyClassifierParams::default(),
+/// )?;
+///
+/// // The majority class, for every row, whatever the features say.
+/// assert_eq!(baseline.predict(&data.as_view())?, vec![0, 0, 0, 0]);
+///
+/// // Probabilities are the observed frequencies, identical on every row.
+/// let probabilities = baseline.predict_proba(&data.as_view())?;
+/// assert_eq!(&probabilities[0..2], &[0.75, 0.25]);
+/// assert_eq!(&probabilities[6..8], &[0.75, 0.25]);
+/// # Ok::<(), Box<dyn std::error::Error>>(())
+/// ```
 #[derive(Clone, Debug, PartialEq)]
 pub struct DummyClassifier {
     n_features_in: usize,

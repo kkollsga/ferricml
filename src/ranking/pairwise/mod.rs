@@ -285,6 +285,42 @@ impl PairwiseLinearRankerParams {
 }
 
 /// Linear item scorer fitted from mirrored weighted pair observations.
+///
+/// ```
+/// use ferricml::data::DenseMatrix;
+/// use ferricml::ranking::{
+///     PairIndex, PairOutcome, PairwiseLinearRanker, PairwiseLinearRankerParams,
+///     PairwiseObservation,
+/// };
+///
+/// // Four items, one feature. Higher is better.
+/// let items = DenseMatrix::new(vec![1.0, 2.0, 3.0, 4.0], 4, 1)?;
+///
+/// let observations = vec![
+///     PairwiseObservation::new(PairIndex::new(3, 0)?, PairOutcome::LeftPreferred, 1.0)?,
+///     PairwiseObservation::new(PairIndex::new(2, 1)?, PairOutcome::LeftPreferred, 1.0)?,
+///     PairwiseObservation::new(PairIndex::new(3, 1)?, PairOutcome::LeftPreferred, 1.0)?,
+/// ];
+///
+/// let ranker = PairwiseLinearRanker::fit(
+///     &items.as_view(),
+///     &observations,
+///     PairwiseLinearRankerParams::default(),
+/// )?;
+///
+/// // Item scores are raw objective values, not probabilities.
+/// let scores = ranker.score_items(&items.as_view())?;
+/// assert!(scores[0] < scores[3]);
+///
+/// // The margin is score(left) - score(right).
+/// let margin = ranker.pair_margin(&items.as_view(), PairIndex::new(3, 0)?)?;
+/// assert!((margin - (scores[3] - scores[0])).abs() < 1e-5);
+/// assert_eq!(
+///     ranker.compare(&items.as_view(), PairIndex::new(3, 0)?)?,
+///     PairOutcome::LeftPreferred,
+/// );
+/// # Ok::<(), Box<dyn std::error::Error>>(())
+/// ```
 #[derive(Clone, Debug, PartialEq)]
 pub struct PairwiseLinearRanker {
     params: PairwiseLinearRankerParams,
