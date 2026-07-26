@@ -40,7 +40,22 @@ argument, workflow log, or GitHub release description.
    `insufficient_history`; that is evidence, not a fabricated pass.
 3. Increment only the patch component unless the user explicitly requests a
    minor or major release. Semver evidence remains required and visible but
-   does not override this patch-default policy. Update only `Cargo.toml`,
+   does not override this patch-default policy.
+
+   The one condition under which the patch default is wrong is a **breaking**
+   diff, and `make semver-check` is the gate that says so: it fails when
+   `cargo-semver-checks` finds changes Cargo would call breaking and the
+   release step would not be a breaking one. Below `1.0` the minor is the
+   breaking component, so `0.1.2 → 0.1.3` is a *compatible* update and cannot
+   carry one. When that gate fails, stop and take an explicit decision on the
+   release level; never edit the version to silence it. An additive-only diff
+   is compatible with a patch release and the default still applies.
+
+   **Recorded decision (2026-07-25):** the next release is a minor bump to
+   `0.2.0`, because the unshipped diff against published `0.1.2` carries eight
+   breaking changes. See `dev-docs/plans/parity-sprints.md` §Program status.
+
+   Update only `Cargo.toml`,
    `Cargo.lock`, and the matching dated `CHANGELOG.md` heading and links.
    Re-run every applicable gate above, plus:
 

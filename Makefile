@@ -35,6 +35,7 @@ gate:
 	$(PYTHON) scripts/check_accessor_pairing.py --self-test
 	$(PYTHON) scripts/check_release_workflow.py
 	$(PYTHON) scripts/check_release_workflow.py --self-test
+	$(PYTHON) scripts/check_semver.py --self-test
 	$(PYTHON) scripts/rust_api_profiles.py self-test
 	$(PYTHON) scripts/performance_history.py self-test
 	$(MAKE) package-check
@@ -67,8 +68,12 @@ reference-check:
 package-check:
 	bash scripts/check_packaged_crate.sh
 
-## Informational comparison with the latest published crate; the first release
-## reports that no baseline exists and succeeds.
+## Gate the release level against the latest published crate: a diff
+## cargo-semver-checks calls breaking must be carried by a version step Cargo
+## also treats as breaking, which below 1.0 is the minor component. An additive
+## diff still rides the standing patch default. The first release reports that
+## no baseline exists and succeeds. Needs network and cargo-semver-checks, so
+## the decision logic alone is self-tested inside `make gate`.
 semver-check:
 	$(PYTHON) scripts/check_semver.py
 
