@@ -147,7 +147,7 @@ fn the_prior_correction_is_what_separates_platt_from_a_raw_label_fit() {
 // ------------------------------------------------- calibrated classifiers
 
 use ferricml::api::ProbabilisticClassifier;
-use ferricml::calibration::{CalibratedClassifier, IsotonicRegression};
+use ferricml::calibration::{CalibratedClassifier, IsotonicRegression, IsotonicRegressionParams};
 use ferricml::ensemble::{MaxFeatures, RandomForestClassifier, RandomForestClassifierParams};
 use ferricml::metrics::{brier_score, log_loss, roc_auc_score};
 use ferricml::model_selection::{
@@ -218,11 +218,20 @@ fn calibrating_on_the_training_fold_is_a_different_model_from_calibrating_on_hel
         "the fixture forest did not memorise its training fold"
     );
 
-    let leaky = CalibratedClassifier::fit_isotonic(forest.clone(), &train.as_view(), &train_labels)
-        .unwrap();
-    let honest =
-        CalibratedClassifier::fit_isotonic(forest.clone(), &holdout.as_view(), &holdout_labels)
-            .unwrap();
+    let leaky = CalibratedClassifier::fit_isotonic(
+        forest.clone(),
+        &train.as_view(),
+        &train_labels,
+        IsotonicRegressionParams,
+    )
+    .unwrap();
+    let honest = CalibratedClassifier::fit_isotonic(
+        forest.clone(),
+        &holdout.as_view(),
+        &holdout_labels,
+        IsotonicRegressionParams,
+    )
+    .unwrap();
 
     // The two fitted maps are not the same object, and they differ in the way
     // the leak predicts: the in-fold map is the identity on {0, 1}, while the
@@ -343,8 +352,13 @@ fn calibration_preserves_the_ranking_it_recalibrates() {
 
     // Isotonic is monotone but not strict: it may merge two scores into one
     // value, so it can lose ordering information but never invert it.
-    let isotonic =
-        CalibratedClassifier::fit_isotonic(forest, &holdout.as_view(), &holdout_labels).unwrap();
+    let isotonic = CalibratedClassifier::fit_isotonic(
+        forest,
+        &holdout.as_view(),
+        &holdout_labels,
+        IsotonicRegressionParams,
+    )
+    .unwrap();
     let stepped = isotonic.predict_class_proba(&view, 1).unwrap();
     for (left, right) in (0..raw.len()).zip(1..raw.len()) {
         if raw[left] < raw[right] {
@@ -359,8 +373,13 @@ fn a_calibrated_model_scores_and_cross_validates_through_the_existing_paths() {
     let (data, labels) = problem(240, 0x51de_beef);
     let (holdout, holdout_labels) = problem(240, 0x2bad_c0de);
     let forest = memorising_forest(&data, &labels);
-    let calibrated =
-        CalibratedClassifier::fit_isotonic(forest, &holdout.as_view(), &holdout_labels).unwrap();
+    let calibrated = CalibratedClassifier::fit_isotonic(
+        forest,
+        &holdout.as_view(),
+        &holdout_labels,
+        IsotonicRegressionParams,
+    )
+    .unwrap();
 
     // The scorer takes it as any other classifier, with no calibration-aware
     // branch anywhere in the scoring path.
@@ -439,5 +458,10 @@ fn fit_calibrated_fold(
         .select(inner.test_indices())
         .expect("calibration labels");
     let forest = memorising_forest(&fit_rows, &fit_labels);
-    CalibratedClassifier::fit_isotonic(forest, &calibration_rows.as_view(), &calibration_labels)
+    CalibratedClassifier::fit_isotonic(
+        forest,
+        &calibration_rows.as_view(),
+        &calibration_labels,
+        IsotonicRegressionParams,
+    )
 }

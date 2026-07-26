@@ -377,6 +377,9 @@ pub const ferricml::pipeline::StagedPipeline<S, E>::CAPABILITIES: ferricml::api:
 pub trait ferricml::api::HasParams
 pub type ferricml::api::HasParams::Params
 pub fn ferricml::api::HasParams::get_params(&self) -> &Self::Params
+impl ferricml::api::HasParams for ferricml::calibration::IsotonicRegression
+pub type ferricml::calibration::IsotonicRegression::Params = ferricml::calibration::IsotonicRegressionParams
+pub fn ferricml::calibration::IsotonicRegression::get_params(&self) -> &Self::Params
 impl ferricml::api::HasParams for ferricml::dummy::DummyClassifier
 pub type ferricml::dummy::DummyClassifier::Params = ferricml::dummy::DummyClassifierParams
 pub fn ferricml::dummy::DummyClassifier::get_params(&self) -> &Self::Params
@@ -726,7 +729,7 @@ pub fn ferricml::calibration::CalibratedClassifier<C, K>::into_parts(self) -> (C
 pub fn ferricml::calibration::CalibratedClassifier<C, K>::new(C, K) -> core::result::Result<Self, ferricml::api::ModelError>
 pub fn ferricml::calibration::CalibratedClassifier<C, K>::predict_into_with(&self, &ferricml::data::MatrixView<'_>, &mut [f32], &mut [u8]) -> core::result::Result<(), ferricml::api::ModelError>
 impl<C: ferricml::api::ProbabilisticClassifier> ferricml::calibration::CalibratedClassifier<C, ferricml::calibration::IsotonicRegression>
-pub fn ferricml::calibration::CalibratedClassifier<C, ferricml::calibration::IsotonicRegression>::fit_isotonic(C, &ferricml::data::MatrixView<'_>, &ferricml::data::BinaryTargets) -> core::result::Result<Self, ferricml::api::ModelError>
+pub fn ferricml::calibration::CalibratedClassifier<C, ferricml::calibration::IsotonicRegression>::fit_isotonic(C, &ferricml::data::MatrixView<'_>, &ferricml::data::BinaryTargets, ferricml::calibration::IsotonicRegressionParams) -> core::result::Result<Self, ferricml::api::ModelError>
 impl<C: ferricml::api::ProbabilisticClassifier> ferricml::calibration::CalibratedClassifier<C, ferricml::calibration::PlattCalibrator>
 pub fn ferricml::calibration::CalibratedClassifier<C, ferricml::calibration::PlattCalibrator>::decision_function(&self, &ferricml::data::MatrixView<'_>) -> core::result::Result<alloc::vec::Vec<f32>, ferricml::api::ModelError>
 pub fn ferricml::calibration::CalibratedClassifier<C, ferricml::calibration::PlattCalibrator>::decision_function_into(&self, &ferricml::data::MatrixView<'_>, &mut [f32]) -> core::result::Result<(), ferricml::api::ModelError>
@@ -755,9 +758,13 @@ impl<C: ferricml::api::ProbabilisticClassifier> ferricml::api::HasCapabilities f
 pub const ferricml::calibration::CalibratedClassifier<C, ferricml::calibration::PlattCalibrator>::CAPABILITIES: ferricml::api::Capabilities
 pub struct ferricml::calibration::IsotonicRegression
 impl ferricml::calibration::IsotonicRegression
-pub fn ferricml::calibration::IsotonicRegression::fit(&ferricml::data::MatrixView<'_>, &ferricml::data::RegressionTargets) -> core::result::Result<Self, ferricml::api::ModelError>
-pub fn ferricml::calibration::IsotonicRegression::fit_calibration(&[f32], &ferricml::data::BinaryTargets) -> core::result::Result<Self, ferricml::api::ModelError>
+pub fn ferricml::calibration::IsotonicRegression::fit(&ferricml::data::MatrixView<'_>, &ferricml::data::RegressionTargets, ferricml::calibration::IsotonicRegressionParams) -> core::result::Result<Self, ferricml::api::ModelError>
+pub fn ferricml::calibration::IsotonicRegression::fit_calibration(&[f32], &ferricml::data::BinaryTargets, ferricml::calibration::IsotonicRegressionParams) -> core::result::Result<Self, ferricml::api::ModelError>
+pub const fn ferricml::calibration::IsotonicRegression::get_params(&self) -> &ferricml::calibration::IsotonicRegressionParams
 pub fn ferricml::calibration::IsotonicRegression::map(&self, f32) -> f32
+pub const fn ferricml::calibration::IsotonicRegression::n_features_in(&self) -> usize
+pub fn ferricml::calibration::IsotonicRegression::predict(&self, &ferricml::data::MatrixView<'_>) -> core::result::Result<alloc::vec::Vec<f32>, ferricml::api::ModelError>
+pub fn ferricml::calibration::IsotonicRegression::predict_into(&self, &ferricml::data::MatrixView<'_>, &mut [f32]) -> core::result::Result<(), ferricml::api::ModelError>
 pub fn ferricml::calibration::IsotonicRegression::predict_one(&self, &[f32]) -> core::result::Result<f32, ferricml::api::ModelError>
 pub fn ferricml::calibration::IsotonicRegression::thresholds(&self) -> &[f32]
 pub fn ferricml::calibration::IsotonicRegression::values(&self) -> &[f32]
@@ -772,12 +779,27 @@ impl ferricml::api::Estimator for ferricml::calibration::IsotonicRegression
 pub fn ferricml::calibration::IsotonicRegression::n_features_in(&self) -> usize
 impl ferricml::api::HasCapabilities for ferricml::calibration::IsotonicRegression
 pub const ferricml::calibration::IsotonicRegression::CAPABILITIES: ferricml::api::Capabilities
+impl ferricml::api::HasParams for ferricml::calibration::IsotonicRegression
+pub type ferricml::calibration::IsotonicRegression::Params = ferricml::calibration::IsotonicRegressionParams
+pub fn ferricml::calibration::IsotonicRegression::get_params(&self) -> &Self::Params
 impl ferricml::api::Regressor for ferricml::calibration::IsotonicRegression
 pub fn ferricml::calibration::IsotonicRegression::predict(&self, &ferricml::data::MatrixView<'_>) -> core::result::Result<alloc::vec::Vec<f32>, ferricml::api::ModelError>
 pub fn ferricml::calibration::IsotonicRegression::predict_into(&self, &ferricml::data::MatrixView<'_>, &mut [f32]) -> core::result::Result<(), ferricml::api::ModelError>
 impl ferricml::calibration::Calibrator for ferricml::calibration::IsotonicRegression
 pub fn ferricml::calibration::IsotonicRegression::calibrate(&self, f32) -> f32
 pub fn ferricml::calibration::IsotonicRegression::calibrate_in_place(&self, &mut [f32])
+pub struct ferricml::calibration::IsotonicRegressionParams
+impl core::clone::Clone for ferricml::calibration::IsotonicRegressionParams
+pub fn ferricml::calibration::IsotonicRegressionParams::clone(&self) -> ferricml::calibration::IsotonicRegressionParams
+impl core::cmp::Eq for ferricml::calibration::IsotonicRegressionParams
+impl core::cmp::PartialEq for ferricml::calibration::IsotonicRegressionParams
+pub fn ferricml::calibration::IsotonicRegressionParams::eq(&self, &ferricml::calibration::IsotonicRegressionParams) -> bool
+impl core::default::Default for ferricml::calibration::IsotonicRegressionParams
+pub fn ferricml::calibration::IsotonicRegressionParams::default() -> ferricml::calibration::IsotonicRegressionParams
+impl core::fmt::Debug for ferricml::calibration::IsotonicRegressionParams
+pub fn ferricml::calibration::IsotonicRegressionParams::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for ferricml::calibration::IsotonicRegressionParams
+impl core::marker::StructuralPartialEq for ferricml::calibration::IsotonicRegressionParams
 pub struct ferricml::calibration::PlattCalibrator
 impl ferricml::calibration::PlattCalibrator
 pub fn ferricml::calibration::PlattCalibrator::decision_score(&self, f32) -> f32

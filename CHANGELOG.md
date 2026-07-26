@@ -114,6 +114,22 @@ and releases use [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Changed
 
+- **Breaking.** `calibration::IsotonicRegression` is now fitted like every other
+  FerricML estimator. `calibration::IsotonicRegressionParams` is a new empty
+  parameter type — the same shape `dummy::DummyClassifierParams` and
+  `preprocessing::MaxAbsScalerParams` already ship — and it is a required final
+  argument of `IsotonicRegression::fit`, `IsotonicRegression::fit_calibration`
+  and `calibration::CalibratedClassifier::fit_isotonic`. The estimator also
+  implements `api::HasParams` and exposes inherent `get_params`,
+  `n_features_in`, `predict` and `predict_into`; the last two were previously
+  reachable only by importing `api::Regressor`, which inverted the crate's
+  preference for the caller-owned form being the easiest to reach. It was the
+  only concrete leaf estimator in the crate missing any of these. Nothing about
+  a fit changes: the parameter type carries no state, and the inherent
+  prediction methods forward to the same trait implementation. Adding an
+  out-of-range policy or a decreasing direction later is now an additive change
+  rather than a `fit` signature break, which is what the empty-params
+  convention exists to buy.
 - **Breaking.** `inspection::permutation_importance_classifier` and
   `inspection::permutation_importance_classifier_into` are generic over the
   target vocabulary through the same sealed `data::ClassificationTargets`

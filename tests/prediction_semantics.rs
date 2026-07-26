@@ -20,7 +20,8 @@ use ferricml::api::{
 };
 use ferricml::artifact::{ArtifactError, ModelArtifact, StageArtifact};
 use ferricml::calibration::{
-    CalibratedClassifier, IsotonicRegression, PlattCalibrator, PlattParams,
+    CalibratedClassifier, IsotonicRegression, IsotonicRegressionParams, PlattCalibrator,
+    PlattParams,
 };
 use ferricml::data::{BinaryTargets, DenseMatrix, MatrixView, RegressionTargets};
 use ferricml::dummy::{
@@ -501,6 +502,7 @@ impl ClassifierCase for IsotonicCalibratedForestCase {
             RandomForestClassifierCase::fit(train, holdout)?,
             &holdout.view(),
             &holdout.labels,
+            IsotonicRegressionParams,
         )
     }
 }
@@ -1024,7 +1026,7 @@ impl RegressorCase for IsotonicRegressionCase {
     const FIXTURE: FixtureShape = FixtureShape::Univariate;
 
     fn fit(train: &Sample, _holdout: &Sample) -> Result<Self::Model, ModelError> {
-        IsotonicRegression::fit(&train.view(), &train.values)
+        IsotonicRegression::fit(&train.view(), &train.values, IsotonicRegressionParams)
     }
 }
 

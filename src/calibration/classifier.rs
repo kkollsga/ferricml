@@ -5,7 +5,9 @@ use crate::api::{
 };
 use crate::data::{BinaryTargets, MatrixView};
 
-use super::{Calibrator, IsotonicRegression, PlattCalibrator, PlattParams};
+use super::{
+    Calibrator, IsotonicRegression, IsotonicRegressionParams, PlattCalibrator, PlattParams,
+};
 
 /// A fitted binary classifier whose probabilities are recalibrated.
 ///
@@ -186,9 +188,10 @@ impl<C: ProbabilisticClassifier> CalibratedClassifier<C, IsotonicRegression> {
         inner: C,
         data: &MatrixView<'_>,
         targets: &BinaryTargets,
+        params: IsotonicRegressionParams,
     ) -> Result<Self, ModelError> {
         let scores = calibration_scores(&inner, data, targets)?;
-        let calibrator = IsotonicRegression::fit_calibration(&scores, targets)?;
+        let calibrator = IsotonicRegression::fit_calibration(&scores, targets, params)?;
         Ok(Self { inner, calibrator })
     }
 }
@@ -500,9 +503,13 @@ mod tests {
     #[test]
     fn calibrated_probabilities_form_valid_rows_and_agree_with_their_columns() {
         let (data, labels) = sample();
-        let model =
-            CalibratedClassifier::fit_isotonic(Overconfident::binary(), &data.as_view(), &labels)
-                .unwrap();
+        let model = CalibratedClassifier::fit_isotonic(
+            Overconfident::binary(),
+            &data.as_view(),
+            &labels,
+            IsotonicRegressionParams,
+        )
+        .unwrap();
         assert_eq!(model.classes(), &[0, 1]);
         assert_eq!(model.n_features_in(), 1);
 
@@ -556,9 +563,13 @@ mod tests {
     #[test]
     fn every_prediction_path_validates_before_writing() {
         let (data, labels) = sample();
-        let model =
-            CalibratedClassifier::fit_isotonic(Overconfident::binary(), &data.as_view(), &labels)
-                .unwrap();
+        let model = CalibratedClassifier::fit_isotonic(
+            Overconfident::binary(),
+            &data.as_view(),
+            &labels,
+            IsotonicRegressionParams,
+        )
+        .unwrap();
         let wide = DenseMatrix::new(vec![0.5; data.rows() * 2], data.rows(), 2).unwrap();
 
         let mut sentinel = vec![f32::MAX; data.rows() * 2];
@@ -606,7 +617,13 @@ mod tests {
         .unwrap();
         assert_eq!(single.classes(), &[1]);
         assert_eq!(
-            CalibratedClassifier::fit_isotonic(single, &data.as_view(), &labels).unwrap_err(),
+            CalibratedClassifier::fit_isotonic(
+                single,
+                &data.as_view(),
+                &labels,
+                IsotonicRegressionParams
+            )
+            .unwrap_err(),
             ModelError::RequiresTwoClasses
         );
 
@@ -614,7 +631,13 @@ mod tests {
             classes: vec![0, 1, 2],
         };
         assert_eq!(
-            CalibratedClassifier::fit_isotonic(wide, &data.as_view(), &labels).unwrap_err(),
+            CalibratedClassifier::fit_isotonic(
+                wide,
+                &data.as_view(),
+                &labels,
+                IsotonicRegressionParams
+            )
+            .unwrap_err(),
             ModelError::MulticlassOutput { columns: 3 }
         );
 
@@ -622,7 +645,13 @@ mod tests {
             classes: vec![3, 7],
         };
         assert_eq!(
-            CalibratedClassifier::fit_isotonic(relabelled, &data.as_view(), &labels).unwrap_err(),
+            CalibratedClassifier::fit_isotonic(
+                relabelled,
+                &data.as_view(),
+                &labels,
+                IsotonicRegressionParams
+            )
+            .unwrap_err(),
             ModelError::UnknownClass { class: 1 }
         );
     }
@@ -632,8 +661,13 @@ mod tests {
         let (data, labels) = sample();
         let wide = DenseMatrix::new(vec![0.5; data.rows() * 2], data.rows(), 2).unwrap();
         assert_eq!(
-            CalibratedClassifier::fit_isotonic(Overconfident::binary(), &wide.as_view(), &labels)
-                .unwrap_err(),
+            CalibratedClassifier::fit_isotonic(
+                Overconfident::binary(),
+                &wide.as_view(),
+                &labels,
+                IsotonicRegressionParams
+            )
+            .unwrap_err(),
             ModelError::FeatureDimension {
                 expected: 1,
                 actual: 2,
@@ -643,7 +677,8 @@ mod tests {
             CalibratedClassifier::fit_isotonic(
                 Overconfident::binary(),
                 &data.as_view(),
-                &BinaryTargets::new(vec![0, 1]).unwrap()
+                &BinaryTargets::new(vec![0, 1]).unwrap(),
+                IsotonicRegressionParams,
             )
             .unwrap_err(),
             ModelError::TargetLength {
@@ -655,7 +690,8 @@ mod tests {
             CalibratedClassifier::fit_isotonic(
                 Overconfident::binary(),
                 &data.as_view(),
-                &BinaryTargets::new(vec![0; data.rows()]).unwrap()
+                &BinaryTargets::new(vec![0; data.rows()]).unwrap(),
+                IsotonicRegressionParams,
             )
             .unwrap_err(),
             ModelError::RequiresTwoClasses
@@ -670,13 +706,15 @@ mod tests {
                 CalibratedClassifier::fit_isotonic(
                     Overconfident::binary(),
                     &data.as_view(),
-                    &labels
+                    &labels,
+                    IsotonicRegressionParams,
                 )
                 .unwrap(),
                 CalibratedClassifier::fit_isotonic(
                     Overconfident::binary(),
                     &data.as_view(),
-                    &labels
+                    &labels,
+                    IsotonicRegressionParams,
                 )
                 .unwrap()
             );

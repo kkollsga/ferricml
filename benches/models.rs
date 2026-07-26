@@ -2,7 +2,8 @@ use criterion::{BatchSize, BenchmarkId, Criterion, Throughput, criterion_group, 
 use ferricml::api::ProbabilisticClassifier;
 use ferricml::artifact::StageArtifact;
 use ferricml::calibration::{
-    CalibratedClassifier, IsotonicRegression, PlattCalibrator, PlattParams,
+    CalibratedClassifier, IsotonicRegression, IsotonicRegressionParams, PlattCalibrator,
+    PlattParams,
 };
 use ferricml::data::{BinaryTargets, ClassTargets, DenseMatrix, RegressionTargets};
 use ferricml::dummy::{
@@ -1240,8 +1241,12 @@ fn calibration(c: &mut Criterion) {
     fit.bench_function(BenchmarkId::from_parameter("isotonic"), |bencher| {
         bencher.iter(|| {
             black_box(
-                IsotonicRegression::fit_calibration(black_box(&scores), black_box(&labels))
-                    .unwrap(),
+                IsotonicRegression::fit_calibration(
+                    black_box(&scores),
+                    black_box(&labels),
+                    IsotonicRegressionParams,
+                )
+                .unwrap(),
             );
         });
     });
@@ -1259,8 +1264,13 @@ fn calibration(c: &mut Criterion) {
     });
     fit.finish();
 
-    let isotonic =
-        CalibratedClassifier::fit_isotonic(forest.clone(), &training.as_view(), &labels).unwrap();
+    let isotonic = CalibratedClassifier::fit_isotonic(
+        forest.clone(),
+        &training.as_view(),
+        &labels,
+        IsotonicRegressionParams,
+    )
+    .unwrap();
     let platt = CalibratedClassifier::fit_platt(
         forest.clone(),
         &training.as_view(),
