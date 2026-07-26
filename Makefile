@@ -8,7 +8,13 @@ PYTHON ?= python3
 DOCS_PYTHON ?= python3.12
 DOCS_VENV ?= .venv-docs
 
-.PHONY: gate gate-full api-check api-refresh reference-check package-check semver-check bench-self bench-history bench-diagnostic docs-env docs-build docs-serve
+## Scope for `make mutants`. A full-crate run is thousands of mutants and hours
+## of rebuilds, which nobody reads; override this to aim the run.
+##   make mutants MUTANTS_SCOPE="--file 'src/tree/**'"
+MUTANTS_SCOPE ?= --file 'src/numeric/**' --file 'src/linear_model/ridge/**'
+MUTANTS_JOBS ?= 4
+
+.PHONY: gate gate-full api-check api-refresh reference-check package-check semver-check mutants bench-self bench-history bench-diagnostic docs-env docs-build docs-serve
 
 ## Ordinary pre-push gate: formatting, default lint/tests, dependency isolation,
 ## and the extracted-package external-consumer contract.
@@ -21,6 +27,7 @@ gate:
 	$(PYTHON) scripts/check_source_layout.py
 	$(PYTHON) scripts/check_source_layout.py --self-test
 	$(PYTHON) scripts/check_release_workflow.py
+	$(PYTHON) scripts/rust_api_profiles.py self-test
 	$(PYTHON) scripts/performance_history.py self-test
 	$(MAKE) package-check
 
@@ -31,9 +38,10 @@ gate-full: gate
 	cargo test --locked --all-features
 	RUSTDOCFLAGS="-D warnings" cargo doc --locked --no-deps --all-features
 
-## Compare the public Rust surface with its exact snapshot. The capability
-## snapshot is a separate mechanism because cargo-public-api cannot see const
-## values; both are part of the same public contract.
+## Compare the public Rust surface with its exact snapshot. The profile records
+## derived impls, so dropping a derive from a public type fails here; the
+## capability snapshot is a separate mechanism because cargo-public-api cannot
+## see const values. Both are part of the same public contract.
 api-check:
 	$(PYTHON) scripts/rust_api_profiles.py check
 	cargo test --locked --test capability_snapshot
@@ -55,6 +63,25 @@ package-check:
 ## reports that no baseline exists and succeeds.
 semver-check:
 	$(PYTHON) scripts/check_semver.py
+
+## Measure whether the tests would notice the code being wrong, by injecting
+## faults into a scoped part of the crate and reporting which ones no test
+## catches. Line coverage says which code ran; a surviving mutant is the
+## specific claim that a line could be wrong and every test would still pass.
+##
+## cargo-mutants is a development tool invoked ad hoc, never a dependency of the
+## crate: install it with `cargo install cargo-mutants --locked`, and nothing
+## enters the published dependency graph. Deliberately outside `gate` — a run
+## rebuilds the crate once per mutant — so it sits with the other named heavy
+## entry points. Surviving mutants land in dev-docs/temp/mutants/mutants.out/,
+## and are a hypothesis list rather than a defect list: rank them before acting.
+mutants:
+	@command -v cargo-mutants >/dev/null || { \
+		echo "cargo-mutants is not installed; run \`cargo install cargo-mutants --locked\`" >&2; \
+		exit 1; \
+	}
+	mkdir -p dev-docs/temp/mutants
+	cargo mutants --output dev-docs/temp/mutants -j $(MUTANTS_JOBS) $(MUTANTS_SCOPE) $(MUTANTS_ARGS)
 
 ## Run only FerricML's root Criterion suite.
 bench-self:

@@ -1,5 +1,8 @@
 /target
 /benchmarks/alternatives/target/
+# `make mutants` writes under dev-docs/temp; this catches a bare `cargo mutants`,
+# which defaults its output to the workspace root.
+/mutants.out/
 .DS_Store
 /dev-docs/
 /inbox/
