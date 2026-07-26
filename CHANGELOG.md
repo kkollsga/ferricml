@@ -813,11 +813,12 @@ and releases use [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ### Fixed
 
 - `calibration::PlattCalibrator::fit` no longer returns an unconverged Newton
-  iterate as a fitted calibrator. It was the last solver in the crate that did:
-  the loop `break`s when the largest parameter update falls to `tol` and
-  otherwise fell through to `Ok`, with only `n_iter` to say the tolerance was
-  never met, while every other iterative solver reports
-  `ModelError::SolverDidNotConverge`. **This is a breaking behaviour change on
+  iterate as a fitted calibrator. The loop `break`s when the largest parameter
+  update falls to `tol` and otherwise fell through to `Ok`, with only `n_iter`
+  to say the tolerance was never met. It is **not** the last solver in the
+  crate that does this — `LogisticRegression`'s Newton path does the same on
+  both target shapes, and is tracked separately; the coordinate-descent and
+  L-BFGS seams do report `ModelError::SolverDidNotConverge`. **This is a breaking behaviour change on
   degenerate calibration samples: a call that previously returned a model can
   now return an error.** No fitted value moves — a fit that is returned has
   exactly the parameters it had before, bit for bit.
