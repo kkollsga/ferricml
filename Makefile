@@ -24,6 +24,7 @@ gate:
 	cargo clippy --locked --all-targets -- -D warnings
 	cargo test --locked
 	$(PYTHON) scripts/check_root_dependency_isolation.py
+	$(PYTHON) scripts/check_root_dependency_isolation.py --self-test
 	$(PYTHON) scripts/check_reference_isolation.py
 	$(PYTHON) scripts/check_reference_isolation.py --self-test
 	$(PYTHON) scripts/check_source_layout.py
