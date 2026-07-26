@@ -948,6 +948,126 @@ mod tests {
         );
     }
 
+    /// Build nodes for the smallest shape whose pre-order leaf rank and runtime
+    /// leaf ordinal disagree.
+    ///
+    /// The root's left child is a branch and its right child is a leaf:
+    ///
+    /// ```text
+    ///           b0                     pre-order rank   runtime ordinal
+    ///          /  \
+    ///        b1    L2   (f0 > 1)       L2 -> 2          L2 -> 0
+    ///       /  \
+    ///     L0    L1                     L0 -> 0          L0 -> 1
+    ///                                  L1 -> 1          L1 -> 2
+    /// ```
+    ///
+    /// Pre-order rank counts leaves in the order the records appear. Packing
+    /// assigns ordinals branch by branch — `b0` is visited first and encodes its
+    /// right leaf before `b1` encodes either of its own — so the root's right
+    /// leaf is ordinal `0` while it is the *last* leaf in pre-order. A balanced
+    /// tree cannot show this: there the two orders coincide, which is why every
+    /// shape used until now could not tell a correct implementation from one
+    /// consistently wrong in both directions.
+    fn skewed_class_build() -> Vec<BuildNode> {
+        vec![
+            branch(0, 1.0, 1, 4),
+            branch(1, 2.0, 2, 3),
+            BuildNode::leaf(0.0),
+            BuildNode::leaf(0.0),
+            BuildNode::leaf(0.0),
+        ]
+    }
+
+    /// The leaf probability rows of [`skewed_class_build`], in pre-order rank.
+    ///
+    /// Every value is exactly representable in both `f64` and `f32`, so nothing
+    /// below is a tolerance.
+    const PRE_ORDER_BLOCK: [f32; 6] = [0.25, 0.75, 0.5, 0.5, 0.125, 0.875];
+
+    /// A feature row reaching each leaf, in the same pre-order.
+    const ROWS_BY_PRE_ORDER_RANK: [[f32; 2]; 3] = [[0.0, 0.0], [0.0, 9.0], [9.0, 0.0]];
+
+    fn skewed_class_tree() -> ClassTree {
+        let mut class_weights = vec![0.0_f64; 5 * 2];
+        class_weights[2 * 2..2 * 2 + 2].copy_from_slice(&[0.25, 0.75]);
+        class_weights[3 * 2..3 * 2 + 2].copy_from_slice(&[0.5, 0.5]);
+        class_weights[4 * 2..4 * 2 + 2].copy_from_slice(&[0.125, 0.875]);
+        ClassTree::from_build_nodes(skewed_class_build(), &class_weights, &[1.0; 5], 2, 2).unwrap()
+    }
+
+    /// The artifact's leaf block really is ordered by pre-order rank, on a shape
+    /// where that is a different order from the one the tree stores.
+    ///
+    /// A round trip cannot establish this. Encoding and decoding are inverses,
+    /// so a pair that agreed on the *runtime ordinal* instead would round-trip
+    /// just as cleanly and write different bytes for the same model — the
+    /// malleability the pre-order rule exists to prevent. Each direction is
+    /// therefore anchored to something outside the pair: the encoder to what the
+    /// tree returns at runtime for a row reaching each leaf, and the decoder to a
+    /// block written out here by hand rather than taken from the encoder.
+    ///
+    /// Measured by making both directions read runtime ordinals: the round-trip
+    /// test next door stays green, as do `tests/reference_semantics.rs` and
+    /// `tests/artifact_fingerprints.rs`, and this test fails. One other test
+    /// notices — `the_frozen_adversarial_corpus_decodes_exactly_as_recorded`,
+    /// whose `multiclass-extra-trees-probability-out-of-range` fixture happens
+    /// to hold a skewed class tree — but it reports only that checked-in bytes
+    /// and rebuilt bytes disagree, which names no invariant and would be
+    /// silenced by regenerating the corpus.
+    #[test]
+    fn the_class_leaf_block_is_ordered_by_pre_order_rank_not_by_runtime_ordinal() {
+        let tree = skewed_class_tree();
+
+        // The premise: the tree stores its rows in runtime-ordinal order, which
+        // on this shape is the last leaf first. If this ever equals
+        // `PRE_ORDER_BLOCK` the shape has stopped discriminating and everything
+        // below would hold vacuously.
+        assert_eq!(tree.probabilities, vec![0.125, 0.875, 0.25, 0.75, 0.5, 0.5]);
+        assert_ne!(tree.probabilities, PRE_ORDER_BLOCK.to_vec());
+
+        // The runtime anchor: which row reaches which distribution.
+        for (rank, row) in ROWS_BY_PRE_ORDER_RANK.iter().enumerate() {
+            assert_eq!(
+                tree.probabilities(row),
+                &PRE_ORDER_BLOCK[rank * 2..rank * 2 + 2],
+                "row {row:?} does not reach pre-order leaf {rank}"
+            );
+        }
+
+        // Encoding: the block is the runtime distributions in pre-order, and the
+        // records place their leaves at the pre-order positions.
+        let (records, block) = tree.to_logical_nodes();
+        assert_eq!(block, PRE_ORDER_BLOCK.to_vec());
+        assert_eq!(
+            records
+                .iter()
+                .enumerate()
+                .filter(|(_, node)| matches!(node, LogicalTreeNode::Leaf { .. }))
+                .map(|(index, _)| index)
+                .collect::<Vec<_>>(),
+            vec![2, 3, 4]
+        );
+
+        // Decoding: from a block written here, in pre-order, not from `block`.
+        let decoded = ClassTree::from_logical_nodes(&records, &PRE_ORDER_BLOCK, 2, 2).unwrap();
+        assert_eq!(decoded, tree);
+        for (rank, row) in ROWS_BY_PRE_ORDER_RANK.iter().enumerate() {
+            assert_eq!(
+                decoded.probabilities(row),
+                &PRE_ORDER_BLOCK[rank * 2..rank * 2 + 2],
+                "decoded row {row:?} does not reach pre-order leaf {rank}"
+            );
+        }
+
+        // And the same block read as runtime ordinals would produce a different
+        // model, which is what makes the choice of order observable rather than
+        // a convention two symmetric halves could share.
+        let as_ordinals: Vec<f32> = tree.probabilities.clone();
+        let misread = ClassTree::from_logical_nodes(&records, &as_ordinals, 2, 2).unwrap();
+        assert_ne!(misread, tree);
+    }
+
     #[test]
     fn deep_left_spines_convert_without_recursing() {
         let depth = 4_096;
