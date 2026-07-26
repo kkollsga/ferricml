@@ -48,8 +48,11 @@ def read_if_present(path: Path) -> str:
 def tree_text(directory: Path) -> str:
     """Every source file under `directory`, including its child modules.
 
-    This is the *only* reader a dependency rule may use, and a non-recursive
-    twin is deliberately absent. A facade that grew into a directory of
+    This is the *only* reader a dependency rule may use. A non-recursive twin
+    exists — [`shallow_text`] — but exclusively as the self-test's foil, and
+    [`rules_reading_a_module_directory`] counts a rule that calls it as still
+    owing its child-module proof, so a rule cannot escape the obligation by
+    switching readers. A facade that grew into a directory of
     per-family child modules would silently narrow every rule reading it: the
     check would keep passing while the dependency it forbids sat one level down.
     That is not hypothetical — `preprocessing`, `pipeline`, `metrics`,
@@ -65,11 +68,13 @@ def tree_text(directory: Path) -> str:
 def shallow_text(directory: Path) -> str:
     """The facade-only reader, kept solely so `--self-test` can fail against it.
 
-    No rule calls this. `self_test` substitutes it for [`tree_text`] and asserts
-    that every child-module violation goes *unreported* — which is what makes
-    each of those violations a proof that its rule reads the tree rather than
-    the facade. Without this, a synthetic violation demonstrates only that the
-    rule matches a string somewhere.
+    No rule calls this, and a rule that started to would keep — not lose — its
+    child-module obligation, which is then unsatisfiable. `self_test`
+    substitutes it for [`tree_text`] and asserts that every child-module
+    violation goes *unreported* — which is what makes each of those violations
+    a proof that its rule reads the tree rather than the facade. Without this,
+    a synthetic violation demonstrates only that the rule matches a string
+    somewhere.
     """
     return "\n".join(path.read_text() for path in sorted(directory.glob("*.rs")))
 
@@ -946,15 +951,38 @@ CLEAN_TREE_PROVEN_RECURSION: dict[str, str] = {
     "rng-single-source": "seeded generator is missing",
 }
 
+# Floor on the child-module proofs, so the count cannot shrink by attrition.
+#
+# `rules_reading_a_module_directory()` derives *who owes* a proof from the live
+# source, which is the right closure for a rule being added or downgraded but
+# not for one being deleted: removing a rule, its synthetic violation and its
+# child-module violation together satisfies every derived assertion while the
+# self-test's summary line quietly counts one fewer. A floor makes that removal
+# an explicit edit to this number with a reason attached, which is the same
+# treatment the reach floors in `tests/artifact_hardening.rs` get. Raise it when
+# proofs are added; lower it only alongside the rule being retired.
+MINIMUM_CHILD_MODULE_PROOFS = 14
 
-def rules_reading_recursively() -> set[str]:
-    """Rule names whose implementation calls [`tree_text`].
+
+def rules_reading_a_module_directory() -> set[str]:
+    """Rule names whose implementation reads a module directory.
 
     Derived from the source rather than listed, so a new dependency rule cannot
     be added without also owing the child-module proof below.
+
+    [`shallow_text`] counts as well as [`tree_text`], which is what makes the
+    closure run in both directions. Deriving the owed set from the recursive
+    reader alone let a rule *stop* owing its proof by being downgraded to the
+    facade-only reader in the same edit that deleted the proof — the two halves
+    cancelling, the self-test passing, the count silently dropping by one. A
+    rule that reads a directory owes the proof however it reads it, so the
+    downgrade now fails against the child-module violation it still owes.
     """
     return {
-        name for name, rule in RULES if "tree_text(" in inspect.getsource(rule)
+        name
+        for name, rule in RULES
+        if "tree_text(" in inspect.getsource(rule)
+        or "shallow_text(" in inspect.getsource(rule)
     }
 
 
@@ -981,18 +1009,23 @@ def self_test() -> None:
         f"stale={sorted(covered - declared)}"
     )
 
-    recursive = rules_reading_recursively()
+    recursive = rules_reading_a_module_directory()
     child_covered = {name for name, _, _ in CHILD_MODULE_VIOLATIONS}
     assert child_covered <= declared, (
         f"stale child-module violations: {sorted(child_covered - declared)}"
     )
     assert recursive <= child_covered, (
-        "every rule reading a module recursively needs a child-module violation: "
+        "every rule reading a module directory needs a child-module violation: "
         f"missing={sorted(recursive - child_covered)}"
     )
     assert set(CLEAN_TREE_PROVEN_RECURSION) <= recursive, (
         "stale clean-tree recursion exemption: "
         f"{sorted(set(CLEAN_TREE_PROVEN_RECURSION) - recursive)}"
+    )
+    assert len(CHILD_MODULE_VIOLATIONS) >= MINIMUM_CHILD_MODULE_PROOFS, (
+        f"child-module proofs fell to {len(CHILD_MODULE_VIOLATIONS)}, below the "
+        f"floor of {MINIMUM_CHILD_MODULE_PROOFS}; lower the floor deliberately "
+        "or restore the proof"
     )
 
     with tempfile.TemporaryDirectory() as workspace:
