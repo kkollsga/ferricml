@@ -170,6 +170,25 @@ and releases use [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   `EmptyFeatureExpansion` for the one configuration that describes no columns
   at all, degree zero with the bias disabled.
 
+### Changed
+
+- `LogisticSolver` and the linear-models guide now state that the **default
+  solver is the expensive one at scale**, with the measurement rather than the
+  adjective. `LogisticSolver::Lbfgs` was documented only as the escape from
+  `ModelError::MulticlassSystemTooLarge`, so a caller on a large binary problem
+  had no reason to look at it. Newton accumulates and factorizes a
+  `parameters x parameters` system over every row, so its per-iteration cost
+  grows as `rows * parameters^2` where the matrix-free path grows as
+  `rows * parameters`, and a smaller `C` buys more iterations to pay it on. At
+  50,000 rows by 50 columns, same data, same `tol`, same `max_iter`, both arms
+  this crate: `C = 1.0` is 68.3 ms against 16.6 ms at `tol = 1e-4` and 83.5 ms
+  against 25.6 ms at `1e-8`; `C = 0.1` is 83.7 ms against 16.6 ms and
+  **375.4 ms against 25.4 ms**, for coefficients agreeing to six decimals. The
+  advantage is a property of the shape and not of the solver — at 5,000 x 20 it
+  is 2.8 ms against 1.8 ms, and on small data the exact step's single-digit
+  iteration count wins — so the default is unchanged and no fitted artifact
+  moves.
+
 ## [0.2.0] - 2026-07-26
 
 ### Added

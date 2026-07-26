@@ -81,6 +81,34 @@ const LOGISTIC_MULTICLASS_FIXED_PAYLOAD_BYTES: usize = 8 * 4;
 /// objective values and cannot bracket a decrease below that. The exact path
 /// has no such floor, because the quantity it certifies an exhausted budget
 /// with is not an objective difference.
+///
+/// # Cost, which is the other reason to select it
+///
+/// The default is the expensive one on a large or strongly penalized problem,
+/// and that is worth stating in numbers rather than as "slower". Newton's
+/// per-iteration cost is one `p x p` factorization *plus* accumulating a
+/// `p x p` system over every row, so it grows as `n * p^2` where the
+/// matrix-free path grows as `n * p`; a stronger penalty (a smaller `c`) also
+/// buys more iterations to pay that on. Fitting 50,000 rows by 50 columns,
+/// same data, same `tol`, same `max_iter`, both arms this crate (Apple M4,
+/// release, median of five after one warmup):
+///
+/// | `c` | `tol` | `Newton` | `Lbfgs` |
+/// |---|---|---|---|
+/// | 1.0 | 1e-4 | 68.3 ms | 16.6 ms |
+/// | 0.1 | 1e-4 | 83.7 ms | 16.6 ms |
+/// | 1.0 | 1e-8 | 83.5 ms | 25.6 ms |
+/// | 0.1 | 1e-8 | **375.4 ms** | **25.4 ms** |
+///
+/// Three to fifteen times, widening as the penalty strengthens and the
+/// tolerance tightens, for coefficients that agree to six decimals at `1e-8`.
+/// The advantage is a property of the shape rather than a constant: at
+/// 5,000 x 20 the same comparison is 2.8 ms against 1.8 ms, and on a small
+/// problem the exact step's single-digit iteration count wins outright. So
+/// this is a reason to *select* [`Lbfgs`](Self::Lbfgs) at scale, not a reason
+/// to move the default — a `tol` below the L-BFGS floor still leaves the exact
+/// path as the only one that answers, and every artifact FerricML writes still
+/// has `Newton` provenance.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
 #[non_exhaustive]
 pub enum LogisticSolver {
@@ -159,6 +187,11 @@ impl LogisticRegressionParams {
     /// fitted coefficients in their last digits, so a model fitted under a
     /// non-default solver has no artifact representation — see
     /// [`LogisticRegression::to_artifact`].
+    ///
+    /// The default is also the *expensive* rule on a large or strongly
+    /// penalized problem: at 50,000 x 50 it is 3x to 15x
+    /// [`LogisticSolver::Lbfgs`] for the same answer, widening as `c` shrinks.
+    /// [`LogisticSolver`] carries the measurements.
     #[must_use]
     pub const fn with_solver(mut self, solver: LogisticSolver) -> Self {
         self.solver = solver;
