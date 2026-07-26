@@ -50,9 +50,36 @@ use crate::data::BinaryTargets;
 ///
 /// Implementations are stateless functions of their fitted parameters: the same
 /// score always produces the same probability, with no interior mutability and
-/// no dependence on call order. The map must be monotone in the score, which is
-/// what preserves the wrapped model's ranking — calibration changes *how
-/// confident* a prediction is, never *which way round* two rows are ordered.
+/// no dependence on call order. The map must be monotone in the score.
+///
+/// # What monotone does and does not guarantee
+///
+/// Monotone is strictly weaker than ranking-preserving, and the gap is not a
+/// technicality: both shipped calibrators reach it on calibration samples a
+/// caller can plausibly supply.
+///
+/// - A **strictly increasing** map preserves the ranking of any two rows
+///   exactly, so a threshold-sweeping score such as ROC AUC is unchanged.
+///   [`PlattCalibrator`] is this case exactly when its fitted
+///   [`slope`](PlattCalibrator::slope) is positive.
+/// - A **non-decreasing** map may send two distinct scores to one value. It
+///   never inverts a pair, but a pair it ties no longer contributes a full
+///   correct ordering, so ROC AUC is not guaranteed unchanged.
+///   [`IsotonicRegression`] is this case whenever pool-adjacent-violators
+///   pools; pooled into one block it is constant and ROC AUC becomes `0.5`.
+/// - A **decreasing** map is monotone too, and reverses every pairwise
+///   comparison: ROC AUC becomes `1.0 - auc`. `PlattCalibrator` is this case
+///   whenever its fitted slope is negative, which is the maximum-likelihood
+///   answer for a calibration sample whose positive rows carry a *lower* mean
+///   score than its negative rows.
+///
+/// So calibration changes *how confident* a prediction is, and on a calibration
+/// sample that disagrees with the wrapped model it can also change *which way
+/// round* two rows are ordered. The fitted parameters are public because that
+/// check is the caller's: `PlattCalibrator::slope` and
+/// [`IsotonicRegression::values`] say which of the three cases a fit landed in.
+/// Neither is rejected at fit time, because a sample that inverts the model's
+/// ranking is a fact about the sample rather than a failure of the fit.
 ///
 /// The trait is open so a caller can supply a calibration family FerricML does
 /// not ship. Such a calibrator composes with [`CalibratedClassifier`] for

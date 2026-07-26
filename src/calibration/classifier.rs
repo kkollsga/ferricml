@@ -43,12 +43,50 @@ use super::{
 /// # Labels follow the calibrated probabilities
 ///
 /// [`predict`](Classifier::predict) is the argmax of this model's *own*
-/// probabilities, not a pass-through of the wrapped model's labels. Calibration
-/// is monotone, so the **ranking** of any two rows is preserved exactly — a
-/// threshold-based score such as ROC AUC is unchanged by calibration — but a
-/// row whose calibrated probability crosses `0.5` does change label, which is
-/// the point of correcting an overconfident model. A classifier whose labels
-/// disagreed with its own probabilities would be a silent wrong answer.
+/// probabilities, not a pass-through of the wrapped model's labels. A row whose
+/// calibrated probability crosses `0.5` does change label, which is the point
+/// of correcting an overconfident model. A classifier whose labels disagreed
+/// with its own probabilities would be a silent wrong answer.
+///
+/// # Ranking is preserved only by a strictly increasing calibrator
+///
+/// Calibration is monotone, and monotone is weaker than ranking-preserving. The
+/// [`Calibrator`] contract states the three cases; the one that matters here is
+/// that a Platt fit whose [`slope`](PlattCalibrator::slope) is negative is a
+/// strictly *decreasing* map, and reverses every pairwise comparison — a model
+/// with ROC AUC `auc` becomes one with `1.0 - auc`. That is not a fitting
+/// failure: it is the maximum-likelihood answer for a calibration sample whose
+/// positive rows carry a lower mean score than its negative rows, which a small
+/// held-out fold can easily be. Isotonic on such a fold pools instead, which
+/// loses ordering rather than inverting it, and in the extreme is constant.
+///
+/// The fitted map is reachable through [`calibrator`](Self::calibrator), so a
+/// caller that depends on ranking checks the sign it depends on:
+///
+/// ```
+/// # use ferricml::api::ProbabilisticClassifier;
+/// # use ferricml::calibration::{CalibratedClassifier, PlattParams};
+/// # use ferricml::data::{BinaryTargets, DenseMatrix};
+/// # use ferricml::linear_model::{LogisticRegression, LogisticRegressionParams};
+/// # let values: Vec<f32> = (0..20).map(|index| index as f32 - 10.0).collect();
+/// # let labels: Vec<u8> = (0..20).map(|index| u8::from(index >= 10)).collect();
+/// # let data = DenseMatrix::new(values, 20, 1)?;
+/// # let labels = BinaryTargets::new(labels)?;
+/// # let model = LogisticRegression::fit(&data.as_view(), &labels, LogisticRegressionParams::default())?;
+/// # let holdout = DenseMatrix::new(vec![-7.5_f32, -5.5, -3.5, -1.5, 1.5, 3.5, 5.5, 7.5], 8, 1)?;
+/// # let holdout_labels = BinaryTargets::new(vec![0, 0, 0, 0, 1, 1, 1, 1])?;
+/// let calibrated = CalibratedClassifier::fit_platt(
+///     model,
+///     &holdout.as_view(),
+///     &holdout_labels,
+///     PlattParams::default(),
+/// )?;
+/// assert!(
+///     calibrated.calibrator().slope() > 0.0,
+///     "this calibration fold inverts the model's ranking",
+/// );
+/// # Ok::<(), Box<dyn std::error::Error>>(())
+/// ```
 ///
 /// ```
 /// use ferricml::api::{Classifier, ProbabilisticClassifier};
@@ -70,11 +108,18 @@ use super::{
 /// let before = model.predict_proba(&data.as_view())?;
 ///
 /// // Calibration rows are always supplied explicitly, never taken from the
-/// // wrapped model's own training rows implicitly.
+/// // wrapped model's own training rows implicitly. These are held out of the
+/// // fit above, which is the workflow this module is written for.
+/// let holdout = DenseMatrix::new(
+///     vec![-7.5_f32, -5.5, -3.5, -1.5, 1.5, 3.5, 5.5, 7.5],
+///     8,
+///     1,
+/// )?;
+/// let holdout_labels = BinaryTargets::new(vec![0, 0, 0, 0, 1, 1, 1, 1])?;
 /// let calibrated = CalibratedClassifier::fit_platt(
 ///     model,
-///     &data.as_view(),
-///     &labels,
+///     &holdout.as_view(),
+///     &holdout_labels,
 ///     PlattParams::default(),
 /// )?;
 /// let after = calibrated.predict_proba(&data.as_view())?;
@@ -83,14 +128,24 @@ use super::{
 /// // cross-validation and permutation importance unchanged.
 /// assert_eq!(calibrated.classes(), &[0, 1]);
 ///
-/// // Calibration is monotone, so it moves probabilities without reordering
-/// // rows: any threshold-sweeping score is unchanged.
+/// // This fold fitted a positive slope, so the map is strictly increasing and
+/// // cannot reorder two rows: every threshold-sweeping score is unchanged.
+/// // The condition is asserted rather than assumed, because it is the
+/// // condition — a fold whose positive rows score below its negative rows
+/// // fits a negative slope, and that map takes ROC AUC to `1.0 - auc`.
+/// assert!(calibrated.calibrator().slope() > 0.0);
+///
+/// // Scored against labels the model does not reproduce exactly, so the two
+/// // AUCs are strictly between 0.5 and 1 and could disagree if they were free
+/// // to. Two of the twenty labels are flipped.
+/// let noisy = BinaryTargets::new(
+///     (0..20).map(|index| u8::from((index >= 10) != (index == 8 || index == 11))).collect(),
+/// )?;
 /// let positive_before: Vec<f32> = before.chunks(2).map(|row| row[1]).collect();
 /// let positive_after: Vec<f32> = after.chunks(2).map(|row| row[1]).collect();
-/// assert_eq!(
-///     roc_auc_score(labels.as_slice(), &positive_before)?,
-///     roc_auc_score(labels.as_slice(), &positive_after)?,
-/// );
+/// let raw = roc_auc_score(noisy.as_slice(), &positive_before)?;
+/// assert!(raw > 0.5 && raw < 1.0);
+/// assert_eq!(raw, roc_auc_score(noisy.as_slice(), &positive_after)?);
 /// # Ok::<(), Box<dyn std::error::Error>>(())
 /// ```
 #[derive(Clone, Debug, PartialEq)]

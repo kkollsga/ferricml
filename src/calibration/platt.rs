@@ -89,8 +89,21 @@ impl PlattParams {
 /// assert!(high > 0.5 && high < 1.0);
 /// assert!(calibrator.calibrate(-3.0) < 0.5);
 ///
-/// // The map is monotone, so it never reorders two rows.
+/// // This sample fitted a positive slope, so the map is strictly increasing
+/// // and cannot reorder two rows. The sign is the condition, and it belongs
+/// // to the calibration sample: see `slope` below.
+/// assert!(calibrator.slope() > 0.0);
 /// assert!(calibrator.calibrate(1.0) < calibrator.calibrate(2.0));
+///
+/// // A sample whose positive rows score below its negative rows fits the
+/// // mirror image, and that map reverses every pairwise comparison.
+/// let mirrored = PlattCalibrator::fit(
+///     &[3.0_f32, 2.0, 1.0, -1.0, -2.0, -3.0],
+///     &labels,
+///     PlattParams::default(),
+/// )?;
+/// assert!(mirrored.slope() < 0.0);
+/// assert!(mirrored.calibrate(1.0) > mirrored.calibrate(2.0));
 /// # Ok::<(), Box<dyn std::error::Error>>(())
 /// ```
 #[derive(Clone, Debug, PartialEq)]
@@ -175,9 +188,33 @@ impl PlattCalibrator {
 
     /// Returns the fitted slope on the model score.
     ///
-    /// A non-negative slope means the calibrated probability increases with the
-    /// score, which is the case for any score positively associated with the
-    /// positive class. The map is monotone either way; the sign says which way.
+    /// **This sign is the ranking contract.** The map is monotone either way,
+    /// and monotone in the decreasing direction reverses every pairwise
+    /// comparison:
+    ///
+    /// - `slope > 0`: strictly increasing. No two rows are reordered, so a
+    ///   threshold-sweeping score such as ROC AUC is unchanged.
+    /// - `slope < 0`: strictly decreasing. Every pair is inverted, and a model
+    ///   with ROC AUC `auc` becomes one with `1.0 - auc`.
+    /// - `slope == 0`: constant. All ordering is gone and ROC AUC is `0.5`.
+    ///
+    /// The sign is not the wrapped model's overall quality; it is a property of
+    /// the calibration sample, and it is the sign of that sample's class mean
+    /// gap — the mean score over its positive rows minus the mean over its
+    /// negative rows. Because the objective is strictly convex, the fit's slope
+    /// takes the sign of that gap and nothing else, so a small held-out fold
+    /// whose few positive rows happen to score low fits a negative slope even
+    /// for a model that ranks well everywhere else. Note that this is a
+    /// *mean* comparison, not a rank one: a calibration sample can have ROC AUC
+    /// above `0.5` and still fit a negative slope, if one high-scoring negative
+    /// row outweighs the ranking. A perfectly separated sample cannot, because
+    /// separation forces the mean gap positive.
+    ///
+    /// A negative slope is therefore the correct maximum-likelihood answer for
+    /// the sample it was given, not a solver failure, and it is reported rather
+    /// than rejected. Callers whose downstream use depends on ranking should
+    /// check the sign; a negative one usually means the calibration fold is too
+    /// small or unrepresentative.
     pub const fn slope(&self) -> f32 {
         self.slope
     }
@@ -376,6 +413,56 @@ mod tests {
         let mirrored = PlattCalibrator::fit(&flipped, &targets, PlattParams::default()).unwrap();
         assert!(mirrored.slope() < 0.0);
         assert!((mirrored.slope() + fitted.slope()).abs() <= 1.0e-4);
+    }
+
+    #[test]
+    fn the_slope_takes_the_sign_of_the_calibration_sample_s_class_mean_gap() {
+        // The documented ranking condition, enumerated rather than sampled:
+        // every label assignment over one fixed score set that has both
+        // classes. The slope's sign is what decides whether calibration
+        // preserves or reverses the wrapped model's ranking, and the claim is
+        // that it is decided by this sample statistic alone — the mean score
+        // over positive rows minus the mean over negative rows — because the
+        // objective is strictly convex and its slope gradient at the profile
+        // optimum for a zero slope is that gap up to a positive factor.
+        let scores = [0.05_f32, 0.2, 0.4, 0.55, 0.7, 0.9];
+        let mut fitted = 0;
+        let mut positive = 0;
+        let mut negative = 0;
+        for mask in 1_u32..(1 << scores.len()) - 1 {
+            let labels: Vec<u8> = (0..scores.len())
+                .map(|index| u8::from(mask >> index & 1 == 1))
+                .collect();
+            let targets = BinaryTargets::new(labels.clone()).unwrap();
+            let fit = PlattCalibrator::fit(&scores, &targets, PlattParams::default()).unwrap();
+            let mut sums = [0.0_f64; 2];
+            let mut counts = [0_usize; 2];
+            for (&score, &label) in scores.iter().zip(&labels) {
+                sums[usize::from(label)] += f64::from(score);
+                counts[usize::from(label)] += 1;
+            }
+            let gap = sums[1] / counts[1] as f64 - sums[0] / counts[0] as f64;
+            fitted += 1;
+            assert_eq!(
+                gap > 0.0,
+                fit.slope() > 0.0,
+                "labels {labels:?}: mean gap {gap} against slope {}",
+                fit.slope()
+            );
+            if gap > 0.0 {
+                positive += 1;
+            } else {
+                negative += 1;
+            }
+        }
+
+        // Both branches have to occur, or the assertion above proves nothing
+        // about the one that inverts a model's ranking.
+        assert_eq!(fitted, (1 << scores.len()) - 2);
+        assert!(
+            positive > 0 && negative > 0,
+            "{positive} against {negative}"
+        );
     }
 
     #[test]
