@@ -9,6 +9,31 @@ and releases use [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- **Breaking (predicted class).** `DummyClassifier` picks its majority class by
+  comparing the class **counts**, instead of the `f32` frequencies narrowed from
+  them. `class_priors` is an `f32` view of a ratio of `usize` counts, and
+  narrowing is not order-preserving: once the relative gap between two counts
+  falls below half an ulp they collapse onto one `f32`, the strict `>` in the
+  scan sees a tie, the tie rule sends it to the smaller label, and the estimator
+  predicts the class that occurs *less* often.
+
+  Measured, and searched rather than guessed: the first pair that collapses is
+  `(16_777_216, 16_777_217)` at `33_554_433` rows, where both ratios round to
+  exactly `0.5` — bit pattern `0x3f00_0000` for each. At every smaller
+  power-of-two total, down to `1_048_577`, the same one-row majority is still
+  strictly larger as an `f32`, so this is the first collapse and not one of
+  many; from `33_554_433` rows onwards it is the whole regime. Fitted on that
+  training set, `predict` returned class `0` for every row while class `1`
+  occurred once more often.
+
+  Counts are exact, so the comparison on them is exact. **The tie rule does not
+  move**: the scan is still ascending with a strict `>`, so a genuine tie still
+  resolves towards the smaller class label, and `class_priors` is unchanged in
+  both value and type. One consequence is deliberate and now documented on both
+  methods: at such a total the predicted label is no longer the first maximum of
+  the reported probabilities, because the reported probabilities are equal where
+  the counts are not. The prediction follows the counts.
+
 - **Breaking (fitted values).** Histogram gradient boosting fits its bin grid
   over the rows that are in the training sample, instead of over every row it
   was handed. Both boosted estimators document that "an integer weight is the
