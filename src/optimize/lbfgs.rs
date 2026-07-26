@@ -708,6 +708,222 @@ mod tests {
         }
     }
 
+    /// A randomized objective, rebuildable so a solve can be verified against a
+    /// fresh instance rather than against the one that produced the answer.
+    #[derive(Clone, Debug)]
+    enum Spec {
+        Diagonal {
+            curvature: Vec<f64>,
+            centre: Vec<f64>,
+        },
+        Rosenbrock {
+            scale: f64,
+        },
+    }
+
+    /// Rosenbrock with a caller-chosen valley steepness.
+    struct ScaledRosenbrock {
+        scale: f64,
+        evaluations: usize,
+    }
+
+    impl Problem for ScaledRosenbrock {
+        fn dimension(&self) -> usize {
+            2
+        }
+
+        fn value_and_gradient(&mut self, point: &[f64], gradient: &mut [f64]) -> f64 {
+            self.evaluations += 1;
+            let (x, y) = (point[0], point[1]);
+            let gap = y - x * x;
+            gradient[0] = -4.0 * self.scale * x * gap - 2.0 * (1.0 - x);
+            gradient[1] = 2.0 * self.scale * gap;
+            self.scale * gap * gap + (1.0 - x) * (1.0 - x)
+        }
+    }
+
+    /// The two families share only this trait object, so the verification pass
+    /// below can rebuild whichever one a case used.
+    fn build(spec: &Spec) -> Box<dyn Problem> {
+        match spec {
+            Spec::Diagonal { curvature, centre } => Box::new(DiagonalQuadratic {
+                curvature: curvature.clone(),
+                centre: centre.clone(),
+                evaluations: 0,
+            }),
+            Spec::Rosenbrock { scale } => Box::new(ScaledRosenbrock {
+                scale: *scale,
+                evaluations: 0,
+            }),
+        }
+    }
+
+    impl Problem for Box<dyn Problem> {
+        fn dimension(&self) -> usize {
+            (**self).dimension()
+        }
+
+        fn value_and_gradient(&mut self, point: &[f64], gradient: &mut [f64]) -> f64 {
+            (**self).value_and_gradient(point, gradient)
+        }
+    }
+
+    /// The convergence contract, run as a sweep rather than asserted on one
+    /// fixture: **no `Ok` ever describes a point that fails the gradient test,
+    /// and no budget short of the one that first converges returns a point at
+    /// all.**
+    ///
+    /// The type's own documentation says every variant is a refusal and that
+    /// reporting the last iterate as a fitted model is the failure it exists to
+    /// prevent. That is checkable, and it is checked here by walking every
+    /// budget from one upward on the same problem: the boundary between refusal
+    /// and answer has to be a single crossing, and the answers on the far side
+    /// of it have to be the same point.
+    #[test]
+    fn an_exhausted_budget_never_returns_an_iterate_and_every_answer_verifies() {
+        let mut rng = crate::numeric::OwnedRng::new(0x0b1e_c714_5eed_0002);
+        let (mut problems, mut budgets_tried) = (0_usize, 0_usize);
+        let (mut converged, mut not_converged, mut other_refusals) = (0_usize, 0, 0);
+        let mut worst_value_mismatch = 0_u64;
+        let mut worst_norm_mismatch = 0_u64;
+        let mut problems_needing_several_iterations = 0_usize;
+        let mut control_perturbed_points_over_tolerance = 0_usize;
+
+        for _ in 0..48 {
+            let spec = if rng.index(3) == 0 {
+                Spec::Rosenbrock {
+                    scale: 10.0_f64.powf(rng.unit_f64() * 3.0),
+                }
+            } else {
+                let dimension = 1 + rng.index(5);
+                Spec::Diagonal {
+                    curvature: (0..dimension)
+                        .map(|_| 10.0_f64.powf(rng.unit_f64() * 4.0 - 2.0))
+                        .collect(),
+                    centre: (0..dimension).map(|_| rng.unit_f64() * 8.0 - 4.0).collect(),
+                }
+            };
+            let dimension = build(&spec).dimension();
+            let start = (0..dimension)
+                .map(|_| rng.unit_f64() * 4.0 - 2.0)
+                .collect::<Vec<_>>();
+            let tolerance = 10.0_f64.powi(-(6 + rng.index(4) as i32));
+
+            let mut first_answer: Option<(usize, Vec<u64>)> = None;
+            for budget in 1..=40_usize {
+                budgets_tried += 1;
+                let options = LbfgsOptions::new(budget, tolerance);
+                let mut problem = build(&spec);
+                let mut point = start.clone();
+                let mut workspace = LbfgsWorkspace::new(dimension, options.memory());
+                let report = minimize(&mut problem, &mut point, &mut workspace, &options);
+                match report {
+                    Ok(report) => {
+                        converged += 1;
+                        // Verified against a fresh instance of the objective at
+                        // the point actually returned.
+                        let mut fresh = build(&spec);
+                        let mut gradient = vec![0.0; dimension];
+                        let value = fresh.value_and_gradient(&point, &mut gradient);
+                        worst_value_mismatch = worst_value_mismatch
+                            .max(value.to_bits().abs_diff(report.value.to_bits()));
+                        let norm = infinity_norm(&gradient);
+                        worst_norm_mismatch = worst_norm_mismatch
+                            .max(norm.to_bits().abs_diff(report.gradient_norm.to_bits()));
+                        assert!(
+                            norm <= tolerance,
+                            "an accepted point has gradient norm {norm} above tolerance \
+                             {tolerance}"
+                        );
+                        assert!(
+                            report.iterations <= budget,
+                            "reported {} iterations under a budget of {budget}",
+                            report.iterations
+                        );
+
+                        // Control: the tolerance test is not satisfied
+                        // everywhere. A displaced point must fail it.
+                        let displaced = point.iter().map(|value| value + 0.25).collect::<Vec<_>>();
+                        let mut displaced_gradient = vec![0.0; dimension];
+                        build(&spec).value_and_gradient(&displaced, &mut displaced_gradient);
+                        if infinity_norm(&displaced_gradient) > tolerance {
+                            control_perturbed_points_over_tolerance += 1;
+                        }
+
+                        let bits = point
+                            .iter()
+                            .map(|value| value.to_bits())
+                            .collect::<Vec<_>>();
+                        match &first_answer {
+                            None => {
+                                if budget > 1 {
+                                    problems_needing_several_iterations += 1;
+                                }
+                                first_answer = Some((budget, bits));
+                            }
+                            Some((first_budget, first_bits)) => assert_eq!(
+                                &bits, first_bits,
+                                "budget {budget} returned a different point than the \
+                                 smallest converging budget {first_budget}"
+                            ),
+                        }
+                    }
+                    Err(OptimizeError::NotConverged { iterations }) => {
+                        not_converged += 1;
+                        assert_eq!(
+                            iterations, budget,
+                            "an exhausted budget must report the budget it exhausted"
+                        );
+                        assert!(
+                            first_answer.is_none(),
+                            "budget {budget} refused after a smaller budget had converged"
+                        );
+                    }
+                    Err(_) => {
+                        other_refusals += 1;
+                        assert!(
+                            first_answer.is_none(),
+                            "budget {budget} refused after a smaller budget had converged"
+                        );
+                    }
+                }
+            }
+            problems += 1;
+        }
+
+        println!(
+            "lbfgs budgets: {problems} problems x 40 budgets = {budgets_tried} solves; \
+             {converged} converged, {not_converged} exhausted the budget, \
+             {other_refusals} refused otherwise"
+        );
+        println!(
+            "lbfgs verification: worst value mismatch {worst_value_mismatch} ulp, worst \
+             gradient-norm mismatch {worst_norm_mismatch} ulp, {problems_needing_several_iterations} \
+             problems needed more than one iteration"
+        );
+        println!(
+            "lbfgs control: a point displaced by 0.25 exceeds the tolerance in \
+             {control_perturbed_points_over_tolerance} of {converged} accepted solves"
+        );
+
+        assert_eq!(
+            worst_value_mismatch, 0,
+            "the report must describe the point"
+        );
+        assert_eq!(worst_norm_mismatch, 0, "the report must describe the point");
+        assert!(converged > 0 && not_converged > 0, "both branches must run");
+        assert!(
+            problems_needing_several_iterations * 2 > problems,
+            "only {problems_needing_several_iterations} of {problems} problems took more \
+             than one iteration, so the budget boundary was barely exercised"
+        );
+        assert_eq!(
+            control_perturbed_points_over_tolerance, converged,
+            "the gradient tolerance was satisfied at a displaced point too, so passing it \
+             at the returned point says nothing"
+        );
+    }
+
     #[test]
     fn the_objective_decreases_at_every_accepted_step() {
         // Recorded through the problem itself, so this observes the values the
