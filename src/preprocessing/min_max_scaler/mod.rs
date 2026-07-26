@@ -95,6 +95,27 @@ impl MinMaxScalerParams {
 /// largest becomes `1.0`. A column with no spread has no such map: it keeps a
 /// divisor of one and transforms to `0.0`, so a constant feature stays
 /// constant instead of producing a non-finite value.
+///
+/// ```
+/// use ferricml::data::DenseMatrix;
+/// use ferricml::preprocessing::{MinMaxScaler, MinMaxScalerParams};
+///
+/// let data = DenseMatrix::new(vec![10.0, 20.0, 30.0, 50.0], 4, 1)?;
+/// let scaler = MinMaxScaler::fit(&data.as_view(), MinMaxScalerParams::default())?;
+///
+/// let scaled = scaler.transform(&data.as_view())?;
+/// assert_eq!(scaled.as_slice()[0], 0.0);
+/// assert_eq!(scaled.as_slice()[3], 1.0);
+///
+/// // The map is invertible, so the original values come back.
+/// let restored = scaler.inverse_transform(&scaled.as_view())?;
+/// assert!((restored.as_slice()[2] - 30.0).abs() < 1e-4);
+/// # Ok::<(), Box<dyn std::error::Error>>(())
+/// ```
+///
+/// Note that it fits order statistics — a minimum and a maximum — which no
+/// per-sample weight can move. That is why it declares no weighted entry point
+/// rather than offering one that would do nothing.
 #[derive(Clone, Debug, PartialEq)]
 pub struct MinMaxScaler {
     n_features_in: usize,

@@ -1,0 +1,47 @@
+# Pinned toolchain for the FerricML narrative documentation site.
+#
+# Python 3.12 is the pinned interpreter line, matching `.readthedocs.yaml`.
+# None of these are FerricML runtime or build dependencies: the crate's
+# dependency graph is `default = []` plus nalgebra and sha2, and this file is
+# outside it. `/requirements` is excluded from the published crate archive.
+#
+# The complete transitive closure is pinned with `==`, not just the two direct
+# requirements, for the same reason the local reference-environment
+# requirements under `dev-docs/references/` are: a docs build that silently
+# changes under you is a reproducibility hole, and the change usually arrives
+# through a transitive dependency rather than a named one.
+#
+# Regenerate with:
+#   python3.12 -m venv .venv-docs
+#   .venv-docs/bin/pip install 'mkdocs==<v>' 'mkdocs-material==<v>'
+#   .venv-docs/bin/pip freeze > requirements/docs.txt
+# then restore this header.
+babel==2.18.0
+backrefs==7.0
+certifi==2026.7.22
+charset-normalizer==3.4.9
+click==8.4.2
+colorama==0.4.6
+ghp-import==2.1.0
+idna==3.18
+Jinja2==3.1.6
+Markdown==3.10.2
+MarkupSafe==3.0.3
+mergedeep==1.3.4
+mkdocs==1.6.1
+mkdocs-get-deps==0.2.2
+mkdocs-material==9.7.7
+mkdocs-material-extensions==1.3.1
+packaging==26.2
+paginate==0.5.7
+pathspec==1.1.1
+platformdirs==4.11.0
+Pygments==2.20.0
+pymdown-extensions==11.0.1
+python-dateutil==2.9.0.post0
+PyYAML==6.0.3
+pyyaml_env_tag==1.1
+requests==2.34.2
+six==1.17.0
+urllib3==2.7.0
+watchdog==6.0.0

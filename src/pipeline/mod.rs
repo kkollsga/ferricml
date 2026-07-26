@@ -37,6 +37,46 @@ const COMPONENT_VERSION: u16 = 1;
 /// Construction validates the feature-width handoff. Allocation-sensitive
 /// callers reuse a workspace and call [`Pipeline::with_transformed`]; callers
 /// that prefer convenience can use [`Pipeline::transform`].
+///
+/// A pipeline is one fitted object, so the transformation travels with the
+/// model. That is what stops the classic mistake of scaling the training data
+/// and then predicting on unscaled rows: there is no separate step left to
+/// forget.
+///
+/// ```
+/// use ferricml::api::Estimator;
+/// use ferricml::data::{DenseMatrix, RegressionTargets};
+/// use ferricml::linear_model::{Ridge, RidgeParams};
+/// use ferricml::pipeline::Pipeline;
+/// use ferricml::preprocessing::{StandardScaler, StandardScalerParams};
+///
+/// // Two columns on wildly different scales.
+/// let data = DenseMatrix::new(
+///     vec![1.0, 1000.0, 2.0, 3000.0, 3.0, 2000.0, 4.0, 5000.0],
+///     4,
+///     2,
+/// )?;
+/// let targets = RegressionTargets::new(vec![1.0, 2.0, 3.0, 4.0])?;
+///
+/// // Fit the scaler, then fit the model on what the scaler produced.
+/// let scaler = StandardScaler::fit(&data.as_view(), StandardScalerParams::default())?;
+/// let scaled = scaler.transform(&data.as_view())?;
+/// let model = Ridge::fit(&scaled.as_view(), &targets, RidgeParams::default())?;
+///
+/// // One object from here on. Construction checks the width handoff.
+/// let pipeline = Pipeline::new(scaler, model)?;
+/// assert_eq!(pipeline.n_features_in(), 2);
+///
+/// // Inference takes raw rows and scales them on the way through, into a
+/// // workspace the caller owns, so a batch allocates nothing.
+/// let rows = 4;
+/// let mut workspace = vec![0.0_f32; pipeline.workspace_len(rows)?];
+/// let mut predictions = vec![0.0_f32; rows];
+/// pipeline.predict_into(&data.as_view(), &mut workspace, &mut predictions)?;
+///
+/// assert!(predictions.iter().all(|value| value.is_finite()));
+/// # Ok::<(), Box<dyn std::error::Error>>(())
+/// ```
 #[derive(Clone, Debug, PartialEq)]
 pub struct Pipeline<T, E> {
     transformer: T,

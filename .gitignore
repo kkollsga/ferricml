@@ -13,3 +13,8 @@ __pycache__/
 
 # Local experiment inputs and generated artifacts
 /research/
+
+# Documentation site: generated HTML and the pinned local toolchain. Neither
+# belongs under docs/, which stays hand-written markdown only.
+/site/
+/.venv-docs/

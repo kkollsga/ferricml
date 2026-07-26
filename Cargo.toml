@@ -10,17 +10,28 @@ documentation = "https://docs.rs/ferricml"
 readme = "README.md"
 keywords = ["machine-learning", "random-forest", "classification", "regression"]
 categories = ["algorithms", "science"]
+# `/docs` is deliberately absent: the narrative markdown ships, because it is
+# the crate's only offline documentation and because `src/lib.rs` compiles those
+# pages as doctests, so excluding them would remove the files that prove the
+# samples still work. Every piece of documentation-site machinery lives outside
+# `docs/` and is excluded here instead.
+# `scripts/check_packaged_crate.sh` asserts both halves of that rule against the
+# extracted archive.
 exclude = [
     "/.github",
+    "/.readthedocs.yaml",
+    "/.venv-docs",
     "/CLAUDE.md",
     "/Makefile",
     "/RELEASING.md",
     "/benches",
     "/benchmarks",
     "/dev-docs",
+    "/mkdocs.yml",
     "/research",
     "/requirements",
     "/scripts",
+    "/site",
     "/tests",
 ]
 

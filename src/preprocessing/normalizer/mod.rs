@@ -51,6 +51,26 @@ impl NormalizerParams {
 /// A row whose norm is zero has no direction to preserve, so it keeps a divisor
 /// of one and passes through as the zero row it already is. That is the same
 /// exact-zero rule the fitted scalers use, reached through the same helper.
+///
+/// ```
+/// use ferricml::data::DenseMatrix;
+/// use ferricml::preprocessing::{Norm, Normalizer, NormalizerParams};
+///
+/// // Two rows pointing the same way at different lengths.
+/// let data = DenseMatrix::new(vec![3.0, 4.0, 30.0, 40.0], 2, 2)?;
+///
+/// let normalizer = Normalizer::fit(
+///     &data.as_view(),
+///     NormalizerParams::default().with_norm(Norm::L2),
+/// )?;
+/// let unit = normalizer.transform(&data.as_view())?;
+///
+/// // Scaling is per row, so both rows land on the same unit vector.
+/// assert_eq!(unit.row(0), unit.row(1));
+/// assert!((unit.as_slice()[0] - 0.6).abs() < 1e-6);
+/// assert!((unit.as_slice()[1] - 0.8).abs() < 1e-6);
+/// # Ok::<(), Box<dyn std::error::Error>>(())
+/// ```
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct Normalizer {
     n_features_in: usize,

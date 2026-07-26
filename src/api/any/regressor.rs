@@ -38,6 +38,34 @@ pub enum AnyRegressorParams<'a> {
 }
 
 /// An owned fitted regressor selected at runtime.
+///
+/// Generic estimators are the zero-overhead layer, and the right default. Reach
+/// for this when the model type is a runtime choice — read from configuration,
+/// or restored from an artifact whose kind is not known until it is decoded.
+/// Dispatch happens once per batch, not once per row.
+///
+/// ```
+/// use ferricml::api::AnyRegressor;
+/// use ferricml::data::{DenseMatrix, RegressionTargets};
+/// use ferricml::linear_model::{Ridge, RidgeParams};
+///
+/// let data = DenseMatrix::new(vec![0.0, 1.0, 2.0, 3.0], 4, 1)?;
+/// let targets = RegressionTargets::new(vec![1.0, 3.0, 5.0, 7.0])?;
+///
+/// let model = Ridge::fit(&data.as_view(), &targets, RidgeParams::default())?;
+/// let expected = model.predict(&data.as_view())?;
+///
+/// // The same model, behind one owned runtime-swappable type.
+/// let any = AnyRegressor::from(model);
+/// assert_eq!(any.predict(&data.as_view())?, expected);
+///
+/// // Persistence nests the selected estimator's own artifact whole, so
+/// // restoring one restores the variant and the payload schema it chose.
+/// let bytes = any.to_artifact([7; 32])?;
+/// let restored = AnyRegressor::from_artifact(&bytes, [7; 32])?;
+/// assert_eq!(restored.predict(&data.as_view())?, expected);
+/// # Ok::<(), Box<dyn std::error::Error>>(())
+/// ```
 #[derive(Clone, Debug, PartialEq)]
 #[non_exhaustive]
 pub enum AnyRegressor {

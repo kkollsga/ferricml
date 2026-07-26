@@ -31,6 +31,46 @@ const COMPONENT_VERSION: u16 = 1;
 /// Inference is allocation-free: [`StagedPipeline::workspace_len`] reports one
 /// buffer size, the caller allocates it once, and every batch reuses it
 /// through [`StagedPipeline::with_transformed`].
+///
+/// ```
+/// use ferricml::api::Estimator;
+/// use ferricml::data::{DenseMatrix, RegressionTargets};
+/// use ferricml::linear_model::{Ridge, RidgeParams};
+/// use ferricml::pipeline::StagedPipeline;
+/// use ferricml::preprocessing::{
+///     MinMaxScaler, MinMaxScalerParams, StandardScaler, StandardScalerParams,
+/// };
+///
+/// let data = DenseMatrix::new(
+///     vec![1.0, 1000.0, 2.0, 3000.0, 3.0, 2000.0, 4.0, 5000.0],
+///     4,
+///     2,
+/// )?;
+/// let targets = RegressionTargets::new(vec![1.0, 2.0, 3.0, 4.0])?;
+///
+/// // One training pass: each stage is fitted on the previous stage output,
+/// // and the estimator on what the last stage produced.
+/// let pipeline = StagedPipeline::fit(
+///     &data.as_view(),
+///     |view| StandardScaler::fit(view, StandardScalerParams::default()),
+///     |view| MinMaxScaler::fit(view, MinMaxScalerParams::default()),
+///     |view| Ridge::fit(view, &targets, RidgeParams::default()),
+/// )?;
+///
+/// assert_eq!(pipeline.n_features_in(), 2);
+///
+/// // One workspace is split into a disjoint segment per stage, so multi-stage
+/// // inference allocates nothing at all.
+/// let mut workspace = vec![0.0_f32; pipeline.workspace_len(4)?];
+/// let predictions = pipeline.with_transformed(
+///     &data.as_view(),
+///     &mut workspace,
+///     |model, view| model.predict(view),
+/// )?;
+///
+/// assert_eq!(predictions.len(), 4);
+/// # Ok::<(), Box<dyn std::error::Error>>(())
+/// ```
 #[derive(Clone, Debug, PartialEq)]
 pub struct StagedPipeline<S, E> {
     stages: S,

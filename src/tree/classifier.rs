@@ -63,6 +63,47 @@ enum Tree {
 /// stores a full distribution per leaf. As with the forest, the two are
 /// different models even on the same two-class data, and both persist under one
 /// artifact kind that records which leaf arithmetic it holds.
+///
+/// ```
+/// use ferricml::api::Classifier;
+/// use ferricml::data::{BinaryTargets, DenseMatrix};
+/// use ferricml::tree::{DecisionTreeClassifier, DecisionTreeClassifierParams};
+///
+/// let data = DenseMatrix::new(vec![0.0, 1.0, 2.0, 3.0, 4.0, 5.0], 6, 1)?;
+/// let labels = BinaryTargets::new(vec![0, 0, 0, 1, 1, 1])?;
+///
+/// let model = DecisionTreeClassifier::fit(
+///     &data.as_view(),
+///     &labels,
+///     DecisionTreeClassifierParams::default(),
+/// )?;
+///
+/// assert_eq!(model.classes(), &[0, 1]);
+/// assert_eq!(model.predict(&data.as_view())?, vec![0, 0, 0, 1, 1, 1]);
+/// # Ok::<(), Box<dyn std::error::Error>>(())
+/// ```
+///
+/// A multiclass fit stores a full distribution per leaf and takes any observed
+/// class set:
+///
+/// ```
+/// use ferricml::api::Classifier;
+/// use ferricml::data::{ClassTargets, DenseMatrix};
+/// use ferricml::tree::{DecisionTreeClassifier, DecisionTreeClassifierParams};
+///
+/// let data = DenseMatrix::new(vec![0.0, 1.0, 2.0, 3.0, 4.0, 5.0], 6, 1)?;
+/// let labels = ClassTargets::new(vec![3, 3, 7, 7, 10, 10])?;
+///
+/// let model = DecisionTreeClassifier::fit_multiclass(
+///     &data.as_view(),
+///     &labels,
+///     DecisionTreeClassifierParams::default(),
+/// )?;
+///
+/// assert_eq!(model.classes(), &[3, 7, 10]);
+/// assert_eq!(model.predict(&data.as_view())?, vec![3, 3, 7, 7, 10, 10]);
+/// # Ok::<(), Box<dyn std::error::Error>>(())
+/// ```
 #[derive(Clone, Debug, PartialEq)]
 pub struct DecisionTreeClassifier {
     n_features_in: usize,

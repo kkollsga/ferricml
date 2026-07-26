@@ -11,6 +11,34 @@ fn validate_finite(values: &[f32]) -> Result<(), DataError> {
 /// An owned, non-empty vector of binary classification targets.
 ///
 /// Every target is guaranteed to be either `0` or `1`.
+///
+/// ```
+/// use ferricml::data::BinaryTargets;
+///
+/// let targets = BinaryTargets::new(vec![0, 1, 1, 0])?;
+///
+/// assert_eq!(targets.len(), 4);
+/// assert_eq!(targets.as_slice(), &[0, 1, 1, 0]);
+/// // Selecting a subset keeps the type's guarantees, which is what makes it
+/// // safe to hand a cross-validation fold straight back to a fit.
+/// assert_eq!(targets.select(&[1, 2])?.as_slice(), &[1, 1]);
+/// # Ok::<(), Box<dyn std::error::Error>>(())
+/// ```
+///
+/// A label outside `{0, 1}` is rejected at construction, with its index and its
+/// value, rather than being clamped or reinterpreted:
+///
+/// ```
+/// use ferricml::data::{BinaryTargets, DataError};
+///
+/// assert_eq!(
+///     BinaryTargets::new(vec![0, 1, 2]),
+///     Err(DataError::InvalidBinaryTarget { index: 2, value: 2 }),
+/// );
+/// ```
+///
+/// For more than two classes use [`ClassTargets`], which additionally records
+/// the observed class set that orders every probability column.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct BinaryTargets {
     values: Vec<u8>,
@@ -208,6 +236,29 @@ fn observed_classes(values: &[u8]) -> Vec<u8> {
 }
 
 /// An owned, non-empty vector of finite regression targets.
+///
+/// ```
+/// use ferricml::data::RegressionTargets;
+///
+/// let targets = RegressionTargets::new(vec![0.0, 1.0, 4.0, 9.0])?;
+///
+/// assert_eq!(targets.len(), 4);
+/// assert_eq!(targets.get(2), Some(4.0));
+/// assert_eq!(targets.select(&[0, 3])?.as_slice(), &[0.0, 9.0]);
+/// # Ok::<(), Box<dyn std::error::Error>>(())
+/// ```
+///
+/// Non-finite targets are refused at construction, so no estimator has to
+/// decide what fitting against a `NaN` would mean:
+///
+/// ```
+/// use ferricml::data::{DataError, RegressionTargets};
+///
+/// assert_eq!(
+///     RegressionTargets::new(vec![1.0, f32::INFINITY]),
+///     Err(DataError::NonFiniteValue { index: 1 }),
+/// );
+/// ```
 #[derive(Clone, Debug, PartialEq)]
 pub struct RegressionTargets {
     values: Vec<f32>,

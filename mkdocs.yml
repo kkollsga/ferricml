@@ -1,0 +1,102 @@
+# FerricML narrative documentation site.
+#
+# This file lives at the repository root, not under `docs/`, and is excluded
+# from the published crate archive. `docs/` holds hand-written markdown and
+# nothing else: no build config, no Python requirements, no theme assets, no
+# generated output. `scripts/check_packaged_crate.sh` asserts that rule against
+# the extracted archive, so `make package-check` is its evidence.
+
+site_name: FerricML
+site_description: A lean, pure-Rust toolkit for classical machine learning
+site_url: https://ferricml.readthedocs.io/
+site_author: FerricML contributors
+copyright: MIT licensed
+
+repo_url: https://github.com/kkollsga/ferricml
+repo_name: kkollsga/ferricml
+edit_uri: edit/main/docs/
+
+theme:
+  name: material
+  features:
+    - content.code.copy
+    - navigation.sections
+    - navigation.top
+    - navigation.tracking
+    - search.highlight
+    - search.suggest
+    - toc.follow
+  palette:
+    - media: "(prefers-color-scheme: light)"
+      scheme: default
+      primary: deep orange
+      accent: deep orange
+      toggle:
+        icon: material/weather-night
+        name: Switch to dark mode
+    - media: "(prefers-color-scheme: dark)"
+      scheme: slate
+      primary: deep orange
+      accent: deep orange
+      toggle:
+        icon: material/weather-sunny
+        name: Switch to light mode
+
+markdown_extensions:
+  - admonition
+  - attr_list
+  - md_in_html
+  - tables
+  - toc:
+      permalink: true
+  - pymdownx.details
+  - pymdownx.highlight:
+      anchor_linenums: true
+  - pymdownx.inlinehilite
+  - pymdownx.superfences
+
+# Under `mkdocs build --strict` — and under Read the Docs' `fail_on_warning` —
+# each of these turns a silent degradation into a build failure. `omitted_files`
+# is the one that matters most: a new page cannot be added without appearing in
+# the nav below, which is the same "cannot silently opt out" property
+# `tests/doc_examples.rs` gives the doctest carrier.
+validation:
+  nav:
+    omitted_files: warn
+    not_found: warn
+  links:
+    not_found: warn
+    unrecognized_links: warn
+
+extra:
+  social:
+    - icon: fontawesome/brands/github
+      link: https://github.com/kkollsga/ferricml
+      name: FerricML on GitHub
+    - icon: fontawesome/solid/book
+      link: https://docs.rs/ferricml
+      name: API reference on docs.rs
+
+nav:
+  - Home: index.md
+  - Getting started:
+      - Install and quickstart: guide/quickstart.md
+      - Data and targets: guide/data.md
+  - Guided tour:
+      - Linear models: guide/linear-models.md
+      - Trees and forests: guide/trees-and-forests.md
+      - Preprocessing and pipelines: guide/preprocessing-and-pipelines.md
+      - Calibration and inspection: guide/calibration-and-inspection.md
+      - Saving and loading models: guide/persistence.md
+  - Contracts:
+      - API and growth: api-and-growth.md
+      - Frozen reference semantics: reference-semantics.md
+      - Determinism: determinism.md
+      - Artifact envelope: artifact-envelope.md
+      - Histogram gradient boosting: histogram-gradient-boosting.md
+  - Evaluation:
+      - Evaluation and model selection: evaluation-and-model-selection.md
+      - Pairwise ranking: pairwise-ranking.md
+  - Project:
+      - Performance: model-performance.md
+      - Dependency security: security.md

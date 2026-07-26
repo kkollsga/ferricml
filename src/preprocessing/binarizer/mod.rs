@@ -49,6 +49,24 @@ impl BinarizerParams {
 /// The comparison is strictly greater-than. A value exactly at the threshold
 /// becomes `0.0`, which makes the two output classes `(-inf, t]` and
 /// `(t, +inf)` rather than leaving the boundary to rounding.
+///
+/// ```
+/// use ferricml::data::DenseMatrix;
+/// use ferricml::preprocessing::{Binarizer, BinarizerParams};
+///
+/// let data = DenseMatrix::new(vec![-1.0, 0.0, 1.0, 2.0], 4, 1)?;
+/// let binarizer = Binarizer::fit(
+///     &data.as_view(),
+///     BinarizerParams::default().with_threshold(1.0),
+/// )?;
+///
+/// // Strictly greater than: a value exactly at the threshold becomes 0.0.
+/// assert_eq!(
+///     binarizer.transform(&data.as_view())?.as_slice(),
+///     &[0.0, 0.0, 0.0, 1.0],
+/// );
+/// # Ok::<(), Box<dyn std::error::Error>>(())
+/// ```
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Binarizer {
     n_features_in: usize,

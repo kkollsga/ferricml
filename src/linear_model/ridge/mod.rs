@@ -61,6 +61,66 @@ impl RidgeParams {
 }
 
 /// Dense single-target ridge regression.
+///
+/// Ridge adds an L2 penalty to the least-squares objective, which shrinks
+/// coefficients toward zero without ever setting one exactly to zero. Use it
+/// where features are correlated or the fit is unstable; use [`Lasso`] instead
+/// when the goal is to *remove* features.
+///
+/// ```
+/// use ferricml::data::{DenseMatrix, RegressionTargets};
+/// use ferricml::linear_model::{Ridge, RidgeParams};
+///
+/// let data = DenseMatrix::new(vec![0.0, 1.0, 2.0, 3.0], 4, 1)?;
+/// let targets = RegressionTargets::new(vec![1.0, 3.0, 5.0, 7.0])?;
+///
+/// let model = Ridge::fit(&data.as_view(), &targets, RidgeParams::default())?;
+///
+/// assert_eq!(model.n_features_in(), 1);
+/// let predictions = model.predict(&data.as_view())?;
+/// assert_eq!(predictions.len(), 4);
+/// # Ok::<(), Box<dyn std::error::Error>>(())
+/// ```
+///
+/// # `alpha` shrinks, and the retained value is exact
+///
+/// A larger `alpha` gives a strictly smaller coefficient. The value a fit was
+/// given is retained exactly and readable through
+/// [`get_params`](crate::api::HasParams::get_params), so a fitted model can
+/// always say what it was fitted with.
+///
+/// ```
+/// use ferricml::api::HasParams;
+/// use ferricml::data::{DenseMatrix, RegressionTargets};
+/// use ferricml::linear_model::{Ridge, RidgeParams};
+///
+/// let data = DenseMatrix::new(vec![0.0, 1.0, 2.0, 3.0], 4, 1)?;
+/// let targets = RegressionTargets::new(vec![1.0, 3.0, 5.0, 7.0])?;
+///
+/// let weak = Ridge::fit(
+///     &data.as_view(),
+///     &targets,
+///     RidgeParams::default().with_alpha(0.01),
+/// )?;
+/// let strong = Ridge::fit(
+///     &data.as_view(),
+///     &targets,
+///     RidgeParams::default().with_alpha(100.0),
+/// )?;
+///
+/// assert!(strong.coefficients()[0].abs() < weak.coefficients()[0].abs());
+/// assert_eq!(strong.get_params().alpha(), 100.0);
+/// # Ok::<(), Box<dyn std::error::Error>>(())
+/// ```
+///
+/// Note that this `alpha` accompanies an *undivided* squared-error term, so it
+/// is a different quantity from [`Lasso`]'s and [`ElasticNet`]'s, which are
+/// measured against a mean. The two agree at
+/// `ridge_alpha = alpha * total_weight`; see the frozen reference semantics for
+/// why the scales are stated rather than reconciled.
+///
+/// [`Lasso`]: crate::linear_model::Lasso
+/// [`ElasticNet`]: crate::linear_model::ElasticNet
 #[derive(Clone, Debug, PartialEq)]
 pub struct Ridge {
     n_features_in: usize,

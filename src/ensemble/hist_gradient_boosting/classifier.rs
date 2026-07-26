@@ -183,6 +183,39 @@ impl HistGradientBoostingClassifierParams {
 /// Only two-class fitting exists. Multiclass boosting is a separate model with a
 /// separate objective, not a widening of this one, and is deliberately absent
 /// rather than approximated — see [`Self::fit`].
+///
+/// `min_samples_leaf` defaults to `20`, so a dataset smaller than twice that
+/// admits no split at all and the fit returns the baseline alone. The example
+/// below uses 64 rows for that reason.
+///
+/// ```
+/// use ferricml::api::{Classifier, ProbabilisticClassifier};
+/// use ferricml::data::{BinaryTargets, DenseMatrix};
+/// use ferricml::ensemble::{
+///     HistGradientBoostingClassifier, HistGradientBoostingClassifierParams,
+/// };
+///
+/// let values: Vec<f32> = (0..64).map(|index| index as f32).collect();
+/// let labels: Vec<u8> = (0..64).map(|index| u8::from(index >= 32)).collect();
+/// let data = DenseMatrix::new(values, 64, 1)?;
+/// let labels = BinaryTargets::new(labels)?;
+///
+/// let model = HistGradientBoostingClassifier::fit(
+///     &data.as_view(),
+///     &labels,
+///     HistGradientBoostingClassifierParams::default(),
+/// )?;
+///
+/// // Both labels must be present to fit, so the class list is always [0, 1].
+/// assert_eq!(model.classes(), &[0, 1]);
+/// assert_eq!(model.predict(&data.as_view())?, labels.as_slice().to_vec());
+///
+/// // The second probability column is the sigmoid of the raw additive score.
+/// let probabilities = model.predict_proba(&data.as_view())?;
+/// assert!(probabilities[1] < 0.5); // first row, truly class 0
+/// assert!(probabilities[127] > 0.5); // last row, truly class 1
+/// # Ok::<(), Box<dyn std::error::Error>>(())
+/// ```
 #[derive(Clone, Debug, PartialEq)]
 pub struct HistGradientBoostingClassifier {
     n_features_in: usize,

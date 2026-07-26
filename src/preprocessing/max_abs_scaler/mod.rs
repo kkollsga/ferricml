@@ -24,6 +24,18 @@ pub struct MaxAbsScalerParams;
 /// `-1.0..=1.0` and a zero stays a zero. A column that is zero everywhere has
 /// no magnitude to divide by: it keeps a divisor of one and passes through
 /// unchanged rather than producing a non-finite value.
+///
+/// ```
+/// use ferricml::data::DenseMatrix;
+/// use ferricml::preprocessing::{MaxAbsScaler, MaxAbsScalerParams};
+///
+/// let data = DenseMatrix::new(vec![-4.0, 0.0, 2.0, 8.0], 4, 1)?;
+/// let scaler = MaxAbsScaler::fit(&data.as_view(), MaxAbsScalerParams::default())?;
+///
+/// let scaled = scaler.transform(&data.as_view())?;
+/// assert_eq!(scaled.as_slice(), &[-0.5, 0.0, 0.25, 1.0]);
+/// # Ok::<(), Box<dyn std::error::Error>>(())
+/// ```
 #[derive(Clone, Debug, PartialEq)]
 pub struct MaxAbsScaler {
     n_features_in: usize,

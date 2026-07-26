@@ -53,6 +53,50 @@ impl StandardScalerParams {
 }
 
 /// Fitted per-feature population standardization state.
+///
+/// Each column is centred on its fitted mean and divided by its fitted
+/// population standard deviation, so a transformed column has mean zero and
+/// unit scale. This is what a penalized linear model needs in front of it:
+/// without it, a feature's units decide how strongly the penalty hits it.
+///
+/// ```
+/// use ferricml::data::DenseMatrix;
+/// use ferricml::preprocessing::{StandardScaler, StandardScalerParams};
+///
+/// // One column in metres, one in millimetres — a thousandfold difference.
+/// let data = DenseMatrix::new(
+///     vec![1.0, 1000.0, 2.0, 2000.0, 3.0, 3000.0, 4.0, 4000.0],
+///     4,
+///     2,
+/// )?;
+///
+/// let scaler = StandardScaler::fit(&data.as_view(), StandardScalerParams::default())?;
+/// let scaled = scaler.transform(&data.as_view())?;
+///
+/// // After scaling the two columns are identical: the units are gone.
+/// for row in 0..4 {
+///     let left = scaled.get(row, 0).expect("in bounds");
+///     let right = scaled.get(row, 1).expect("in bounds");
+///     assert!((left - right).abs() < 1e-5);
+/// }
+/// # Ok::<(), Box<dyn std::error::Error>>(())
+/// ```
+///
+/// A constant column has no spread to divide by. It keeps a divisor of exactly
+/// one rather than producing a non-finite value, so a constant feature survives
+/// as a constant:
+///
+/// ```
+/// use ferricml::data::DenseMatrix;
+/// use ferricml::preprocessing::{StandardScaler, StandardScalerParams};
+///
+/// let data = DenseMatrix::new(vec![5.0, 5.0, 5.0, 5.0], 4, 1)?;
+/// let scaler = StandardScaler::fit(&data.as_view(), StandardScalerParams::default())?;
+///
+/// let scaled = scaler.transform(&data.as_view())?;
+/// assert!(scaled.as_slice().iter().all(|value| value.is_finite()));
+/// # Ok::<(), Box<dyn std::error::Error>>(())
+/// ```
 #[derive(Clone, Debug, PartialEq)]
 pub struct StandardScaler {
     n_features_in: usize,

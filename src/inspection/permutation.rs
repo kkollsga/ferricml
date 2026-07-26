@@ -180,6 +180,55 @@ pub fn permutation_importance_classifier_into<S: ClassificationScore>(
 }
 
 /// Measures permutation importance for a fitted regressor.
+///
+/// Shuffling a column and re-scoring says how much the model relied on it.
+/// This works through the public batch prediction and scoring contracts alone,
+/// so it needs no cooperation from the estimator and exposes no internals.
+///
+/// Values are quality **losses**, oriented so a larger number always means a
+/// more important feature — whichever direction the underlying metric improves
+/// in. The orientation is taken from the score's own declaration rather than
+/// assumed.
+///
+/// ```
+/// use ferricml::data::{DenseMatrix, RegressionTargets};
+/// use ferricml::inspection::{PermutationImportanceParams, permutation_importance_regressor};
+/// use ferricml::linear_model::{LinearRegression, LinearRegressionParams};
+/// use ferricml::model_selection::RegressionScorer;
+///
+/// // Column 0 drives the target; column 1 is noise.
+/// let mut values = Vec::new();
+/// let mut targets = Vec::new();
+/// for index in 0..24 {
+///     let signal = index as f32;
+///     values.push(signal);
+///     values.push(if index % 2 == 0 { 1.0 } else { -1.0 });
+///     targets.push(2.0 * signal);
+/// }
+/// let data = DenseMatrix::new(values, 24, 2)?;
+/// let targets = RegressionTargets::new(targets)?;
+///
+/// let model = LinearRegression::fit(
+///     &data.as_view(),
+///     &targets,
+///     LinearRegressionParams::default(),
+/// )?;
+///
+/// let importance = permutation_importance_regressor(
+///     &model,
+///     &data.as_view(),
+///     &targets,
+///     RegressionScorer::MeanSquaredError,
+///     PermutationImportanceParams::default().with_random_state(4),
+/// )?;
+///
+/// assert_eq!(importance.n_features(), 2);
+/// // The signal column matters; the noise column does not.
+/// assert!(importance.means()[0] > importance.means()[1]);
+/// // `ranked` orders features most important first.
+/// assert_eq!(importance.ranked()[0], 0);
+/// # Ok::<(), Box<dyn std::error::Error>>(())
+/// ```
 pub fn permutation_importance_regressor<S: RegressionScore>(
     regressor: &dyn Regressor,
     data: &MatrixView<'_>,
