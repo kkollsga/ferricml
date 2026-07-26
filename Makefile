@@ -34,6 +34,7 @@ gate:
 	$(PYTHON) scripts/check_accessor_pairing.py
 	$(PYTHON) scripts/check_accessor_pairing.py --self-test
 	$(PYTHON) scripts/check_release_workflow.py
+	$(PYTHON) scripts/check_release_workflow.py --self-test
 	$(PYTHON) scripts/rust_api_profiles.py self-test
 	$(PYTHON) scripts/performance_history.py self-test
 	$(MAKE) package-check
