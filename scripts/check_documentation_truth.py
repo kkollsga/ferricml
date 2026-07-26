@@ -109,6 +109,20 @@ REPOSITORY_PATH_MENTION = re.compile(r"`([A-Za-z][A-Za-z0-9_-]*/[A-Za-z0-9_./*-]
 
 GENERIC_PARAMETERS = re.compile(r"^[^<]*<([^>]*)>")
 
+# The crate manifest, which is the authority the install snippet is checked
+# against. Only the `[package]` table is read, because `[dependencies]` carries
+# `version = "..."` keys of its own that say nothing about this crate.
+MANIFEST = "Cargo.toml"
+TABLE_HEADER = re.compile(r"^\s*\[\s*([^\]]+?)\s*\]\s*$")
+MANIFEST_FIELD = re.compile(r'^\s*(name|version)\s*=\s*"([^"]*)"')
+PLAIN_VERSION = re.compile(r"^(\d+)\.(\d+)\.(\d+)$")
+
+# One comparator of a Cargo version requirement: an optional operator and one
+# to three components, each a number or a `*`.
+COMPARATOR = re.compile(
+    r"^\s*(\^|~|=|>=|<=|>|<)?\s*(\d+|\*)(?:\.(\d+|\*))?(?:\.(\d+|\*))?\s*$"
+)
+
 
 def rust_sources(root: Path) -> list[Path]:
     return sorted((root / RUST_SOURCE).rglob("*.rs"))
@@ -116,6 +130,22 @@ def rust_sources(root: Path) -> list[Path]:
 
 def narrative_sources(root: Path) -> list[Path]:
     return sorted((root / NARRATIVE).rglob("*.md"))
+
+
+def install_sources(root: Path) -> list[Path]:
+    """Every page that may carry an install snippet.
+
+    This is the prose the other rules read, plus the root `README.md`. The
+    readme is outside `docs/` and outside rustdoc, so no rule here reads it —
+    but it is the crates.io landing page and the most likely second home for an
+    install snippet, which makes it exactly the place a stale requirement would
+    survive unread.
+    """
+    sources = [*rust_sources(root), *narrative_sources(root)]
+    readme = root / "README.md"
+    if readme.exists():
+        sources.append(readme)
+    return sources
 
 
 def documentation_lines(path: Path) -> Iterable[tuple[int, str]]:
@@ -538,12 +568,253 @@ def documented_repository_paths_exist(root: Path) -> list[str]:
     return findings
 
 
+def manifest_package(root: Path) -> tuple[str, tuple[int, int, int] | None, list[str]]:
+    """The crate's own name and version, read from the `[package]` table.
+
+    Returns the findings alongside them rather than raising, because a manifest
+    this cannot read is a rule that has lost its input, and the house rule is
+    that such a rule reports rather than passes.
+    """
+    path = root / MANIFEST
+    if not path.exists():
+        return "", None, [f"the crate manifest {MANIFEST} is missing; the "
+                          "dependency-requirement rule can no longer prove anything"]
+    name = ""
+    version = ""
+    table = ""
+    for line in path.read_text().splitlines():
+        header = TABLE_HEADER.match(line)
+        if header:
+            table = header.group(1)
+            continue
+        if table != "package":
+            continue
+        field = MANIFEST_FIELD.match(line)
+        if not field:
+            continue
+        if field.group(1) == "name" and not name:
+            name = field.group(2)
+        elif field.group(1) == "version" and not version:
+            version = field.group(2)
+    if not name or not version:
+        return "", None, [
+            f"the crate manifest {MANIFEST} declares no [package] name and version "
+            "pair; the dependency-requirement rule can no longer prove anything"
+        ]
+    parsed = PLAIN_VERSION.match(version)
+    if not parsed:
+        return name, None, [
+            f"the crate manifest version {version!r} is not a plain "
+            "major.minor.patch version, so no documented requirement can be "
+            "evaluated against it"
+        ]
+    major, minor, patch = (int(part) for part in parsed.groups())
+    return name, (major, minor, patch), []
+
+
+def _comparator_bounds(
+    operator: str, given: list[int], wildcard: bool
+) -> tuple[tuple[int, int, int] | None, tuple[int, int, int] | None, bool] | None:
+    """`(lower, upper, lower_inclusive)` for one comparator, upper exclusive.
+
+    `None` means a form this evaluator does not model, which is reported rather
+    than assumed to pass — a requirement nobody can evaluate is not a
+    requirement anybody has checked.
+    """
+    if wildcard:
+        # `*`, `1.*`, `1.2.*`. A wildcard carries no operator in Cargo.
+        if operator not in ("", "^"):
+            return None
+        if not given:
+            return None, None, True
+        if len(given) == 1:
+            return (given[0], 0, 0), (given[0] + 1, 0, 0), True
+        return (given[0], given[1], 0), (given[0], given[1] + 1, 0), True
+    padded = (given + [0, 0, 0])[:3]
+    lower = (padded[0], padded[1], padded[2])
+    if operator in ("", "^"):
+        # Caret, which is what a bare requirement means. The leftmost non-zero
+        # component of the components actually written is the one that may not
+        # move; below 1.0 that is the minor, which is the whole reason `"0.1"`
+        # cannot reach a 0.2.0 crate. An omitted component is a wider bound,
+        # not a zero: `^0.0` admits every 0.0.x, while `^0.0.0` admits only
+        # 0.0.0 itself.
+        if len(given) == 1:
+            return lower, (padded[0] + 1, 0, 0), True
+        if len(given) == 2:
+            if padded[0] != 0:
+                return lower, (padded[0] + 1, 0, 0), True
+            return lower, (0, padded[1] + 1, 0), True
+        if padded[0] != 0:
+            return lower, (padded[0] + 1, 0, 0), True
+        if padded[1] != 0:
+            return lower, (0, padded[1] + 1, 0), True
+        return lower, (0, 0, padded[2] + 1), True
+    if operator == "~":
+        if len(given) == 1:
+            return lower, (padded[0] + 1, 0, 0), True
+        return lower, (padded[0], padded[1] + 1, 0), True
+    if operator == "=":
+        if len(given) == 3:
+            return lower, (padded[0], padded[1], padded[2] + 1), True
+        if len(given) == 2:
+            return lower, (padded[0], padded[1] + 1, 0), True
+        return lower, (padded[0] + 1, 0, 0), True
+    if operator == ">=":
+        return lower, None, True
+    if operator == "<":
+        return None, lower, True
+    # `>` and `<=` against a partial version have subtleties this rule does not
+    # model, so they are reported as unevaluable unless fully spelled out.
+    if len(given) < 3:
+        return None
+    if operator == ">":
+        return lower, None, False
+    return None, (lower[0], lower[1], lower[2] + 1), True
+
+
+def requirement_admits(version: tuple[int, int, int], requirement: str) -> bool | None:
+    """Whether `version` satisfies a Cargo version requirement.
+
+    `None` means the requirement is not a form this evaluator models.
+    """
+    if not requirement.strip():
+        return None
+    for part in requirement.split(","):
+        if part.strip() == "*":
+            continue
+        match = COMPARATOR.match(part)
+        if not match:
+            return None
+        operator = match.group(1) or ""
+        components = [group for group in match.groups()[1:] if group is not None]
+        wildcard = "*" in components
+        if wildcard and components[-1] != "*":
+            return None
+        numbers = [int(component) for component in components if component != "*"]
+        bounds = _comparator_bounds(operator, numbers, wildcard)
+        if bounds is None:
+            return None
+        lower, upper, inclusive = bounds
+        if lower is not None and (version < lower or (not inclusive and version == lower)):
+            return False
+        if upper is not None and version >= upper:
+            return False
+    return True
+
+
+def documented_requirements(root: Path, name: str) -> Iterable[tuple[Path, int, str]]:
+    """Every documented requirement on this crate, as `(path, line, requirement)`.
+
+    Three spellings are read, because all three are things a reader copies: a
+    manifest line in a TOML block, a dependency table with a `version` key, and
+    a `cargo add` command line.
+
+    Exempt, and therefore not yielded at all:
+
+    * a `path` or `git` dependency, which names no registry version and so can
+      contradict no manifest — the packaged-consumer fixture is written that
+      way deliberately;
+    * `cargo add <crate>` with no version, which resolves to whatever is newest
+      and is therefore correct by construction.
+
+    A manifest line is required to be the *whole* line, because that is what
+    distinguishes a snippet a reader copies from a sentence that quotes one.
+    Prose about a requirement that is deliberately wrong — this page's own
+    explanation of the defect, for one — has to be written inline, the same way
+    round the other rules already require of prose about an absent entity.
+    """
+    escaped = re.escape(name)
+    inline = re.compile(rf'^\s*{escaped}\s*=\s*"([^"]*)"\s*(?:#.*)?$')
+    table = re.compile(rf"^\s*{escaped}\s*=\s*\{{(.*)\}}\s*(?:#.*)?$")
+    add = re.compile(rf"\bcargo\s+add\s+{escaped}(?P<rest>\S*[^\n]*)")
+    version_key = re.compile(r'\bversion\s*=\s*"([^"]*)"')
+    source_key = re.compile(r"\b(path|git)\s*=")
+    add_version = re.compile(r'(?:@|--vers(?:ion)?[= ]\s*)"?([^"\s]+)"?')
+    for path in install_sources(root):
+        for number, line in documentation_lines(path):
+            simple = inline.match(line)
+            if simple:
+                yield path, number, simple.group(1)
+                continue
+            structured = table.match(line)
+            if structured:
+                body = structured.group(1)
+                pinned = version_key.search(body)
+                if pinned:
+                    yield path, number, pinned.group(1)
+                elif not source_key.search(body):
+                    yield path, number, ""
+                continue
+            command = add.search(line)
+            if command:
+                pinned = add_version.search(command.group("rest"))
+                if pinned:
+                    yield path, number, pinned.group(1)
+
+
+def documented_dependency_requirements_resolve(root: Path) -> list[str]:
+    """A documented `crate = "<req>"` must be a requirement the manifest satisfies.
+
+    The install snippet is the first thing a reader runs, and it is the one
+    claim in the documentation whose being wrong produces no error. Below 1.0
+    Cargo treats the minor as the breaking component, so `ferricml = "0.1"`
+    against a 0.2.0 crate is `>=0.1.0, <0.2.0`: it resolves, quietly, to the
+    last 0.1.x release, and the reader then works through a page describing an
+    API their build does not have. That was live in `docs/guide/quickstart.md`,
+    and the published 0.2.0 carried breaking changes, so the mismatch was not
+    cosmetic.
+
+    The requirement is *evaluated* the way Cargo evaluates it rather than
+    string-matched against the current version, so `"0.2"`, `"0.2.0"`,
+    `"^0.2"`, `"~0.2"`, `"0.2.*"` and `">=0.2, <0.3"` all pass against 0.2.0
+    and only a genuinely unsatisfiable requirement is reported. A requirement
+    that excludes the manifest in the *forward* direction is a finding too:
+    `"0.2.1"` against a 0.2.0 manifest names a release that does not exist yet,
+    so a reader following it resolves nothing at all.
+
+    A form the evaluator does not model is reported rather than passed, and so
+    is a manifest it cannot read. The exempt spellings — `path`, `git`, and a
+    bare `cargo add` — are not counted towards the rule having proved anything,
+    because a page whose only snippet is a path dependency has given this rule
+    nothing to check.
+    """
+    name, version, findings = manifest_package(root)
+    if version is None:
+        return findings
+    checked = 0
+    for path, number, requirement in documented_requirements(root, name):
+        checked += 1
+        admits = requirement_admits(version, requirement)
+        if admits is None:
+            findings.append(
+                f"documentation states a dependency requirement that cannot be "
+                f"evaluated: {path.relative_to(root)}:{number} writes "
+                f'{name} = "{requirement}", which is not a Cargo requirement form '
+                f"this rule models"
+            )
+        elif not admits:
+            findings.append(
+                f"documentation states a dependency requirement the manifest "
+                f"contradicts: {path.relative_to(root)}:{number} tells a reader to "
+                f'depend on {name} = "{requirement}", which does not admit the '
+                f"manifest's {'.'.join(str(part) for part in version)}"
+            )
+    if not checked:
+        findings.append(
+            "no documented dependency requirement on the crate itself was found; "
+            "the dependency-requirement rule can no longer prove anything"
+        )
+    return findings
+
+
 RULES: tuple[tuple[str, Callable[[Path], list[str]]], ...] = (
     ("capability-declarations-documented", capability_declarations_are_documented),
     ("capability-documentation-complete", capability_documentation_matches_declaration),
     ("documented-paths-resolve", documented_paths_resolve),
     ("documented-bounds-are-real", documented_bounds_are_real_bounds),
     ("documented-repository-paths-exist", documented_repository_paths_exist),
+    ("documented-dependency-requirement-resolves", documented_dependency_requirements_resolve),
 )
 
 
@@ -650,7 +921,31 @@ CLEAN_TREE: dict[str, str] = {
         "# Guide\n\n"
         "An empty batch surfaces `ModelError::EmptyData`.\n"
     ),
+    # The manifest the install snippet is measured against, and a page carrying
+    # the snippet in both spellings a reader copies.
+    "Cargo.toml": (
+        "[package]\n"
+        'name = "ferricml"\n'
+        'version = "0.2.0"\n'
+        "\n"
+        "[dependencies]\n"
+        'nalgebra = "0.34"\n'
+    ),
+    "docs/guide/quickstart.md": (
+        "# Install\n\n"
+        "```toml\n"
+        "[dependencies]\n"
+        'ferricml = "0.2"\n'
+        "```\n\n"
+        "Or from the command line:\n\n"
+        "```console\n"
+        "cargo add ferricml@0.2\n"
+        "```\n"
+    ),
 }
+
+CLEAN_REQUIREMENT = 'ferricml = "0.2"'
+CLEAN_ADD = "cargo add ferricml@0.2"
 
 
 def write_clean_tree(root: Path) -> Path:
@@ -676,6 +971,50 @@ def rewrite(path: Path, old: str, new: str) -> None:
 def drop_files(root: Path, *relatives: str) -> None:
     for relative in relatives:
         (root / relative).unlink()
+
+
+def blank_files(root: Path, *relatives: str) -> None:
+    for relative in relatives:
+        (root / relative).write_text("")
+
+
+def requirement_spelling(spelling: str) -> Callable[[Path], None]:
+    """A mutation rewriting the clean tree's install snippet to `spelling`."""
+    return lambda root: rewrite(
+        root / "docs" / "guide" / "quickstart.md",
+        CLEAN_REQUIREMENT,
+        f"ferricml = {spelling}",
+    )
+
+
+# Requirement spellings the rule must **accept** against a 0.2.0 manifest, each
+# proven at the tree level so the regex, the evaluator, and the exemptions are
+# all on the path being tested. A rule that rejects everything catches the
+# defect too, which makes the accept side the half that says the rule is a rule
+# rather than a tripwire. The exempt spellings are checked with the `cargo add`
+# line left in place, because on its own an exempt snippet leaves the rule with
+# nothing to check and must therefore report vacuity rather than pass.
+ACCEPTED_REQUIREMENTS: tuple[tuple[str, Callable[[Path], None]], ...] = (
+    ("bare-minor", requirement_spelling('"0.2"')),
+    ("bare-patch", requirement_spelling('"0.2.0"')),
+    ("caret-minor", requirement_spelling('"^0.2"')),
+    ("caret-patch", requirement_spelling('"^0.2.0"')),
+    ("tilde-minor", requirement_spelling('"~0.2"')),
+    ("wildcard-patch", requirement_spelling('"0.2.*"')),
+    ("wildcard-any", requirement_spelling('"*"')),
+    ("explicit-range", requirement_spelling('">=0.2, <0.3"')),
+    ("dependency-table", requirement_spelling('{ version = "0.2", default-features = false }')),
+    ("path-dependency", requirement_spelling('{ path = "../ferricml" }')),
+    ("git-dependency", requirement_spelling('{ git = "https://example.invalid/ferricml.git" }')),
+    (
+        "unversioned-cargo-add",
+        lambda root: rewrite(
+            root / "docs" / "guide" / "quickstart.md",
+            CLEAN_ADD,
+            "cargo add ferricml",
+        ),
+    ),
+)
 
 
 SYNTHETIC_VIOLATIONS: tuple[tuple[str, Callable[[Path], None], str], ...] = (
@@ -732,6 +1071,26 @@ SYNTHETIC_VIOLATIONS: tuple[tuple[str, Callable[[Path], None], str], ...] = (
         "documented-repository-paths-exist",
         lambda root: drop_files(root, "tests/reference_semantics.rs"),
         "documentation names a repository path that does not exist",
+    ),
+    (
+        # The live defect: below 1.0 the minor is the breaking component, so
+        # this resolves to the newest 0.1.x and never reaches the 0.2.0 crate.
+        "documented-dependency-requirement-resolves",
+        requirement_spelling('"0.1"'),
+        "documentation states a dependency requirement the manifest contradicts",
+    ),
+    (
+        # The forward direction, which is a finding for the same reason: a
+        # requirement naming a release that does not exist resolves to nothing.
+        "documented-dependency-requirement-resolves",
+        requirement_spelling('"0.2.1"'),
+        "documentation states a dependency requirement the manifest contradicts",
+    ),
+    (
+        # A form the evaluator does not model is reported, not waved through.
+        "documented-dependency-requirement-resolves",
+        requirement_spelling('"latest"'),
+        "documentation states a dependency requirement that cannot be evaluated",
     ),
 )
 
@@ -808,6 +1167,45 @@ SYNTHETIC_VACUITIES: tuple[tuple[str, Callable[[Path], None], str], ...] = (
         ),
         "no repository path citation was found",
     ),
+    (
+        # The page still exists and still reads as an install page; it simply
+        # no longer states a requirement. Nothing is violated, and a pass here
+        # would mean the rule had stopped looking.
+        "documented-dependency-requirement-resolves",
+        lambda root: (
+            rewrite(
+                root / "docs" / "guide" / "quickstart.md",
+                CLEAN_REQUIREMENT,
+                "# add the crate",
+            ),
+            rewrite(
+                root / "docs" / "guide" / "quickstart.md",
+                CLEAN_ADD,
+                "cargo build",
+            ),
+        )
+        and None,
+        "no documented dependency requirement on the crate itself was found",
+    ),
+    (
+        # The page the rule reads is empty.
+        "documented-dependency-requirement-resolves",
+        lambda root: blank_files(root, "docs/guide/quickstart.md"),
+        "no documented dependency requirement on the crate itself was found",
+    ),
+    (
+        # The manifest the rule measures against is gone, so there is no
+        # version any requirement could be compared with.
+        "documented-dependency-requirement-resolves",
+        lambda root: drop_files(root, "Cargo.toml"),
+        f"the crate manifest {MANIFEST} is missing",
+    ),
+    (
+        # The manifest is present but says nothing the rule can use.
+        "documented-dependency-requirement-resolves",
+        lambda root: blank_files(root, "Cargo.toml"),
+        "declares no [package] name and version pair",
+    ),
 )
 
 # The two documentation defects this checker was built from, reconstructed as
@@ -843,7 +1241,29 @@ HISTORICAL_REGRESSIONS: tuple[tuple[str, Callable[[Path], None], str], ...] = (
         ),
         "documentation names a member that does not exist",
     ),
+    (
+        # 2026-07-27: the quickstart's install snippet still said
+        # `ferricml = "0.1"` after the 0.2.0 release. Cargo resolved it to
+        # 0.1.2 without a warning, so a reader worked through a page describing
+        # an API their build did not contain, and the release it silently
+        # pinned away from was a breaking one.
+        "documented-dependency-requirement-resolves",
+        requirement_spelling('"0.1"'),
+        "documentation states a dependency requirement the manifest contradicts",
+    ),
 )
+
+
+def assert_accepts(
+    workspace: Path,
+    label: str,
+    cases: tuple[tuple[str, Callable[[Path], None]], ...],
+) -> None:
+    for name, mutate in cases:
+        tree = write_clean_tree(workspace / f"{label}-{name}")
+        mutate(tree)
+        found = violations(tree)
+        assert found == [], f"{label} case {name} was rejected; reported {found}"
 
 
 def assert_fires(
@@ -881,6 +1301,7 @@ def self_test() -> None:
         found = violations(clean)
         assert found == [], f"synthetic clean tree reported violations: {found}"
 
+        assert_accepts(base, "accepted", ACCEPTED_REQUIREMENTS)
         assert_fires(base, "violation", SYNTHETIC_VIOLATIONS)
         assert_fires(base, "vacuity", SYNTHETIC_VACUITIES)
         assert_fires(base, "historical", HISTORICAL_REGRESSIONS)
@@ -893,6 +1314,8 @@ def main() -> int:
             "documentation truth verifier self-test passed "
             f"({len(RULES)} rules, each proven to fire against a synthetic "
             "violation and against the loss of its own input; "
+            f"{len(ACCEPTED_REQUIREMENTS)} dependency requirement spellings "
+            "proven to be accepted rather than merely unreported; "
             f"{len(HISTORICAL_REGRESSIONS)} historical defects reconstructed)"
         )
         return 0
