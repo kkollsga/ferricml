@@ -115,8 +115,9 @@ common transformations, and anything else is expressed by implementing
 `api::Transformer` directly, which is the honest way to say the transformation
 is the caller's rather than FerricML's.
 
-Third-party provenance and regeneration tools are local development materials
-under the gitignored `dev-docs/references/` workspace. They may inform fixture
-updates, but are not packaged, shipped, or required by CI. Any intentional
-fixture change must be reviewed together with the Rust test that states its
-meaning.
+Third-party provenance and the tooling that regenerates these fixtures are
+maintainer-side development materials, kept in a workspace outside the crate.
+They may inform a fixture update, but they are not packaged, shipped, or
+required by CI: what a consumer receives is the frozen fixture values and the
+Rust tests that state their meaning. Any intentional fixture change must be
+reviewed together with the test that states what it means.

@@ -134,9 +134,10 @@ estimator meaning follow the reference contract.
   any two rows — and therefore any threshold-sweeping score such as ROC AUC — is
   unchanged. The composition declares its capabilities per calibrator rather
   than by intersecting the wrapped model's: it owns fitted parts, so weighted
-  fitting, persistence, and multiclass fitting are declared away structurally,
-  while a Platt composition genuinely gains a `decision_function` the wrapped
-  model never had.
+  fitting, persistence, and multiclass fitting are declared away structurally.
+  Both calibrators declare probabilities, which is what the wrapper exists to
+  produce, and a Platt composition additionally gains a `decision_function` the
+  wrapped model never had.
 - `inspection` owns model-agnostic attribution. Permutation importance works
   through the public batch prediction and scoring contracts only, so it needs
   no estimator cooperation and exposes no model internals. It holds no scoring
