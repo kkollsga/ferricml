@@ -261,11 +261,19 @@ impl RobustScaler {
     /// # Exactness
     ///
     /// The round trip is **exact by construction** only when both statistics
-    /// are disabled, and on a degenerate column whose divisor was substituted
-    /// to one. Everywhere else it is exact only when the arithmetic happens to
-    /// be: dividing by a spread and multiplying back is not an identity in
-    /// floating point, and neither is subtracting a centre and adding it back.
-    /// A caller who needs the original values keeps them.
+    /// are disabled. Everywhere else it is exact only when the arithmetic
+    /// happens to be: dividing by a spread and multiplying back is not an
+    /// identity in floating point, and neither is subtracting a centre and
+    /// adding it back. A caller who needs the original values keeps them.
+    ///
+    /// Note the difference from [`StandardScaler`](super::StandardScaler),
+    /// whose degenerate column *is* exact. A zero variance forces every value
+    /// equal, so subtracting the mean and adding it back is exact on each of
+    /// them. A zero **interquartile spread** does not: both quartiles can sit
+    /// inside one repeated value while the column still varies at its ends. So
+    /// a substituted divisor of one removes the scaling error and leaves the
+    /// centring error, which is bounded by the envelope above rather than
+    /// absent — one ulp on the observed counterexample.
     pub fn inverse_transform_into<'output>(
         &self,
         data: &MatrixView<'_>,

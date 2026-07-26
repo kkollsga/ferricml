@@ -799,8 +799,9 @@ fn a_zero_spread_robust_column_need_not_be_constant() {
     assert_ne!(
         round_tripped.to_bits(),
         original.to_bits(),
-        "if this now passes, the exactness paragraph has become true and this test \
-         should be replaced by an equality"
+        "the exactness paragraph now says a substituted divisor leaves the centring \
+         error rather than removing it; if this row ever round-trips exactly, that \
+         paragraph has become too weak and both should be tightened together"
     );
     assert_eq!(
         original.to_bits() - round_tripped.to_bits(),
