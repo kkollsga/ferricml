@@ -737,6 +737,16 @@ impl LogisticRegression {
         <Self as ProbabilisticClassifier>::predict_class_proba(self, data, class)
     }
 
+    /// Predicts one requested class probability column without allocating.
+    pub fn predict_class_proba_into(
+        &self,
+        data: &MatrixView<'_>,
+        class: u8,
+        output: &mut [f32],
+    ) -> Result<(), ModelError> {
+        <Self as ProbabilisticClassifier>::predict_class_proba_into(self, data, class, output)
+    }
+
     fn to_binary_artifact(
         &self,
         feature_schema_sha256: [u8; 32],

@@ -9,6 +9,14 @@ and releases use [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- `linear_model::LogisticRegression::predict_class_proba_into` is now reachable
+  as an inherent method, matching the allocating `predict_class_proba` forwarder
+  it already had and the pair every other probabilistic classifier ships.
+  Reaching the allocation-free form previously required importing
+  `api::ProbabilisticClassifier` while the allocating one did not, which
+  inverted the crate's stated preference on hot paths. Behaviour is unchanged:
+  the inherent method delegates to the same trait implementation.
+
 - `linear_model::Lasso` and `linear_model::ElasticNet` now persist, under their
   own artifact kinds. They were the last tunable regressors that could be fitted
   but not saved, which is backwards for an L1 model: a sparse coefficient vector
