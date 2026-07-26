@@ -9,7 +9,7 @@ use crate::api::{
 };
 use crate::artifact::{
     ArtifactError, ArtifactPayloadWriter, LOGISTIC_ARTIFACT_KIND, MODEL_ARTIFACT_VERSION,
-    SchemaRole, artifact_payload_version, artifact_version, decode_component,
+    ModelArtifact, SchemaRole, artifact_payload_version, artifact_version, decode_component,
     decode_legacy_envelope, decode_v2_envelope, encode_component, encode_v2_envelope,
 };
 use crate::data::{BinaryTargets, ClassTargets, MatrixView, SampleWeights};
@@ -706,36 +706,6 @@ impl LogisticRegression {
         <Self as ProbabilisticClassifier>::predict_class_proba(self, data, class)
     }
 
-    /// Encodes this model in FerricML's stable checksummed artifact format.
-    ///
-    /// Both fits persist. The two parametrizations are different models, so
-    /// they are different payload schemas under one estimator kind: a binary
-    /// fit writes payload version 1, which stores one coefficient row and one
-    /// intercept, and a multiclass fit writes payload version 2, which stores
-    /// the observed class list, one intercept per class, and one coefficient
-    /// row per class. Decoding selects the reader from the recorded version, so
-    /// neither can decode as the other.
-    ///
-    /// # Solver provenance
-    ///
-    /// Both payload schemas predate [`LogisticSolver`] and store no solver
-    /// field, so widening either to carry one would change the bytes of every
-    /// artifact ever written. A model fitted under a non-default solver
-    /// therefore reports [`ArtifactError::UnsupportedModelState`] instead:
-    /// writing it would produce bytes that decode as a model claiming Newton
-    /// provenance it does not have, and a decoded model that compares unequal
-    /// to the one encoded is worse than a refusal.
-    pub fn to_artifact(&self, feature_schema_sha256: [u8; 32]) -> Result<Vec<u8>, ArtifactError> {
-        if self.params.solver != LogisticSolver::Newton {
-            return Err(ArtifactError::UnsupportedModelState);
-        }
-        if self.is_binary() {
-            self.to_binary_artifact(feature_schema_sha256)
-        } else {
-            self.to_multiclass_artifact(feature_schema_sha256)
-        }
-    }
-
     fn to_binary_artifact(
         &self,
         feature_schema_sha256: [u8; 32],
@@ -839,48 +809,6 @@ impl LogisticRegression {
             &[(SchemaRole::Input, feature_schema_sha256)],
             &component,
         )
-    }
-
-    /// Decodes a logistic model after checking integrity and feature identity.
-    ///
-    /// The recorded payload version selects the reader before anything is
-    /// hashed or parsed, so a binary artifact and a multiclass artifact never
-    /// reach each other's parser. Every field that selection depends on is
-    /// re-read and re-validated by the reader it selected.
-    pub fn from_artifact(
-        bytes: &[u8],
-        expected_feature_schema_sha256: [u8; 32],
-    ) -> Result<Self, ArtifactError> {
-        if artifact_version(bytes)? == MODEL_ARTIFACT_VERSION
-            && artifact_payload_version(bytes)? == LOGISTIC_MULTICLASS_PAYLOAD_VERSION
-        {
-            return Self::from_multiclass_artifact(bytes, expected_feature_schema_sha256);
-        }
-        let cursor = if artifact_version(bytes)? == MODEL_ARTIFACT_VERSION {
-            let mut envelope = decode_v2_envelope(
-                bytes,
-                LOGISTIC_ARTIFACT_KIND,
-                LOGISTIC_PAYLOAD_VERSION,
-                &[(SchemaRole::Input, expected_feature_schema_sha256)],
-            )?;
-            let component = decode_component(
-                &mut envelope,
-                LOGISTIC_STATE_COMPONENT_KIND,
-                LOGISTIC_STATE_COMPONENT_VERSION,
-            )?;
-            if !envelope.is_empty() {
-                return Err(ArtifactError::TrailingBytes);
-            }
-            component
-        } else {
-            decode_legacy_envelope(
-                bytes,
-                LOGISTIC_ARTIFACT_KIND,
-                expected_feature_schema_sha256,
-                LOGISTIC_FIXED_PAYLOAD_BYTES,
-            )?
-        };
-        Self::decode_payload(cursor)
     }
 
     fn from_multiclass_artifact(
@@ -1040,6 +968,82 @@ impl LogisticRegression {
             intercepts: vec![intercept],
             iterations,
         })
+    }
+}
+
+impl ModelArtifact for LogisticRegression {
+    const ARTIFACT_KIND: u16 = LOGISTIC_ARTIFACT_KIND;
+
+    /// Encodes this model in FerricML's stable checksummed artifact format.
+    ///
+    /// Both fits persist. The two parametrizations are different models, so
+    /// they are different payload schemas under one estimator kind: a binary
+    /// fit writes payload version 1, which stores one coefficient row and one
+    /// intercept, and a multiclass fit writes payload version 2, which stores
+    /// the observed class list, one intercept per class, and one coefficient
+    /// row per class. Decoding selects the reader from the recorded version, so
+    /// neither can decode as the other.
+    ///
+    /// # Solver provenance
+    ///
+    /// Both payload schemas predate [`LogisticSolver`] and store no solver
+    /// field, so widening either to carry one would change the bytes of every
+    /// artifact ever written. A model fitted under a non-default solver
+    /// therefore reports [`ArtifactError::UnsupportedModelState`] instead:
+    /// writing it would produce bytes that decode as a model claiming Newton
+    /// provenance it does not have, and a decoded model that compares unequal
+    /// to the one encoded is worse than a refusal.
+    fn to_artifact(&self, feature_schema_sha256: [u8; 32]) -> Result<Vec<u8>, ArtifactError> {
+        if self.params.solver != LogisticSolver::Newton {
+            return Err(ArtifactError::UnsupportedModelState);
+        }
+        if self.is_binary() {
+            self.to_binary_artifact(feature_schema_sha256)
+        } else {
+            self.to_multiclass_artifact(feature_schema_sha256)
+        }
+    }
+
+    /// Decodes a logistic model after checking integrity and feature identity.
+    ///
+    /// The recorded payload version selects the reader before anything is
+    /// hashed or parsed, so a binary artifact and a multiclass artifact never
+    /// reach each other's parser. Every field that selection depends on is
+    /// re-read and re-validated by the reader it selected.
+    fn from_artifact(
+        bytes: &[u8],
+        expected_feature_schema_sha256: [u8; 32],
+    ) -> Result<Self, ArtifactError> {
+        if artifact_version(bytes)? == MODEL_ARTIFACT_VERSION
+            && artifact_payload_version(bytes)? == LOGISTIC_MULTICLASS_PAYLOAD_VERSION
+        {
+            return Self::from_multiclass_artifact(bytes, expected_feature_schema_sha256);
+        }
+        let cursor = if artifact_version(bytes)? == MODEL_ARTIFACT_VERSION {
+            let mut envelope = decode_v2_envelope(
+                bytes,
+                Self::ARTIFACT_KIND,
+                LOGISTIC_PAYLOAD_VERSION,
+                &[(SchemaRole::Input, expected_feature_schema_sha256)],
+            )?;
+            let component = decode_component(
+                &mut envelope,
+                LOGISTIC_STATE_COMPONENT_KIND,
+                LOGISTIC_STATE_COMPONENT_VERSION,
+            )?;
+            if !envelope.is_empty() {
+                return Err(ArtifactError::TrailingBytes);
+            }
+            component
+        } else {
+            decode_legacy_envelope(
+                bytes,
+                Self::ARTIFACT_KIND,
+                expected_feature_schema_sha256,
+                LOGISTIC_FIXED_PAYLOAD_BYTES,
+            )?
+        };
+        Self::decode_payload(cursor)
     }
 }
 

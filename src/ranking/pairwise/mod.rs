@@ -5,8 +5,8 @@ use std::fmt;
 
 use crate::api::{Capabilities, Estimator, HasCapabilities, HasParams, ModelError};
 use crate::artifact::{
-    ArtifactError, ArtifactPayloadWriter, PAIRWISE_LINEAR_RANKER_ARTIFACT_KIND, SchemaRole,
-    decode_component, decode_v2_envelope, encode_component, encode_v2_envelope,
+    ArtifactError, ArtifactPayloadWriter, ModelArtifact, PAIRWISE_LINEAR_RANKER_ARTIFACT_KIND,
+    SchemaRole, decode_component, decode_v2_envelope, encode_component, encode_v2_envelope,
 };
 use crate::data::{BinaryTargets, DenseMatrix, MatrixView, SampleWeights};
 use crate::linear_model::{LogisticRegression, LogisticRegressionParams};
@@ -469,9 +469,13 @@ impl PairwiseLinearRanker {
         }
         Ok(())
     }
+}
+
+impl ModelArtifact for PairwiseLinearRanker {
+    const ARTIFACT_KIND: u16 = PAIRWISE_LINEAR_RANKER_ARTIFACT_KIND;
 
     /// Encodes the rank objective, normalization, and fitted linear model.
-    pub fn to_artifact(&self, schema: [u8; 32]) -> Result<Vec<u8>, ArtifactError> {
+    fn to_artifact(&self, schema: [u8; 32]) -> Result<Vec<u8>, ArtifactError> {
         if self.n_features_in() > MAX_ARTIFACT_FEATURES {
             return Err(ArtifactError::InvalidPayload);
         }
@@ -501,7 +505,7 @@ impl PairwiseLinearRanker {
         payload.extend_from_slice(&metadata);
         payload.extend_from_slice(&model);
         encode_v2_envelope(
-            PAIRWISE_LINEAR_RANKER_ARTIFACT_KIND,
+            Self::ARTIFACT_KIND,
             PAYLOAD_VERSION,
             &[(SchemaRole::Input, schema)],
             &payload,
@@ -509,10 +513,10 @@ impl PairwiseLinearRanker {
     }
 
     /// Decodes a ranker after checking objective, normalization, and schema.
-    pub fn from_artifact(bytes: &[u8], schema: [u8; 32]) -> Result<Self, ArtifactError> {
+    fn from_artifact(bytes: &[u8], schema: [u8; 32]) -> Result<Self, ArtifactError> {
         let mut envelope = decode_v2_envelope(
             bytes,
-            PAIRWISE_LINEAR_RANKER_ARTIFACT_KIND,
+            Self::ARTIFACT_KIND,
             PAYLOAD_VERSION,
             &[(SchemaRole::Input, schema)],
         )?;

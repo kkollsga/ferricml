@@ -1,5 +1,6 @@
 use criterion::{BatchSize, BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
 use ferricml::api::ProbabilisticClassifier;
+use ferricml::artifact::StageArtifact;
 use ferricml::calibration::{
     CalibratedClassifier, IsotonicRegression, PlattCalibrator, PlattParams,
 };

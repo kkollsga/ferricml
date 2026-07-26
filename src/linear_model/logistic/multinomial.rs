@@ -293,7 +293,7 @@ fn validate_fit(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::artifact::ArtifactError;
+    use crate::artifact::{ArtifactError, ModelArtifact};
     use crate::data::{BinaryTargets, DenseMatrix};
 
     /// The row-sum tolerance FerricML freezes: `n_classes` `f32` ulps.

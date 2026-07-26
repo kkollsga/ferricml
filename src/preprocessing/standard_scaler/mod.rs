@@ -1,7 +1,7 @@
 //! Deterministic dense standardization.
 
 use crate::api::{Capabilities, Estimator, HasCapabilities, HasParams, ModelError, Transformer};
-use crate::artifact::{ArtifactError, STANDARD_SCALER_ARTIFACT_KIND};
+use crate::artifact::{ArtifactError, STANDARD_SCALER_ARTIFACT_KIND, StageArtifact};
 use crate::data::{MatrixView, SampleWeights};
 
 use super::scaling::{
@@ -275,14 +275,30 @@ impl StandardScaler {
         })
     }
 
+    #[cfg(test)]
+    fn transformed_value(&self, value: f32, column: usize) -> f32 {
+        let mut transformed = f64::from(value);
+        if self.params.with_mean {
+            transformed -= self.means[column];
+        }
+        if self.params.with_std {
+            transformed /= self.scales[column];
+        }
+        transformed as f32
+    }
+}
+
+impl StageArtifact for StandardScaler {
+    const ARTIFACT_KIND: u16 = STANDARD_SCALER_ARTIFACT_KIND;
+
     /// Encodes fitted scaling state with explicit input and transformed schemas.
-    pub fn to_artifact(
+    fn to_artifact(
         &self,
         input_schema: [u8; 32],
         transformed_schema: [u8; 32],
     ) -> Result<Vec<u8>, ArtifactError> {
         encode_scaler_artifact(
-            STANDARD_SCALER_ARTIFACT_KIND,
+            Self::ARTIFACT_KIND,
             input_schema,
             transformed_schema,
             self.n_features_in,
@@ -304,7 +320,7 @@ impl StandardScaler {
     }
 
     /// Decodes fitted scaling state after checking both schemas.
-    pub fn from_artifact(
+    fn from_artifact(
         bytes: &[u8],
         input_schema: [u8; 32],
         transformed_schema: [u8; 32],
@@ -316,7 +332,7 @@ impl StandardScaler {
             ..
         } = decode_scaler_artifact(
             bytes,
-            STANDARD_SCALER_ARTIFACT_KIND,
+            Self::ARTIFACT_KIND,
             input_schema,
             transformed_schema,
             BASE_PAYLOAD_VERSION,
@@ -362,18 +378,6 @@ impl StandardScaler {
             variances,
             scales,
         })
-    }
-
-    #[cfg(test)]
-    fn transformed_value(&self, value: f32, column: usize) -> f32 {
-        let mut transformed = f64::from(value);
-        if self.params.with_mean {
-            transformed -= self.means[column];
-        }
-        if self.params.with_std {
-            transformed /= self.scales[column];
-        }
-        transformed as f32
     }
 }
 

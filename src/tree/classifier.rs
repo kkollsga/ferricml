@@ -13,8 +13,8 @@ use crate::api::{
 };
 use crate::artifact::{
     ArtifactCursor, ArtifactError, ArtifactPayloadWriter, DECISION_TREE_CLASSIFIER_ARTIFACT_KIND,
-    LogicalTreeNode, SchemaRole, decode_component, decode_logical_tree, decode_v2_envelope,
-    encode_component, encode_logical_tree, encode_v2_envelope,
+    LogicalTreeNode, ModelArtifact, SchemaRole, decode_component, decode_logical_tree,
+    decode_v2_envelope, encode_component, encode_logical_tree, encode_v2_envelope,
 };
 use crate::data::{BinaryTargets, ClassTargets, MatrixView, SampleWeights};
 use crate::numeric::OwnedRng;
@@ -483,6 +483,10 @@ impl DecisionTreeClassifier {
             }),
         }
     }
+}
+
+impl ModelArtifact for DecisionTreeClassifier {
+    const ARTIFACT_KIND: u16 = DECISION_TREE_CLASSIFIER_ARTIFACT_KIND;
 
     /// Encodes the fitted parameters, class list, and canonical logical tree.
     ///
@@ -493,7 +497,7 @@ impl DecisionTreeClassifier {
     /// Storing rank rather than the runtime leaf ordinal is what keeps the
     /// encoding unique: the ordinals could be permuted together with the block
     /// to name one model twice.
-    pub fn to_artifact(&self, schema: [u8; 32]) -> Result<Vec<u8>, ArtifactError> {
+    fn to_artifact(&self, schema: [u8; 32]) -> Result<Vec<u8>, ArtifactError> {
         let (flavour, node_count) = match &self.tree {
             Tree::Binary(tree) => (TREE_BINARY, tree.logical_node_count()),
             Tree::Multiclass(tree) => (TREE_MULTICLASS, tree.logical_node_count()),
@@ -563,7 +567,7 @@ impl DecisionTreeClassifier {
             }
         }
         encode_v2_envelope(
-            DECISION_TREE_CLASSIFIER_ARTIFACT_KIND,
+            Self::ARTIFACT_KIND,
             PAYLOAD_VERSION,
             &[(SchemaRole::Input, schema)],
             &payload,
@@ -576,10 +580,10 @@ impl DecisionTreeClassifier {
     /// decoded records re-enter the same topology validator fitting uses, and
     /// decoded probabilities re-enter the same class-topology invariant a
     /// fitted tree satisfies.
-    pub fn from_artifact(bytes: &[u8], schema: [u8; 32]) -> Result<Self, ArtifactError> {
+    fn from_artifact(bytes: &[u8], schema: [u8; 32]) -> Result<Self, ArtifactError> {
         let mut envelope = decode_v2_envelope(
             bytes,
-            DECISION_TREE_CLASSIFIER_ARTIFACT_KIND,
+            Self::ARTIFACT_KIND,
             PAYLOAD_VERSION,
             &[(SchemaRole::Input, schema)],
         )?;

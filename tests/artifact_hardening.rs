@@ -28,7 +28,7 @@
 //! SplitMix64 stream, restated here because `src/numeric/rng.rs` is private.
 
 use ferricml::api::{AnyClassifier, AnyRegressor};
-use ferricml::artifact::ArtifactError;
+use ferricml::artifact::{ArtifactError, ModelArtifact, StageArtifact};
 use ferricml::data::{BinaryTargets, ClassTargets, DenseMatrix, RegressionTargets};
 use ferricml::ensemble::{
     ExtraTreesClassifier, ExtraTreesClassifierParams, ExtraTreesRegressor,

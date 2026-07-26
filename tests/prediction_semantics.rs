@@ -18,7 +18,7 @@ use ferricml::api::{
     AnyClassifier, AnyClassifierParams, AnyRegressor, AnyRegressorParams, Classifier, ModelError,
     ProbabilisticClassifier, Regressor,
 };
-use ferricml::artifact::ArtifactError;
+use ferricml::artifact::{ArtifactError, ModelArtifact, StageArtifact};
 use ferricml::calibration::{
     CalibratedClassifier, IsotonicRegression, PlattCalibrator, PlattParams,
 };

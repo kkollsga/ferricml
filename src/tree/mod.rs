@@ -36,5 +36,10 @@ pub use parameters::{
 pub(crate) use parameters::{decode_max_features, encode_max_features};
 pub use regressor::DecisionTreeRegressor;
 
+// `tests` reaches the persistence contract through this module's `use super::*`,
+// so the trait is imported here rather than in the test file.
+#[cfg(test)]
+use crate::artifact::ModelArtifact;
+
 #[cfg(test)]
 mod tests;

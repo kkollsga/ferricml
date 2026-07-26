@@ -262,7 +262,7 @@ pub(super) fn fit_multinomial(
 mod tests {
     use super::super::{LogisticRegression, LogisticRegressionParams, LogisticSolver};
     use crate::api::ModelError;
-    use crate::artifact::ArtifactError;
+    use crate::artifact::{ArtifactError, ModelArtifact};
     use crate::data::{BinaryTargets, ClassTargets, DenseMatrix, SampleWeights};
 
     /// A separable-but-not-perfectly-separable binary problem.

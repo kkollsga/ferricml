@@ -7,6 +7,7 @@ private struct, and no format that changes when an internal layout does.
 ## The round trip
 
 ```rust
+use ferricml::artifact::ModelArtifact;
 use ferricml::data::{DenseMatrix, RegressionTargets};
 use ferricml::linear_model::{Ridge, RidgeParams};
 
@@ -108,6 +109,7 @@ are the owned dispatch layer. They match once per batch, not once per row.
 
 ```rust
 use ferricml::api::AnyRegressor;
+use ferricml::artifact::ModelArtifact;
 use ferricml::data::{DenseMatrix, RegressionTargets};
 use ferricml::linear_model::{Ridge, RidgeParams};
 

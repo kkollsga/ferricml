@@ -20,6 +20,7 @@
 use ferricml::api::{
     AnyClassifier, AnyRegressor, Capabilities, HasCapabilities, ProbabilisticClassifier,
 };
+use ferricml::artifact::{ModelArtifact, StageArtifact};
 use ferricml::calibration::{CalibratedClassifier, IsotonicRegression, PlattCalibrator};
 use ferricml::data::{BinaryTargets, DenseMatrix, RegressionTargets};
 use ferricml::dummy::{DummyClassifier, DummyRegressor};

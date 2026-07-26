@@ -6,7 +6,7 @@ use crate::api::{
     validate_prediction, validate_scalar_row,
 };
 use crate::artifact::{
-    ArtifactCursor, ArtifactError, ArtifactPayloadWriter, MODEL_ARTIFACT_VERSION,
+    ArtifactCursor, ArtifactError, ArtifactPayloadWriter, MODEL_ARTIFACT_VERSION, ModelArtifact,
     RIDGE_ARTIFACT_KIND, SchemaRole, artifact_version, decode_component, decode_v2_envelope,
     encode_component, encode_v2_envelope,
 };
@@ -228,56 +228,6 @@ impl Ridge {
         <Self as Regressor>::predict_into(self, data, output)
     }
 
-    /// Encodes this model in FerricML's bounded artifact format.
-    pub fn to_artifact(&self, schema: [u8; 32]) -> Result<Vec<u8>, ArtifactError> {
-        if self.n_features_in > MAX_ARTIFACT_FEATURES {
-            return Err(ArtifactError::InvalidPayload);
-        }
-        let n_features =
-            u32::try_from(self.n_features_in).map_err(|_| ArtifactError::InvalidPayload)?;
-        let mut state =
-            ArtifactPayloadWriter::with_capacity(FIXED_PAYLOAD_BYTES + self.coefficients.len() * 4);
-        state.u32(n_features);
-        state.f32(self.params.alpha);
-        state.u32(u32::from(self.params.fit_intercept));
-        state.f32(self.intercept);
-        state.u32(n_features);
-        for &coefficient in &self.coefficients {
-            state.f32(coefficient);
-        }
-        let component = encode_component(
-            STATE_COMPONENT_KIND,
-            STATE_COMPONENT_VERSION,
-            &state.finish(),
-        )?;
-        encode_v2_envelope(
-            RIDGE_ARTIFACT_KIND,
-            PAYLOAD_VERSION,
-            &[(SchemaRole::Input, schema)],
-            &component,
-        )
-    }
-
-    /// Decodes a ridge model after checking integrity and feature identity.
-    pub fn from_artifact(bytes: &[u8], schema: [u8; 32]) -> Result<Self, ArtifactError> {
-        let version = artifact_version(bytes)?;
-        if version != MODEL_ARTIFACT_VERSION {
-            return Err(ArtifactError::UnsupportedVersion { found: version });
-        }
-        let mut envelope = decode_v2_envelope(
-            bytes,
-            RIDGE_ARTIFACT_KIND,
-            PAYLOAD_VERSION,
-            &[(SchemaRole::Input, schema)],
-        )?;
-        let component =
-            decode_component(&mut envelope, STATE_COMPONENT_KIND, STATE_COMPONENT_VERSION)?;
-        if !envelope.is_empty() {
-            return Err(ArtifactError::TrailingBytes);
-        }
-        Self::decode_payload(component)
-    }
-
     fn decode_payload(mut cursor: ArtifactCursor<'_>) -> Result<Self, ArtifactError> {
         let n_features_in = cursor.u32()? as usize;
         let alpha = cursor.f32()?;
@@ -317,6 +267,60 @@ impl Ridge {
             coefficients,
             intercept,
         })
+    }
+}
+
+impl ModelArtifact for Ridge {
+    const ARTIFACT_KIND: u16 = RIDGE_ARTIFACT_KIND;
+
+    /// Encodes this model in FerricML's bounded artifact format.
+    fn to_artifact(&self, schema: [u8; 32]) -> Result<Vec<u8>, ArtifactError> {
+        if self.n_features_in > MAX_ARTIFACT_FEATURES {
+            return Err(ArtifactError::InvalidPayload);
+        }
+        let n_features =
+            u32::try_from(self.n_features_in).map_err(|_| ArtifactError::InvalidPayload)?;
+        let mut state =
+            ArtifactPayloadWriter::with_capacity(FIXED_PAYLOAD_BYTES + self.coefficients.len() * 4);
+        state.u32(n_features);
+        state.f32(self.params.alpha);
+        state.u32(u32::from(self.params.fit_intercept));
+        state.f32(self.intercept);
+        state.u32(n_features);
+        for &coefficient in &self.coefficients {
+            state.f32(coefficient);
+        }
+        let component = encode_component(
+            STATE_COMPONENT_KIND,
+            STATE_COMPONENT_VERSION,
+            &state.finish(),
+        )?;
+        encode_v2_envelope(
+            Self::ARTIFACT_KIND,
+            PAYLOAD_VERSION,
+            &[(SchemaRole::Input, schema)],
+            &component,
+        )
+    }
+
+    /// Decodes a ridge model after checking integrity and feature identity.
+    fn from_artifact(bytes: &[u8], schema: [u8; 32]) -> Result<Self, ArtifactError> {
+        let version = artifact_version(bytes)?;
+        if version != MODEL_ARTIFACT_VERSION {
+            return Err(ArtifactError::UnsupportedVersion { found: version });
+        }
+        let mut envelope = decode_v2_envelope(
+            bytes,
+            Self::ARTIFACT_KIND,
+            PAYLOAD_VERSION,
+            &[(SchemaRole::Input, schema)],
+        )?;
+        let component =
+            decode_component(&mut envelope, STATE_COMPONENT_KIND, STATE_COMPONENT_VERSION)?;
+        if !envelope.is_empty() {
+            return Err(ArtifactError::TrailingBytes);
+        }
+        Self::decode_payload(component)
     }
 }
 

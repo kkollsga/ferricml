@@ -7,13 +7,13 @@
 
 use crate::api::{Capabilities, Estimator, HasCapabilities, ModelError, Transformer};
 use crate::artifact::{
-    ArtifactError, ArtifactPayloadWriter, MODEL_ARTIFACT_VERSION, STAGED_PIPELINE_ARTIFACT_KIND,
-    SchemaRole, artifact_version, decode_component, decode_v2_envelope, encode_component,
-    encode_v2_envelope,
+    ArtifactError, ArtifactPayloadWriter, MODEL_ARTIFACT_VERSION, ModelArtifact,
+    STAGED_PIPELINE_ARTIFACT_KIND, SchemaRole, StageArtifact, artifact_version, decode_component,
+    decode_v2_envelope, encode_component, encode_v2_envelope,
 };
 use crate::data::{DenseMatrix, MatrixView};
 
-use super::{ModelArtifact, PersistedStack, TransformerStack};
+use super::{PersistedStack, TransformerStack};
 
 const PAYLOAD_VERSION: u16 = 1;
 const METADATA_COMPONENT_KIND: u16 = 1;
@@ -242,17 +242,19 @@ where
     const CAPABILITIES: Capabilities = Capabilities::NONE.with_artifact(true);
 }
 
-impl<S, E> StagedPipeline<S, E>
+impl<S, E> StageArtifact for StagedPipeline<S, E>
 where
     S: TransformerStack + PersistedStack,
     E: Estimator + ModelArtifact,
 {
+    const ARTIFACT_KIND: u16 = STAGED_PIPELINE_ARTIFACT_KIND;
+
     /// Encodes the whole composition and both schema identities.
     ///
     /// The payload records which concrete stage types the composition holds,
     /// in order, plus its estimator type, so a composition never decodes as a
     /// different one.
-    pub fn to_artifact(
+    fn to_artifact(
         &self,
         input_schema: [u8; 32],
         transformed_schema: [u8; 32],
@@ -287,11 +289,11 @@ where
         payload.extend_from_slice(&encode_component(
             ESTIMATOR_COMPONENT_KIND,
             COMPONENT_VERSION,
-            &self.estimator.to_model_artifact(transformed_schema)?,
+            &self.estimator.to_artifact(transformed_schema)?,
         )?);
 
         encode_v2_envelope(
-            STAGED_PIPELINE_ARTIFACT_KIND,
+            Self::ARTIFACT_KIND,
             PAYLOAD_VERSION,
             &[
                 (SchemaRole::Input, input_schema),
@@ -307,7 +309,7 @@ where
     /// estimator tag must all match the composition being decoded into, every
     /// part revalidates its own payload, and the reconstructed composition
     /// goes back through [`StagedPipeline::new`].
-    pub fn from_artifact(
+    fn from_artifact(
         bytes: &[u8],
         input_schema: [u8; 32],
         transformed_schema: [u8; 32],
@@ -318,7 +320,7 @@ where
         }
         let mut envelope = decode_v2_envelope(
             bytes,
-            STAGED_PIPELINE_ARTIFACT_KIND,
+            Self::ARTIFACT_KIND,
             PAYLOAD_VERSION,
             &[
                 (SchemaRole::Input, input_schema),
@@ -354,7 +356,7 @@ where
         }
 
         let stages = S::decode_stages(&components, input_schema, transformed_schema)?;
-        let estimator = E::from_model_artifact(estimator.remaining(), transformed_schema)?;
+        let estimator = E::from_artifact(estimator.remaining(), transformed_schema)?;
         Self::new(stages, estimator).map_err(|_| ArtifactError::InvalidPayload)
     }
 }

@@ -10,7 +10,7 @@ mod artifact;
 mod stack;
 mod staged;
 
-pub use artifact::{ModelArtifact, PersistedStack, StageArtifact};
+pub use artifact::PersistedStack;
 pub use stack::TransformerStack;
 pub use staged::StagedPipeline;
 
@@ -19,9 +19,10 @@ use crate::api::{
     Capabilities, Estimator, HasCapabilities, ModelError, Transformer, validate_transformed_shape,
 };
 use crate::artifact::{
-    ArtifactError, STANDARD_SCALER_LINEAR_PIPELINE_ARTIFACT_KIND,
+    ArtifactError, ModelArtifact, STANDARD_SCALER_LINEAR_PIPELINE_ARTIFACT_KIND,
     STANDARD_SCALER_LOGISTIC_PIPELINE_ARTIFACT_KIND, STANDARD_SCALER_RIDGE_PIPELINE_ARTIFACT_KIND,
-    SchemaRole, decode_component, decode_v2_envelope, encode_component, encode_v2_envelope,
+    SchemaRole, StageArtifact, decode_component, decode_v2_envelope, encode_component,
+    encode_v2_envelope,
 };
 use crate::data::{DenseMatrix, MatrixView};
 use crate::linear_model::{LinearRegression, LogisticRegression, Ridge};
@@ -298,15 +299,19 @@ impl Pipeline<StandardScaler, LogisticRegression> {
             model.decision_function_into(transformed, output)
         })
     }
+}
+
+impl StageArtifact for Pipeline<StandardScaler, LogisticRegression> {
+    const ARTIFACT_KIND: u16 = STANDARD_SCALER_LOGISTIC_PIPELINE_ARTIFACT_KIND;
 
     /// Encodes this concrete fitted pipeline and both schema identities.
-    pub fn to_artifact(
+    fn to_artifact(
         &self,
         input_schema: [u8; 32],
         transformed_schema: [u8; 32],
     ) -> Result<Vec<u8>, ArtifactError> {
         encode_pipeline_artifact(
-            STANDARD_SCALER_LOGISTIC_PIPELINE_ARTIFACT_KIND,
+            Self::ARTIFACT_KIND,
             input_schema,
             transformed_schema,
             &self
@@ -317,14 +322,14 @@ impl Pipeline<StandardScaler, LogisticRegression> {
     }
 
     /// Decodes this concrete pipeline and validates the fitted width handoff.
-    pub fn from_artifact(
+    fn from_artifact(
         bytes: &[u8],
         input_schema: [u8; 32],
         transformed_schema: [u8; 32],
     ) -> Result<Self, ArtifactError> {
         let (transformer, estimator) = decode_pipeline_components(
             bytes,
-            STANDARD_SCALER_LOGISTIC_PIPELINE_ARTIFACT_KIND,
+            Self::ARTIFACT_KIND,
             input_schema,
             transformed_schema,
         )?;
@@ -355,15 +360,19 @@ macro_rules! impl_scaler_regression_pipeline {
                     model.predict_into(transformed, output)
                 })
             }
+        }
+
+        impl StageArtifact for Pipeline<StandardScaler, $estimator> {
+            const ARTIFACT_KIND: u16 = $kind;
 
             /// Encodes this concrete fitted pipeline and both schema identities.
-            pub fn to_artifact(
+            fn to_artifact(
                 &self,
                 input_schema: [u8; 32],
                 transformed_schema: [u8; 32],
             ) -> Result<Vec<u8>, ArtifactError> {
                 encode_pipeline_artifact(
-                    $kind,
+                    Self::ARTIFACT_KIND,
                     input_schema,
                     transformed_schema,
                     &self
@@ -374,13 +383,17 @@ macro_rules! impl_scaler_regression_pipeline {
             }
 
             /// Decodes this concrete pipeline and validates the fitted width handoff.
-            pub fn from_artifact(
+            fn from_artifact(
                 bytes: &[u8],
                 input_schema: [u8; 32],
                 transformed_schema: [u8; 32],
             ) -> Result<Self, ArtifactError> {
-                let (transformer, estimator) =
-                    decode_pipeline_components(bytes, $kind, input_schema, transformed_schema)?;
+                let (transformer, estimator) = decode_pipeline_components(
+                    bytes,
+                    Self::ARTIFACT_KIND,
+                    input_schema,
+                    transformed_schema,
+                )?;
                 let transformer =
                     StandardScaler::from_artifact(transformer, input_schema, transformed_schema)?;
                 let estimator = <$estimator>::from_artifact(estimator, transformed_schema)?;

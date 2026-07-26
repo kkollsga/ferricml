@@ -2,6 +2,7 @@ use ferricml::api::{
     AnyClassifier, AnyClassifierParams, AnyRegressor, AnyRegressorParams, Classifier,
     ProbabilisticClassifier, Regressor,
 };
+use ferricml::artifact::{ModelArtifact, StageArtifact};
 use ferricml::data::{
     BinaryTargets, ClassTargets, DenseMatrix, RegressionTargets, SampleWeights,
 };

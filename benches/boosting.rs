@@ -1,5 +1,6 @@
 use criterion::{BatchSize, BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
 use ferricml::api::ProbabilisticClassifier;
+use ferricml::artifact::ModelArtifact;
 use ferricml::data::{BinaryTargets, DenseMatrix, RegressionTargets, SampleWeights};
 use ferricml::ensemble::{
     HistGradientBoostingClassifier, HistGradientBoostingClassifierParams,

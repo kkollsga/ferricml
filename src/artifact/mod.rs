@@ -1,10 +1,12 @@
 //! Stable, bounded model-artifact errors and format identity.
 
+mod contract;
 mod cursor;
 mod envelope;
 mod error;
 mod logical_tree;
 
+pub use contract::{ModelArtifact, StageArtifact};
 pub(crate) use cursor::ArtifactCursor;
 pub(crate) use envelope::{
     ANY_CLASSIFIER_ARTIFACT_KIND, ANY_REGRESSOR_ARTIFACT_KIND, ArtifactPayloadWriter,
