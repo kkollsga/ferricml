@@ -1,7 +1,8 @@
 //! Repeated random holdouts that keep every group whole.
 
 use super::grouped::group_sizes;
-use super::{Split, SplitError, StableRng, repeat_seed, shuffle_with_rng, validate_sample_count};
+use super::{Split, SplitError, repeat_seed, shuffle_with_rng, validate_sample_count};
+use crate::numeric::OwnedRng;
 
 /// Requested holdout size measured in **whole groups**.
 ///
@@ -171,7 +172,7 @@ impl Iterator for GroupShuffleSplitIter {
             return None;
         }
         let mut order = (0..self.distinct).collect::<Vec<_>>();
-        let mut rng = StableRng::new(repeat_seed(self.random_state, self.next_split));
+        let mut rng = OwnedRng::new(repeat_seed(self.random_state, self.next_split));
         shuffle_with_rng(&mut order, &mut rng);
         self.next_split += 1;
 
