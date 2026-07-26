@@ -91,6 +91,14 @@ pub(super) fn validate_control_bounds(controls: BoostingControls) -> Result<(), 
     Ok(())
 }
 
+/// Translates a private boosting failure into its public counterpart.
+///
+/// The mapping is injective, and the unit tests assert that rather than the
+/// individual pairs: a lossy arm is invisible from the code that writes it, and
+/// two such arms each cost a distinguishable failure. What the mapping does not
+/// carry is the residual index, because no public FerricML error names a row or
+/// an observation — the private error keeps it for a debugger, and the public
+/// one reports the condition.
 pub(super) fn map_boosting_error(error: BoostingError) -> ModelError {
     match error {
         BoostingError::InvalidMaxBins => ModelError::InvalidMaxBins,
@@ -102,10 +110,13 @@ pub(super) fn map_boosting_error(error: BoostingError) -> ModelError {
             ModelError::FeatureDimension { expected, actual }
         }
         BoostingError::TooManyFeatures => ModelError::TooManyFeatures,
-        BoostingError::TreeTooLarge | BoostingError::InvalidTree => ModelError::TreeTooLarge,
-        BoostingError::ResidualLength { .. } | BoostingError::NonFiniteResidual { .. } => {
-            ModelError::NumericalOverflow
-        }
+        BoostingError::TreeTooLarge => ModelError::TreeTooLarge,
+        BoostingError::InvalidTree => ModelError::InvalidTreeStructure,
+        BoostingError::ResidualLength { rows, residuals } => ModelError::OutputLength {
+            expected: rows,
+            actual: residuals,
+        },
+        BoostingError::NonFiniteResidual { .. } => ModelError::NumericalOverflow,
     }
 }
 
@@ -208,6 +219,106 @@ mod tests {
                 ..controls()
             }),
             Err(ModelError::BoostingModelTooLarge)
+        );
+    }
+
+    /// One representative of every private boosting failure.
+    ///
+    /// The `match` below exists only to be exhaustive: adding a variant to
+    /// [`BoostingError`] without adding it here stops compiling, so the list
+    /// cannot silently fall behind the enum it claims to enumerate.
+    fn every_boosting_error() -> Vec<BoostingError> {
+        let all = vec![
+            BoostingError::InvalidMaxBins,
+            BoostingError::InvalidMaxLeafNodes,
+            BoostingError::InvalidMaxDepth,
+            BoostingError::InvalidMinSamplesLeaf,
+            BoostingError::InvalidL2Regularization,
+            BoostingError::ResidualLength {
+                rows: 8,
+                residuals: 5,
+            },
+            BoostingError::NonFiniteResidual { index: 3 },
+            BoostingError::FeatureDimension {
+                expected: 4,
+                actual: 7,
+            },
+            BoostingError::TooManyFeatures,
+            BoostingError::TreeTooLarge,
+            BoostingError::InvalidTree,
+        ];
+        for error in &all {
+            match error {
+                BoostingError::InvalidMaxBins
+                | BoostingError::InvalidMaxLeafNodes
+                | BoostingError::InvalidMaxDepth
+                | BoostingError::InvalidMinSamplesLeaf
+                | BoostingError::InvalidL2Regularization
+                | BoostingError::ResidualLength { .. }
+                | BoostingError::NonFiniteResidual { .. }
+                | BoostingError::FeatureDimension { .. }
+                | BoostingError::TooManyFeatures
+                | BoostingError::TreeTooLarge
+                | BoostingError::InvalidTree => {}
+            }
+        }
+        all
+    }
+
+    /// No two private failures may arrive as one public error.
+    ///
+    /// A lossy conversion is not visible from the mapping's own code, which is
+    /// how `TreeTooLarge`/`InvalidTree` and `ResidualLength`/`NonFiniteResidual`
+    /// each spent a release arriving as a single variant. Injectivity is the
+    /// property that would have caught it, so it is asserted rather than the
+    /// eleven individual pairs.
+    #[test]
+    fn distinct_boosting_failures_stay_distinct_through_the_public_mapping() {
+        let all = every_boosting_error();
+        let mut mapped: Vec<(BoostingError, ModelError)> = Vec::new();
+        for error in all {
+            let public = map_boosting_error(error.clone());
+            if let Some((collision, _)) = mapped
+                .iter()
+                .find(|(_, existing)| existing == &public)
+                .cloned()
+            {
+                panic!("{collision:?} and {error:?} both map to {public:?}");
+            }
+            mapped.push((error, public));
+        }
+        assert_eq!(mapped.len(), 11);
+    }
+
+    /// The two failures that were collapsed must keep the identity they had.
+    ///
+    /// Injectivity alone would be satisfied by mapping them to any two
+    /// unrelated variants, so the meaning of each is pinned separately. Neither
+    /// carries the row index the private error holds: no public FerricML error
+    /// names an observation, and inventing that convention here was ruled out.
+    #[test]
+    fn the_uncollapsed_failures_report_what_they_are() {
+        assert_eq!(
+            map_boosting_error(BoostingError::ResidualLength {
+                rows: 8,
+                residuals: 5
+            }),
+            ModelError::OutputLength {
+                expected: 8,
+                actual: 5
+            },
+        );
+        assert_eq!(
+            map_boosting_error(BoostingError::NonFiniteResidual { index: 3 }),
+            ModelError::NumericalOverflow,
+        );
+        assert_eq!(
+            map_boosting_error(BoostingError::TreeTooLarge),
+            ModelError::TreeTooLarge,
+        );
+        assert_eq!(
+            map_boosting_error(BoostingError::InvalidTree),
+            ModelError::InvalidTreeStructure,
         );
     }
 

@@ -129,6 +129,7 @@ pub ferricml::api::ModelError::InvalidRegularization
 pub ferricml::api::ModelError::InvalidRidgeAlpha
 pub ferricml::api::ModelError::InvalidThreshold
 pub ferricml::api::ModelError::InvalidTolerance
+pub ferricml::api::ModelError::InvalidTreeStructure
 pub ferricml::api::ModelError::LinearSolveFailed
 pub ferricml::api::ModelError::MulticlassOutput
 pub ferricml::api::ModelError::MulticlassOutput::columns: usize

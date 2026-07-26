@@ -9,6 +9,10 @@ and releases use [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- `api::ModelError::InvalidTreeStructure`, for a fitted tree whose topology or
+  values the packed node format cannot represent at any size. It is separate
+  from `TreeTooLarge`, which is a size bound; see the note under Changed for
+  what now reports it.
 - `tree::DecisionTreeClassifier` and `tree::DecisionTreeRegressor`, standalone
   decision trees over the same grower a random forest uses. Both support
   weighted fitting and persist under new artifact kinds; the classifier fits
@@ -62,6 +66,18 @@ and releases use [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   illustrative one is always visible to a reader.
 
 ### Changed
+
+- Histogram-boosting fits report four distinct failures where they previously
+  reported two. `api::ModelError::NumericalOverflow` used to stand for both a
+  non-finite residual and a residual-length mismatch, and
+  `api::ModelError::TreeTooLarge` for both an oversized tree and a structurally
+  invalid one. A residual-length mismatch is now
+  `api::ModelError::OutputLength` — it is a shape bug, not an overflow — and a
+  structurally invalid tree is the new `api::ModelError::InvalidTreeStructure`.
+  A caller matching on `NumericalOverflow` or `TreeTooLarge` from a
+  `HistGradientBoosting*` fit may now see the other variant instead. The
+  errors do not carry the residual's index: no public FerricML error names a
+  row or an observation, and this is not the place to start.
 
 - The allocating defaults on `api::Classifier`, `api::ProbabilisticClassifier`,
   `api::Regressor`, and `api::Transformer` — `predict`, `predict_proba`,

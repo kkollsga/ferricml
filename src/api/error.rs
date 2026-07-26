@@ -41,6 +41,15 @@ pub enum ModelError {
     TooManyFeatures,
     /// A fitted tree exceeds the internal node-index format.
     TreeTooLarge,
+    /// A fitted tree violates the internal node format's structural rules.
+    ///
+    /// Separate from [`ModelError::TreeTooLarge`], which is a size bound: this
+    /// reports a topology or a leaf value the format cannot represent at any
+    /// size — an unreachable node, a child index that does not follow its
+    /// parent, a split on a column the tree was not fitted over, or a
+    /// non-finite threshold or leaf. It is a backstop against an internal
+    /// inconsistency rather than a statement about the caller's data.
+    InvalidTreeStructure,
     /// Input feature width differs from the fitted width.
     FeatureDimension { expected: usize, actual: usize },
     /// A caller-provided output buffer has the wrong length.
@@ -174,6 +183,9 @@ impl fmt::Display for ModelError {
             Self::TooManyRows => f.write_str("row count exceeds the bootstrap counter format"),
             Self::TooManyFeatures => f.write_str("feature count exceeds the packed node format"),
             Self::TreeTooLarge => f.write_str("tree exceeds the packed node format"),
+            Self::InvalidTreeStructure => {
+                f.write_str("tree topology or value is invalid for the packed node format")
+            }
             Self::FeatureDimension { expected, actual } => {
                 write!(f, "expected {expected} features, got {actual}")
             }
