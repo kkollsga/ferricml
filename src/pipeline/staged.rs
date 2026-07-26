@@ -162,6 +162,41 @@ where
     /// it works for every estimator category, including ones FerricML has not
     /// added yet, and it keeps the estimator's own vocabulary rather than
     /// restating it once per category.
+    ///
+    /// # Why there is no `predict`
+    ///
+    /// Callers compose `transform` and `estimator().predict()` by hand, in this
+    /// repository at four sites including the artifact fuzz harness, so the
+    /// absence is a real cost rather than a theoretical one. Both ways of
+    /// removing it were built and measured, and both cost more than the absence
+    /// does. Neither is an argument from taste.
+    ///
+    /// *Two inherent `predict` methods, one per estimator category*, is
+    /// `E0592`: `impl<S, E: Regressor>` and `impl<S, E: Classifier>` on the same
+    /// generic type are duplicate definitions of one name, whatever their
+    /// bounds. Measured, and it is why `Pipeline`'s concrete standard-scaler
+    /// forms *can* each carry a `predict_into` — they are monomorphic impls with
+    /// no `E` to dispatch on. A single inherent `predict` bounded on `Regressor`
+    /// alone does compile, and is declined: an entry point that exists for
+    /// regressor compositions and not for classifier ones is a new asymmetry on
+    /// the crate's generic composition type, which is the shape three separate
+    /// accessor findings already came from.
+    ///
+    /// *Implementing [`Regressor`](crate::api::Regressor) and
+    /// [`Classifier`](crate::api::Classifier)* does compile — different traits
+    /// never collide — and gives both categories `predict` *and* `predict_into`
+    /// under one name. It is declined on the contract rather than on the
+    /// compiler: `Regressor::predict_into` takes an output buffer and no
+    /// workspace, so the impl would have to allocate a transform workspace
+    /// inside it, on every call. That makes the crate's caller-owned form
+    /// allocate per batch, which is the one thing `workspace_len` and this method
+    /// exist to prevent, and generic code looping over batches through the trait
+    /// would allocate every iteration while the signature promised otherwise.
+    ///
+    /// The reversal condition is concrete: if `TransformerStack` gains a way to
+    /// carry its own workspace — or if the traits grow a workspace-taking form —
+    /// the trait route stops costing a hidden allocation and becomes the right
+    /// answer.
     pub fn with_transformed<R>(
         &self,
         data: &MatrixView<'_>,
