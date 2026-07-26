@@ -9,6 +9,17 @@ and releases use [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- `scripts/check_accessor_pairing.py`, run by `make gate`, which enforces that
+  an `X_into` method and its allocating `X` partner are actually a pair: the
+  caller-owned form takes exactly the allocating form's arguments plus its
+  output buffers, every inherent `_into` has an inherent allocating partner,
+  and a type forwarding one form inherently forwards the other too. The
+  contract was written down and unenforced, which is how a single-row method
+  came to hold a batch method's name on five classifiers and get copied into a
+  sixth. Its `--self-test` proves each rule against a synthetic violation,
+  proves that losing its input is reported rather than passed, and reconstructs
+  the four defects it was written for from the baseline rows they occupied.
+
 - `linear_model::LogisticRegression::predict_class_proba_into` is now reachable
   as an inherent method, matching the allocating `predict_class_proba` forwarder
   it already had and the pair every other probabilistic classifier ships.
