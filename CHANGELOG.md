@@ -114,6 +114,18 @@ and releases use [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Changed
 
+- **Breaking.** `MaxFeatures` has one public path again, and it is
+  `tree::MaxFeatures`. The `ensemble::MaxFeatures` re-export is removed; callers
+  importing it — including callers of a *forest's* `with_max_features`, which
+  takes this type — change the import path and nothing else, because it was
+  always the same type. Two paths to one type left rustdoc free to pick the
+  canonical one, and it picked `ensemble`, so
+  `tree::DecisionTreeClassifierParams::max_features` rendered as returning
+  `ferricml::ensemble::MaxFeatures` — a standalone tree's own parameter
+  documented as an ensemble type, reading as though `tree` depended on
+  `ensemble` when the `tree-below-estimators` layout rule enforces the
+  reverse. The type is defined beside the grower that consumes it and now
+  publishes from there alone.
 - `api::AnyClassifier` and `api::AnyRegressor` now document their variant lists
   as a deliberate, curated set and say what decides membership. The API document
   claimed the regressor variants "cover forests", which was never true of

@@ -148,12 +148,13 @@ fn the_prior_correction_is_what_separates_platt_from_a_raw_label_fit() {
 
 use ferricml::api::ProbabilisticClassifier;
 use ferricml::calibration::{CalibratedClassifier, IsotonicRegression, IsotonicRegressionParams};
-use ferricml::ensemble::{MaxFeatures, RandomForestClassifier, RandomForestClassifierParams};
+use ferricml::ensemble::{RandomForestClassifier, RandomForestClassifierParams};
 use ferricml::metrics::{brier_score, log_loss, roc_auc_score};
 use ferricml::model_selection::{
     ClassificationScorer, HoldoutParams, KFold, ScorableClassifier, Split, TestSize,
     cross_validate_classifier, score_classifier, stratified_train_test_split,
 };
+use ferricml::tree::MaxFeatures;
 
 /// A noisy two-feature problem no model can fit perfectly.
 ///

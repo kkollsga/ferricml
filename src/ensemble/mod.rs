@@ -8,7 +8,7 @@ mod random_forest;
 #[cfg(test)]
 mod equivalence;
 
-pub use forest::{MaxFeatures, NJobs};
+pub use forest::NJobs;
 
 pub use extra_trees::{
     ExtraTreesClassifier, ExtraTreesClassifierParams, ExtraTreesRegressor,

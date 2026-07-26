@@ -292,7 +292,7 @@ impl Regressor for AnyRegressor {
 mod tests {
     use super::*;
     use crate::data::{DenseMatrix, RegressionTargets};
-    use crate::ensemble::MaxFeatures;
+    use crate::tree::MaxFeatures;
     use sha2::{Digest, Sha256};
 
     const PAYLOAD_START: usize = 24 + 36;

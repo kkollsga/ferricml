@@ -7,7 +7,7 @@ use ferricml::ensemble::{
     ExtraTreesClassifier, ExtraTreesClassifierParams, ExtraTreesRegressor,
     ExtraTreesRegressorParams, HistGradientBoostingClassifier,
     HistGradientBoostingClassifierParams, HistGradientBoostingRegressor,
-    HistGradientBoostingRegressorParams, MaxFeatures, NJobs, RandomForestClassifier,
+    HistGradientBoostingRegressorParams, NJobs, RandomForestClassifier,
     RandomForestClassifierParams, RandomForestRegressor, RandomForestRegressorParams,
 };
 use ferricml::linear_model::{
@@ -31,6 +31,7 @@ use ferricml::ranking::{
     PairIndex, PairOutcome, PairwiseLinearRanker, PairwiseLinearRankerParams, PairwiseObservation,
     decisive_directional_accuracy, kendall_tau_b, spearman_correlation, three_way_accuracy,
 };
+use ferricml::tree::MaxFeatures;
 use ferricml::tree::{
     DecisionTreeClassifier, DecisionTreeClassifierParams, DecisionTreeRegressor,
     DecisionTreeRegressorParams,

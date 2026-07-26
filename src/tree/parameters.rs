@@ -2,6 +2,16 @@
 
 /// How many randomly selected features are considered at each split.
 ///
+/// This is the one type every tree-shaped estimator shares, and
+/// `ferricml::tree::MaxFeatures` is its only public path — a forest's
+/// `with_max_features` takes *this* type. It lives here because it is a
+/// property of growing a tree, which is what both a standalone tree and one
+/// member of a forest do; the ensembles consume it, which is the direction the
+/// `tree-below-estimators` layout rule enforces. It was briefly reachable as
+/// `ensemble::MaxFeatures` as well, and rustdoc picked that alias as the
+/// canonical path, so a standalone tree's own parameter rendered as an ensemble
+/// type. One type keeps one path.
+///
 /// The candidate set is drawn uniformly **without replacement**, and every
 /// drawn column consumes the quota whether or not it turns out to admit a
 /// split. See the recorded divergences in the reference contract: this is a

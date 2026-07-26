@@ -7,8 +7,7 @@
 //! under a second name.
 
 use super::super::forest::forest_params;
-use crate::ensemble::MaxFeatures;
-use crate::tree::Splitter;
+use crate::tree::{MaxFeatures, Splitter};
 
 forest_params!(
     ExtraTreesClassifierParams,

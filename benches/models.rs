@@ -10,7 +10,7 @@ use ferricml::dummy::{
     DummyClassifier, DummyClassifierParams, DummyRegressor, DummyRegressorParams,
 };
 use ferricml::ensemble::{
-    MaxFeatures, RandomForestClassifier, RandomForestClassifierParams, RandomForestRegressor,
+    RandomForestClassifier, RandomForestClassifierParams, RandomForestRegressor,
     RandomForestRegressorParams,
 };
 use ferricml::inspection::{PermutationImportanceParams, permutation_importance_regressor_into};
@@ -37,6 +37,7 @@ use ferricml::preprocessing::{
 use ferricml::ranking::{
     PairIndex, PairOutcome, PairwiseLinearRanker, PairwiseLinearRankerParams, PairwiseObservation,
 };
+use ferricml::tree::MaxFeatures;
 use std::hint::black_box;
 
 const ROWS: usize = 2_048;

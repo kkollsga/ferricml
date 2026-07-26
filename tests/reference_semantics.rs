@@ -6,7 +6,7 @@ use ferricml::ensemble::{
     ExtraTreesClassifier, ExtraTreesClassifierParams, ExtraTreesRegressor,
     ExtraTreesRegressorParams, HistGradientBoostingClassifier,
     HistGradientBoostingClassifierParams, HistGradientBoostingRegressor,
-    HistGradientBoostingRegressorParams, MaxFeatures, NJobs, RandomForestClassifier,
+    HistGradientBoostingRegressorParams, NJobs, RandomForestClassifier,
     RandomForestClassifierParams, RandomForestRegressor, RandomForestRegressorParams,
 };
 use ferricml::linear_model::{
@@ -28,6 +28,7 @@ use ferricml::preprocessing::{
     Binarizer, BinarizerParams, MinMaxScaler, MinMaxScalerParams, Norm, Normalizer,
     NormalizerParams, RobustScaler, RobustScalerParams, StandardScaler, StandardScalerParams,
 };
+use ferricml::tree::MaxFeatures;
 use ferricml::tree::{
     DecisionTreeClassifier, DecisionTreeClassifierParams, DecisionTreeRegressor,
     DecisionTreeRegressorParams,

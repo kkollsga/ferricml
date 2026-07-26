@@ -6,9 +6,10 @@ use crate::artifact::{
 };
 use crate::data::{BinaryTargets, ClassTargets, DenseMatrix, RegressionTargets, SampleWeights};
 use crate::ensemble::{
-    MaxFeatures, NJobs, RandomForestClassifier, RandomForestClassifierParams,
-    RandomForestRegressor, RandomForestRegressorParams,
+    NJobs, RandomForestClassifier, RandomForestClassifierParams, RandomForestRegressor,
+    RandomForestRegressorParams,
 };
+use crate::tree::MaxFeatures;
 
 const SCHEMA: [u8; 32] = [7; 32];
 const OTHER_SCHEMA: [u8; 32] = [9; 32];

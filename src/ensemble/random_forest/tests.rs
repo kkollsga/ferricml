@@ -7,8 +7,9 @@ use crate::artifact::{
 };
 use crate::data::{BinaryTargets, ClassTargets, DenseMatrix, RegressionTargets, SampleWeights};
 use crate::ensemble::HistGradientBoostingRegressor;
-use crate::ensemble::{MaxFeatures, NJobs};
+use crate::ensemble::NJobs;
 use crate::linear_model::Ridge;
+use crate::tree::MaxFeatures;
 use crate::tree::{FEATURE_MASK, LEFT_IS_LEAF, PackedNode, RIGHT_IS_LEAF};
 use sha2::{Digest, Sha256};
 

@@ -1111,19 +1111,6 @@ pub fn ferricml::dummy::DummyRegressorParams::fmt(&self, &mut core::fmt::Formatt
 impl core::marker::Copy for ferricml::dummy::DummyRegressorParams
 impl core::marker::StructuralPartialEq for ferricml::dummy::DummyRegressorParams
 pub mod ferricml::ensemble
-pub enum ferricml::ensemble::MaxFeatures
-pub ferricml::ensemble::MaxFeatures::All
-pub ferricml::ensemble::MaxFeatures::Count(usize)
-pub ferricml::ensemble::MaxFeatures::Sqrt
-impl core::clone::Clone for ferricml::ensemble::MaxFeatures
-pub fn ferricml::ensemble::MaxFeatures::clone(&self) -> ferricml::ensemble::MaxFeatures
-impl core::cmp::Eq for ferricml::ensemble::MaxFeatures
-impl core::cmp::PartialEq for ferricml::ensemble::MaxFeatures
-pub fn ferricml::ensemble::MaxFeatures::eq(&self, &ferricml::ensemble::MaxFeatures) -> bool
-impl core::fmt::Debug for ferricml::ensemble::MaxFeatures
-pub fn ferricml::ensemble::MaxFeatures::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
-impl core::marker::Copy for ferricml::ensemble::MaxFeatures
-impl core::marker::StructuralPartialEq for ferricml::ensemble::MaxFeatures
 pub enum ferricml::ensemble::NJobs
 pub ferricml::ensemble::NJobs::All
 pub ferricml::ensemble::NJobs::Count(usize)
@@ -1193,7 +1180,7 @@ pub struct ferricml::ensemble::ExtraTreesClassifierParams
 impl ferricml::ensemble::ExtraTreesClassifierParams
 pub const fn ferricml::ensemble::ExtraTreesClassifierParams::bootstrap(&self) -> bool
 pub const fn ferricml::ensemble::ExtraTreesClassifierParams::max_depth(&self) -> core::option::Option<usize>
-pub const fn ferricml::ensemble::ExtraTreesClassifierParams::max_features(&self) -> ferricml::ensemble::MaxFeatures
+pub const fn ferricml::ensemble::ExtraTreesClassifierParams::max_features(&self) -> ferricml::tree::MaxFeatures
 pub const fn ferricml::ensemble::ExtraTreesClassifierParams::min_samples_leaf(&self) -> usize
 pub const fn ferricml::ensemble::ExtraTreesClassifierParams::min_samples_split(&self) -> usize
 pub const fn ferricml::ensemble::ExtraTreesClassifierParams::n_estimators(&self) -> usize
@@ -1201,7 +1188,7 @@ pub const fn ferricml::ensemble::ExtraTreesClassifierParams::n_jobs(&self) -> fe
 pub const fn ferricml::ensemble::ExtraTreesClassifierParams::random_state(&self) -> u64
 pub fn ferricml::ensemble::ExtraTreesClassifierParams::with_bootstrap(self, bool) -> Self
 pub fn ferricml::ensemble::ExtraTreesClassifierParams::with_max_depth(self, core::option::Option<usize>) -> Self
-pub fn ferricml::ensemble::ExtraTreesClassifierParams::with_max_features(self, ferricml::ensemble::MaxFeatures) -> Self
+pub fn ferricml::ensemble::ExtraTreesClassifierParams::with_max_features(self, ferricml::tree::MaxFeatures) -> Self
 pub fn ferricml::ensemble::ExtraTreesClassifierParams::with_min_samples_leaf(self, usize) -> Self
 pub fn ferricml::ensemble::ExtraTreesClassifierParams::with_min_samples_split(self, usize) -> Self
 pub fn ferricml::ensemble::ExtraTreesClassifierParams::with_n_estimators(self, usize) -> Self
@@ -1252,7 +1239,7 @@ pub struct ferricml::ensemble::ExtraTreesRegressorParams
 impl ferricml::ensemble::ExtraTreesRegressorParams
 pub const fn ferricml::ensemble::ExtraTreesRegressorParams::bootstrap(&self) -> bool
 pub const fn ferricml::ensemble::ExtraTreesRegressorParams::max_depth(&self) -> core::option::Option<usize>
-pub const fn ferricml::ensemble::ExtraTreesRegressorParams::max_features(&self) -> ferricml::ensemble::MaxFeatures
+pub const fn ferricml::ensemble::ExtraTreesRegressorParams::max_features(&self) -> ferricml::tree::MaxFeatures
 pub const fn ferricml::ensemble::ExtraTreesRegressorParams::min_samples_leaf(&self) -> usize
 pub const fn ferricml::ensemble::ExtraTreesRegressorParams::min_samples_split(&self) -> usize
 pub const fn ferricml::ensemble::ExtraTreesRegressorParams::n_estimators(&self) -> usize
@@ -1260,7 +1247,7 @@ pub const fn ferricml::ensemble::ExtraTreesRegressorParams::n_jobs(&self) -> fer
 pub const fn ferricml::ensemble::ExtraTreesRegressorParams::random_state(&self) -> u64
 pub fn ferricml::ensemble::ExtraTreesRegressorParams::with_bootstrap(self, bool) -> Self
 pub fn ferricml::ensemble::ExtraTreesRegressorParams::with_max_depth(self, core::option::Option<usize>) -> Self
-pub fn ferricml::ensemble::ExtraTreesRegressorParams::with_max_features(self, ferricml::ensemble::MaxFeatures) -> Self
+pub fn ferricml::ensemble::ExtraTreesRegressorParams::with_max_features(self, ferricml::tree::MaxFeatures) -> Self
 pub fn ferricml::ensemble::ExtraTreesRegressorParams::with_min_samples_leaf(self, usize) -> Self
 pub fn ferricml::ensemble::ExtraTreesRegressorParams::with_min_samples_split(self, usize) -> Self
 pub fn ferricml::ensemble::ExtraTreesRegressorParams::with_n_estimators(self, usize) -> Self
@@ -1469,7 +1456,7 @@ pub struct ferricml::ensemble::RandomForestClassifierParams
 impl ferricml::ensemble::RandomForestClassifierParams
 pub const fn ferricml::ensemble::RandomForestClassifierParams::bootstrap(&self) -> bool
 pub const fn ferricml::ensemble::RandomForestClassifierParams::max_depth(&self) -> core::option::Option<usize>
-pub const fn ferricml::ensemble::RandomForestClassifierParams::max_features(&self) -> ferricml::ensemble::MaxFeatures
+pub const fn ferricml::ensemble::RandomForestClassifierParams::max_features(&self) -> ferricml::tree::MaxFeatures
 pub const fn ferricml::ensemble::RandomForestClassifierParams::min_samples_leaf(&self) -> usize
 pub const fn ferricml::ensemble::RandomForestClassifierParams::min_samples_split(&self) -> usize
 pub const fn ferricml::ensemble::RandomForestClassifierParams::n_estimators(&self) -> usize
@@ -1477,7 +1464,7 @@ pub const fn ferricml::ensemble::RandomForestClassifierParams::n_jobs(&self) -> 
 pub const fn ferricml::ensemble::RandomForestClassifierParams::random_state(&self) -> u64
 pub fn ferricml::ensemble::RandomForestClassifierParams::with_bootstrap(self, bool) -> Self
 pub fn ferricml::ensemble::RandomForestClassifierParams::with_max_depth(self, core::option::Option<usize>) -> Self
-pub fn ferricml::ensemble::RandomForestClassifierParams::with_max_features(self, ferricml::ensemble::MaxFeatures) -> Self
+pub fn ferricml::ensemble::RandomForestClassifierParams::with_max_features(self, ferricml::tree::MaxFeatures) -> Self
 pub fn ferricml::ensemble::RandomForestClassifierParams::with_min_samples_leaf(self, usize) -> Self
 pub fn ferricml::ensemble::RandomForestClassifierParams::with_min_samples_split(self, usize) -> Self
 pub fn ferricml::ensemble::RandomForestClassifierParams::with_n_estimators(self, usize) -> Self
@@ -1530,7 +1517,7 @@ pub struct ferricml::ensemble::RandomForestRegressorParams
 impl ferricml::ensemble::RandomForestRegressorParams
 pub const fn ferricml::ensemble::RandomForestRegressorParams::bootstrap(&self) -> bool
 pub const fn ferricml::ensemble::RandomForestRegressorParams::max_depth(&self) -> core::option::Option<usize>
-pub const fn ferricml::ensemble::RandomForestRegressorParams::max_features(&self) -> ferricml::ensemble::MaxFeatures
+pub const fn ferricml::ensemble::RandomForestRegressorParams::max_features(&self) -> ferricml::tree::MaxFeatures
 pub const fn ferricml::ensemble::RandomForestRegressorParams::min_samples_leaf(&self) -> usize
 pub const fn ferricml::ensemble::RandomForestRegressorParams::min_samples_split(&self) -> usize
 pub const fn ferricml::ensemble::RandomForestRegressorParams::n_estimators(&self) -> usize
@@ -1538,7 +1525,7 @@ pub const fn ferricml::ensemble::RandomForestRegressorParams::n_jobs(&self) -> f
 pub const fn ferricml::ensemble::RandomForestRegressorParams::random_state(&self) -> u64
 pub fn ferricml::ensemble::RandomForestRegressorParams::with_bootstrap(self, bool) -> Self
 pub fn ferricml::ensemble::RandomForestRegressorParams::with_max_depth(self, core::option::Option<usize>) -> Self
-pub fn ferricml::ensemble::RandomForestRegressorParams::with_max_features(self, ferricml::ensemble::MaxFeatures) -> Self
+pub fn ferricml::ensemble::RandomForestRegressorParams::with_max_features(self, ferricml::tree::MaxFeatures) -> Self
 pub fn ferricml::ensemble::RandomForestRegressorParams::with_min_samples_leaf(self, usize) -> Self
 pub fn ferricml::ensemble::RandomForestRegressorParams::with_min_samples_split(self, usize) -> Self
 pub fn ferricml::ensemble::RandomForestRegressorParams::with_n_estimators(self, usize) -> Self
@@ -3410,15 +3397,15 @@ pub enum ferricml::tree::MaxFeatures
 pub ferricml::tree::MaxFeatures::All
 pub ferricml::tree::MaxFeatures::Count(usize)
 pub ferricml::tree::MaxFeatures::Sqrt
-impl core::clone::Clone for ferricml::ensemble::MaxFeatures
-pub fn ferricml::ensemble::MaxFeatures::clone(&self) -> ferricml::ensemble::MaxFeatures
-impl core::cmp::Eq for ferricml::ensemble::MaxFeatures
-impl core::cmp::PartialEq for ferricml::ensemble::MaxFeatures
-pub fn ferricml::ensemble::MaxFeatures::eq(&self, &ferricml::ensemble::MaxFeatures) -> bool
-impl core::fmt::Debug for ferricml::ensemble::MaxFeatures
-pub fn ferricml::ensemble::MaxFeatures::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
-impl core::marker::Copy for ferricml::ensemble::MaxFeatures
-impl core::marker::StructuralPartialEq for ferricml::ensemble::MaxFeatures
+impl core::clone::Clone for ferricml::tree::MaxFeatures
+pub fn ferricml::tree::MaxFeatures::clone(&self) -> ferricml::tree::MaxFeatures
+impl core::cmp::Eq for ferricml::tree::MaxFeatures
+impl core::cmp::PartialEq for ferricml::tree::MaxFeatures
+pub fn ferricml::tree::MaxFeatures::eq(&self, &ferricml::tree::MaxFeatures) -> bool
+impl core::fmt::Debug for ferricml::tree::MaxFeatures
+pub fn ferricml::tree::MaxFeatures::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for ferricml::tree::MaxFeatures
+impl core::marker::StructuralPartialEq for ferricml::tree::MaxFeatures
 pub enum ferricml::tree::Splitter
 pub ferricml::tree::Splitter::Best
 pub ferricml::tree::Splitter::Random
@@ -3486,13 +3473,13 @@ pub fn ferricml::tree::DecisionTreeClassifier::to_artifact(&self, [u8; 32]) -> c
 pub struct ferricml::tree::DecisionTreeClassifierParams
 impl ferricml::tree::DecisionTreeClassifierParams
 pub const fn ferricml::tree::DecisionTreeClassifierParams::max_depth(&self) -> core::option::Option<usize>
-pub const fn ferricml::tree::DecisionTreeClassifierParams::max_features(&self) -> ferricml::ensemble::MaxFeatures
+pub const fn ferricml::tree::DecisionTreeClassifierParams::max_features(&self) -> ferricml::tree::MaxFeatures
 pub const fn ferricml::tree::DecisionTreeClassifierParams::min_samples_leaf(&self) -> usize
 pub const fn ferricml::tree::DecisionTreeClassifierParams::min_samples_split(&self) -> usize
 pub const fn ferricml::tree::DecisionTreeClassifierParams::random_state(&self) -> u64
 pub const fn ferricml::tree::DecisionTreeClassifierParams::splitter(&self) -> ferricml::tree::Splitter
 pub fn ferricml::tree::DecisionTreeClassifierParams::with_max_depth(self, core::option::Option<usize>) -> Self
-pub fn ferricml::tree::DecisionTreeClassifierParams::with_max_features(self, ferricml::ensemble::MaxFeatures) -> Self
+pub fn ferricml::tree::DecisionTreeClassifierParams::with_max_features(self, ferricml::tree::MaxFeatures) -> Self
 pub fn ferricml::tree::DecisionTreeClassifierParams::with_min_samples_leaf(self, usize) -> Self
 pub fn ferricml::tree::DecisionTreeClassifierParams::with_min_samples_split(self, usize) -> Self
 pub fn ferricml::tree::DecisionTreeClassifierParams::with_random_state(self, u64) -> Self
@@ -3541,13 +3528,13 @@ pub fn ferricml::tree::DecisionTreeRegressor::to_artifact(&self, [u8; 32]) -> co
 pub struct ferricml::tree::DecisionTreeRegressorParams
 impl ferricml::tree::DecisionTreeRegressorParams
 pub const fn ferricml::tree::DecisionTreeRegressorParams::max_depth(&self) -> core::option::Option<usize>
-pub const fn ferricml::tree::DecisionTreeRegressorParams::max_features(&self) -> ferricml::ensemble::MaxFeatures
+pub const fn ferricml::tree::DecisionTreeRegressorParams::max_features(&self) -> ferricml::tree::MaxFeatures
 pub const fn ferricml::tree::DecisionTreeRegressorParams::min_samples_leaf(&self) -> usize
 pub const fn ferricml::tree::DecisionTreeRegressorParams::min_samples_split(&self) -> usize
 pub const fn ferricml::tree::DecisionTreeRegressorParams::random_state(&self) -> u64
 pub const fn ferricml::tree::DecisionTreeRegressorParams::splitter(&self) -> ferricml::tree::Splitter
 pub fn ferricml::tree::DecisionTreeRegressorParams::with_max_depth(self, core::option::Option<usize>) -> Self
-pub fn ferricml::tree::DecisionTreeRegressorParams::with_max_features(self, ferricml::ensemble::MaxFeatures) -> Self
+pub fn ferricml::tree::DecisionTreeRegressorParams::with_max_features(self, ferricml::tree::MaxFeatures) -> Self
 pub fn ferricml::tree::DecisionTreeRegressorParams::with_min_samples_leaf(self, usize) -> Self
 pub fn ferricml::tree::DecisionTreeRegressorParams::with_min_samples_split(self, usize) -> Self
 pub fn ferricml::tree::DecisionTreeRegressorParams::with_random_state(self, u64) -> Self

@@ -31,10 +31,11 @@ use ferricml::ensemble::{
     ExtraTreesClassifier, ExtraTreesClassifierParams, ExtraTreesRegressor,
     ExtraTreesRegressorParams, HistGradientBoostingClassifier,
     HistGradientBoostingClassifierParams, HistGradientBoostingRegressor,
-    HistGradientBoostingRegressorParams, MaxFeatures, NJobs, RandomForestClassifier,
+    HistGradientBoostingRegressorParams, NJobs, RandomForestClassifier,
     RandomForestClassifierParams, RandomForestRegressor, RandomForestRegressorParams,
 };
 use ferricml::pipeline::{Pipeline, StagedPipeline};
+use ferricml::tree::MaxFeatures;
 use ferricml::tree::{
     DecisionTreeClassifier, DecisionTreeClassifierParams, DecisionTreeRegressor,
     DecisionTreeRegressorParams,

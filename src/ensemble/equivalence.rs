@@ -24,9 +24,10 @@
 use crate::data::{BinaryTargets, ClassTargets, DenseMatrix, RegressionTargets};
 use crate::ensemble::{
     ExtraTreesClassifier, ExtraTreesClassifierParams, ExtraTreesRegressor,
-    ExtraTreesRegressorParams, MaxFeatures, RandomForestClassifier, RandomForestClassifierParams,
+    ExtraTreesRegressorParams, RandomForestClassifier, RandomForestClassifierParams,
     RandomForestRegressor, RandomForestRegressorParams,
 };
+use crate::tree::MaxFeatures;
 use crate::tree::{
     DecisionTreeClassifier, DecisionTreeClassifierParams, DecisionTreeRegressor,
     DecisionTreeRegressorParams, Splitter,
