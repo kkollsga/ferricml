@@ -6,6 +6,7 @@
 //! the factorization while knowing nothing about which loss it is minimizing.
 
 use super::objective::Objective;
+use crate::numeric::sum_in_order;
 
 /// Raw linear score for one design row.
 ///
@@ -26,6 +27,38 @@ pub(crate) fn raw_score(
         score += theta[column] * design_row[column];
     }
     score
+}
+
+/// The Newton decrement at the point a step was computed from.
+///
+/// The step solves `H step = gradient`, so `gradient . step` is
+/// `gradient' H^-1 gradient`: non-negative, zero exactly at a stationary point,
+/// and equal to twice the objective's own estimate of how far the iterate sits
+/// above its minimum wherever the quadratic model holds.
+///
+/// It is what an exhausted Newton budget is judged by, on every solver in the
+/// crate that takes exact second-order steps. The reason it rather than the
+/// step size is that it is **affine invariant**: rescaling a design column
+/// rescales the gradient and the step inversely and leaves their product
+/// unchanged. A step size is measured in parameter units, and those units have
+/// no fixed scale — the same fit expressed over a column scaled by a thousand
+/// has a step a thousand times smaller without being any closer to the
+/// minimum. Neither does a gradient norm survive the rescaling, and a gradient
+/// norm additionally says nothing about distance from the minimum when the
+/// system is ill-conditioned, which is exactly the regime an exhausted budget
+/// is found in.
+///
+/// The reduction runs in ascending parameter order per the accumulation policy
+/// in [`crate::numeric`], because the acceptance decision it feeds has to be
+/// reproducible for a caller who refits the same data.
+pub(crate) fn newton_decrement(gradient: &[f64], step: &[f64]) -> f64 {
+    debug_assert_eq!(gradient.len(), step.len());
+    sum_in_order(
+        gradient
+            .iter()
+            .zip(step)
+            .map(|(&gradient, &step)| gradient * step),
+    )
 }
 
 /// Adds one weighted row to a Newton system in coefficient space.
