@@ -9,6 +9,22 @@ and releases use [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- `GroupKFold::split` documented that "group identifiers carry no order or
+  meaning beyond equality", and `GroupShuffleSplit` restated it as
+  "`GroupKFold`, whose assignment depends only on group sizes". Both were
+  false: the size tie-break is `left.0.cmp(&right.0)`, the identifier itself,
+  so equal-sized groups are ordered by name. Behaviour is unchanged — the
+  documentation was the defect — and both pages now say that identifiers order
+  equal-sized groups, so the partition survives any order-*preserving*
+  renaming and a reversing one can move it.
+
+  The test that named the property renamed with `g -> u32::MAX + 1000g`, which
+  is strictly increasing and therefore left the tie-break reading the same
+  order: it could not fail. Measured over 4,500 equal-sized-group
+  configurations, an order-reversing rename moves 3,500 of them, the smallest
+  being `[0, 1]` at two folds. The test now asserts the invariance over
+  renamings that really preserve it and pins the reversing case as observable.
+
 - `CalibratedClassifier` saturates its calibrated probabilities at the boundary
   that produces them, instead of forwarding whatever the calibrator returned.
   `Calibrator::calibrate` documents a result in `0.0..=1.0`, and the wrapper
