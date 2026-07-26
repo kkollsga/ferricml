@@ -6,13 +6,28 @@ use std::fmt;
 /// Data-container construction has its own [`crate::data::DataError`] because
 /// it occurs before an estimator is involved. All estimators use this error
 /// surface once fitting or prediction begins.
+///
+/// # What is deliberately absent
+///
+/// There is no variant for an empty target vector, a binary label outside
+/// `{0, 1}`, or a non-finite regression target. Those are
+/// [`DataError`](crate::data::DataError) cases, refused by
+/// [`BinaryTargets::new`](crate::data::BinaryTargets::new) and
+/// [`RegressionTargets::new`](crate::data::RegressionTargets::new), and the
+/// refusal is total: the target containers have no unchecked constructor, and
+/// `select` preserves what `new` established. An estimator taking one of them
+/// cannot be handed a value that would need such a variant, so a variant for it
+/// would document a failure no caller can observe.
+///
+/// [`ModelError::EmptyData`] and [`ModelError::NonFiniteFeature`] look like the
+/// same case and are **not**: several entry points take a bare `&[f32]` rather
+/// than a container — every `predict_one`, and calibration, which fits on
+/// decision scores — and nothing has validated those.
 #[derive(Clone, Debug, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum ModelError {
     /// Training data has no samples or features.
     EmptyData,
-    /// The target vector is empty.
-    EmptyTargets,
     /// The target count does not match the sample count.
     TargetLength {
         /// Number of rows the feature matrix holds.
@@ -33,18 +48,6 @@ pub enum ModelError {
         row: usize,
         /// Zero-based column of that value.
         column: usize,
-    },
-    /// A binary target is not zero or one.
-    InvalidBinaryTarget {
-        /// Zero-based position of the first offending target.
-        index: usize,
-        /// The label found there.
-        value: u8,
-    },
-    /// A regression target is NaN or infinite.
-    NonFiniteTarget {
-        /// Zero-based position of the first offending target.
-        index: usize,
     },
     /// `n_estimators` is zero.
     InvalidEstimatorCount,
@@ -213,7 +216,6 @@ impl fmt::Display for ModelError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::EmptyData => f.write_str("training data must have at least one row and column"),
-            Self::EmptyTargets => f.write_str("targets must not be empty"),
             Self::TargetLength { rows, targets } => {
                 write!(f, "target length {targets} does not match row count {rows}")
             }
@@ -225,13 +227,6 @@ impl fmt::Display for ModelError {
             }
             Self::NonFiniteFeature { row, column } => {
                 write!(f, "feature at row {row}, column {column} is not finite")
-            }
-            Self::InvalidBinaryTarget { index, value } => write!(
-                f,
-                "binary target at index {index} is {value}, expected 0 or 1"
-            ),
-            Self::NonFiniteTarget { index } => {
-                write!(f, "regression target at index {index} is not finite")
             }
             Self::InvalidEstimatorCount => f.write_str("n_estimators must be at least one"),
             Self::InvalidMaxDepth => f.write_str("max_depth must be at least one when set"),

@@ -734,6 +734,25 @@ and releases use [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   taking the built-in enums. Calls that pass a built-in scorer are unaffected;
   a turbofished `cross_validate_*` call gains one inferred type argument.
 
+- **Breaking.** `api::ModelError` no longer has `EmptyTargets`,
+  `InvalidBinaryTarget` or `NonFiniteTarget`. No public entry point could
+  produce them: every estimator that checked for those conditions was handed a
+  `data::BinaryTargets` or `data::RegressionTargets`, and those containers have
+  no unchecked constructor — `new` refuses each case as a `data::DataError`,
+  `select` preserves what `new` established and refuses an empty selection, and
+  `From<BinaryTargets> for ClassTargets` widens without weakening. A caller
+  matching on one of the three was matching on a state the type system already
+  ruled out; the corresponding `DataError` variants are where the condition is
+  actually reported, and they are unchanged. `ModelError` documents the absence
+  so the variants are not reintroduced.
+  `EmptyData` and `NonFiniteFeature` deliberately remain: `predict_one` and
+  calibration take a bare `&[f32]`, which nothing has validated.
+- Tree and forest fitting no longer rescans the training matrix for non-finite
+  features. Every value in a `data::MatrixView` is finite by construction, so
+  the scan was re-deriving the container's own invariant at O(rows × columns)
+  on every fit. No performance claim is attached to this: it has not been
+  measured.
+
 ### Fixed
 
 - `Pipeline<StandardScaler, LogisticRegression>` now declares the

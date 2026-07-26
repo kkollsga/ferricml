@@ -89,11 +89,6 @@ macro_rules! forest_classifier {
                 use $crate::ensemble::forest::{model, training};
                 let config = training::ForestConfig::from(&params);
                 model::validate_common(data, targets.as_slice().len(), sample_weights, &config)?;
-                for (index, &value) in targets.as_slice().iter().enumerate() {
-                    if value > 1 {
-                        return Err($crate::api::ModelError::InvalidBinaryTarget { index, value });
-                    }
-                }
                 let saw_zero = targets.as_slice().contains(&0);
                 let saw_one = targets.as_slice().contains(&1);
                 let classes = match (saw_zero, saw_one) {
@@ -498,11 +493,6 @@ macro_rules! forest_regressor {
                 use $crate::ensemble::forest::{model, training};
                 let config = training::ForestConfig::from(&params);
                 model::validate_common(data, targets.as_slice().len(), sample_weights, &config)?;
-                for (index, value) in targets.as_slice().iter().enumerate() {
-                    if !value.is_finite() {
-                        return Err($crate::api::ModelError::NonFiniteTarget { index });
-                    }
-                }
                 let trees = training::train_forest(
                     data,
                     targets.as_slice(),

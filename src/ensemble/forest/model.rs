@@ -518,9 +518,6 @@ pub(crate) fn validate_common(
     if data.rows() == 0 || data.columns() == 0 {
         return Err(ModelError::EmptyData);
     }
-    if target_len == 0 {
-        return Err(ModelError::EmptyTargets);
-    }
     if target_len != data.rows() {
         return Err(ModelError::TargetLength {
             rows: data.rows(),

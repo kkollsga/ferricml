@@ -15,7 +15,9 @@
 
 use ferricml::api::{Estimator, ModelError, Transformer};
 use ferricml::calibration::{PlattCalibrator, PlattParams};
-use ferricml::data::{BinaryTargets, DenseMatrix, MatrixView, RegressionTargets};
+use ferricml::data::{
+    BinaryTargets, DataError, DenseMatrix, MatrixView, RegressionTargets, SelectionError,
+};
 use ferricml::dummy::{DummyClassifier, DummyClassifierParams};
 
 /// Finite storage a dishonest transformer can point at instead of its output.
@@ -86,6 +88,38 @@ fn a_transformed_matrix_is_accepted_by_an_estimator_without_rescanning_it() {
         DecisionTreeRegressorParams::default(),
     )
     .expect("a validated matrix is fittable");
+}
+
+#[test]
+fn the_target_containers_refuse_what_no_estimator_checks_any_more() {
+    // `ModelError::EmptyTargets`, `InvalidBinaryTarget` and `NonFiniteTarget`
+    // are gone because these refusals are total. Unlike the matrix, the target
+    // containers have no unchecked constructor at all, so `new` and `select`
+    // below are the complete set of ways to obtain one.
+    assert_eq!(BinaryTargets::new(Vec::new()), Err(DataError::EmptyTargets));
+    assert_eq!(
+        RegressionTargets::new(Vec::new()),
+        Err(DataError::EmptyTargets)
+    );
+    assert_eq!(
+        BinaryTargets::new(vec![0, 1, 2]),
+        Err(DataError::InvalidBinaryTarget { index: 2, value: 2 })
+    );
+    assert_eq!(
+        RegressionTargets::new(vec![0.0, f32::NAN]),
+        Err(DataError::NonFiniteValue { index: 1 })
+    );
+
+    // `select` preserves both guarantees rather than re-deriving them, and
+    // cannot empty a vector: an empty selection is refused outright.
+    let binary = BinaryTargets::new(vec![0, 1, 1]).expect("valid targets");
+    assert_eq!(
+        binary.select(&[2, 0]).expect("valid indices").as_slice(),
+        &[1, 0]
+    );
+    assert_eq!(binary.select(&[]), Err(SelectionError::Empty));
+    let regression = RegressionTargets::new(vec![0.5, 1.5]).expect("valid targets");
+    assert_eq!(regression.select(&[]), Err(SelectionError::Empty));
 }
 
 #[test]

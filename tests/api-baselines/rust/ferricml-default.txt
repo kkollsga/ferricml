@@ -104,13 +104,9 @@ impl<'a> core::marker::StructuralPartialEq for ferricml::api::AnyRegressorParams
 #[non_exhaustive] pub enum ferricml::api::ModelError
 pub ferricml::api::ModelError::BoostingModelTooLarge
 pub ferricml::api::ModelError::EmptyData
-pub ferricml::api::ModelError::EmptyTargets
 pub ferricml::api::ModelError::FeatureDimension
 pub ferricml::api::ModelError::FeatureDimension::actual: usize
 pub ferricml::api::ModelError::FeatureDimension::expected: usize
-pub ferricml::api::ModelError::InvalidBinaryTarget
-pub ferricml::api::ModelError::InvalidBinaryTarget::index: usize
-pub ferricml::api::ModelError::InvalidBinaryTarget::value: u8
 pub ferricml::api::ModelError::InvalidBoostingIterationCount
 pub ferricml::api::ModelError::InvalidBoostingMaxDepth
 pub ferricml::api::ModelError::InvalidEstimatorCount
@@ -149,8 +145,6 @@ pub ferricml::api::ModelError::NonFiniteFeature::column: usize
 pub ferricml::api::ModelError::NonFiniteFeature::row: usize
 pub ferricml::api::ModelError::NonFinitePrediction
 pub ferricml::api::ModelError::NonFinitePrediction::row: usize
-pub ferricml::api::ModelError::NonFiniteTarget
-pub ferricml::api::ModelError::NonFiniteTarget::index: usize
 pub ferricml::api::ModelError::NonFiniteTransform
 pub ferricml::api::ModelError::NonFiniteTransform::column: usize
 pub ferricml::api::ModelError::NonFiniteTransform::row: usize

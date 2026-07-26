@@ -168,11 +168,6 @@ impl DecisionTreeClassifier {
             sample_weights.map(SampleWeights::len),
             &config,
         )?;
-        for (index, &value) in targets.as_slice().iter().enumerate() {
-            if value > 1 {
-                return Err(ModelError::InvalidBinaryTarget { index, value });
-            }
-        }
         let saw_zero = targets.as_slice().contains(&0);
         let saw_one = targets.as_slice().contains(&1);
         let classes = match (saw_zero, saw_one) {

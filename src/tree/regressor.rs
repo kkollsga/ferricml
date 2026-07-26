@@ -132,11 +132,6 @@ impl DecisionTreeRegressor {
             sample_weights.map(SampleWeights::len),
             &config,
         )?;
-        for (index, value) in targets.as_slice().iter().enumerate() {
-            if !value.is_finite() {
-                return Err(ModelError::NonFiniteTarget { index });
-            }
-        }
         let sample_weights = sample_weights.map(SampleWeights::as_slice);
         let (weights, rows) = unbootstrapped_sample(data.rows(), sample_weights);
         let mut rng = OwnedRng::new(tree_seed(params.random_state()));
