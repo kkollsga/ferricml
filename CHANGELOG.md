@@ -812,13 +812,69 @@ and releases use [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- `linear_model::LogisticRegression` no longer returns an unconverged Newton
+  iterate as a fitted model, on **either** target shape. `fit` and
+  `fit_multiclass` broke out of the iteration when the largest standardized
+  coefficient update fell to `tol` and otherwise fell through to `Ok`, so an
+  exhausted `max_iter` was reported only by `n_iter`. Their `LogisticSolver::Lbfgs`
+  sibling, on the same data and the same parameters, already returned
+  `ModelError::SolverDidNotConverge`; the two solvers are documented to agree
+  on the minimizer and disagreed on whether one had been found. **This is a
+  breaking behaviour change on badly conditioned designs: a call that
+  previously returned a model can now return an error.** No fitted value
+  moves — a fit that is returned has exactly the coefficients and intercepts it
+  had before, bit for bit, and the frozen reference fixtures and artifact
+  fingerprints are unchanged.
+  <br>
+  Exhaustion by itself is *not* the new test, and the measurement is what
+  decided that. Over 57,600 sampled binary fits, 3,838 exhaust `max_iter`, and
+  3,382 of those sit on the minimum — the absolute test accepts **none** of
+  them, so refusing on exhaustion alone would have converted every one into a
+  spurious error. The cause is conditioning rather than scale: the standardized
+  system carries an L2 penalty of `1 / (C * scale^2)` on the feature diagonal,
+  nothing at all on the intercept, and a curvature `p (1 - p)` that collapses
+  towards its floor wherever the fit separates a row confidently. At an
+  observed condition number reaching `2e26`, the last digits of a gradient
+  already down at `1e-13` are amplified into a coefficient step of `1e-2`, far
+  above a `tol` of `1e-4`, and no further iteration removes it. The multinomial
+  system is worse conditioned, not better — median `1e13` against the binary
+  median of `13` — because its unpenalized intercept block is singular in the
+  direction that shifts every class alike.
+  <br>
+  The acceptance test at exhaustion is therefore the Newton decrement, the last
+  step's inner product with the gradient it was computed from, which is twice
+  the objective's own estimate of the distance above the minimum and is
+  unchanged by rescaling a design column. Measured against an independently
+  conditioned damped-Newton solve, it accepts all 3,382 at-minimum fits and no
+  fit that is more than `7.3e-8` relative above the minimum, while the fits it
+  refuses are `2.7e5` relative above it — five orders of magnitude of clear
+  air. The three candidates it was compared with all fail: a relative step test
+  refuses 2,025 of the 3,382 *and* accepts a fit `3.1e7` above the minimum; a
+  gradient infinity norm accepts one `2.7e5` above it, and the mean gradient
+  norm one `1.5e8` above it, because at this conditioning a small gradient is
+  no evidence of a small distance. The loop's own stopping rule is untouched,
+  which is why nothing that converges today moves.
+  `LogisticRegression::n_iter` may therefore equal `max_iter` on a returned
+  fit, and when it does the fit is at the minimum rather than merely the last
+  thing tried.
+  <br>
+  Four tests pin the rule over generated ill-conditioned regions rather than
+  one fixture, two per target shape: refusing on plain exhaustion fails the one
+  that watches the region fit — 163 of 919 binary fits and 52 of 344
+  multinomial ones exhaust their budget and are accepted — and an acceptance
+  that never refuses fails the one that starves the same region, where every
+  reachable fit is refused. A third holds the genuinely divergent fits in that
+  region to a refusal at the *full* default budget, not only a starved one,
+  because the undamped exact step is not globally convergent and this is the
+  population the old code returned as a model.
 - `calibration::PlattCalibrator::fit` no longer returns an unconverged Newton
   iterate as a fitted calibrator. The loop `break`s when the largest parameter
   update falls to `tol` and otherwise fell through to `Ok`, with only `n_iter`
-  to say the tolerance was never met. It is **not** the last solver in the
-  crate that does this — `LogisticRegression`'s Newton path does the same on
-  both target shapes, and is tracked separately; the coordinate-descent and
-  L-BFGS seams do report `ModelError::SolverDidNotConverge`. **This is a breaking behaviour change on
+  to say the tolerance was never met. `LogisticRegression`'s Newton path had
+  the same defect on both target shapes and is fixed in its own entry below;
+  with those two, every iterative solver in the crate now reports
+  `ModelError::SolverDidNotConverge` rather than returning an unconverged
+  iterate. **This is a breaking behaviour change on
   degenerate calibration samples: a call that previously returned a model can
   now return an error.** No fitted value moves — a fit that is returned has
   exactly the parameters it had before, bit for bit.

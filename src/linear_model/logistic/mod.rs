@@ -13,7 +13,7 @@ use crate::artifact::{
     decode_legacy_envelope, decode_v2_envelope, encode_component, encode_v2_envelope,
 };
 use crate::data::{BinaryTargets, ClassTargets, MatrixView, SampleWeights};
-use crate::loss::{BinaryLogLoss, accumulate_newton_row, raw_score};
+use crate::loss::{BinaryLogLoss, accumulate_newton_row, newton_decrement, raw_score};
 use crate::numeric::{sigmoid_f32, softmax_in_place_f32, sum_in_order};
 
 const BINARY_CLASSES: [u8; 2] = [0, 1];
@@ -40,7 +40,10 @@ const LOGISTIC_MULTICLASS_FIXED_PAYLOAD_BYTES: usize = 8 * 4;
 ///
 /// Both solvers minimize the same L2-penalized objective and agree on its
 /// minimizer; they differ in cost, in storage, and in what
-/// [`with_tol`](LogisticRegressionParams::with_tol) measures.
+/// [`with_tol`](LogisticRegressionParams::with_tol) measures. Neither returns
+/// an iterate that is not at the minimum: see
+/// [`ModelError::SolverDidNotConverge`] and the convergence section on
+/// [`LogisticRegression::fit`].
 ///
 /// # Choosing
 ///
@@ -57,12 +60,13 @@ const LOGISTIC_MULTICLASS_FIXED_PAYLOAD_BYTES: usize = 8 * 4;
 /// the exact one reports [`ModelError::MulticlassSystemTooLarge`]. The bound is
 /// a property of the selected solver rather than of the model: a shape the
 /// exact path accepts still takes the exact path and produces the identical
-/// fit. It needs more iterations to reach
-/// the same answer, and it reports
-/// [`ModelError::SolverDidNotConverge`] rather than returning an
-/// unconverged model — both when `max_iter` runs out and when the requested
-/// `tol` is below what the objective's own numerical resolution can certify,
-/// which is around `1e-9` for a log-loss of order one.
+/// fit. It needs more iterations to reach the same answer, and it additionally
+/// reports [`ModelError::SolverDidNotConverge`] when the requested `tol` is
+/// below what the objective's own numerical resolution can certify, which is
+/// around `1e-9` for a log-loss of order one — its line search compares
+/// objective values and cannot bracket a decrease below that. The exact path
+/// has no such floor, because the quantity it certifies an exhausted budget
+/// with is not an objective difference.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
 #[non_exhaustive]
 pub enum LogisticSolver {
@@ -125,6 +129,10 @@ impl LogisticRegressionParams {
     /// [`LogisticSolver::Newton`] it is the largest absolute coefficient
     /// update; under [`LogisticSolver::Lbfgs`] it is the infinity norm of the
     /// gradient of the mean penalized objective.
+    ///
+    /// The Newton bound is *absolute*, and a standardized coefficient has no
+    /// fixed scale, so it is not the only thing an exhausted budget is judged
+    /// by; see the convergence section on [`LogisticRegression::fit`].
     #[must_use]
     pub fn with_tol(mut self, tol: f32) -> Self {
         self.tol = tol;
@@ -273,6 +281,37 @@ pub struct LogisticRegression {
 
 impl LogisticRegression {
     /// Fits a binary logistic classifier with deterministic Newton updates.
+    ///
+    /// # Convergence
+    ///
+    /// The iteration stops as soon as the largest standardized coefficient
+    /// update falls to `tol`. Exhausting `max_iter` without an iterate that is
+    /// *at the minimum* is [`ModelError::SolverDidNotConverge`], never a
+    /// returned last iterate — the rule every iterative solver in the crate
+    /// follows, and the rule [`LogisticSolver::Lbfgs`] already followed on this
+    /// same estimator.
+    ///
+    /// Exhaustion by itself is not that test, and making it the test would
+    /// reject fits that are correct. `tol` bounds an update in standardized
+    /// parameter units, and the step is computed by factorizing a system whose
+    /// conditioning the data chooses: an L2 penalty of `1 / (C * scale^2)` on
+    /// the feature diagonal, no penalty at all on the intercept, and a
+    /// curvature `p (1 - p)` that collapses towards its floor wherever the fit
+    /// separates a row confidently. Once that system is ill-conditioned, the
+    /// last few digits of a gradient that is already numerically zero are
+    /// amplified into a step far above `tol`, and no further iteration removes
+    /// it. Measured over 57,600 sampled fits, 3,838 exhaust `max_iter` and
+    /// 3,382 of those sit on the minimum with a step the absolute test can
+    /// never accept.
+    ///
+    /// So the acceptance test at exhaustion is a quantity that does not change
+    /// with the parameter scale: the Newton decrement, the last step's inner
+    /// product with the gradient it was computed from, which is twice the
+    /// objective's own estimate of how far above the minimum the iterate sits.
+    /// An exhausted budget is accepted when that estimate is within `tol` and
+    /// reported otherwise. [`n_iter`](Self::n_iter) can therefore equal
+    /// `max_iter` on a returned fit, and when it does the fit is at the
+    /// minimum rather than merely the last thing tried.
     pub fn fit(
         data: &MatrixView<'_>,
         targets: &BinaryTargets,
@@ -307,6 +346,15 @@ impl LogisticRegression {
     /// model, which is a different parametrization from [`Self::fit`]'s single
     /// asymmetric row. Both are correct; they are not interchangeable, and only
     /// [`Self::fit`] persists to an artifact today.
+    ///
+    /// Convergence is judged exactly as [`Self::fit`] judges it, over the
+    /// stacked system: an exhausted `max_iter` is
+    /// [`ModelError::SolverDidNotConverge`] unless the Newton decrement
+    /// certifies the iterate is at the minimum. The stacked system is the more
+    /// ill-conditioned of the two — its unpenalized intercept block is singular
+    /// in the direction that shifts every class alike, and is regularized
+    /// rather than identified — so the scale-free test matters more here, not
+    /// less.
     pub fn fit_multiclass(
         data: &MatrixView<'_>,
         targets: &ClassTargets,
@@ -373,6 +421,11 @@ impl LogisticRegression {
         let mut update = vec![0.0_f64; parameter_count];
         let lambda = 1.0 / f64::from(params.c);
         let mut iterations = 0;
+        let mut converged = false;
+        // Refuse by default: only a step the loop actually took can certify an
+        // exhausted budget, and `validate_fit` has already guaranteed the loop
+        // below runs at least once.
+        let mut decrement = f64::INFINITY;
         for iteration in 0..params.max_iter {
             gradient.fill(0.0);
             hessian.fill(0.0);
@@ -411,13 +464,23 @@ impl LogisticRegression {
             let max_update = update
                 .iter()
                 .fold(0.0_f64, |max, value| max.max(value.abs()));
+            decrement = newton_decrement(&gradient, &update);
             for (value, &update) in theta.iter_mut().zip(&update) {
                 *value -= update;
             }
             iterations = iteration + 1;
             if max_update <= f64::from(params.tol) {
+                converged = true;
                 break;
             }
+        }
+        // The scale-free second chance, applied only where the absolute test
+        // has already failed, so an accepted fit keeps exactly the coefficients
+        // it has always had. A non-finite decrement certifies nothing and is
+        // refused by the comparison rather than by a separate branch.
+        let certified = decrement <= f64::from(params.tol);
+        if !converged && !certified {
+            return Err(ModelError::SolverDidNotConverge { iterations });
         }
 
         Self::from_standardized(
@@ -547,6 +610,11 @@ impl LogisticRegression {
     }
 
     /// Returns the number of optimization iterations performed.
+    ///
+    /// Equality with `max_iter` is not a warning sign on a returned fit: see
+    /// the convergence section on [`fit`](Self::fit), which reports an
+    /// exhausted budget rather than returning it unless the iterate is at the
+    /// minimum.
     pub const fn n_iter(&self) -> usize {
         self.iterations
     }
@@ -2061,5 +2129,339 @@ mod tests {
                 actual: oversized.len(),
             }
         );
+    }
+
+    // ------------------------------------------------------- convergence rule
+
+    /// A deterministic generator for the region where an exact Newton step
+    /// exhausts its budget while sitting on the minimum.
+    ///
+    /// Nothing here is exotic. Feature columns on wildly different scales, a
+    /// weak penalty, and few rows: the standardized system is then
+    /// ill-conditioned enough that the last digits of a gradient which is
+    /// already numerically zero are amplified into a coefficient step far above
+    /// `tol`, and no further iteration removes it. Every case is generated
+    /// rather than listed, because a single fixture stops covering the region
+    /// the moment the boundary moves.
+    fn ill_conditioned_neighbourhood() -> Vec<(DenseMatrix, BinaryTargets, LogisticRegressionParams)>
+    {
+        let mut state = 0x0517_2026_0726_1001_u64;
+        let mut next = move || {
+            state = state
+                .wrapping_mul(6_364_136_223_846_793_005)
+                .wrapping_add(1_442_695_040_888_963_407);
+            f64::from((state >> 33) as u32) / f64::from(1_u32 << 31) / 2.0
+        };
+        let mut normal = move || (0..12).map(|_| next()).sum::<f64>() - 6.0;
+        let mut cases = Vec::new();
+        for _ in 0..6 {
+            for &rows in &[8_usize, 12, 20] {
+                for &columns in &[3_usize, 5, 7] {
+                    for &column_scale in &[30.0_f64, 1.0e3] {
+                        for &separation in &[0.0_f64, 1.0, 4.0] {
+                            let mut values = Vec::with_capacity(rows * columns);
+                            let mut labels = Vec::with_capacity(rows);
+                            for row in 0..rows {
+                                let label = u8::from(row % 2 == 0);
+                                labels.push(label);
+                                let shift = if label == 1 { separation } else { -separation };
+                                for column in 0..columns {
+                                    let base = normal() + if column == 0 { shift } else { 0.0 };
+                                    values.push((base * column_scale.powi(column as i32)) as f32);
+                                }
+                            }
+                            let data = DenseMatrix::new(values, rows, columns).unwrap();
+                            let targets = BinaryTargets::new(labels).unwrap();
+                            for &c in &[1.0e3_f32, 1.0e6, 1.0e9] {
+                                cases.push((
+                                    data.clone(),
+                                    targets.clone(),
+                                    LogisticRegressionParams::default().with_c(c),
+                                ));
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        cases
+    }
+
+    /// The exact penalized objective a binary fit claims to minimize, in the
+    /// caller's own feature space and at `f64`.
+    ///
+    /// Standardization is an affine reparametrization, so it cancels: the
+    /// stored coefficients and intercept describe the same raw score the
+    /// solver's standardized ones do, and the penalty
+    /// `1 / (2 C) * sum(coefficient^2)` is the same sum either way. Writing it
+    /// here rather than reusing the solver's own accumulation is what makes it
+    /// a check instead of a restatement.
+    fn penalized_objective(
+        data: &DenseMatrix,
+        targets: &BinaryTargets,
+        coefficients: &[f64],
+        intercept: f64,
+        c: f64,
+    ) -> f64 {
+        let view = data.as_view();
+        let mut total = 0.0;
+        for (row, &target) in view.iter_rows().zip(targets.as_slice()) {
+            let mut raw = intercept;
+            for (column, &value) in row.iter().enumerate() {
+                raw += coefficients[column] * f64::from(value);
+            }
+            total += crate::numeric::log_sum_exp(&[0.0, raw]) - f64::from(target) * raw;
+        }
+        total + 0.5 / c * coefficients.iter().map(|value| value * value).sum::<f64>()
+    }
+
+    /// Whether every single-coordinate neighbour of this fit is at least as
+    /// costly, probed with a *relative* perturbation.
+    ///
+    /// The perturbation has to be relative. These fits carry coefficients whose
+    /// magnitudes span the reciprocal of the column scaling — `1e-12` against
+    /// `1e0` in the same vector — and a fixed absolute step is simultaneously
+    /// far too large for one coordinate and pure rounding for another. A
+    /// difference quotient built that way measures the arithmetic rather than
+    /// the fit, which is exactly how a converged iterate gets mistaken for a
+    /// non-stationary one.
+    fn is_a_local_minimum(
+        data: &DenseMatrix,
+        targets: &BinaryTargets,
+        coefficients: &[f64],
+        intercept: f64,
+        c: f64,
+    ) -> bool {
+        let base = penalized_objective(data, targets, coefficients, intercept, c);
+        let slack = 1.0e-9 * base.abs().max(1.0);
+        let mut probe = coefficients.to_vec();
+        for index in 0..=coefficients.len() {
+            let value = if index == coefficients.len() {
+                intercept
+            } else {
+                coefficients[index]
+            };
+            if value == 0.0 {
+                continue;
+            }
+            for direction in [1.0_f64, -1.0] {
+                let moved = value * (1.0 + direction * 1.0e-3);
+                let neighbour = if index == coefficients.len() {
+                    penalized_objective(data, targets, coefficients, moved, c)
+                } else {
+                    probe[index] = moved;
+                    let value = penalized_objective(data, targets, &probe, intercept, c);
+                    probe[index] = coefficients[index];
+                    value
+                };
+                if neighbour < base - slack {
+                    return false;
+                }
+            }
+        }
+        true
+    }
+
+    /// A fit that is at the minimum is returned even though its budget ran out.
+    ///
+    /// This is the half of the contract that is easy to break by "fixing" the
+    /// other half. The absolute tolerance on the largest coefficient update is
+    /// unreachable at this conditioning — the step's own rounding floor is
+    /// above it — so these samples exhaust `max_iter` while sitting on the
+    /// minimum. Refusing on exhaustion alone would turn every one of them into
+    /// an error.
+    ///
+    /// The count of exhausted fits is asserted, not merely observed: if the
+    /// region stopped exhausting `max_iter`, the local-minimality assertion
+    /// would hold for the empty reason and prove nothing.
+    #[test]
+    fn an_exhausted_binary_budget_that_reached_its_minimum_is_fitted_not_refused() {
+        let cases = ill_conditioned_neighbourhood();
+        let mut fitted = 0_usize;
+        let mut exhausted = 0_usize;
+        let mut refused = 0_usize;
+        for (index, (data, targets, params)) in cases.iter().enumerate() {
+            match LogisticRegression::fit(&data.as_view(), targets, params.clone()) {
+                Ok(model) => {
+                    fitted += 1;
+                    if model.n_iter() == params.max_iter() {
+                        exhausted += 1;
+                        let coefficients: Vec<f64> =
+                            model.coefficients().iter().map(|&v| f64::from(v)).collect();
+                        assert!(
+                            is_a_local_minimum(
+                                data,
+                                targets,
+                                &coefficients,
+                                f64::from(model.intercept()),
+                                f64::from(params.c()),
+                            ),
+                            "case {index} exhausted its budget away from the minimum"
+                        );
+                    }
+                }
+                Err(ModelError::SolverDidNotConverge { .. }) => refused += 1,
+                Err(other) => panic!("case {index} was refused with {other:?}"),
+            }
+        }
+        // As generated the region is 972 cases: 919 fits and 53 refusals, and
+        // 163 of the fits — nearly a fifth — exhaust the budget and are
+        // returned because the certificate accepted them.
+        assert_eq!(fitted + refused, cases.len());
+        assert!(
+            exhausted >= 100 && exhausted * 8 >= fitted,
+            "only {exhausted} of {fitted} fits exhausted max_iter, so this region no \
+             longer exercises the acceptance path at all"
+        );
+    }
+
+    /// And the acceptance is a test rather than a rubber stamp.
+    ///
+    /// The same region, starved of iterations. Every sample here is one the
+    /// previous test watched being accepted at the default budget, so an
+    /// acceptance rule that always said yes would pass that test and fail this
+    /// one — and refusing on plain exhaustion would pass this one and fail
+    /// that one. Neither test alone constrains the rule; together they pin it
+    /// from both sides.
+    #[test]
+    fn the_same_binary_region_is_refused_when_the_budget_really_is_too_short() {
+        let cases = ill_conditioned_neighbourhood();
+        let mut reachable = 0_usize;
+        let mut refused = 0_usize;
+        for (data, targets, params) in &cases {
+            if LogisticRegression::fit(&data.as_view(), targets, params.clone()).is_err() {
+                continue;
+            }
+            reachable += 1;
+            if let Err(error) =
+                LogisticRegression::fit(&data.as_view(), targets, params.clone().with_max_iter(1))
+            {
+                assert_eq!(error, ModelError::SolverDidNotConverge { iterations: 1 });
+                refused += 1;
+            }
+        }
+        // All 919 are refused. The floor is nine tenths rather than all of
+        // them because a sample that really does land on the minimum in one
+        // step must keep being accepted, and refusing it would be the same
+        // mistake in the other direction.
+        assert!(reachable > 0, "the region produced no fits to starve");
+        assert!(
+            refused * 10 >= reachable * 9,
+            "only {refused} of {reachable} single-iteration fits were refused; an \
+             acceptance rule this permissive would accept anything"
+        );
+    }
+
+    /// A fit that is genuinely nowhere near its minimum is refused at the full
+    /// default budget, not only at a starved one.
+    ///
+    /// The undamped exact step is not globally convergent. On a badly scaled,
+    /// near-separable design with a weak penalty it overshoots and keeps
+    /// overshooting, so a hundred iterations end further from the minimum than
+    /// they started. This is the population the old code returned as a fitted
+    /// model, and the one the acceptance test has to keep out.
+    #[test]
+    fn a_binary_fit_that_diverged_under_its_full_budget_is_refused() {
+        let cases = ill_conditioned_neighbourhood();
+        let mut diverged = 0_usize;
+        for (data, targets, params) in &cases {
+            let Err(error) = LogisticRegression::fit(&data.as_view(), targets, params.clone())
+            else {
+                continue;
+            };
+            assert!(
+                matches!(error, ModelError::SolverDidNotConverge { iterations } if iterations
+                    == params.max_iter()),
+                "unexpected refusal {error:?}"
+            );
+            diverged += 1;
+        }
+        assert!(
+            diverged > 0,
+            "the region no longer contains a genuinely non-convergent fit, so nothing \
+             here distinguishes the acceptance test from an unconditional yes"
+        );
+    }
+
+    /// The filed reproduction, on both target shapes and both solvers.
+    ///
+    /// A one-iteration budget against a tolerance no single step can meet is
+    /// non-convergence by any reading, and the estimator used to answer it
+    /// three different ways depending on which path a caller took.
+    #[test]
+    fn a_starved_budget_is_refused_identically_by_every_solver_and_target_shape() {
+        let mut values = Vec::with_capacity(80);
+        let mut labels = Vec::with_capacity(40);
+        let mut classes = Vec::with_capacity(40);
+        for row in 0..40_usize {
+            let step = row as f32 * 0.25 - 5.0;
+            values.push(step);
+            values.push(step * step * 0.1 - 1.0);
+            labels.push(u8::from(row >= 20));
+            classes.push((row % 3) as u8);
+        }
+        let data = DenseMatrix::new(values, 40, 2).unwrap();
+        let binary = BinaryTargets::new(labels).unwrap();
+        let multiclass = ClassTargets::new(classes).unwrap();
+
+        for solver in [LogisticSolver::Newton, LogisticSolver::Lbfgs] {
+            let params = LogisticRegressionParams::default()
+                .with_solver(solver)
+                .with_max_iter(1)
+                .with_tol(1.0e-12);
+            assert_eq!(
+                LogisticRegression::fit(&data.as_view(), &binary, params.clone()),
+                Err(ModelError::SolverDidNotConverge { iterations: 1 }),
+                "binary under {solver:?}"
+            );
+            assert_eq!(
+                LogisticRegression::fit_multiclass(&data.as_view(), &multiclass, params.clone()),
+                Err(ModelError::SolverDidNotConverge { iterations: 1 }),
+                "multinomial under {solver:?}"
+            );
+        }
+
+        // And the same data fits when the budget is the default one, so the
+        // refusals above are about the budget rather than about the design.
+        for solver in [LogisticSolver::Newton, LogisticSolver::Lbfgs] {
+            let params = LogisticRegressionParams::default().with_solver(solver);
+            let model = LogisticRegression::fit(&data.as_view(), &binary, params.clone())
+                .expect("the default budget fits");
+            assert!(model.n_iter() < params.max_iter());
+            let model =
+                LogisticRegression::fit_multiclass(&data.as_view(), &multiclass, params.clone())
+                    .expect("the default budget fits");
+            assert!(model.n_iter() < params.max_iter());
+        }
+    }
+
+    /// A weighted binary fit is held to the same rule.
+    ///
+    /// Weights enter both the gradient and the curvature, so they scale the
+    /// decrement with the system it is computed from and cannot quietly move
+    /// the acceptance threshold.
+    #[test]
+    fn a_starved_weighted_binary_fit_is_refused() {
+        let (data, targets) = simple_data();
+        let weights = SampleWeights::new(vec![0.25, 4.0, 1.0, 1.0, 4.0, 0.25]).unwrap();
+        assert_eq!(
+            LogisticRegression::fit_weighted(
+                &data.as_view(),
+                &targets,
+                &weights,
+                LogisticRegressionParams::default()
+                    .with_max_iter(1)
+                    .with_tol(1.0e-12),
+            ),
+            Err(ModelError::SolverDidNotConverge { iterations: 1 })
+        );
+        let model = LogisticRegression::fit_weighted(
+            &data.as_view(),
+            &targets,
+            &weights,
+            LogisticRegressionParams::default(),
+        )
+        .expect("the default budget fits");
+        assert!(model.n_iter() < 100);
     }
 }

@@ -2,8 +2,8 @@
 
 use crate::api::ModelError;
 use crate::data::BinaryTargets;
-use crate::loss::{BinaryLogLoss, accumulate_newton_row, raw_score};
-use crate::numeric::{sigmoid_f32, sum_in_order};
+use crate::loss::{BinaryLogLoss, accumulate_newton_row, newton_decrement, raw_score};
+use crate::numeric::sigmoid_f32;
 
 use super::Calibrator;
 
@@ -315,25 +315,6 @@ fn validate_params(params: &PlattParams) -> Result<(), ModelError> {
         return Err(ModelError::InvalidTolerance);
     }
     Ok(())
-}
-
-/// The Newton decrement at the point the given step was computed from.
-///
-/// The step solves `H step = gradient`, so `gradient . step` is
-/// `gradient^T H^-1 gradient`: a non-negative number that is zero exactly at a
-/// stationary point, and that approximates twice the objective's distance
-/// above its minimum wherever the quadratic model holds. It is *affine
-/// invariant* — rescaling the score column rescales the gradient and the step
-/// inversely and leaves the product alone — which is what makes it usable as
-/// an acceptance test on a problem whose parameters can reach `1e6`, where the
-/// step size alone cannot be compared against a fixed number.
-fn newton_decrement(gradient: &[f64; PARAMETERS], update: &[f64; PARAMETERS]) -> f64 {
-    sum_in_order(
-        gradient
-            .iter()
-            .zip(update)
-            .map(|(&gradient, &step)| gradient * step),
-    )
 }
 
 /// Solves the symmetric two-parameter Newton system by its closed form.
