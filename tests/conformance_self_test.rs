@@ -917,10 +917,17 @@ violates!(
     classifier_report::<ClassifierProbeCase<PREDICT_FAILS>>(),
     ["predicts_the_fixture"]
 );
+// Two obligations, from one lie. The probe overrides `predict` but not
+// `predict_proba`, so the allocating `ProbabilisticClassifier::predict_proba`
+// default runs — and that default now checks the batch width against
+// `n_features_in` before allocating. A probe whose `n_features_in` disagrees
+// with the width its own `_into` accepts therefore fails the declared
+// probability path as well as the metadata check. That is the fault showing
+// through a second surface rather than a second fault.
 violates!(
     classifier_wrong_metadata,
     classifier_report::<ClassifierProbeCase<WRONG_METADATA>>(),
-    ["metadata"]
+    ["metadata", "probability_declaration_matches_behavior"]
 );
 violates!(
     classifier_into_disagrees,

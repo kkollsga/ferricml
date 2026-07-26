@@ -36,6 +36,7 @@ pub trait Classifier: Estimator {
 
     /// Predicts labels, allocating one output value per input row.
     fn predict(&self, data: &MatrixView<'_>) -> Result<Vec<u8>, ModelError> {
+        check_batch_width(self.n_features_in(), data)?;
         let mut output = vec![0; data.rows()];
         self.predict_into(data, &mut output)?;
         Ok(output)
@@ -66,6 +67,7 @@ pub trait ProbabilisticClassifier: Classifier {
 
     /// Predicts row-major probabilities, allocating the output matrix.
     fn predict_proba(&self, data: &MatrixView<'_>) -> Result<Vec<f32>, ModelError> {
+        check_batch_width(self.n_features_in(), data)?;
         let output_len = data.rows().checked_mul(self.classes().len()).ok_or(
             ModelError::OutputShapeOverflow {
                 rows: data.rows(),
@@ -92,6 +94,7 @@ pub trait ProbabilisticClassifier: Classifier {
         data: &MatrixView<'_>,
         class: u8,
     ) -> Result<Vec<f32>, ModelError> {
+        check_batch_width(self.n_features_in(), data)?;
         let mut output = vec![0.0; data.rows()];
         self.predict_class_proba_into(data, class, &mut output)?;
         Ok(output)
@@ -105,6 +108,7 @@ pub trait Regressor: Estimator {
 
     /// Predicts values, allocating one output value per input row.
     fn predict(&self, data: &MatrixView<'_>) -> Result<Vec<f32>, ModelError> {
+        check_batch_width(self.n_features_in(), data)?;
         let mut output = vec![0.0; data.rows()];
         self.predict_into(data, &mut output)?;
         Ok(output)
@@ -135,6 +139,7 @@ pub trait Transformer: Estimator {
 
     /// Transforms a batch, allocating one dense output matrix.
     fn transform(&self, data: &MatrixView<'_>) -> Result<DenseMatrix, ModelError> {
+        check_batch_width(self.n_features_in(), data)?;
         let columns = self.n_features_out();
         let output_len =
             data.rows()
@@ -152,6 +157,22 @@ pub trait Transformer: Estimator {
             columns,
         ))
     }
+}
+
+/// Rejects a batch whose width differs from the estimator's fitted width.
+///
+/// Every allocating default above runs this *before* sizing its output buffer,
+/// so an invalid shape fails without allocating; each `_into` primitive repeats
+/// the check for callers that use it directly, and reports the same error from
+/// the same two numbers, so hoisting it changes ordering rather than behaviour.
+fn check_batch_width(expected: usize, data: &MatrixView<'_>) -> Result<(), ModelError> {
+    if data.columns() != expected {
+        return Err(ModelError::FeatureDimension {
+            expected,
+            actual: data.columns(),
+        });
+    }
+    Ok(())
 }
 
 pub(crate) fn validate_transformed_shape(

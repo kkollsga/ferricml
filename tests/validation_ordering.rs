@@ -1,0 +1,287 @@
+//! Shape validation must precede allocation and training work.
+//!
+//! `CLAUDE.md` states the rule as *"keep validation at public boundaries and
+//! make invalid shapes fail before allocation or training work begins."* An
+//! assertion that a rejected call returns the right error does not test that
+//! rule: code which allocates a gigabyte and then errors satisfies it exactly.
+//! So every test here measures the *ordering* directly — a rejected call must
+//! reach its error having asked the allocator for nothing at all.
+//!
+//! The meter is a counting global allocator, the same technique
+//! `tests/inspection_allocation.rs` and `tests/artifact_hardening.rs` use. It
+//! is thread-local rather than process-global (as in `artifact_hardening.rs`)
+//! so the tests in this binary can run in parallel without interfering, and it
+//! counts allocator *calls* rather than bytes because the claim being made is
+//! "nothing was allocated", not "not much was allocated".
+//!
+//! Every measurement is preceded by an identical *valid* call outside the
+//! meter. That warm-up is not decoration: it forces any lazily initialized
+//! global on the path to be paid for before counting starts, so a non-zero
+//! count can only come from the rejected call itself.
+
+use ferricml::api::{Classifier, ProbabilisticClassifier, Regressor, Transformer};
+use ferricml::data::{BinaryTargets, DenseMatrix, RegressionTargets};
+use ferricml::dummy::{
+    DummyClassifier, DummyClassifierParams, DummyRegressor, DummyRegressorParams,
+};
+use ferricml::preprocessing::{StandardScaler, StandardScalerParams};
+use std::alloc::{GlobalAlloc, Layout, System};
+use std::cell::Cell;
+
+// ---------------------------------------------------------------------------
+// Allocation meter
+// ---------------------------------------------------------------------------
+
+#[derive(Clone, Copy)]
+struct Meter {
+    armed: bool,
+    calls: usize,
+}
+
+impl Meter {
+    const IDLE: Self = Self {
+        armed: false,
+        calls: 0,
+    };
+}
+
+thread_local! {
+    /// Per-thread so two `#[test]` functions in this binary cannot interfere.
+    static METER: Cell<Meter> = const { Cell::new(Meter::IDLE) };
+}
+
+fn record() {
+    let _ = METER.try_with(|cell| {
+        let mut meter = cell.get();
+        if meter.armed {
+            meter.calls += 1;
+            cell.set(meter);
+        }
+    });
+}
+
+struct CountingAllocator;
+
+// SAFETY: every method forwards to the system allocator unchanged. The counter
+// only observes calls, and it holds no allocation of its own (a const-init
+// `Cell<Meter>` needs neither lazy initialization nor a destructor), so
+// observing cannot re-enter the allocator.
+unsafe impl GlobalAlloc for CountingAllocator {
+    unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
+        record();
+        unsafe { System.alloc(layout) }
+    }
+
+    unsafe fn alloc_zeroed(&self, layout: Layout) -> *mut u8 {
+        record();
+        unsafe { System.alloc_zeroed(layout) }
+    }
+
+    unsafe fn dealloc(&self, pointer: *mut u8, layout: Layout) {
+        unsafe { System.dealloc(pointer, layout) }
+    }
+
+    unsafe fn realloc(&self, pointer: *mut u8, layout: Layout, new_size: usize) -> *mut u8 {
+        record();
+        unsafe { System.realloc(pointer, layout, new_size) }
+    }
+}
+
+#[global_allocator]
+static ALLOCATOR: CountingAllocator = CountingAllocator;
+
+/// Runs `operation` and reports how many times it called the allocator.
+fn allocations(operation: impl FnOnce()) -> usize {
+    METER.with(|cell| {
+        cell.set(Meter {
+            armed: true,
+            calls: 0,
+        })
+    });
+    operation();
+    METER.with(|cell| {
+        let meter = cell.get();
+        cell.set(Meter::IDLE);
+        meter.calls
+    })
+}
+
+/// Asserts that `rejected` reaches its error without allocating.
+///
+/// `accepted` runs first, unmeasured, so lazily initialized state on the same
+/// code path cannot be mistaken for the rejected call's own allocation.
+#[track_caller]
+fn rejects_before_allocating(accepted: impl FnOnce(), rejected: impl FnOnce()) {
+    accepted();
+    let calls = allocations(rejected);
+    assert_eq!(
+        calls, 0,
+        "a rejected call allocated {calls} time(s) before reporting its error"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Fixtures
+// ---------------------------------------------------------------------------
+
+/// Two columns wide, which is the fitted width of every model below.
+fn fitted_width_data() -> DenseMatrix {
+    DenseMatrix::new((0..24).map(|value| value as f32).collect(), 12, 2).unwrap()
+}
+
+/// Three columns wide, so every model below must refuse it.
+fn wrong_width_data() -> DenseMatrix {
+    DenseMatrix::new((0..24).map(|value| value as f32).collect(), 8, 3).unwrap()
+}
+
+fn dummy_classifier() -> DummyClassifier {
+    let targets = BinaryTargets::new((0..12).map(|row| u8::from(row >= 6)).collect()).unwrap();
+    DummyClassifier::fit(
+        &fitted_width_data().as_view(),
+        &targets,
+        DummyClassifierParams,
+    )
+    .unwrap()
+}
+
+fn dummy_regressor() -> DummyRegressor {
+    let targets = RegressionTargets::new((0..12).map(|row| row as f32).collect()).unwrap();
+    DummyRegressor::fit(
+        &fitted_width_data().as_view(),
+        &targets,
+        DummyRegressorParams,
+    )
+    .unwrap()
+}
+
+fn standard_scaler() -> StandardScaler {
+    StandardScaler::fit(
+        &fitted_width_data().as_view(),
+        StandardScalerParams::default(),
+    )
+    .unwrap()
+}
+
+// ---------------------------------------------------------------------------
+// Audit finding 15 — the allocating trait defaults
+// ---------------------------------------------------------------------------
+//
+// Each default body builds the return buffer and then delegates to the `_into`
+// primitive that owns the width check. These call the trait methods explicitly
+// rather than the inherent ones, so the default body is what is measured even
+// where a concrete type also offers an inherent method of the same name.
+
+#[test]
+fn classifier_predict_default_validates_before_allocating() {
+    let model = dummy_classifier();
+    let fitted = fitted_width_data();
+    let wrong = wrong_width_data();
+    rejects_before_allocating(
+        || {
+            Classifier::predict(&model, &fitted.as_view()).unwrap();
+        },
+        || {
+            assert!(Classifier::predict(&model, &wrong.as_view()).is_err());
+        },
+    );
+}
+
+#[test]
+fn probabilistic_classifier_predict_proba_default_validates_before_allocating() {
+    let model = dummy_classifier();
+    let fitted = fitted_width_data();
+    let wrong = wrong_width_data();
+    rejects_before_allocating(
+        || {
+            ProbabilisticClassifier::predict_proba(&model, &fitted.as_view()).unwrap();
+        },
+        || {
+            assert!(ProbabilisticClassifier::predict_proba(&model, &wrong.as_view()).is_err());
+        },
+    );
+}
+
+#[test]
+fn probabilistic_classifier_predict_class_proba_default_validates_before_allocating() {
+    let model = dummy_classifier();
+    let fitted = fitted_width_data();
+    let wrong = wrong_width_data();
+    rejects_before_allocating(
+        || {
+            ProbabilisticClassifier::predict_class_proba(&model, &fitted.as_view(), 1).unwrap();
+        },
+        || {
+            assert!(
+                ProbabilisticClassifier::predict_class_proba(&model, &wrong.as_view(), 1).is_err()
+            );
+        },
+    );
+}
+
+#[test]
+fn regressor_predict_default_validates_before_allocating() {
+    let model = dummy_regressor();
+    let fitted = fitted_width_data();
+    let wrong = wrong_width_data();
+    rejects_before_allocating(
+        || {
+            Regressor::predict(&model, &fitted.as_view()).unwrap();
+        },
+        || {
+            assert!(Regressor::predict(&model, &wrong.as_view()).is_err());
+        },
+    );
+}
+
+#[test]
+fn transformer_transform_default_validates_before_allocating() {
+    let model = standard_scaler();
+    let fitted = fitted_width_data();
+    let wrong = wrong_width_data();
+    rejects_before_allocating(
+        || {
+            Transformer::transform(&model, &fitted.as_view()).unwrap();
+        },
+        || {
+            assert!(Transformer::transform(&model, &wrong.as_view()).is_err());
+        },
+    );
+}
+
+/// The hoisted check must not change *which* error a rejected call reports.
+///
+/// The ordering tests above would still pass if the defaults had started
+/// reporting a different variant, so the identity of the error is pinned
+/// separately.
+#[test]
+fn the_hoisted_width_check_reports_the_same_error_the_into_form_reports() {
+    use ferricml::api::ModelError;
+
+    let wrong = wrong_width_data();
+    let expected = ModelError::FeatureDimension {
+        expected: 2,
+        actual: 3,
+    };
+
+    let classifier = dummy_classifier();
+    assert_eq!(
+        Classifier::predict(&classifier, &wrong.as_view()),
+        Err(expected.clone())
+    );
+    assert_eq!(
+        ProbabilisticClassifier::predict_proba(&classifier, &wrong.as_view()),
+        Err(expected.clone())
+    );
+    assert_eq!(
+        ProbabilisticClassifier::predict_class_proba(&classifier, &wrong.as_view(), 1),
+        Err(expected.clone())
+    );
+    assert_eq!(
+        Regressor::predict(&dummy_regressor(), &wrong.as_view()),
+        Err(expected.clone())
+    );
+    assert_eq!(
+        Transformer::transform(&standard_scaler(), &wrong.as_view()).err(),
+        Some(expected)
+    );
+}

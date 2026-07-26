@@ -63,6 +63,16 @@ and releases use [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Changed
 
+- The allocating defaults on `api::Classifier`, `api::ProbabilisticClassifier`,
+  `api::Regressor`, and `api::Transformer` — `predict`, `predict_proba`,
+  `predict_class_proba`, and `transform` — now check the batch width against
+  `Estimator::n_features_in` *before* sizing their output buffer, rather than
+  allocating it and discovering the mismatch inside the `_into` primitive they
+  delegate to. The error is unchanged in kind and in values; what changes is
+  that a rejected call now allocates nothing at all. An implementor whose
+  `_into` method accepted a width other than its declared `n_features_in`
+  would see the default reject that call.
+
 - **Breaking.** Producing probabilities is no longer required of every
   classifier. `predict_proba`, `predict_proba_into`, `predict_class_proba`, and
   `predict_class_proba_into` move off `api::Classifier` onto a new
