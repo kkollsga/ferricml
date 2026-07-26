@@ -6,7 +6,7 @@
 //! caller-owned workspace, split per stage, which is what keeps a multi-stage
 //! transform free of hidden allocation.
 
-use crate::api::{Estimator, ModelError, Transformer, validate_transformed_shape};
+use crate::api::{Estimator, HasCapabilities, ModelError, Transformer, validate_transformed_shape};
 use crate::data::MatrixView;
 
 /// One or more fitted transform stages applied in a fixed order.
@@ -19,6 +19,14 @@ use crate::data::MatrixView;
 /// chain type: a stack reports exactly how much `f32` storage it needs for a
 /// batch, and every stage writes into a disjoint segment of that one buffer.
 pub trait TransformerStack {
+    /// Whether every stage in this stack persists.
+    ///
+    /// Derived from the stages' own capability declarations rather than
+    /// declared here, so a stack cannot claim a persistence its parts do not
+    /// have and cannot lose one they do. This is what lets a composition
+    /// *compute* its artifact capability instead of being gated on one.
+    const STAGES_PERSIST: bool;
+
     /// Input width the first stage was fitted on.
     fn n_features_in(&self) -> usize;
 
@@ -106,9 +114,11 @@ fn run_stage<'segment, T: Transformer>(
 
 impl<A, B> TransformerStack for (A, B)
 where
-    A: Transformer,
-    B: Transformer,
+    A: Transformer + HasCapabilities,
+    B: Transformer + HasCapabilities,
 {
+    const STAGES_PERSIST: bool = A::CAPABILITIES.artifact() && B::CAPABILITIES.artifact();
+
     fn n_features_in(&self) -> usize {
         Estimator::n_features_in(&self.0)
     }
@@ -141,10 +151,13 @@ where
 
 impl<A, B, C> TransformerStack for (A, B, C)
 where
-    A: Transformer,
-    B: Transformer,
-    C: Transformer,
+    A: Transformer + HasCapabilities,
+    B: Transformer + HasCapabilities,
+    C: Transformer + HasCapabilities,
 {
+    const STAGES_PERSIST: bool =
+        A::CAPABILITIES.artifact() && B::CAPABILITIES.artifact() && C::CAPABILITIES.artifact();
+
     fn n_features_in(&self) -> usize {
         Estimator::n_features_in(&self.0)
     }

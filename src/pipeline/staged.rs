@@ -174,8 +174,8 @@ where
 
 impl<A, B, E> StagedPipeline<(A, B), E>
 where
-    A: Transformer,
-    B: Transformer,
+    A: Transformer + HasCapabilities,
+    B: Transformer + HasCapabilities,
     E: Estimator,
 {
     /// Fits two stages and an estimator in one pass, in that fixed order.
@@ -225,10 +225,21 @@ where
 
 /// A composition persists exactly when every one of its parts does.
 ///
-/// The bound is what makes this declaration honest for *every* composition
-/// rather than for a hand-listed few: an impl exists only where each stage and
-/// the estimator really have a schema-bound artifact, so asking a composition
-/// that cannot persist is a compile error rather than a wrong answer.
+/// That sentence is a statement about the declaration's *value*, so it is
+/// computed rather than gated. An earlier version instead bounded this impl on
+/// the persistence traits, which conflated two different things: "this
+/// composition declares no artifact" and "this composition cannot declare
+/// anything at all". A composition holding a stateless stage, or ending in a
+/// baseline estimator, is perfectly usable — it simply does not persist — yet
+/// under the bound it had no capability vocabulary, and the conformance
+/// battery requires a declaring model to check one. Whole families of working
+/// compositions were therefore unreachable by the battery for the sole reason
+/// that they were honest about not persisting.
+///
+/// Taking the declaration from the parts is the same shape that fixed
+/// `decision_function` on [`Pipeline`](super::Pipeline): ask where the property
+/// actually comes from. Persistence genuinely is an intersection — every part
+/// must have it — so it is computed as one, from each part's own declaration.
 ///
 /// Weighted fitting is declared away structurally. `StagedPipeline` has no
 /// `fit_weighted` of its own — weights reach the parts through the fitting
@@ -236,10 +247,11 @@ where
 /// each part, never of the composition.
 impl<S, E> HasCapabilities for StagedPipeline<S, E>
 where
-    S: TransformerStack + PersistedStack,
-    E: Estimator + ModelArtifact,
+    S: TransformerStack,
+    E: Estimator + HasCapabilities,
 {
-    const CAPABILITIES: Capabilities = Capabilities::NONE.with_artifact(true);
+    const CAPABILITIES: Capabilities =
+        Capabilities::NONE.with_artifact(S::STAGES_PERSIST && E::CAPABILITIES.artifact());
 }
 
 impl<S, E> StageArtifact for StagedPipeline<S, E>

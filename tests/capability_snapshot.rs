@@ -172,6 +172,14 @@ fn declarations() -> Vec<(&'static str, Capabilities)> {
             "ferricml::pipeline::StagedPipeline<(ferricml::preprocessing::MinMaxScaler, ferricml::preprocessing::StandardScaler), ferricml::linear_model::Ridge>",
             <StagedPipeline<(MinMaxScaler, StandardScaler), Ridge> as HasCapabilities>::CAPABILITIES,
         ),
+        // The same generic impl at an instantiation that does *not* persist.
+        // One row per declaration site would record only the persisting value
+        // and change-detect nothing about the computed one, so both ends of
+        // the intersection are pinned.
+        (
+            "ferricml::pipeline::StagedPipeline<(ferricml::preprocessing::Normalizer, ferricml::preprocessing::StandardScaler), ferricml::linear_model::Ridge>",
+            <StagedPipeline<(Normalizer, StandardScaler), Ridge> as HasCapabilities>::CAPABILITIES,
+        ),
         (
             "ferricml::preprocessing::MaxAbsScaler",
             MaxAbsScaler::CAPABILITIES,

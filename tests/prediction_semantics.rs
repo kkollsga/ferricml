@@ -15,8 +15,8 @@
 mod support;
 
 use ferricml::api::{
-    AnyClassifier, AnyClassifierParams, AnyRegressor, AnyRegressorParams, Classifier, ModelError,
-    ProbabilisticClassifier, Regressor,
+    AnyClassifier, AnyClassifierParams, AnyRegressor, AnyRegressorParams, Classifier,
+    HasCapabilities, ModelError, ProbabilisticClassifier, Regressor,
 };
 use ferricml::artifact::{ArtifactError, ModelArtifact, StageArtifact};
 use ferricml::calibration::{
@@ -54,7 +54,7 @@ use ferricml::ranking::{
 };
 
 use support::conformance::{
-    ClassifierCase, Fixture, FixtureShape, OptionalFit, RegressorCase, RoundTrip, SCHEMA, Sample,
+    ClassifierCase, FixtureShape, OptionalFit, RegressorCase, RoundTrip, SCHEMA, Sample,
     ScalarClassifierCase, ScalarRegressorCase, ScalarWorkspaceRegressorCase, TransformerCase,
     WorkspaceClassifierCase, WorkspaceRegressorCase, check_batch_only_classifier,
     check_batch_only_regressor, check_classifier, check_regressor,
@@ -1269,6 +1269,75 @@ impl WorkspaceRegressorCase for RobustStagedPipelineCase {
     }
 }
 
+/// A composition that holds stateless stages, and therefore does not persist.
+///
+/// It is registered here for exactly the reason it used to be unregisterable:
+/// declaring no artifact is a *declaration*, and the battery checks a
+/// declaration against behaviour. While `HasCapabilities for StagedPipeline`
+/// was bounded on the persistence traits, this composition had no capability
+/// vocabulary at all and its obligations had to be hand-written. Computing the
+/// declaration from the parts gives it an honest `Capabilities::NONE`, and the
+/// battery then proves the negative the same way it proves every positive: a
+/// `None` round trip must accompany a declaration of no artifact.
+struct StatelessStagedPipelineCase;
+
+impl WorkspaceRegressorCase for StatelessStagedPipelineCase {
+    type Model = StagedPipeline<(Normalizer, Binarizer, FunctionTransformer), Ridge>;
+    const NAME: &'static str =
+        "StagedPipeline<(Normalizer, Binarizer, FunctionTransformer), Ridge>";
+
+    fn fit(train: &Sample, _holdout: &Sample) -> Result<Self::Model, ModelError> {
+        let first = Normalizer::fit(&train.view(), NormalizerParams::default())?;
+        let after_first = first.transform(&train.view())?;
+        let second = Binarizer::fit(
+            &after_first.as_view(),
+            BinarizerParams::default().with_threshold(0.5),
+        )?;
+        let after_second = second.transform(&after_first.as_view())?;
+        let third = FunctionTransformer::fit(
+            &after_second.as_view(),
+            FunctionTransformerParams::default().with_func(double),
+        )?;
+        let after_third = third.transform(&after_second.as_view())?;
+        let estimator = Ridge::fit(
+            &after_third.as_view(),
+            &train.values,
+            RidgeParams::default(),
+        )?;
+        StagedPipeline::new((first, second, third), estimator)
+    }
+
+    /// No artifact, which is the whole point of the registration.
+    fn round_trip(_model: &Self::Model) -> RoundTrip<Self::Model> {
+        None
+    }
+
+    fn workspace_len(model: &Self::Model, rows: usize) -> Result<usize, ModelError> {
+        model.workspace_len(rows)
+    }
+
+    fn predict(
+        model: &Self::Model,
+        data: &MatrixView<'_>,
+        workspace: &mut [f32],
+    ) -> Result<Vec<f32>, ModelError> {
+        model.with_transformed(data, workspace, |estimator, transformed| {
+            estimator.predict(transformed)
+        })
+    }
+
+    fn predict_into(
+        model: &Self::Model,
+        data: &MatrixView<'_>,
+        workspace: &mut [f32],
+        output: &mut [f32],
+    ) -> Result<(), ModelError> {
+        model.with_transformed(data, workspace, |estimator, transformed| {
+            estimator.predict_into(transformed, output)
+        })
+    }
+}
+
 /// Two fitted transform stages and an estimator, predicted through one
 /// workspace split per stage.
 struct TwoStagePipelineCase;
@@ -1638,94 +1707,31 @@ fn staged_pipelines_conform_at_both_arities() {
     check_workspace_regressor::<TwoStagePipelineCase>();
     check_workspace_regressor::<ThreeStagePipelineCase>();
     check_workspace_regressor::<RobustStagedPipelineCase>();
+    check_workspace_regressor::<StatelessStagedPipelineCase>();
 }
 
-/// A composition holding a stateless stage transforms and predicts, but cannot
-/// be persisted — and cannot be registered in the battery either.
+/// A composition that does not persist still declares — and the declaration is
+/// computed from its parts rather than asserted here.
 ///
-/// The reason is worth recording precisely, because it is stronger than "no
-/// artifact". `HasCapabilities for StagedPipeline` is itself bounded on the
-/// stage-persistence trait, so a stack containing a stage that declares no
-/// artifact cannot declare *anything*, and the battery requires a declaring
-/// model. The composition is perfectly usable; it simply has no capability
-/// vocabulary to be checked against, so its obligations are asserted here
-/// directly rather than generically.
+/// This is the property that made the registration above possible, so it is
+/// worth stating separately from it: swapping one persisting stage for a
+/// stateless one flips the composition's artifact bit, with nothing anywhere
+/// naming either composition.
 #[test]
-fn a_stateless_stage_composes_and_predicts_without_being_persistable() {
-    let fixture = Fixture::default();
-    let train = &fixture.train;
-    let first = Normalizer::fit(&train.view(), NormalizerParams::default()).unwrap();
-    let after_first = first.transform(&train.view()).unwrap();
-    let second = Binarizer::fit(
-        &after_first.as_view(),
-        BinarizerParams::default().with_threshold(0.5),
-    )
-    .unwrap();
-    let after_second = second.transform(&after_first.as_view()).unwrap();
-    let third = FunctionTransformer::fit(
-        &after_second.as_view(),
-        FunctionTransformerParams::default().with_func(double),
-    )
-    .unwrap();
-    let after_third = third.transform(&after_second.as_view()).unwrap();
-    let pipeline: StagedPipeline<(Normalizer, Binarizer, FunctionTransformer), Ridge> =
-        StagedPipeline::new(
-            (first, second, third),
-            Ridge::fit(
-                &after_third.as_view(),
-                &train.values,
-                RidgeParams::default(),
-            )
-            .unwrap(),
-        )
-        .expect("a stateless composition composes");
-
-    let view = train.view();
-    let workspace_len = pipeline.workspace_len(view.rows()).unwrap();
-    let mut workspace = vec![0.0; workspace_len];
-    let predictions = pipeline
-        .with_transformed(&view, &mut workspace, |estimator, transformed| {
-            estimator.predict(transformed)
-        })
-        .unwrap();
-    assert_eq!(predictions.len(), view.rows());
-    assert!(predictions.iter().all(|value| value.is_finite()));
-
-    // The two composition hazards the battery would otherwise have covered: a
-    // workspace whose length is never checked, and one whose contents leak from
-    // one batch into the next.
-    let mut short = vec![0.0; workspace_len - 1];
-    assert_eq!(
-        pipeline
-            .with_transformed(&view, &mut short, |estimator, transformed| {
-                estimator.predict(transformed)
-            })
-            .unwrap_err(),
-        ModelError::OutputLength {
-            expected: workspace_len,
-            actual: workspace_len - 1
-        }
+fn a_composition_takes_its_persistence_from_the_parts_that_have_it() {
+    assert!(
+        <StagedPipeline<(MinMaxScaler, StandardScaler), Ridge> as HasCapabilities>::CAPABILITIES
+            .artifact()
     );
-
-    let holdout = fixture.holdout.view();
-    let mut fresh = vec![0.0; workspace_len];
-    let alone = pipeline
-        .with_transformed(&holdout, &mut fresh, |estimator, transformed| {
-            estimator.predict(transformed)
-        })
-        .unwrap();
-    let mut reused = vec![0.0; workspace_len];
-    let _ = pipeline.with_transformed(&view, &mut reused, |estimator, transformed| {
-        estimator.predict(transformed)
-    });
-    let after = pipeline
-        .with_transformed(&holdout, &mut reused, |estimator, transformed| {
-            estimator.predict(transformed)
-        })
-        .unwrap();
-    assert_eq!(
-        alone, after,
-        "a reused workspace must carry nothing forward"
+    // One stateless stage is enough to remove it.
+    assert!(
+        !<StagedPipeline<(Normalizer, StandardScaler), Ridge> as HasCapabilities>::CAPABILITIES
+            .artifact()
+    );
+    // So is a final estimator that does not persist, with every stage that does.
+    assert!(
+        !<StagedPipeline<(MinMaxScaler, StandardScaler), DummyRegressor> as HasCapabilities>::CAPABILITIES
+            .artifact()
     );
 }
 

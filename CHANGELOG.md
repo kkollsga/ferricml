@@ -67,6 +67,29 @@ and releases use [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Changed
 
+- **Breaking.** Persistence is now a trait. `to_artifact` and `from_artifact`
+  moved from inherent methods onto `artifact::ModelArtifact` (estimators, one
+  feature schema) and `artifact::StageArtifact` (transformers and compositions,
+  an input and an output schema), so calling either needs the trait in scope —
+  `use ferricml::artifact::ModelArtifact;` — exactly as calling `predict` needs
+  `api::Estimator`. No artifact's bytes change.
+
+  This closes a gap rather than moving a name. Persisting used to require two
+  independent declarations: writing the encoder, and separately listing the
+  type as composable. Seven estimators had the first and not the second, so
+  `ensemble::RandomForestClassifier`, both extra-trees models,
+  `ensemble::HistGradientBoostingClassifier`, both standalone trees and
+  `ranking::PairwiseLinearRanker` could be saved on their own but not inside a
+  `pipeline::StagedPipeline`. All seven now compose, as do `api::AnyRegressor`
+  and `api::AnyClassifier`. The traits are no longer re-exported from
+  `ferricml::pipeline`; `ferricml::artifact` is the one path.
+- A `pipeline::StagedPipeline` now declares capabilities whatever it holds,
+  computing `artifact` from its parts instead of requiring every part to
+  persist before it can declare anything. A composition that does not persist
+  previously had no capability declaration at all, which also kept it out of
+  the conformance battery. `pipeline::TransformerStack` gains
+  `STAGES_PERSIST`, and its tuple implementations now require each stage to
+  declare capabilities.
 - Histogram-boosting fits report four distinct failures where they previously
   reported two. `api::ModelError::NumericalOverflow` used to stand for both a
   non-finite residual and a residual-length mismatch, and
