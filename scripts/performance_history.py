@@ -588,11 +588,21 @@ def verdict_report(comparison: dict[str, Any]) -> list[str]:
             )
             current, reference = evidence["current_idle"], evidence["reference_idle"]
             if current and reference:
+                # The gap is None when the pair was refused on measurement
+                # configuration: that verdict is reached before any idle
+                # comparison, so there is no gap to report even though both
+                # runs recorded their idle. Report the idle evidence anyway —
+                # it is what a reader needs to judge a later re-measurement.
+                gap = evidence["gap"]
+                measured = (
+                    f"gap {gap:+.2f} points, limit {IDLE_GAP_MAX:.1f}"
+                    if gap is not None
+                    else "gap not computed: refused before the idle comparison"
+                )
                 lines.append(
                     f"  idle before this run: {current['samples']} (mean "
                     f"{current['mean']:.2f}%); reference: {reference['samples']} "
-                    f"(mean {reference['mean']:.2f}%); gap {evidence['gap']:+.2f} points, "
-                    f"limit {IDLE_GAP_MAX:.1f}"
+                    f"(mean {reference['mean']:.2f}%); {measured}"
                 )
             if evidence["reason"] == "measurement_configuration":
                 lines.append(
@@ -1047,6 +1057,22 @@ def measurement_self_test(root: Path) -> None:
         result = previous(f"differs_{field}", reference)
         assert result["status"] == "not_comparable", f"{field}: {result['status']}"
         assert result["comparability"]["reason"] == "measurement_configuration"
+        # Every not_comparable verdict must be *reportable*, not merely
+        # reached. This case shipped broken: `verdict_report` formatted the
+        # idle gap whenever both runs carried idle evidence, but a
+        # configuration refusal happens before any gap is computed, so the
+        # first real capture after the sample-size change crashed on
+        # `None.__format__`. The idle self-test covered the reporting path only
+        # for idle-gap refusals — reaching a verdict and being able to explain
+        # it are separate properties, and only one of them was proven.
+        report = verdict_report({"suites": {"forest-v1": {"previous_release": result}}})
+        assert report, f"{field}: a not_comparable verdict produced no explanation"
+        assert any("measurement configuration differs" in line for line in report), report
+        assert any("NOT a pass" in line for line in report), report
+        assert not any("gap +" in line or "gap -" in line for line in report), (
+            "a configuration refusal has no idle gap to report",
+            report,
+        )
 
     # History predating the fields falls back to the idle bands rather than
     # failing, so older records stay readable.
