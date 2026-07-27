@@ -332,6 +332,33 @@ and releases use [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Changed
 
+- `LinearRegression` and `Ridge` at `alpha = 0` reduce a tall design through the
+  `R` of its thin QR before decomposing, rather than decomposing the design
+  itself. **Fitted values do not move** — every `f32` coefficient and intercept
+  is bit-identical across 62 fits from `8x3` to `400x300`, weighted and
+  unweighted, intercept both ways, including both frozen reference designs — so
+  this is recorded for its cost rather than for its result. Release build,
+  sequential, medians of five interleaved runs on an 80-86% idle machine:
+  `50000x50` 38.3 ms to **25.9 ms**, `1000x300` 23.2 ms to **17.1 ms**,
+  `50000x300` 640.2 ms to **310.4 ms**.
+
+  The reduction is exact rather than approximate, which is why the contract is
+  unchanged: `A = QR` with `Q` an isometry, so `R` and `A` have identical
+  singular values and the rank cutoff is applied to the same numbers, while
+  `(QR)⁺ = R⁺Qᵀ` makes the minimum-norm least-squares solution of `Rx = Qᵀb`
+  *be* the minimum-norm least-squares solution of `Ax = b`. Rank deficiency
+  needs no special case.
+
+  It is taken only where it pays. Break-even is at `rows/columns ~ 1.20`
+  measured at `columns = 300` — 13.33 ms against 13.36 ms — and below it the
+  reduction *costs*: 10% at `rows == columns`. The guard is
+  `4 * rows >= 5 * columns`, integer so no rounding decides it, and set at 1.25
+  rather than at break-even because at break-even there is nothing to save. One
+  cost is recorded rather than hidden: break-even drifts with `columns`, sitting
+  nearer 1.5 at `columns = 100`, so a small-`columns` design between 1.25 and
+  1.5 pays up to 4% of 1.2 ms. A `columns`-dependent constant would buy that
+  back and cost a second tuning parameter.
+
 - `LogisticSolver` and the linear-models guide now state that the **default
   solver is the expensive one at scale**, with the measurement rather than the
   adjective. `LogisticSolver::Lbfgs` was documented only as the escape from
