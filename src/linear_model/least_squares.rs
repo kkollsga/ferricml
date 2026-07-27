@@ -1,8 +1,13 @@
 use crate::api::ModelError;
 use crate::data::{MatrixView, SampleWeights};
 use crate::numeric::sum_in_order;
+use faer::dyn_stack::{MemBuffer, MemStack};
+use faer::linalg::householder::{
+    apply_block_householder_sequence_transpose_on_the_left_in_place_scratch,
+    apply_block_householder_sequence_transpose_on_the_left_in_place_with_conj,
+};
 use faer::linalg::solvers::Solve;
-use faer::{Mat, MatRef, Par, Side};
+use faer::{Conj, Mat, MatRef, Par, Side};
 
 /// Forces the backend's global parallelism to sequential, at every fit.
 ///
@@ -43,6 +48,30 @@ pub(super) fn fit_dense(
     fit_intercept: bool,
     tolerance: f32,
 ) -> Result<LeastSquaresFit, ModelError> {
+    fit_dense_by(
+        data,
+        targets,
+        sample_weights,
+        fit_intercept,
+        tolerance,
+        reduce_before_decomposing(data.rows(), data.columns()),
+    )
+}
+
+/// [`fit_dense`] with the decomposition path named rather than derived.
+///
+/// The choice is a *performance* choice between two routes to the same
+/// contract, so the tests have to be able to run either one on any design and
+/// compare — a battery that only ever exercises whichever path the shape guard
+/// picks cannot tell agreement from a shape guard that never fires.
+fn fit_dense_by(
+    data: &MatrixView<'_>,
+    targets: &[f32],
+    sample_weights: Option<&SampleWeights>,
+    fit_intercept: bool,
+    tolerance: f32,
+    reduce: bool,
+) -> Result<LeastSquaresFit, ModelError> {
     debug_assert_eq!(data.rows(), targets.len());
     debug_assert!(sample_weights.is_none_or(|weights| weights.len() == data.rows()));
 
@@ -50,8 +79,186 @@ pub(super) fn fit_dense(
     let preprocessed = preprocess(data, targets, sample_weights, fit_intercept);
     let rows = data.rows();
     let columns = data.columns();
-    let svd = preprocessed
-        .matrix_ref()
+    let (coefficients, rank) = if reduce {
+        let (upper, projected) = reduce_by_qr(&preprocessed)?;
+        solve_min_norm(upper.as_ref(), &projected, rows, columns, tolerance)?
+    } else {
+        solve_min_norm(
+            preprocessed.matrix_ref(),
+            &preprocessed.targets,
+            rows,
+            columns,
+            tolerance,
+        )?
+    };
+    let intercept = preprocessed.target_mean
+        - preprocessed
+            .feature_means
+            .iter()
+            .zip(&coefficients)
+            .map(|(&mean, &coefficient)| mean * coefficient)
+            .sum::<f64>();
+    if coefficients.iter().any(|value| !value.is_finite()) || !intercept.is_finite() {
+        return Err(ModelError::LinearSolveFailed);
+    }
+    Ok(LeastSquaresFit {
+        coefficients,
+        intercept,
+        rank,
+    })
+}
+
+/// Whether a design is tall enough that reducing it before the SVD pays.
+///
+/// `rows >= 1.25 * columns`, written in integers so no rounding decides it.
+///
+/// **This is a tuning constant, and an earlier attempt at this reduction
+/// deliberately refused to have one.** That attempt gated on `rows > columns`
+/// instead, on two grounds: a ratio threshold reintroduces a shape-dependent
+/// cliff, and — under the previous backend — the reduced path was also the
+/// *more accurate* one, because a smaller matrix reached less of an upstream
+/// SVD defect on exactly rank-deficient input. Under that second condition a
+/// shape just below any constant would silently receive the worse
+/// decomposition, which is not a trade a speed argument can buy.
+///
+/// **The second ground no longer holds, and that is measured rather than
+/// assumed.** That backend is gone and the defect it worked around went with
+/// it. Across well-conditioned, ill-conditioned and exactly rank-deficient
+/// designs at `rows == columns`, `rows == columns + 1` and well above, weighted
+/// and unweighted, with and without an intercept, the two paths report the
+/// *same rank every time*, and their coefficients agree to `1e-15` relative on
+/// tall designs (worst `2.0e-14`) and `9.2e-14` on near-square ones. Only a
+/// design conditioned at about `1e8` separates them further, at `1.1e-8` — which
+/// is `cond * eps`, the spread any two backward-stable solves are entitled to,
+/// and not a quality ordering: the *fit* still agrees there, with a worst scaled
+/// normal-equation gradient of `1.8e-14` over the whole corpus. See
+/// `the_two_paths_agree_on_well_conditioned_ill_conditioned_and_deficient_designs`.
+///
+/// So neither path is the more accurate one, and what is left below the
+/// constant is a pure speed question — where the reduction *loses*. At
+/// `rows == columns` the QR is redundant work ahead of a decomposition that was
+/// already square, and costs a stable 10 percent: 600x600, 74.8 ms direct
+/// against 82.6 ms reduced; 1000x1000, 314.9 ms against 350.1 ms. Sweeping
+/// `rows` at `columns == 300` puts the break-even at `rows/columns ≈ 1.20`
+/// (13.33 ms direct against 13.36 ms reduced), with the reduction 10 percent
+/// behind at 1.00 and 5 percent ahead by 1.30.
+///
+/// `1.25` is therefore one notch on the safe side of break-even, and it is not
+/// bought at the cost of a saving: at the break-even ratio itself there is
+/// nothing to save, and by `1.25` the reduction is already 3 percent ahead
+/// (13.81 ms against 13.45 ms). The one honest debit is that break-even drifts
+/// with `columns` — at `columns == 100` it sits nearer `1.5`, so a design
+/// between `1.25` and `1.5` there pays up to 4 percent. That is 4 percent of
+/// 1.2 ms. Making the constant a function of `columns` to recover 0.05 ms would
+/// be a worse trade than the cliff it removes.
+///
+/// The first ground — that a threshold is a cliff — stands on its own, but it
+/// is now a cliff between two answers of equal quality, so it is a cliff in
+/// *cost* only, and paying 10 percent on every square design to avoid it is the
+/// worse deal.
+///
+/// The guard is therefore defensible on speed alone in a way it was not before.
+/// Do not restore the unconditional `rows > columns` rule, and do not move this
+/// constant, without re-running the agreement measurement above — it is that
+/// measurement, not the timings, that licenses having a constant at all.
+fn reduce_before_decomposing(rows: usize, columns: usize) -> bool {
+    4 * rows >= 5 * columns
+}
+
+/// Reduces a tall design to the `p`-by-`p` `R` of its thin QR, and the target
+/// to `Qᵀb`.
+///
+/// This is the first half of Chan's R-SVD. `A = QR` with `Q` an isometry, so
+/// `R` and `A` have identical singular values — the rank cutoff is applied to
+/// the same numbers either way — and `(QR)⁺ = R⁺Qᵀ`, so the minimum-norm
+/// least-squares solution of `Rx = Qᵀb` *is* the minimum-norm least-squares
+/// solution of `Ax = b`. Rank deficiency needs no special case: an unpivoted
+/// QR factors a rank-deficient `A` exactly all the same.
+///
+/// **`Q` is never materialized, and that is the whole reduction.** The obvious
+/// spelling — form the thin `Q`, then multiply `Qᵀb` — was measured against
+/// applying the stored Householder sequence to the single right-hand side, and
+/// it does not merely cost more, it *gives back the entire saving*: 50000x50
+/// goes 25.4 ms to 38.0 ms against a direct SVD's 38.3, and 50000x300 goes
+/// 302 ms to 620 ms against 640. Forming an `n`-by-`p` `Q` is the same order of
+/// work as decomposing the `n`-by-`p` design, so a reduction that materializes
+/// it has reduced nothing. Applying the sequence to one column is `O(np)`.
+///
+/// Only the first `columns` entries of `Qᵀb` are kept, because only the thin
+/// `Q` multiplies `R`; the tail is the residual component orthogonal to the
+/// column space and contributes nothing to the solution.
+///
+/// **Requires at least as many rows as columns.** An underdetermined design has
+/// no square `R` to reduce to, and the minimum-norm solution it needs lives
+/// precisely in the part a square `R` would discard. Nothing here checks that
+/// at runtime, because nothing has to: `reduce_before_decomposing` cannot
+/// return `true` below `rows == 1.25 * columns`, and
+/// `the_shape_guard_never_routes_an_underdetermined_design_into_the_reduction`
+/// pins that implication rather than leaving it to be re-derived.
+fn reduce_by_qr(preprocessed: &PreprocessedDense) -> Result<(Mat<f64>, Vec<f64>), ModelError> {
+    let rows = preprocessed.rows;
+    let columns = preprocessed.columns;
+    debug_assert!(
+        rows >= columns,
+        "the R-SVD reduction was handed an underdetermined design, whose \
+         minimum-norm solution lives in the part `R` discards"
+    );
+    let qr = preprocessed.matrix_ref().qr();
+
+    // `R` arrives already square and already upper triangular — pinned by
+    // `the_backends_qr_returns_a_square_upper_triangular_r`, because it is a
+    // property of a dependency that this code would silently misuse if it ever
+    // changed. It is nonetheless *copied* rather than decomposed where it lies:
+    // the borrowed view is a `columns`-by-`columns` window on storage whose
+    // column stride is the design's `rows`, so on a 50000-by-50 fit consecutive
+    // columns of a 50-by-50 matrix sit 400 KB apart, and the SVD would spend
+    // itself on cache misses. The copy is `p²` against the SVD's `p³`.
+    let packed = qr.R();
+    let upper = Mat::from_fn(columns, columns, |row, column| packed[(row, column)]);
+
+    let basis = qr.Q_basis();
+    let coefficients = qr.Q_coeff();
+    let mut rhs = Mat::from_fn(rows, 1, |row, _| preprocessed.targets[row]);
+    let mut buffer = MemBuffer::new(
+        apply_block_householder_sequence_transpose_on_the_left_in_place_scratch::<f64>(
+            rows,
+            coefficients.nrows(),
+            1,
+        ),
+    );
+    apply_block_householder_sequence_transpose_on_the_left_in_place_with_conj(
+        basis,
+        coefficients,
+        Conj::No,
+        rhs.as_mut(),
+        Par::Seq,
+        MemStack::new(&mut buffer),
+    );
+    let projected = (0..columns).map(|row| rhs[(row, 0)]).collect::<Vec<_>>();
+    if projected.iter().any(|value| !value.is_finite()) {
+        return Err(ModelError::LinearSolveFailed);
+    }
+    Ok((upper, projected))
+}
+
+/// Minimum-norm least-squares solution of `matrix * x ≈ targets`, and the rank.
+///
+/// `rows` and `columns` describe the **design the caller is solving**, which is
+/// not always `matrix`'s own shape: on the reduced path `matrix` is the square
+/// `R`, while the numerical floor under the rank cutoff scales with the
+/// design's larger dimension and has to keep scaling with it however the solve
+/// reaches the singular values. Passing `matrix`'s dimensions here would shrink
+/// the floor by the aspect ratio — a factor of 1000 on a 50000-by-50 design —
+/// and silently change the rank a tall design reports.
+fn solve_min_norm(
+    matrix: MatRef<'_, f64>,
+    targets: &[f64],
+    rows: usize,
+    columns: usize,
+    tolerance: f32,
+) -> Result<(Vec<f64>, usize), ModelError> {
+    debug_assert_eq!(matrix.nrows(), targets.len());
+    let svd = matrix
         .thin_svd()
         .map_err(|_| ModelError::LinearSolveFailed)?;
     let singular = svd.S();
@@ -79,7 +286,7 @@ pub(super) fn fit_dense(
         let value = singular[index];
         if value > cutoff {
             *projection =
-                sum_in_order((0..rows).map(|row| left[(row, index)] * preprocessed.targets[row]))
+                sum_in_order((0..matrix.nrows()).map(|row| left[(row, index)] * targets[row]))
                     / value;
         }
     }
@@ -93,21 +300,7 @@ pub(super) fn fit_dense(
             )
         })
         .collect::<Vec<_>>();
-    let intercept = preprocessed.target_mean
-        - preprocessed
-            .feature_means
-            .iter()
-            .zip(&coefficients)
-            .map(|(&mean, &coefficient)| mean * coefficient)
-            .sum::<f64>();
-    if coefficients.iter().any(|value| !value.is_finite()) || !intercept.is_finite() {
-        return Err(ModelError::LinearSolveFailed);
-    }
-    Ok(LeastSquaresFit {
-        coefficients,
-        intercept,
-        rank,
-    })
+    Ok((coefficients, rank))
 }
 
 pub(super) fn fit_ridge_dense(
@@ -257,6 +450,393 @@ mod tests {
     use super::*;
     use crate::data::DenseMatrix;
     use crate::numeric::OwnedRng;
+
+    /// How a corpus design is conditioned, which is what decides how closely
+    /// two arithmetically different routes to the same answer may be asked to
+    /// agree.
+    #[derive(Clone, Copy, Debug)]
+    enum Conditioning {
+        Well,
+        /// Columns scaled geometrically down to `1e-8`, so the design's
+        /// condition number is about `1e8` and a coefficient is determined to
+        /// only about `cond * eps` by *any* backward-stable solve.
+        Ill,
+        /// The last column duplicates the first exactly, so the true rank is
+        /// `columns - 1` and the solution is one point in an affine set.
+        Deficient,
+    }
+
+    /// Builds one corpus design and its targets, deterministically.
+    fn corpus_design(
+        rows: usize,
+        columns: usize,
+        conditioning: Conditioning,
+        seed: u64,
+    ) -> (Vec<f32>, Vec<f32>) {
+        let mut rng = OwnedRng::new(seed);
+        let mut values = vec![0.0_f32; rows * columns];
+        for row in 0..rows {
+            for column in 0..columns {
+                values[row * columns + column] = (rng.unit_f64() * 2.0 - 1.0) as f32;
+            }
+        }
+        match conditioning {
+            Conditioning::Well => {}
+            Conditioning::Ill => {
+                for column in 0..columns {
+                    let scale =
+                        10.0_f64.powf(-8.0 * column as f64 / (columns - 1).max(1) as f64) as f32;
+                    for row in 0..rows {
+                        values[row * columns + column] *= scale;
+                    }
+                }
+            }
+            Conditioning::Deficient => {
+                for row in 0..rows {
+                    values[row * columns + columns - 1] = values[row * columns];
+                }
+            }
+        }
+        let targets = (0..rows)
+            .map(|_| (rng.unit_f64() * 2.0 - 1.0) as f32)
+            .collect::<Vec<f32>>();
+        (values, targets)
+    }
+
+    /// `‖Xᵀ(Xb − y)‖∞`, weighted, and scaled by `‖X‖∞‖y‖∞·rows` so the bound is
+    /// unitless. Zero exactly when `b` solves the normal equations — that is,
+    /// exactly when `b` minimises the residual.
+    fn scaled_normal_equation_gradient(
+        values: &[f32],
+        targets: &[f32],
+        rows: usize,
+        columns: usize,
+        coefficients: &[f64],
+        intercept: f64,
+        weights: Option<&[f32]>,
+    ) -> f64 {
+        let weight = |row: usize| weights.map_or(1.0, |w| f64::from(w[row]));
+        let residual = (0..rows)
+            .map(|row| {
+                let predicted = sum_in_order((0..columns).map(|column| {
+                    f64::from(values[row * columns + column]) * coefficients[column]
+                })) + intercept;
+                weight(row) * (predicted - f64::from(targets[row]))
+            })
+            .collect::<Vec<_>>();
+        let scale = values
+            .iter()
+            .fold(0.0_f64, |m, &v| m.max(f64::from(v).abs()))
+            * targets
+                .iter()
+                .fold(0.0_f64, |m, &v| m.max(f64::from(v).abs()))
+            * rows as f64;
+        let mut worst = 0.0_f64;
+        for column in 0..columns {
+            let gradient = sum_in_order(
+                (0..rows).map(|row| f64::from(values[row * columns + column]) * residual[row]),
+            );
+            worst = worst.max(gradient.abs() / scale);
+        }
+        worst
+    }
+
+    /// The shape guard implies the reduction's precondition, for every shape.
+    ///
+    /// [`reduce_by_qr`] needs `rows >= columns` and does not enforce it, on the
+    /// grounds that `4 * rows >= 5 * columns` already implies it. That is a
+    /// coupling between two conditions written in two places, and the kind that
+    /// survives a plausible edit: widening the guard to `rows > columns` or to
+    /// `rows >= columns` keeps it true, while relaxing it to admit a square-ish
+    /// or underdetermined design silently hands the reduction a case whose
+    /// minimum-norm solution it cannot represent. So the implication is checked
+    /// here over every small shape rather than argued about at the call site.
+    #[test]
+    fn the_shape_guard_never_routes_an_underdetermined_design_into_the_reduction() {
+        let mut reduced_shapes = 0_usize;
+        for columns in 1..48_usize {
+            for rows in 0..96_usize {
+                if reduce_before_decomposing(rows, columns) {
+                    reduced_shapes += 1;
+                    assert!(
+                        rows >= columns,
+                        "the guard routes a {rows}x{columns} design into a reduction \
+                         that discards the part its minimum-norm solution lives in"
+                    );
+                }
+            }
+        }
+        assert!(
+            reduced_shapes > 1000,
+            "only {reduced_shapes} shapes reach the reduction at all, so this \
+             implication is close to vacuous"
+        );
+    }
+
+    /// The backend's `R` is square and upper triangular, which
+    /// [`reduce_by_qr`] copies without masking.
+    ///
+    /// This is a dependency's property that FerricML relies on and cannot see.
+    /// A `QR` implementation is equally entitled to hand back the *packed*
+    /// factor — `rows`-by-`columns`, with the Householder vectors living in the
+    /// strict lower triangle where the zeros would be — and this crate's copy
+    /// would then carry those vectors into the SVD and fit a different model
+    /// without failing anything structural. Masking the lower triangle
+    /// defensively would hide that behind a branch no test could reach, so the
+    /// assumption is pinned here instead, where a dependency bump breaks it
+    /// loudly.
+    ///
+    /// The shape is asserted too: a `rows`-by-`columns` `R` would make the copy
+    /// a silent truncation rather than a copy.
+    #[test]
+    fn the_backends_qr_returns_a_square_upper_triangular_r() {
+        pin_sequential();
+        // Tall and non-square, with no zeros of its own anywhere.
+        let rows = 17_usize;
+        let columns = 5_usize;
+        let mut rng = OwnedRng::new(0xD1CE_0007);
+        let values = (0..rows * columns)
+            .map(|_| (rng.unit_f64() * 2.0 - 1.0) as f32 + 1.5)
+            .collect::<Vec<f32>>();
+        let data = DenseMatrix::new(values, rows, columns).unwrap();
+        let targets = vec![1.0_f32; rows];
+        let preprocessed = preprocess(&data.as_view(), &targets, None, false);
+        let factor = preprocessed.matrix_ref().qr();
+        let upper = factor.R();
+
+        assert_eq!(
+            (upper.nrows(), upper.ncols()),
+            (columns, columns),
+            "the backend's `R` is no longer square, so `reduce_by_qr` is \
+             truncating it rather than copying it"
+        );
+        for row in 0..columns {
+            for column in 0..row {
+                assert_eq!(
+                    upper[(row, column)],
+                    0.0,
+                    "the backend's `R` has {} below the diagonal at ({row}, \
+                     {column}), so it is the packed factor and `reduce_by_qr` is \
+                     feeding Householder vectors to the SVD",
+                    upper[(row, column)]
+                );
+            }
+            assert_ne!(
+                upper[(row, row)],
+                0.0,
+                "the backend's `R` has a zero diagonal entry at {row} on a design \
+                 with no zeros in it, so this is not the factor it claims to be"
+            );
+        }
+    }
+
+    /// The two decomposition routes answer the same question, on every kind of
+    /// design the guard can route either way.
+    ///
+    /// This is the measurement the shape guard on
+    /// [`reduce_before_decomposing`] rests on, and it is deliberately a
+    /// *measurement* rather than an inherited claim. The predecessor of this
+    /// reduction refused a ratio threshold partly because, under the previous
+    /// backend, the reduced path was the more accurate one, so any design below
+    /// the constant would have been silently downgraded. Whether that is still
+    /// true is not a matter of reasoning about `Q` being an isometry — it is a
+    /// matter of what the two paths actually return — so it is asserted here,
+    /// across well-conditioned, ill-conditioned and exactly rank-deficient
+    /// designs, at `rows == columns`, `rows == columns + 1` and well above,
+    /// weighted and unweighted, with and without an intercept.
+    ///
+    /// Ranks must agree *exactly*: the rank rule is public API and reads the
+    /// same singular values either way, because `A = QR` with `Q` an isometry
+    /// gives `R` the singular values of `A`.
+    ///
+    /// Coefficients are compared relative to the coefficient scale. The bound
+    /// is loosened for an ill-conditioned design, and that is not a concession:
+    /// at a condition number of `1e8`, `cond * eps ≈ 1e-8` is the spread any two
+    /// backward-stable solves are entitled to, and demanding better would be
+    /// asserting a coincidence. The *fit* is held to the tight bound there
+    /// instead, through the normal-equation gradient, which is what actually has
+    /// to agree.
+    #[test]
+    fn the_two_paths_agree_on_well_conditioned_ill_conditioned_and_deficient_designs() {
+        let shapes = [
+            (500_usize, 8_usize, Conditioning::Well),
+            (400, 6, Conditioning::Ill),
+            (300, 5, Conditioning::Deficient),
+            (40, 40, Conditioning::Well),
+            (41, 40, Conditioning::Well),
+            (40, 40, Conditioning::Ill),
+            (41, 40, Conditioning::Deficient),
+            (60, 12, Conditioning::Deficient),
+            (200, 3, Conditioning::Ill),
+            (129, 128, Conditioning::Well),
+        ];
+        let mut worst_well = 0.0_f64;
+        let mut worst_ill = 0.0_f64;
+        let mut worst_gradient = 0.0_f64;
+        let mut seed = 0x00A1_1CE5_u64;
+        for &(rows, columns, conditioning) in &shapes {
+            for &fit_intercept in &[false, true] {
+                for &weighted in &[false, true] {
+                    seed = seed.wrapping_mul(6_364_136_223_846_793_005).wrapping_add(1);
+                    let (values, targets) = corpus_design(rows, columns, conditioning, seed);
+                    let data = DenseMatrix::new(values.clone(), rows, columns).unwrap();
+                    let weight_values = (0..rows)
+                        .map(|row| 0.25 + (row % 7) as f32 * 0.5)
+                        .collect::<Vec<f32>>();
+                    let weights =
+                        weighted.then(|| SampleWeights::new(weight_values.clone()).unwrap());
+
+                    let direct = fit_dense_by(
+                        &data.as_view(),
+                        &targets,
+                        weights.as_ref(),
+                        fit_intercept,
+                        0.0,
+                        false,
+                    )
+                    .unwrap();
+                    let reduced = fit_dense_by(
+                        &data.as_view(),
+                        &targets,
+                        weights.as_ref(),
+                        fit_intercept,
+                        0.0,
+                        true,
+                    )
+                    .unwrap();
+
+                    assert_eq!(
+                        direct.rank, reduced.rank,
+                        "the two paths disagree on the rank of a {rows}x{columns} \
+                         {conditioning:?} design (intercept {fit_intercept}, weighted \
+                         {weighted}): {} against {}",
+                        direct.rank, reduced.rank
+                    );
+                    if matches!(conditioning, Conditioning::Deficient) {
+                        assert_eq!(
+                            reduced.rank,
+                            columns - 1,
+                            "a duplicated column leaves rank {} at {rows}x{columns}",
+                            columns - 1
+                        );
+                    }
+
+                    let scale = direct
+                        .coefficients
+                        .iter()
+                        .fold(direct.intercept.abs(), |m, &v| m.max(v.abs()))
+                        .max(f64::MIN_POSITIVE);
+                    let mut deviation = (direct.intercept - reduced.intercept).abs() / scale;
+                    for (&a, &b) in direct.coefficients.iter().zip(&reduced.coefficients) {
+                        deviation = deviation.max((a - b).abs() / scale);
+                    }
+                    match conditioning {
+                        Conditioning::Ill => worst_ill = worst_ill.max(deviation),
+                        _ => worst_well = worst_well.max(deviation),
+                    }
+
+                    for fit in [&direct, &reduced] {
+                        worst_gradient = worst_gradient.max(scaled_normal_equation_gradient(
+                            &values,
+                            &targets,
+                            rows,
+                            columns,
+                            &fit.coefficients,
+                            if fit_intercept { fit.intercept } else { 0.0 },
+                            weighted.then_some(weight_values.as_slice()),
+                        ));
+                    }
+                }
+            }
+        }
+        assert!(
+            worst_well < 1.0e-12,
+            "the reduced and direct paths disagree by {worst_well:e} relative on a \
+             well-conditioned or exactly rank-deficient design, which is far past the \
+             last-bit spread two backward-stable solves are entitled to"
+        );
+        assert!(
+            worst_ill < 1.0e-6,
+            "the reduced and direct paths disagree by {worst_ill:e} relative on a \
+             design conditioned at about 1e8, past the `cond * eps` spread"
+        );
+        assert!(
+            worst_gradient < 1.0e-12,
+            "some fit is not a least-squares solution: worst scaled normal-equation \
+             gradient {worst_gradient:e}"
+        );
+    }
+
+    /// The numerical floor under the rank cutoff scales with the **design's**
+    /// rows, however the solve reaches the singular values.
+    ///
+    /// This is the assertion the predecessor of this reduction found survived
+    /// its first mutant. Handing [`solve_min_norm`] the reduced `R`'s own
+    /// dimensions instead of the design's shrinks the floor by the aspect
+    /// ratio, and no ordinary design notices: an exactly rank-deficient design
+    /// puts its vanishing singular value *below both* floors, and a healthy one
+    /// puts every singular value above both. Only a design with a singular value
+    /// in the band between them separates the two rules, and no such design
+    /// occurs by accident — so this one is constructed.
+    ///
+    /// 2000 rows, two columns, the second exactly twice the first except in one
+    /// row where it is one `f32` ulp larger. That row's magnitude is `2^-16`
+    /// rather than `1`, which dilutes the perturbation without changing the
+    /// design's scale, and lands `σ₂/σ₁` at about `1.6e-14`: about 37 times the
+    /// floor `R`'s dimensions would give (`eps * 2`) and about 27 times *below*
+    /// the floor the design's give (`eps * 2000`). The design is rank 1, and a
+    /// path that reports 2 has taken the wrong floor.
+    #[test]
+    fn the_rank_floor_scales_with_the_designs_rows_and_not_the_reductions() {
+        pin_sequential();
+        let rows = 2000_usize;
+        let small = (2.0_f64).powi(-16) as f32;
+        let mut values = vec![0.0_f32; rows * 2];
+        for row in 0..rows {
+            let base = if row == rows / 2 { small } else { 1.0_f32 };
+            values[row * 2] = base;
+            values[row * 2 + 1] = 2.0 * base;
+        }
+        let perturbed = (rows / 2) * 2 + 1;
+        values[perturbed] = f32::from_bits(values[perturbed].to_bits() + 1);
+        let data = DenseMatrix::new(values.clone(), rows, 2).unwrap();
+        let targets = (0..rows)
+            .map(|row| if row % 3 == 0 { 1.0_f32 } else { -0.5 })
+            .collect::<Vec<f32>>();
+
+        // The design really does sit in the band, so the assertion below is not
+        // vacuous. Both bounds are checked, in units of `σ₁`.
+        let preprocessed = preprocess(&data.as_view(), &targets, None, false);
+        let (upper, _) = reduce_by_qr(&preprocessed).unwrap();
+        let svd = upper.as_ref().thin_svd().unwrap();
+        let singular = svd.S();
+        let singular = singular.column_vector();
+        let largest = singular.iter().copied().fold(0.0_f64, f64::max);
+        let ratio = singular[1] / largest;
+        assert!(
+            ratio > f64::EPSILON * 2.0 * 4.0,
+            "σ₂/σ₁ = {ratio:e} does not clear the floor `R`'s own dimensions would \
+             give, so the two rules are not being separated"
+        );
+        assert!(
+            ratio < f64::EPSILON * rows as f64 / 4.0,
+            "σ₂/σ₁ = {ratio:e} is not below the floor the design's dimensions give, \
+             so the two rules are not being separated"
+        );
+
+        for reduce in [false, true] {
+            let fit = fit_dense_by(&data.as_view(), &targets, None, false, 0.0, reduce).unwrap();
+            assert_eq!(
+                fit.rank,
+                1,
+                "the {} path reports rank {} on a design whose second singular value \
+                 is below the floor `eps * rows * σ₁`, so it took the reduction's \
+                 dimensions rather than the design's",
+                if reduce { "reduced" } else { "direct" },
+                fit.rank
+            );
+        }
+    }
 
     /// The buffer layout `coordinate_descent` slices by column, pinned exactly.
     ///
