@@ -896,6 +896,11 @@ mod tests {
     /// solution), the reported rank must be the true one, and the two identical
     /// columns must split their effect evenly (the minimum-norm choice among
     /// the infinitely many solutions).
+    ///
+    /// Every shape here is tall enough that the shape guard routes it through
+    /// the R-SVD reduction, so both routes are run explicitly rather than
+    /// letting the guard decide. Leaving it to the guard would quietly retire
+    /// the direct path's coverage the moment the constant moved.
     #[test]
     fn exactly_rank_deficient_tall_designs_get_a_minimum_norm_least_squares_answer() {
         let mut rng = OwnedRng::new(0x5EED_1234);
@@ -916,40 +921,30 @@ mod tests {
                     .map(|_| (rng.unit_f64() * 2.0 - 1.0) as f32)
                     .collect::<Vec<f32>>();
                 let data = DenseMatrix::new(values.clone(), rows, columns).unwrap();
-                let fit = fit_dense(&data.as_view(), &targets, None, false, 0.0).unwrap();
+                for reduce in [false, true] {
+                    let fit =
+                        fit_dense_by(&data.as_view(), &targets, None, false, 0.0, reduce).unwrap();
 
-                assert_eq!(
-                    fit.rank,
-                    columns - 1,
-                    "a duplicated column leaves rank {} at {rows}x{columns}",
-                    columns - 1
-                );
-
-                // ‖Xᵀ(Xb − y)‖∞, scaled by ‖X‖∞‖y‖∞ so the bound is unitless.
-                let residual = (0..rows)
-                    .map(|row| {
-                        let predicted = sum_in_order((0..columns).map(|column| {
-                            f64::from(values[row * columns + column]) * fit.coefficients[column]
-                        }));
-                        predicted - f64::from(targets[row])
-                    })
-                    .collect::<Vec<_>>();
-                let scale = values
-                    .iter()
-                    .fold(0.0_f64, |m, &v| m.max(f64::from(v).abs()))
-                    * targets
-                        .iter()
-                        .fold(0.0_f64, |m, &v| m.max(f64::from(v).abs()))
-                    * rows as f64;
-                for column in 0..columns {
-                    let gradient = sum_in_order(
-                        (0..rows)
-                            .map(|row| f64::from(values[row * columns + column]) * residual[row]),
+                    assert_eq!(
+                        fit.rank,
+                        columns - 1,
+                        "a duplicated column leaves rank {} at {rows}x{columns} \
+                         (reduced: {reduce})",
+                        columns - 1
                     );
-                    worst_gradient = worst_gradient.max(gradient.abs() / scale);
+
+                    worst_gradient = worst_gradient.max(scaled_normal_equation_gradient(
+                        &values,
+                        &targets,
+                        rows,
+                        columns,
+                        &fit.coefficients,
+                        0.0,
+                        None,
+                    ));
+                    let split = (fit.coefficients[0] - fit.coefficients[columns - 1]).abs();
+                    worst_split = worst_split.max(split);
                 }
-                let split = (fit.coefficients[0] - fit.coefficients[columns - 1]).abs();
-                worst_split = worst_split.max(split);
             }
         }
         assert!(
@@ -971,6 +966,12 @@ mod tests {
     /// the vanishing singular value sits from the floor that rounds it away. A
     /// backend that left it a factor of two below the cutoff would pass the
     /// rank assertion today and fail it on the next dependency bump.
+    ///
+    /// The 3x2 design is `rows >= 1.25 * columns`, so it is the *reduced* path
+    /// that decides `rank()` for it now. The margin is therefore asserted on
+    /// both sets of singular values — `R`'s, which the shipped path reads, and
+    /// the design's, which the fallback reads — because `A = QR` promises they
+    /// are the same numbers and this is where that promise is cashed.
     #[test]
     fn the_vanishing_singular_value_clears_the_rank_floor_with_margin() {
         pin_sequential();
@@ -978,22 +979,33 @@ mod tests {
         // column 0, so σ₂ is exactly zero in exact arithmetic.
         let data = DenseMatrix::new(vec![1.0, 2.0, 2.0, 4.0, 3.0, 6.0], 3, 2).unwrap();
         let targets = [1.0_f32, 2.0, 3.0];
+        assert!(
+            reduce_before_decomposing(3, 2),
+            "the reference design no longer takes the reduced path, so this test \
+             stopped covering the path that decides its rank"
+        );
         let preprocessed = preprocess(&data.as_view(), &targets, None, false);
-        let svd = preprocessed.matrix_ref().thin_svd().unwrap();
-        let singular = svd.S();
-        let singular = singular.column_vector();
-        let largest = singular.iter().copied().fold(0.0_f64, f64::max);
-        let floor = f64::EPSILON * 3.0 * largest;
-        assert!(
-            singular[1] < floor / 4.0,
-            "σ₂ = {} is within a factor of four of the rank floor {floor}, which \
-             leaves no margin for the comparison `rank()` reports",
-            singular[1]
-        );
-        assert!(
-            singular[0] > floor * 1.0e12,
-            "σ₁ = {} does not clear the floor by a wide margin",
-            singular[0]
-        );
+        let (upper, _) = reduce_by_qr(&preprocessed).unwrap();
+        for (label, matrix) in [
+            ("the design", preprocessed.matrix_ref()),
+            ("the reduced R", upper.as_ref()),
+        ] {
+            let svd = matrix.thin_svd().unwrap();
+            let singular = svd.S();
+            let singular = singular.column_vector();
+            let largest = singular.iter().copied().fold(0.0_f64, f64::max);
+            let floor = f64::EPSILON * 3.0 * largest;
+            assert!(
+                singular[1] < floor / 4.0,
+                "σ₂ of {label} is {} — within a factor of four of the rank floor \
+                 {floor}, which leaves no margin for the comparison `rank()` reports",
+                singular[1]
+            );
+            assert!(
+                singular[0] > floor * 1.0e12,
+                "σ₁ of {label} is {} and does not clear the floor by a wide margin",
+                singular[0]
+            );
+        }
     }
 }
