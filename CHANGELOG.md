@@ -124,6 +124,14 @@ and releases use [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   rather than with an empty vector. A nonlinear shape reports its conditional
   mean and *no* coefficients, because none produce it.
 
+  **A dial moves the difficulty; a structural field moves the problem.** Two
+  recipes differing only in a dial draw from the same streams, so a ladder over
+  one of them is a ladder over one problem rather than over a sequence of
+  unrelated draws. `informative` and `rank` are dials, which is a claim about the
+  implementation and is tested as one: widening `informative` leaves the
+  coefficients of the columns that already mattered bit-identical and switches
+  further ones on, and `rank` never reaches the coefficient draw at all.
+
   **Prevalence is a knob, not an outcome.** The binary families solve for the
   intercept by bisection so the mean Bayes probability equals the request
   exactly; the realized rate is then a binomial draw around it, within four

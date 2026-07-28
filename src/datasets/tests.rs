@@ -1606,6 +1606,113 @@ fn every_task_dial_holds_the_stream_and_every_structural_field_moves_it() {
     }
 }
 
+/// Widening `informative` turns further columns on and disturbs none of the
+/// ones already on.
+///
+/// This is the property that decides `informative`'s classification, and holding
+/// the stream is necessary for it but not sufficient: a coefficient draw that
+/// consumed a value only for the *informative* columns would share a stream and
+/// still reshuffle every coefficient when the prefix widened. So the nesting is
+/// asserted directly rather than inferred from the digest the sweep above
+/// compares.
+///
+/// Both families that draw a coefficient prefix are covered, because they draw
+/// it in different code: [`Task::LinearRegression`] through `draw_coefficients`,
+/// [`Task::TimeOrdered`] through `drifting_predictor`, which draws two vectors
+/// in two passes and has to nest at *both* ends. `rank` is here for the
+/// complementary claim: it never reaches the coefficient draw at all, so its
+/// coefficients are identical rather than merely nested, and what moves is the
+/// design.
+#[test]
+fn widening_the_informative_prefix_leaves_the_columns_that_already_mattered() {
+    const ROWS: usize = 256;
+    const COLUMNS: usize = 6;
+
+    let linear = |informative| {
+        Recipe::seeded(ROWS, COLUMNS, 41)
+            .unwrap()
+            .with_task(Task::LinearRegression {
+                informative,
+                coefficient_scale: 1.0,
+                intercept: 0.25,
+                noise_scale: 0.1,
+            })
+            .unwrap()
+            .generate()
+    };
+    let (narrow, wide) = (linear(2), linear(4));
+    let (narrow_beta, wide_beta) = (
+        narrow.truth().coefficients().unwrap(),
+        wide.truth().coefficients().unwrap(),
+    );
+    assert_eq!(
+        narrow_beta[..2],
+        wide_beta[..2],
+        "widening the prefix redrew the coefficients it already had"
+    );
+    assert_eq!(narrow_beta[2..], [0.0; COLUMNS - 2]);
+    assert!(
+        wide_beta[2..4].iter().all(|&value| value != 0.0),
+        "widening the prefix left the new columns switched off"
+    );
+    assert_eq!(wide_beta[4..], [0.0; COLUMNS - 4]);
+    // The dial's other half: one problem, so the design under it does not move
+    // and only the target does.
+    assert_eq!(narrow.features().as_slice(), wide.features().as_slice());
+    assert_ne!(narrow.target(), wide.target());
+
+    let timed = |informative| {
+        Recipe::seeded(ROWS, COLUMNS, 41)
+            .unwrap()
+            .with_task(Task::TimeOrdered {
+                informative,
+                coefficient_scale: 1.0,
+                drift: 0.5,
+                intercept: 0.25,
+                noise_scale: 0.1,
+            })
+            .unwrap()
+            .generate()
+    };
+    let (narrow, wide) = (timed(2), timed(4));
+    assert_eq!(
+        narrow.truth().start_coefficients().unwrap()[..2],
+        wide.truth().start_coefficients().unwrap()[..2],
+        "the drifting predictor redrew the start it already had"
+    );
+    assert_eq!(
+        narrow.truth().end_coefficients().unwrap()[..2],
+        wide.truth().end_coefficients().unwrap()[..2],
+        "the drifting predictor redrew the end it already had"
+    );
+
+    let conditioned = |rank| {
+        Recipe::seeded(ROWS, COLUMNS, 41)
+            .unwrap()
+            .with_task(Task::IllConditioned {
+                condition_number: 10.0,
+                rank,
+                coefficient_scale: 1.0,
+                noise_scale: 0.1,
+            })
+            .unwrap()
+            .generate()
+    };
+    let (deficient, full) = (conditioned(4), conditioned(COLUMNS));
+    assert_eq!(
+        deficient.truth().coefficients().unwrap(),
+        full.truth().coefficients().unwrap(),
+        "rank reached the coefficient draw, which is not what it does"
+    );
+    assert_ne!(
+        deficient.features().as_slice(),
+        full.features().as_slice(),
+        "rank left the design it duplicates columns of unmoved"
+    );
+    assert_eq!(deficient.truth().rank(), Some(4));
+    assert_eq!(full.truth().rank(), Some(COLUMNS));
+}
+
 /// One move of every field of every family.
 ///
 /// The shapes are wide enough that a dial which moved only a handful of drawn
@@ -1676,7 +1783,7 @@ fn task_partition_sweeps() -> Vec<FamilySweep> {
                     "informative",
                     linear(2, 1.0, 0.25, 0.1),
                     linear(3, 1.0, 0.25, 0.1),
-                    Role::Structural,
+                    Role::Dial,
                 ),
                 FieldMove::one(
                     "coefficient_scale",
@@ -1747,7 +1854,7 @@ fn task_partition_sweeps() -> Vec<FamilySweep> {
                     "informative",
                     glm(GlmLink::LogPositive, 2, 0.5, 0.0, 0.3),
                     glm(GlmLink::LogPositive, 3, 0.5, 0.0, 0.3),
-                    Role::Structural,
+                    Role::Dial,
                 ),
                 FieldMove::one(
                     "coefficient_scale",
@@ -1784,7 +1891,7 @@ fn task_partition_sweeps() -> Vec<FamilySweep> {
                     "rank",
                     conditioned(10.0, 4, 1.0, 0.1),
                     conditioned(10.0, 5, 1.0, 0.1),
-                    Role::Structural,
+                    Role::DesignDial,
                 ),
                 FieldMove::one(
                     "coefficient_scale",
@@ -1809,7 +1916,7 @@ fn task_partition_sweeps() -> Vec<FamilySweep> {
                     "informative",
                     binary(2, 1.0, 0.3),
                     binary(3, 1.0, 0.3),
-                    Role::Structural,
+                    Role::Dial,
                 ),
                 FieldMove::one(
                     "separation",
@@ -1929,7 +2036,7 @@ fn task_partition_sweeps() -> Vec<FamilySweep> {
                     "informative",
                     timed(2, 1.0, 0.5, 0.25, 0.1),
                     timed(3, 1.0, 0.5, 0.25, 0.1),
-                    Role::Structural,
+                    Role::Dial,
                 ),
                 FieldMove::one(
                     "coefficient_scale",
@@ -1979,7 +2086,7 @@ fn task_partition_sweeps() -> Vec<FamilySweep> {
                     "informative",
                     ranked(60, 4, 3, 2, 1.0),
                     ranked(60, 4, 3, 3, 1.0),
-                    Role::Structural,
+                    Role::Dial,
                 ),
                 FieldMove::one(
                     "coefficient_scale",

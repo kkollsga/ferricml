@@ -205,11 +205,11 @@ fn the_bit_exact_structural_families_emit_their_recorded_values() {
     // drift detector has to be checkable against.
     assert_eq!(
         timed.truth().start_coefficients().unwrap(),
-        [0.45322812, -0.15990639, 0.0, 0.0]
+        [-0.1475718, -0.55283177, 0.0, 0.0]
     );
     assert_eq!(
         timed.truth().end_coefficients().unwrap(),
-        [-0.0157606, -0.21080309, 0.0, 0.0]
+        [-0.013011634, -0.837603, 0.0, 0.0]
     );
     assert_eq!(
         timed.truth().times().unwrap(),
@@ -218,23 +218,23 @@ fn the_bit_exact_structural_families_emit_their_recorded_values() {
     assert_eq!(
         timed.truth().conditional_mean().unwrap(),
         [
-            -0.10510425,
-            -0.031377234,
-            0.21514462,
-            0.17250443,
-            0.1466398,
-            0.40465248,
+            0.078280665,
+            0.4418712,
+            0.74205536,
+            0.65748143,
+            -0.1973481,
+            0.88105035,
         ]
     );
     assert_eq!(
         regression_values(&timed),
         [
-            -0.049607117,
-            -0.12997325,
-            0.23383884,
-            0.09396485,
-            0.14392065,
-            0.34857976,
+            0.13455477,
+            0.42213467,
+            0.8023602,
+            0.7066564,
+            -0.17670716,
+            0.9362745,
         ]
     );
 
@@ -252,26 +252,26 @@ fn the_bit_exact_structural_families_emit_their_recorded_values() {
     let ranked = ranked.generate();
     assert_eq!(
         ranked.truth().coefficients().unwrap(),
-        [0.54718494, 0.19836342, 0.0]
+        [-0.9215907, -0.6541351, 0.0]
     );
     assert_eq!(
         ranked.truth().utilities().unwrap(),
         [
-            -0.24278522,
-            -0.6566786,
-            -0.4619074,
-            -0.27466083,
-            -0.62744313,
-            -0.094629556,
-            -0.2027956,
-            -0.41489163,
-            0.19324021,
-            -0.3737892,
-            0.38672507,
-            -0.24450049,
+            0.25687963,
+            1.3786702,
+            1.075353,
+            0.32582423,
+            1.2081432,
+            0.11730967,
+            0.10333539,
+            0.6984636,
+            -0.13804281,
+            0.48865008,
+            -0.8380709,
+            0.2908382,
         ]
     );
-    assert_eq!(class_labels(&ranked), [2, 0, 1, 2, 0, 2, 2, 1, 2, 0, 2, 1]);
+    assert_eq!(class_labels(&ranked), [0, 2, 2, 1, 2, 1, 0, 2, 1, 2, 0, 2]);
     assert_eq!(
         ranked.groups().unwrap(),
         [0, 0, 0, 0, 1, 1, 1, 1, 2, 2, 2, 2]

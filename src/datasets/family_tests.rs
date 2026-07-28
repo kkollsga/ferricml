@@ -125,29 +125,29 @@ fn the_bit_exact_families_emit_their_recorded_first_values() {
     // is a statement a consumer must be able to check, not merely believe.
     assert_eq!(
         dataset.truth().coefficients().unwrap(),
-        [0.31747937, -0.26101267, 0.0, 0.0]
+        [0.32677436, -0.445773, 0.0, 0.0]
     );
     assert_eq!(dataset.truth().intercept(), Some(0.25));
     assert_eq!(
         dataset.truth().conditional_mean().unwrap(),
         [
-            -0.06952426,
-            0.017645527,
-            0.23827066,
-            0.06384924,
-            0.14391439,
-            0.5539454,
+            -0.16301496,
+            0.036715016,
+            0.35427174,
+            0.14217514,
+            0.04050196,
+            0.6972035,
         ]
     );
     assert_eq!(
         regression_values(&dataset),
         [
-            -0.14038074,
-            0.009581805,
-            0.22630431,
-            0.024172205,
-            0.082978025,
-            0.5472678,
+            -0.077414885,
+            -0.0066493675,
+            0.37861413,
+            0.047296844,
+            -0.035004154,
+            0.68908757,
         ]
     );
 

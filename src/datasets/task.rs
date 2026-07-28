@@ -485,17 +485,27 @@ pub enum GlmLink {
 /// what a sweep over one of them is entitled to conclude.
 ///
 /// `separation`, `prevalence`, `noise_scale`, `drift`, `spread`,
-/// `coefficient_scale`, `intercept`, `condition_number`, `dispersion` and
-/// `balance` are **dials**. Two recipes differing only in a dial draw from the
-/// same streams: the same design, the same coefficients or centres, the same
-/// noise and label draws. A ladder over one of them is a ladder over one
-/// problem, so the difference between two rungs is the knob.
+/// `coefficient_scale`, `intercept`, `condition_number`, `dispersion`,
+/// `balance`, `informative` and `rank` are **dials**. Two recipes differing only
+/// in a dial draw from the same streams: the same design, the same coefficients
+/// or centres, the same noise and label draws. A ladder over one of them is a
+/// ladder over one problem, so the difference between two rungs is the knob.
 ///
-/// `informative`, `classes`, `blobs`, `queries`, `docs_per_query`, `grades`,
-/// `geometry`, `kind`, `link` and `rank` are **structural**. They change what
-/// the problem is — which columns matter, how many classes exist, which
-/// expression is evaluated — and two recipes differing in one of them are two
-/// different draws, deliberately.
+/// `classes`, `blobs`, `queries`, `docs_per_query`, `grades`, `geometry`, `kind`
+/// and `link` are **structural**. They change what the problem is — how many
+/// classes exist, which expression is evaluated — and two recipes differing in
+/// one of them are two different draws, deliberately.
+///
+/// `informative` and `rank` are the two counts on the dial side, and they earn
+/// it in different ways. Widening `informative` **nests**: the coefficient
+/// draw consumes one value per column whether that column is informative or
+/// not, so at `informative = 4` the first two coefficients are bit-identical to
+/// the ones at `informative = 2` and two more become non-zero. A ladder over it
+/// really is one problem gaining informative columns, rather than two unrelated
+/// coefficient vectors. `rank` never reaches a draw at all — the columns past it
+/// are exact copies of the leading ones, a closed-form transform of a design the
+/// source already produced, which is the same argument that makes
+/// `condition_number` a dial.
 ///
 /// Both move [`Recipe::spec_digest`](super::Recipe::spec_digest), because the
 /// data moves either way. `Recipe::stream_digest`'s documentation records why
@@ -1327,12 +1337,12 @@ pub(super) fn draw_coefficients(
         .map(|column| {
             // Every column consumes a draw, informative or not, so the
             // coefficient of column `j` is a function of `j` and the stream
-            // alone. Note what that does *not* buy: `informative` is a
-            // structural field, so two recipes differing in it do not share a
-            // stream and the nesting this positional encoding would give them is
-            // not observable today. It is written this way so that a decision to
-            // reclassify `informative` as a dial would be a one-line change with
-            // the nesting already in place, rather than a second redesign.
+            // alone — and since `informative` is a dial, two recipes differing
+            // in it *do* share a stream, so that positional encoding is
+            // observable: widening the prefix leaves the coefficients of the
+            // columns that already mattered bit-identical and turns on new ones.
+            // A caller sweeping `informative` is adding informative columns to
+            // one problem rather than drawing an unrelated one at each rung.
             let draw = signed_draw(&mut rng);
             if column < informative {
                 scale * draw

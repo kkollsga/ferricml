@@ -251,8 +251,17 @@ fn evaluation_fold() -> (DenseMatrix, BinaryTargets) {
 /// test asserts the negative class mean gap as a precondition instead of
 /// assuming it, and would fail loudly rather than quietly measuring nothing if
 /// a later change moved the draw.
+///
+/// **It did move the draw, and the precondition did fail loudly**: reclassifying
+/// `Task::LinearBinary`'s `informative` as a dial redrew this population's
+/// coefficients, and offset `1130` stopped disagreeing. Re-searched rather than
+/// re-pinned — a pinned gap would be a number, and what this fold has to be is a
+/// fold. `1143` is the first offset past the other ranges whose labels split
+/// three and three, so the class mean gap compares two three-row means rather
+/// than one row against five; 46 of the 194 admissible offsets qualify, so the
+/// property is common in this population rather than a needle.
 fn disagreeing_fold() -> (DenseMatrix, BinaryTargets) {
-    fold(1130, 6)
+    fold(1143, 6)
 }
 
 /// A second training fold, disjoint from every other range.
