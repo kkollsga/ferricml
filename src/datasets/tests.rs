@@ -496,3 +496,537 @@ fn a_dataset_whose_target_is_the_wrong_length_is_a_defect() {
         recipe.spec_digest(),
     );
 }
+
+/// Every absorbed lane's design split, at every recorded seed.
+///
+/// `(seed, first four training values, first four test values)`. The test
+/// values are the load-bearing half: they are the stream *continuing* past the
+/// training half's `768 * 12` draws rather than restarting, which is what the
+/// lanes did and what a preset generating two independent matrices would get
+/// wrong while every distributional check stayed green.
+const ABSORBED_DESIGN_HEADS: [(u64, [f32; 4], [f32; 4]); 5] = [
+    (
+        11,
+        [-0.36751127, -0.4752698, 0.27608466, 0.009227991],
+        [-0.96033, -0.71677804, 0.7148739, 0.5721407],
+    ),
+    (
+        22,
+        [0.56292343, 0.8718723, -0.84690225, 0.34488785],
+        [0.27923572, -0.7704772, 0.28242874, 0.6317868],
+    ),
+    (
+        33,
+        [-0.65582097, -0.84953594, -0.40368485, -0.68200266],
+        [0.87418437, 0.59509933, 0.49366927, -0.52509165],
+    ),
+    (
+        44,
+        [0.9630481, 0.13257527, -0.22201598, 0.5625949],
+        [-0.88748443, -0.3912977, 0.7844597, 0.47235596],
+    ),
+    (
+        55,
+        [-0.14003551, -0.9380609, 0.65851283, 0.8496196],
+        [-0.042396903, 0.77195096, -0.9948883, -0.5530999],
+    ),
+];
+
+/// `(lane, seed, training fold, test fold, training positives, test positives)`
+/// for every absorbed classification lane.
+///
+/// The folds cover all `768` and `384` labels; the positive counts are carried
+/// beside them because a fold says only *that* something moved and a prevalence
+/// says *what*, which is the first thing a reader of a failure wants.
+const ABSORBED_BINARY_LABELS: [(ReferenceLane, u64, u64, u64, usize, usize); 20] = [
+    (
+        ReferenceLane::NonlinearBinary,
+        11,
+        0x7795_0006_415e_4b9d,
+        0x6e71_2035_961b_bd7d,
+        458,
+        200,
+    ),
+    (
+        ReferenceLane::NonlinearBinary,
+        22,
+        0xc045_289f_e807_c5f7,
+        0xab4a_4564_f91f_0cb0,
+        466,
+        225,
+    ),
+    (
+        ReferenceLane::NonlinearBinary,
+        33,
+        0xdad2_b19d_a98e_89bc,
+        0x033f_4ce0_6dc8_a8f9,
+        417,
+        210,
+    ),
+    (
+        ReferenceLane::NonlinearBinary,
+        44,
+        0xa6e1_14e4_2c6b_f700,
+        0x085e_53ce_f8ff_b406,
+        429,
+        229,
+    ),
+    (
+        ReferenceLane::NonlinearBinary,
+        55,
+        0x798c_e185_a011_484d,
+        0x5aa3_ef67_93ac_35bf,
+        428,
+        222,
+    ),
+    (
+        ReferenceLane::SeparableBinary,
+        11,
+        0x1ecd_f024_7d6a_3b14,
+        0x8193_69ac_b040_139b,
+        377,
+        214,
+    ),
+    (
+        ReferenceLane::SeparableBinary,
+        22,
+        0x2021_13d9_9c14_a2ba,
+        0xba12_e06c_23b5_2bcf,
+        379,
+        186,
+    ),
+    (
+        ReferenceLane::SeparableBinary,
+        33,
+        0x99d8_222a_6495_6ac0,
+        0x66f4_5382_dad1_617f,
+        379,
+        192,
+    ),
+    (
+        ReferenceLane::SeparableBinary,
+        44,
+        0x8d36_31aa_76c4_ed09,
+        0xf3f2_5d4c_8b49_bdbd,
+        408,
+        198,
+    ),
+    (
+        ReferenceLane::SeparableBinary,
+        55,
+        0x2f66_6c0d_2496_7d76,
+        0x628d_5571_0a8e_5a66,
+        361,
+        183,
+    ),
+    (
+        ReferenceLane::ImbalancedBinary,
+        11,
+        0xc1af_532e_7d1b_2493,
+        0xac6b_fa7a_a1c0_e542,
+        44,
+        21,
+    ),
+    (
+        ReferenceLane::ImbalancedBinary,
+        22,
+        0x4b2f_17a1_3033_bc98,
+        0x9f3d_ca02_c600_32fa,
+        43,
+        35,
+    ),
+    (
+        ReferenceLane::ImbalancedBinary,
+        33,
+        0x49ab_ca78_46c0_691b,
+        0x0f11_0d24_3607_3bcd,
+        42,
+        18,
+    ),
+    (
+        ReferenceLane::ImbalancedBinary,
+        44,
+        0xd634_76bb_34dc_8620,
+        0x8f1e_5716_42fb_99b3,
+        59,
+        22,
+    ),
+    (
+        ReferenceLane::ImbalancedBinary,
+        55,
+        0x4f3c_34d4_a74e_c65d,
+        0x771e_44ce_4194_45a0,
+        44,
+        13,
+    ),
+    (
+        ReferenceLane::NoisyBinary,
+        11,
+        0xdb47_0405_c479_9a98,
+        0x3e13_accc_f567_eaad,
+        383,
+        192,
+    ),
+    (
+        ReferenceLane::NoisyBinary,
+        22,
+        0xa128_7cfb_20ac_7ccf,
+        0x407d_0ad6_2d53_f05d,
+        382,
+        188,
+    ),
+    (
+        ReferenceLane::NoisyBinary,
+        33,
+        0xde1b_2582_6aa1_2ea7,
+        0xfd58_e30a_cc43_1181,
+        380,
+        186,
+    ),
+    (
+        ReferenceLane::NoisyBinary,
+        44,
+        0x7032_5df5_8e41_b7f5,
+        0x8cb2_6518_4295_d0e1,
+        386,
+        194,
+    ),
+    (
+        ReferenceLane::NoisyBinary,
+        55,
+        0xc11b_815f_9cd7_4693,
+        0x32cc_f403_0775_4539,
+        384,
+        192,
+    ),
+];
+
+/// `(seed, training fold, test fold)` over the regression lane's target bits.
+const ABSORBED_REGRESSION_TARGETS: [(u64, u64, u64); 5] = [
+    (11, 0x1160_f627_8a9f_460b, 0x83bb_becc_e30d_a8ce),
+    (22, 0xefac_d5f8_172d_c2f3, 0x09e7_244e_1933_60aa),
+    (33, 0xe256_c637_fd8a_4f7c, 0xb499_529d_fd38_ab6b),
+    (44, 0x45aa_3065_fee3_d9eb, 0xae0e_d639_30a9_aa72),
+    (55, 0x7cf6_d731_f6ab_21ba, 0x555f_9ab8_877a_62b8),
+];
+
+/// FNV-1a over whole `u64` words, used only to pin a long vector by one number.
+///
+/// It is order-sensitive and value-sensitive, which is the whole requirement: a
+/// permuted or altered label vector gives a different fold. Nothing depends on
+/// its cryptographic strength — the folds below were captured from the lane
+/// functions this module replaced, and they exist so a `1152`-value vector can
+/// be frozen without pasting `1152` literals.
+fn fold_u64(values: impl Iterator<Item = u64>) -> u64 {
+    let mut accumulator: u64 = 0xcbf2_9ce4_8422_2325;
+    for value in values {
+        accumulator = (accumulator ^ value).wrapping_mul(0x0100_0000_01b3);
+    }
+    accumulator
+}
+
+/// The labels of a dataset a binary lane produced.
+fn binary_labels(dataset: &Dataset) -> &[u8] {
+    match dataset.target() {
+        Some(Target::Binary(targets)) => targets.as_slice(),
+        other => panic!("a binary lane produced {other:?}"),
+    }
+}
+
+/// The targets of a dataset the regression lane produced.
+fn regression_values(dataset: &Dataset) -> &[f32] {
+    match dataset.target() {
+        Some(Target::Regression(targets)) => targets.as_slice(),
+        other => panic!("the regression lane produced {other:?}"),
+    }
+}
+
+/// The absorbed lanes reproduce, by value, what the functions they replaced
+/// produced.
+///
+/// This is the evidence the port rests on, and it is deliberately not an
+/// aggregate one. The lanes it replaces are consumed by quality tests that
+/// compare accuracy and Brier against a frozen reference within `0.02`, so a
+/// preset emitting a *different but similarly distributed* stream would pass
+/// every one of them while changing every design matrix and every label — the
+/// trap `tests/reference_semantics.rs` records at the frozen-stream test. Every
+/// literal below was captured by running the outgoing functions before they were
+/// deleted, in the commit that deleted them.
+#[test]
+fn the_absorbed_lanes_reproduce_their_recorded_values() {
+    for (seed, train_head, test_head) in ABSORBED_DESIGN_HEADS {
+        for lane in [
+            ReferenceLane::NonlinearBinary,
+            ReferenceLane::SeparableBinary,
+            ReferenceLane::ImbalancedBinary,
+            ReferenceLane::NoisyBinary,
+            ReferenceLane::Regression,
+        ] {
+            // The design is the lane's own stream and does not depend on which
+            // task is drawn over it, which is asserted here rather than assumed
+            // because it is what lets one recipe describe all five lanes.
+            let preset = ReferenceQuality::new(lane, seed);
+            let train = preset.train();
+            let test = preset.test();
+            assert_eq!(train.features().rows(), ReferenceQuality::TRAIN_ROWS);
+            assert_eq!(test.features().rows(), ReferenceQuality::TEST_ROWS);
+            assert_eq!(
+                &train.features().as_slice()[..4],
+                train_head,
+                "{lane:?} seed {seed} training design moved"
+            );
+            assert_eq!(
+                &test.features().as_slice()[..4],
+                test_head,
+                "{lane:?} seed {seed} test design moved — the test half must continue \
+                 the training half's stream, not restart it"
+            );
+            assert_eq!(train.truth(), &Truth::Unrecorded);
+            assert_eq!(train.spec_digest(), preset.recipe().spec_digest());
+            assert_eq!(test.spec_digest(), preset.recipe().spec_digest());
+        }
+    }
+
+    for (lane, seed, train_fold, test_fold, train_positives, test_positives) in
+        ABSORBED_BINARY_LABELS
+    {
+        let preset = ReferenceQuality::new(lane, seed);
+        let train = preset.train();
+        let test = preset.test();
+        let (train_labels, test_labels) = (binary_labels(&train), binary_labels(&test));
+        assert_eq!(train_labels.len(), ReferenceQuality::TRAIN_ROWS);
+        assert_eq!(test_labels.len(), ReferenceQuality::TEST_ROWS);
+        assert_eq!(
+            train_labels.iter().filter(|&&label| label == 1).count(),
+            train_positives,
+            "{lane:?} seed {seed} training prevalence moved"
+        );
+        assert_eq!(
+            test_labels.iter().filter(|&&label| label == 1).count(),
+            test_positives,
+            "{lane:?} seed {seed} test prevalence moved"
+        );
+        assert_eq!(
+            fold_u64(train_labels.iter().map(|&label| u64::from(label))),
+            train_fold,
+            "{lane:?} seed {seed} training labels moved"
+        );
+        assert_eq!(
+            fold_u64(test_labels.iter().map(|&label| u64::from(label))),
+            test_fold,
+            "{lane:?} seed {seed} test labels moved"
+        );
+    }
+
+    for (seed, train_fold, test_fold) in ABSORBED_REGRESSION_TARGETS {
+        let preset = ReferenceQuality::new(ReferenceLane::Regression, seed);
+        let train = preset.train();
+        let test = preset.test();
+        assert_eq!(
+            fold_u64(
+                regression_values(&train)
+                    .iter()
+                    .map(|value| u64::from(value.to_bits()))
+            ),
+            train_fold,
+            "regression seed {seed} training targets moved"
+        );
+        assert_eq!(
+            fold_u64(
+                regression_values(&test)
+                    .iter()
+                    .map(|value| u64::from(value.to_bits()))
+            ),
+            test_fold,
+            "regression seed {seed} test targets moved"
+        );
+    }
+}
+
+/// The head of every lane's label and target vector, spelled out.
+///
+/// The folds above pin the whole vectors and this pins the first twelve values
+/// of each, at the first recorded seed. It exists because a fold failure says
+/// only that something moved: these literals say *what* the lane is supposed to
+/// emit, and are what a reader compares against when one of them does move.
+#[test]
+fn the_absorbed_lanes_emit_their_recorded_first_values() {
+    let heads: [(ReferenceLane, [u8; 12], [u8; 12]); 4] = [
+        (
+            ReferenceLane::NonlinearBinary,
+            [1, 1, 1, 1, 0, 1, 1, 1, 1, 1, 1, 0],
+            [1, 0, 1, 1, 0, 0, 0, 0, 1, 1, 1, 0],
+        ),
+        (
+            ReferenceLane::SeparableBinary,
+            [1, 1, 0, 0, 1, 1, 0, 1, 0, 1, 0, 0],
+            [0, 0, 1, 1, 1, 0, 1, 1, 0, 0, 0, 1],
+        ),
+        (
+            ReferenceLane::ImbalancedBinary,
+            [0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+            [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+        ),
+        // The noisy lane's two splits agree on all twelve, and that is a
+        // property rather than a coincidence: its noise term is four times the
+        // linear signal and depends only on the row index and the seed, both of
+        // which restart with the split. A preset indexing the test rows
+        // continuously from 768 would disagree here on the first row.
+        (
+            ReferenceLane::NoisyBinary,
+            [0, 0, 1, 1, 0, 1, 1, 0, 0, 1, 0, 0],
+            [0, 0, 1, 1, 0, 1, 1, 0, 0, 1, 0, 0],
+        ),
+    ];
+    for (lane, train_head, test_head) in heads {
+        let preset = ReferenceQuality::new(lane, 11);
+        assert_eq!(binary_labels(&preset.train())[..12], train_head, "{lane:?}");
+        assert_eq!(binary_labels(&preset.test())[..12], test_head, "{lane:?}");
+    }
+
+    let regression = ReferenceQuality::new(ReferenceLane::Regression, 11);
+    assert_eq!(
+        regression_values(&regression.train())[..6],
+        [
+            -0.9404716,
+            0.3970253,
+            0.05040382,
+            -1.2404964,
+            1.5710618,
+            0.061550044
+        ]
+    );
+    assert_eq!(
+        regression_values(&regression.test())[..6],
+        [
+            -1.5648069, -1.180205, 0.89713323, 1.1617364, 0.24731648, -0.5884442
+        ]
+    );
+}
+
+/// A preset's design is exactly the recipe it names, split by row.
+///
+/// The two splits are halves of one generated matrix rather than two separately
+/// seeded ones, and this asserts the identity directly instead of inferring it
+/// from the pinned heads: concatenating them reproduces the recipe's own output
+/// value for value.
+#[test]
+fn a_preset_splits_one_generated_design_rather_than_seeding_two() {
+    let preset = ReferenceQuality::new(ReferenceLane::NonlinearBinary, 33);
+    let recipe = preset.recipe();
+    assert_eq!(recipe.source(), Source::Sampled { state: 33 });
+    assert_eq!(
+        recipe.rows(),
+        ReferenceQuality::TRAIN_ROWS + ReferenceQuality::TEST_ROWS
+    );
+    assert_eq!(recipe.columns(), ReferenceQuality::COLUMNS);
+
+    let whole = recipe.design();
+    let mut rejoined = preset.train().into_features().as_slice().to_vec();
+    rejoined.extend_from_slice(preset.test().features().as_slice());
+    assert_eq!(rejoined, whole.as_slice());
+}
+
+/// A preset's stream is the raw seed, not the derived one.
+///
+/// This is the single transcription error that would move every frozen fixture
+/// while leaving the port looking correct: `Recipe::seeded` is the right
+/// constructor for new work and the wrong one here.
+#[test]
+fn a_preset_names_the_raw_state_and_not_a_derived_stream() {
+    for seed in [11_u64, 22, 33, 44, 55] {
+        let preset = ReferenceQuality::new(ReferenceLane::SeparableBinary, seed);
+        assert_eq!(preset.seed(), seed);
+        assert_eq!(preset.recipe().source(), Source::Sampled { state: seed });
+        assert_ne!(
+            preset.recipe().source(),
+            Recipe::seeded(16, 4, seed).unwrap().source(),
+            "seed {seed} reached the derivation, which would move every fixture"
+        );
+    }
+}
+
+/// Each lane draws a different target over the same design.
+///
+/// Without this the five lanes could collapse onto one another — the same
+/// expression reached through five variants — and every pinned fold would still
+/// be whatever that one expression emits.
+#[test]
+fn the_lanes_are_distinct_tasks_over_one_design() {
+    let seed = 11;
+    let binary = [
+        ReferenceLane::NonlinearBinary,
+        ReferenceLane::SeparableBinary,
+        ReferenceLane::ImbalancedBinary,
+        ReferenceLane::NoisyBinary,
+    ];
+    let designs: Vec<Vec<f32>> = binary
+        .iter()
+        .map(|&lane| {
+            ReferenceQuality::new(lane, seed)
+                .train()
+                .into_features()
+                .as_slice()
+                .to_vec()
+        })
+        .collect();
+    for design in &designs[1..] {
+        assert_eq!(design, &designs[0], "the lanes must share one design");
+    }
+
+    let labels: Vec<Vec<u8>> = binary
+        .iter()
+        .map(|&lane| binary_labels(&ReferenceQuality::new(lane, seed).train()).to_vec())
+        .collect();
+    for (index, left) in labels.iter().enumerate() {
+        for right in &labels[index + 1..] {
+            assert_ne!(left, right, "two lanes produced the same labels");
+        }
+    }
+
+    let regression = ReferenceQuality::new(ReferenceLane::Regression, seed).train();
+    assert_eq!(
+        regression.features().as_slice(),
+        designs[0],
+        "the regression lane must share the same design"
+    );
+    assert!(
+        matches!(regression.target(), Some(Target::Regression(_))),
+        "the regression lane must not threshold"
+    );
+}
+
+/// The absorbed lanes carry targets and still report no ground truth.
+///
+/// `DesignOnly` would be a false statement — a task *was* drawn — and inventing
+/// a coefficient vector for a thresholded polynomial would be a claim this
+/// module cannot support. The third variant is what says so, and this is what
+/// keeps a later family from quietly reusing it.
+#[test]
+fn an_absorbed_lane_reports_a_task_without_a_recorded_truth() {
+    let preset = ReferenceQuality::new(ReferenceLane::NoisyBinary, 44);
+    let train = preset.train();
+    assert!(train.target().is_some());
+    assert_eq!(train.truth(), &Truth::Unrecorded);
+    assert_ne!(train.truth(), &Truth::DesignOnly);
+    assert!(train.weights().is_none());
+    assert!(train.groups().is_none());
+
+    // A bare recipe over the same stream draws no task at all, which is the
+    // other statement.
+    assert_eq!(preset.recipe().generate().truth(), &Truth::DesignOnly);
+}
+
+/// Generating a preset twice gives the same bytes.
+#[test]
+fn regenerating_a_preset_reproduces_its_bytes() {
+    let preset = ReferenceQuality::new(ReferenceLane::Regression, 22);
+    assert_eq!(preset.train(), preset.train());
+    assert_eq!(preset.test(), preset.test());
+    assert_eq!(preset, ReferenceQuality::new(ReferenceLane::Regression, 22));
+    assert_ne!(preset, ReferenceQuality::new(ReferenceLane::Regression, 23));
+    assert_ne!(
+        preset,
+        ReferenceQuality::new(ReferenceLane::NonlinearBinary, 22)
+    );
+}

@@ -49,6 +49,35 @@ and releases use [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   describes data that can be produced, which is why `generate` and `design`
   return a value rather than a `Result`.
 
+- **The frozen conformance lanes are now part of the generator.**
+  `datasets::ReferenceQuality` reproduces the design matrices and targets
+  FerricML's reference suite is recorded against — a nonlinear, a separable, an
+  imbalanced and a noisy binary lane, plus a regression lane, at the recorded
+  seeds — and the private lane functions in `tests/reference_semantics.rs` are
+  gone. The test crate now consumes the same generator a downstream caller can.
+
+  **Ported by value, not by resemblance.** The lanes feed quality tests that
+  compare aggregate accuracy and Brier against the reference within `0.02`, so a
+  generator emitting a *different but similarly distributed* stream would pass
+  every one of them while changing every design matrix. The outgoing values were
+  therefore captured first: `the_absorbed_lanes_reproduce_their_recorded_values`
+  pins each lane's design head, its label prevalence, and a fold over all 1152
+  labels or targets, at all five seeds, against literals read out of the
+  functions this commit deletes. `tests/fixtures/reference_semantics_v1.rs` is
+  unchanged, and the frozen-stream test now compares the crate's generator and
+  the test crate's against each other as well as against the recorded literals.
+
+  These presets name a **raw** stream state rather than routing through
+  `Recipe::seeded`'s derivation, because that is what they were recorded
+  against; the derivation stays the right default for new recipes.
+
+  A dataset with targets and no recorded ground truth is a third thing, and
+  `Truth::Unrecorded` is how it says so. The absorbed lanes were written to
+  compare two implementations against each other, so no coefficient vector or
+  noise-free target was ever kept — reporting `Truth::DesignOnly` would deny
+  that a task exists, and inventing a coefficient vector would claim more than
+  the lanes support.
+
 ### Changed
 
 - **The exact public-API snapshot now covers feature-gated surface.**

@@ -1060,6 +1060,21 @@ pub fn ferricml::datasets::DatasetError::fmt(&self, &mut core::fmt::Formatter<'_
 impl core::fmt::Display for ferricml::datasets::DatasetError
 pub fn ferricml::datasets::DatasetError::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
 impl core::marker::StructuralPartialEq for ferricml::datasets::DatasetError
+#[non_exhaustive] pub enum ferricml::datasets::ReferenceLane
+pub ferricml::datasets::ReferenceLane::ImbalancedBinary
+pub ferricml::datasets::ReferenceLane::NoisyBinary
+pub ferricml::datasets::ReferenceLane::NonlinearBinary
+pub ferricml::datasets::ReferenceLane::Regression
+pub ferricml::datasets::ReferenceLane::SeparableBinary
+impl core::clone::Clone for ferricml::datasets::ReferenceLane
+pub fn ferricml::datasets::ReferenceLane::clone(&self) -> ferricml::datasets::ReferenceLane
+impl core::cmp::Eq for ferricml::datasets::ReferenceLane
+impl core::cmp::PartialEq for ferricml::datasets::ReferenceLane
+pub fn ferricml::datasets::ReferenceLane::eq(&self, &ferricml::datasets::ReferenceLane) -> bool
+impl core::fmt::Debug for ferricml::datasets::ReferenceLane
+pub fn ferricml::datasets::ReferenceLane::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for ferricml::datasets::ReferenceLane
+impl core::marker::StructuralPartialEq for ferricml::datasets::ReferenceLane
 #[non_exhaustive] pub enum ferricml::datasets::Source
 pub ferricml::datasets::Source::Lattice
 pub ferricml::datasets::Source::Lattice::column_stride: u64
@@ -1091,6 +1106,7 @@ pub fn ferricml::datasets::Target::fmt(&self, &mut core::fmt::Formatter<'_>) -> 
 impl core::marker::StructuralPartialEq for ferricml::datasets::Target
 #[non_exhaustive] pub enum ferricml::datasets::Truth
 pub ferricml::datasets::Truth::DesignOnly
+pub ferricml::datasets::Truth::Unrecorded
 impl core::clone::Clone for ferricml::datasets::Truth
 pub fn ferricml::datasets::Truth::clone(&self) -> ferricml::datasets::Truth
 impl core::cmp::PartialEq for ferricml::datasets::Truth
@@ -1134,6 +1150,26 @@ impl core::fmt::Debug for ferricml::datasets::Recipe
 pub fn ferricml::datasets::Recipe::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
 impl core::marker::Copy for ferricml::datasets::Recipe
 impl core::marker::StructuralPartialEq for ferricml::datasets::Recipe
+pub struct ferricml::datasets::ReferenceQuality
+impl ferricml::datasets::ReferenceQuality
+pub const ferricml::datasets::ReferenceQuality::COLUMNS: usize
+pub const ferricml::datasets::ReferenceQuality::TEST_ROWS: usize
+pub const ferricml::datasets::ReferenceQuality::TRAIN_ROWS: usize
+pub const fn ferricml::datasets::ReferenceQuality::lane(&self) -> ferricml::datasets::ReferenceLane
+pub const fn ferricml::datasets::ReferenceQuality::new(ferricml::datasets::ReferenceLane, u64) -> Self
+pub fn ferricml::datasets::ReferenceQuality::recipe(&self) -> ferricml::datasets::Recipe
+pub const fn ferricml::datasets::ReferenceQuality::seed(&self) -> u64
+pub fn ferricml::datasets::ReferenceQuality::test(&self) -> ferricml::datasets::Dataset
+pub fn ferricml::datasets::ReferenceQuality::train(&self) -> ferricml::datasets::Dataset
+impl core::clone::Clone for ferricml::datasets::ReferenceQuality
+pub fn ferricml::datasets::ReferenceQuality::clone(&self) -> ferricml::datasets::ReferenceQuality
+impl core::cmp::Eq for ferricml::datasets::ReferenceQuality
+impl core::cmp::PartialEq for ferricml::datasets::ReferenceQuality
+pub fn ferricml::datasets::ReferenceQuality::eq(&self, &ferricml::datasets::ReferenceQuality) -> bool
+impl core::fmt::Debug for ferricml::datasets::ReferenceQuality
+pub fn ferricml::datasets::ReferenceQuality::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for ferricml::datasets::ReferenceQuality
+impl core::marker::StructuralPartialEq for ferricml::datasets::ReferenceQuality
 pub mod ferricml::dummy
 pub struct ferricml::dummy::DummyClassifier
 impl ferricml::dummy::DummyClassifier

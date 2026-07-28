@@ -2,6 +2,7 @@
 
 use ferricml::api::ModelError;
 use ferricml::data::{BinaryTargets, ClassTargets, DenseMatrix, RegressionTargets, SampleWeights};
+use ferricml::datasets::{Dataset, Recipe, ReferenceLane, ReferenceQuality, Source, Target};
 use ferricml::ensemble::{
     ExtraTreesClassifier, ExtraTreesClassifierParams, ExtraTreesRegressor,
     ExtraTreesRegressorParams, HistGradientBoostingClassifier,
@@ -48,6 +49,21 @@ const EXACT_TOLERANCE: f32 = 1.0e-6;
 const LOGISTIC_TOLERANCE: f32 = 2.0e-5;
 const QUALITY_SEEDS: [u64; 5] = [11, 22, 33, 44, 55];
 const HGB_QUALITY_SEEDS: [u64; 3] = [11, 22, 33];
+
+/// The four classification lanes, paired with the name the frozen reference
+/// table records each of them under.
+///
+/// The generator moved into `ferricml::datasets` and the fixture's lane strings
+/// did not, because those strings are the reference file's own vocabulary — a
+/// row key in `QUALITY_REFERENCES` — rather than anything the generator knows.
+/// Pairing them here keeps the lookup a lookup instead of pushing fixture
+/// spelling into the crate's public API.
+const QUALITY_LANES: [(&str, ReferenceLane); 4] = [
+    ("nonlinear", ReferenceLane::NonlinearBinary),
+    ("separable", ReferenceLane::SeparableBinary),
+    ("imbalanced", ReferenceLane::ImbalancedBinary),
+    ("noise", ReferenceLane::NoisyBinary),
+];
 
 fn matrix(values: &[f32], rows: usize, columns: usize) -> DenseMatrix {
     DenseMatrix::new(values.to_vec(), rows, columns).unwrap()
@@ -1609,7 +1625,8 @@ fn boosted_classification_multi_seed_quality_stays_near_frozen_baseline() {
     let mut baseline_accuracy = 0.0;
     let mut baseline_brier = 0.0;
     for (index, seed) in HGB_QUALITY_SEEDS.into_iter().enumerate() {
-        let (train, train_y, test, test_y) = classification_data("nonlinear", seed);
+        let (train, train_y, test, test_y) =
+            classification_data(ReferenceLane::NonlinearBinary, seed);
         let model = HistGradientBoostingClassifier::fit(
             &train.as_view(),
             &train_y,
@@ -1755,6 +1772,15 @@ fn supported_defaults_names_and_validation_are_locked() {
 ///
 /// `TestRng::from_state` is the raw-seed constructor for that reason:
 /// `TestRng::new` perturbs the seed and would have moved every fixture.
+///
+/// The lanes have since moved again, into `ferricml::datasets` — the crate now
+/// owns the generator it measures itself against. The literals below did not
+/// move with them, and the final assertion is what makes that check-able rather
+/// than asserted: the ported `Source::Sampled` design and this file's surviving
+/// `TestRng` composition are compared against each other as well as against the
+/// values recorded before either existed. `TestRng` itself stays, because five
+/// other test binaries sweep and fuzz from it and `test-rng-single-source`
+/// requires its markers present.
 #[test]
 fn the_generated_design_stream_is_frozen_bit_for_bit() {
     let raw: [(u64, [u64; 6]); 2] = [
@@ -1804,10 +1830,19 @@ fn the_generated_design_stream_is_frozen_bit_for_bit() {
         ]
     );
 
-    // And the composition the lanes actually call, at the first quality seed.
-    let matrix = generated_matrix(&mut TestRng::from_state(11), 2, 3);
+    // And the composition the lanes actually call, at the first quality seed —
+    // now reached two ways. The first is what this file did before the lanes
+    // moved; the second is the crate's own generator, named on the raw state
+    // rather than on a derived one. Both are compared against the literals, and
+    // then against each other, so a port that changed the map would have to
+    // change three things at once to stay green.
+    let mut rng = TestRng::from_state(11);
+    let composed: Vec<f32> = (0..6).map(|_| rng.signed_unit()).collect();
+    let ported = Recipe::new(2, 3, Source::Sampled { state: 11 })
+        .unwrap()
+        .design();
     assert_eq!(
-        matrix.as_slice(),
+        composed,
         [
             -0.36751127,
             -0.4752698,
@@ -1817,64 +1852,31 @@ fn the_generated_design_stream_is_frozen_bit_for_bit() {
             0.10387528
         ]
     );
+    assert_eq!(ported.as_slice(), composed);
 }
 
-fn generated_matrix(rng: &mut TestRng, rows: usize, columns: usize) -> DenseMatrix {
-    let values = (0..rows * columns).map(|_| rng.signed_unit()).collect();
-    DenseMatrix::new(values, rows, columns).unwrap()
-}
-
-fn classification_labels(lane: &str, values: &DenseMatrix, seed: u64) -> BinaryTargets {
-    let labels = values
-        .iter_rows()
-        .enumerate()
-        .map(|(index, row)| {
-            let score = match lane {
-                "nonlinear" => {
-                    row[0] * row[1] + 0.7 * row[2] * row[2] - 0.45 * row[3] + 0.2 * row[4] * row[5]
-                        - 0.15
-                }
-                "separable" => 1.2 * row[0] - 0.9 * row[1] + 0.5 * row[2],
-                "imbalanced" => 1.3 * row[0] + 0.8 * row[1] - 0.35 * row[2] * row[2] - 1.25,
-                "noise" => {
-                    let noise = (((index as u64 * 1_103_515_245 + seed) & 0xffff) as f64 / 32_768.0
-                        - 1.0) as f32;
-                    0.25 * row[0] + noise
-                }
-                _ => panic!("unknown quality lane {lane}"),
-            };
-            u8::from(score > 0.0)
-        })
-        .collect();
-    BinaryTargets::new(labels).unwrap()
-}
-
+/// One quality lane's split, from the preset that absorbed it.
+///
+/// The generator this used to call lived in this file; it now lives in
+/// `ferricml::datasets`, pinned by value there against literals captured from
+/// this file's copy before it was deleted. What remains here is the adapter
+/// from the generator's vocabulary to the containers the estimators take.
 fn classification_data(
-    lane: &str,
+    lane: ReferenceLane,
     seed: u64,
 ) -> (DenseMatrix, BinaryTargets, DenseMatrix, BinaryTargets) {
-    let mut rng = TestRng::from_state(seed);
-    let train = generated_matrix(&mut rng, 768, 12);
-    let test = generated_matrix(&mut rng, 384, 12);
-    let train_targets = classification_labels(lane, &train, seed);
-    let test_targets = classification_labels(lane, &test, seed);
+    let preset = ReferenceQuality::new(lane, seed);
+    let (train, train_targets) = binary_split(preset.train());
+    let (test, test_targets) = binary_split(preset.test());
     (train, train_targets, test, test_targets)
 }
 
-fn regression_targets(values: &DenseMatrix, seed: u64) -> RegressionTargets {
-    let targets = values
-        .iter_rows()
-        .enumerate()
-        .map(|(index, row)| {
-            let noise = (((index as u64 * 214_013 + seed * 2_531_011) & 0xffff) as f64 / 32_768.0
-                - 1.0) as f32;
-            1.7 * row[0] - 0.8 * row[1] * row[1]
-                + 0.6 * row[2] * row[3]
-                + 0.3 * row[4]
-                + 0.1 * noise
-        })
-        .collect();
-    RegressionTargets::new(targets).unwrap()
+fn binary_split(dataset: Dataset) -> (DenseMatrix, BinaryTargets) {
+    let targets = match dataset.target() {
+        Some(Target::Binary(targets)) => targets.clone(),
+        other => panic!("a classification lane produced {other:?}"),
+    };
+    (dataset.into_features(), targets)
 }
 
 fn regression_data(
@@ -1885,12 +1887,18 @@ fn regression_data(
     DenseMatrix,
     RegressionTargets,
 ) {
-    let mut rng = TestRng::from_state(seed);
-    let train = generated_matrix(&mut rng, 768, 12);
-    let test = generated_matrix(&mut rng, 384, 12);
-    let train_targets = regression_targets(&train, seed);
-    let test_targets = regression_targets(&test, seed);
+    let preset = ReferenceQuality::new(ReferenceLane::Regression, seed);
+    let (train, train_targets) = regression_split(preset.train());
+    let (test, test_targets) = regression_split(preset.test());
     (train, train_targets, test, test_targets)
+}
+
+fn regression_split(dataset: Dataset) -> (DenseMatrix, RegressionTargets) {
+    let targets = match dataset.target() {
+        Some(Target::Regression(targets)) => targets.clone(),
+        other => panic!("the regression lane produced {other:?}"),
+    };
+    (dataset.into_features(), targets)
 }
 
 fn normalized_root_mean_squared_error(expected: &[f32], actual: &[f32]) -> f64 {
@@ -1905,7 +1913,7 @@ fn normalized_root_mean_squared_error(expected: &[f32], actual: &[f32]) -> f64 {
 
 #[test]
 fn five_seed_classification_quality_stays_within_approved_deltas() {
-    for lane in ["nonlinear", "separable", "imbalanced", "noise"] {
+    for (name, lane) in QUALITY_LANES {
         let mut ferric_accuracy = 0.0;
         let mut ferric_brier = 0.0;
         let mut baseline_accuracy = 0.0;
@@ -1933,7 +1941,7 @@ fn five_seed_classification_quality_stays_within_approved_deltas() {
             .unwrap();
             let reference = reference::QUALITY_REFERENCES
                 .iter()
-                .find(|reference| reference.lane == lane && reference.seed == seed)
+                .find(|reference| reference.lane == name && reference.seed == seed)
                 .unwrap();
             baseline_accuracy += reference.accuracy;
             baseline_brier += reference.brier;
@@ -1944,15 +1952,15 @@ fn five_seed_classification_quality_stays_within_approved_deltas() {
         baseline_accuracy /= count;
         baseline_brier /= count;
         eprintln!(
-            "quality {lane}: ferric accuracy={ferric_accuracy:.6} brier={ferric_brier:.6}; baseline accuracy={baseline_accuracy:.6} brier={baseline_brier:.6}"
+            "quality {name}: ferric accuracy={ferric_accuracy:.6} brier={ferric_brier:.6}; baseline accuracy={baseline_accuracy:.6} brier={baseline_brier:.6}"
         );
         assert!(
             ferric_accuracy + 0.02 >= baseline_accuracy,
-            "{lane}: FerricML accuracy {ferric_accuracy:.6} trails baseline {baseline_accuracy:.6} by more than 0.02"
+            "{name}: FerricML accuracy {ferric_accuracy:.6} trails baseline {baseline_accuracy:.6} by more than 0.02"
         );
         assert!(
             ferric_brier <= baseline_brier + 0.02,
-            "{lane}: FerricML Brier {ferric_brier:.6} exceeds baseline {baseline_brier:.6} by more than 0.02"
+            "{name}: FerricML Brier {ferric_brier:.6} exceeds baseline {baseline_brier:.6} by more than 0.02"
         );
     }
 }
@@ -1974,7 +1982,8 @@ fn five_seed_extra_trees_quality_stays_within_approved_deltas() {
     let mut baseline_accuracy = 0.0;
     let mut baseline_brier = 0.0;
     for seed in QUALITY_SEEDS {
-        let (train, train_y, test, test_y) = classification_data("nonlinear", seed);
+        let (train, train_y, test, test_y) =
+            classification_data(ReferenceLane::NonlinearBinary, seed);
         let model = ExtraTreesClassifier::fit(
             &train.as_view(),
             &train_y,

@@ -40,6 +40,19 @@ pub enum Truth {
     /// answer" and "this data's correct answer is all zeros" are different
     /// statements and a consumer must not be able to confuse them.
     DesignOnly,
+    /// A task was drawn, but nothing was recorded about what it is right about.
+    ///
+    /// This is what the absorbed frozen lanes produce. Their targets are
+    /// deterministic functions of the design, so a correct answer exists in
+    /// principle — but the lanes were written to compare two implementations
+    /// against *each other*, so neither the coefficients behind a classification
+    /// score nor a noise-free regression target was ever kept, and inventing one
+    /// now would be a claim this module cannot support.
+    ///
+    /// It is distinct from [`Truth::DesignOnly`], which says no task exists at
+    /// all, and it is what a consumer checks before trusting an accuracy number
+    /// to mean distance from correct rather than distance from another library.
+    Unrecorded,
 }
 
 /// A generated dataset: the design matrix, whatever task was drawn over it, and

@@ -54,9 +54,24 @@
 //! `DesignOnly` until a task family draws targets over the design, and it says
 //! so with a variant rather than with an empty coefficient vector, because "no
 //! correct answer exists" and "the correct answer is zero" are different claims.
+//!
+//! The absorbed lanes are the counter-example that makes the distinction worth
+//! carrying: they draw real targets and still have no recorded truth, because
+//! they were written to compare two implementations against each other rather
+//! than against a right answer. They report `Truth::Unrecorded`, which is a
+//! third statement again.
+//!
+//! # Frozen presets
+//!
+//! [`ReferenceQuality`] reproduces the design matrices and targets FerricML's
+//! conformance fixtures were recorded against. Those are not recipes a caller
+//! would choose — they are transcriptions, pinned by value, and the module
+//! documentation in `presets.rs` says which parts of the arithmetic are
+//! load-bearing.
 
 mod dataset;
 mod error;
+mod presets;
 mod recipe;
 mod source;
 
@@ -65,4 +80,5 @@ mod tests;
 
 pub use dataset::{Dataset, Target, Truth};
 pub use error::DatasetError;
+pub use presets::{ReferenceLane, ReferenceQuality};
 pub use recipe::{Recipe, Source};
