@@ -390,8 +390,28 @@ assert_eq!(cells, 256 * (8 + 32 + 128) * Family::COUNT);
 The grid exists to be measured, not asserted. FerricML's performance protocol
 records numbers on a registered runner against its own history, so what belongs
 in a test is that every case exists and is valid; the throughput itself belongs
-in `dev-docs/bench/results/`, and the claim it supports is that generation is
-negligible against the smallest fit it feeds.
+in `dev-docs/bench/results/`.
+
+The grid was built to support the claim that generation is negligible against
+the smallest fit it feeds. Measured over all ninety points, that claim is true
+at the wide end and **false at the narrow one** — which is the answer the second
+dimension exists to produce. Generation runs between `0.002` and `1.275` times
+the cheapest fit accepting that family's target: at 128 columns it is `0.2`–`3.2%`
+of the fit, but at 8 columns it is `21`–`79%` for seven families, and for
+`NonlinearBinary` it is *more* than the fit — `1.27` times a
+`LogisticRegression::fit` at `256 x 8`.
+
+The mechanism is a per-row cost that does not shrink with the width. The
+classification families solve for their requested prevalence or balance rather
+than reporting whichever one falls out, and that solve evaluates a logistic over
+every row per iteration: roughly `160 ns` per row at any width, against `12 ns`
+per row for a linear regression. It buys the property that makes prevalence a
+knob at all, so it is a trade rather than a defect.
+
+Nothing downstream is distorted by it, because a benchmark generates once and
+fits many times, so a generation cost comparable to a single fit never enters a
+measured fit. What it does mean is that generating *inside* a timed region at
+eight columns times the generator as much as the model.
 
 ## Adding a family
 
