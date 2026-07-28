@@ -1169,6 +1169,10 @@ pub ferricml::datasets::DatasetError::TooFewGrades::grades: usize
 pub ferricml::datasets::DatasetError::TooManyClasses
 pub ferricml::datasets::DatasetError::TooManyClasses::classes: usize
 pub ferricml::datasets::DatasetError::TooManyClasses::limit: usize
+pub ferricml::datasets::DatasetError::UnpinnedBenchmarkShape
+pub ferricml::datasets::DatasetError::UnpinnedBenchmarkShape::columns: usize
+pub ferricml::datasets::DatasetError::UnpinnedBenchmarkShape::lane: ferricml::datasets::BenchmarkLane
+pub ferricml::datasets::DatasetError::UnpinnedBenchmarkShape::rows: usize
 pub ferricml::datasets::DatasetError::WeightPatternNeedsLabels
 pub ferricml::datasets::DatasetError::ZeroBlobs
 pub ferricml::datasets::DatasetError::ZeroColumns
@@ -1559,6 +1563,7 @@ pub fn ferricml::datasets::BenchmarkFixture::generate(&self) -> ferricml::datase
 pub const fn ferricml::datasets::BenchmarkFixture::lane(&self) -> ferricml::datasets::BenchmarkLane
 pub fn ferricml::datasets::BenchmarkFixture::new(ferricml::datasets::BenchmarkLane, usize, usize) -> core::result::Result<Self, ferricml::datasets::DatasetError>
 pub const fn ferricml::datasets::BenchmarkFixture::recipe(&self) -> ferricml::datasets::Recipe
+pub fn ferricml::datasets::BenchmarkFixture::recorded(ferricml::datasets::BenchmarkLane, usize, usize) -> core::result::Result<Self, ferricml::datasets::DatasetError>
 impl core::clone::Clone for ferricml::datasets::BenchmarkFixture
 pub fn ferricml::datasets::BenchmarkFixture::clone(&self) -> ferricml::datasets::BenchmarkFixture
 impl core::cmp::Eq for ferricml::datasets::BenchmarkFixture

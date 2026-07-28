@@ -1193,6 +1193,87 @@ fn the_absorbed_benchmark_fixtures_reproduce_their_recorded_bytes() {
     }
 }
 
+/// The shape roster the benches are held to and the digest table are the same
+/// set, and a shape off it cannot be measured.
+///
+/// The hole this closes: before it, `ABSORBED_BENCHMARK_DIGESTS` pinned the ten
+/// shapes the benches happened to call *on the day it was written*, and nothing
+/// connected the two. A bench added tomorrow at `4096x64` would generate a
+/// perfectly valid fixture, measure it, and enter it into `bench-history` as the
+/// baseline every later release is compared against — with no pinned digest, so
+/// nothing in the repository could ever detect that fixture changing underneath
+/// those results. A timing lane cannot notice: a differently distributed design
+/// of the same shape runs at very nearly the same speed.
+///
+/// Three assertions close it, and each is needed:
+///
+/// 1. Every roster entry is pinned. Otherwise `recorded` would admit a shape no
+///    digest watches.
+/// 2. Every pinned shape is on the roster. Otherwise a digest could be deleted
+///    while the bench drawing it kept running.
+/// 3. `recorded` actually refuses a shape off the roster — demonstrated on a
+///    planted one rather than assumed from the code, in the pattern
+///    `scripts/check_source_layout.py` uses for its own rules. The planted shape
+///    is a real, generatable dataset: what makes it inadmissible is that nothing
+///    pins it, which is precisely the failure mode being guarded.
+///
+/// The remaining half of the guard is not expressible here, because
+/// `benches/` is a separate crate target that this module cannot see: the rule
+/// `absorbed-benchmark-shapes-are-pinned` in `scripts/check_source_layout.py`
+/// forbids `BenchmarkFixture::new` in `benches/`, so a benchmark cannot reach
+/// the unrestricted constructor and route around the roster.
+#[test]
+fn a_benchmark_cannot_measure_a_fixture_shape_no_digest_pins() {
+    let roster = super::benchmarks::recorded_shapes();
+    let pinned: Vec<(BenchmarkLane, usize, usize)> = ABSORBED_BENCHMARK_DIGESTS
+        .iter()
+        .map(|&(lane, rows, columns, _, _)| (lane, rows, columns))
+        .collect();
+
+    for entry in roster {
+        assert!(
+            pinned.contains(&entry),
+            "{entry:?} is on the roster the benches draw from and no digest pins it"
+        );
+    }
+    for entry in &pinned {
+        assert!(
+            roster.contains(entry),
+            "{entry:?} is pinned and the benches are not allowed to draw it"
+        );
+    }
+    assert_eq!(roster.len(), pinned.len(), "the roster carries a duplicate");
+
+    // The planted shape: one column wider than a lane the suite really measures,
+    // so it generates cleanly and is refused only for being unwatched.
+    let (lane, rows, columns) = (BenchmarkLane::ForestBinary, 512, 17);
+    assert!(
+        BenchmarkFixture::new(lane, rows, columns).is_ok(),
+        "the planted shape must be a real dataset, or the guard proves nothing"
+    );
+    assert_eq!(
+        BenchmarkFixture::recorded(lane, rows, columns),
+        Err(DatasetError::UnpinnedBenchmarkShape {
+            lane,
+            rows,
+            columns
+        })
+    );
+    // And the roster's own shapes pass, so the guard is not simply closed.
+    for (lane, rows, columns) in roster {
+        assert!(
+            BenchmarkFixture::recorded(lane, rows, columns).is_ok(),
+            "{lane:?} {rows}x{columns} is pinned and was refused"
+        );
+    }
+    // A shape the lane's *own* validation rejects still fails as that, so the
+    // roster check does not mask a shape error.
+    assert_eq!(
+        BenchmarkFixture::recorded(BenchmarkLane::ForestBinary, 0, 64),
+        Err(DatasetError::ZeroRows)
+    );
+}
+
 /// The head of every absorbed benchmark fixture, spelled out.
 ///
 /// The digests above pin the whole vectors; these say *what* each lane is

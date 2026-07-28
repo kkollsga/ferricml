@@ -97,6 +97,15 @@ and releases use [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   `(lane, shape)` pairs in all, against digests read out of the functions this
   commit deletes.
 
+  **And a bench cannot reach a shape those digests do not pin.**
+  `BenchmarkFixture::recorded` — the constructor the suites call — refuses a
+  `(lane, rows, columns)` off that roster with
+  `DatasetError::UnpinnedBenchmarkShape`, so a new bench arm cannot quietly
+  define a fixture nothing is watching and then have every later release
+  compared against it. `BenchmarkFixture::new` stays unrestricted for callers
+  exercising these lanes at shapes they choose rather than timing against a
+  history.
+
   Like the conformance presets, these are transcriptions rather than recipes:
   `f32` throughout, association order preserved, and a design narrower than a
   target expression's score columns still sums only the columns it has.

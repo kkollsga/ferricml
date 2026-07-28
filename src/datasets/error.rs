@@ -376,6 +376,27 @@ pub enum DatasetError {
         /// The knob whose effect the task's truth cannot survive.
         parameter: Parameter,
     },
+    /// A benchmark fixture was asked for at a shape no recorded digest pins.
+    ///
+    /// [`BenchmarkFixture::recorded`](super::BenchmarkFixture::recorded) exists
+    /// for the benchmark suites, whose whole reason for reproducing these
+    /// expressions is that `bench-history` compares each release against
+    /// immutable earlier results — which is meaningful only while the data is
+    /// the data those results were measured on. A shape nothing pins is a
+    /// fixture nothing can detect a change to, so it is refused here rather
+    /// than measured and compared.
+    ///
+    /// [`BenchmarkFixture::new`](super::BenchmarkFixture::new) is the
+    /// unrestricted constructor, for callers exercising these lanes at shapes
+    /// they choose rather than timing against a history.
+    UnpinnedBenchmarkShape {
+        /// The lane that was asked for.
+        lane: super::BenchmarkLane,
+        /// Rows requested.
+        rows: usize,
+        /// Columns requested.
+        columns: usize,
+    },
 }
 
 impl fmt::Display for DatasetError {
@@ -496,6 +517,15 @@ impl fmt::Display for DatasetError {
                 f,
                 "{} would falsify the truth this task records",
                 parameter.name()
+            ),
+            Self::UnpinnedBenchmarkShape {
+                lane,
+                rows,
+                columns,
+            } => write!(
+                f,
+                "no recorded digest pins {lane:?} at {rows}x{columns}, so a benchmark \
+                 measured on it could not be compared with an earlier release"
             ),
         }
     }

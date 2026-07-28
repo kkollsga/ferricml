@@ -55,6 +55,39 @@ pub(super) const FOREST_LATTICE: Source = Source::Lattice {
     modulus: 1009,
 };
 
+/// Every `(lane, rows, columns)` a recorded digest pins.
+///
+/// This is the roster [`BenchmarkFixture::recorded`] checks against, and it is
+/// deliberately *here* rather than in the test module that owns the digests: a
+/// roster living beside the assertions it feeds would be a roster the benchmarks
+/// cannot see, which is exactly the gap it exists to close. `src/datasets/tests.rs`
+/// asserts in both directions that this list and `ABSORBED_BENCHMARK_DIGESTS`
+/// name the same set, so a shape added to one without the other fails rather
+/// than diverging.
+///
+/// Adding an entry here is therefore a two-part statement: that a benchmark
+/// draws this shape, and that a digest was captured for it. Neither half is
+/// optional, and the second is what makes a change to the fixture detectable at
+/// all.
+const RECORDED_SHAPES: [(BenchmarkLane, usize, usize); 10] = [
+    (BenchmarkLane::ForestBinary, 2048, 64),
+    (BenchmarkLane::ForestRegression, 2048, 64),
+    (BenchmarkLane::ForestBinary, 512, 16),
+    (BenchmarkLane::ForestRegression, 512, 16),
+    (BenchmarkLane::ModelsRegression, 2048, 48),
+    (BenchmarkLane::ModelsRegression, 1024, 48),
+    (BenchmarkLane::ModelsRegression, 1024, 512),
+    (BenchmarkLane::ModelsRegression, 256, 12),
+    (BenchmarkLane::ModelsRegression, 256, 8),
+    (BenchmarkLane::BoostingRegression, 2048, 48),
+];
+
+/// The roster above, for the test module that asserts it against the digests.
+#[cfg(test)]
+pub(super) const fn recorded_shapes() -> [(BenchmarkLane, usize, usize); 10] {
+    RECORDED_SHAPES
+}
+
 /// Columns the forest fixture's separating score reads.
 const FOREST_SCORE_COLUMNS: usize = 4;
 
@@ -157,6 +190,59 @@ impl BenchmarkFixture {
             lane,
             recipe: Recipe::new(rows, columns, lane.source())?,
         })
+    }
+
+    /// Validates a shape against a lane's source **and** against the shapes a
+    /// recorded digest pins.
+    ///
+    /// This is the constructor the repository's own benchmark suites call, and
+    /// the difference from [`BenchmarkFixture::new`] is the whole reason this
+    /// module exists. `bench-history` compares each release against immutable
+    /// earlier results, which is only meaningful while the data is the data
+    /// those results were measured on — and the mechanism that detects a change
+    /// to that data is the pinned digest table in this module's tests. A shape
+    /// absent from it is a fixture nothing is watching, so a bench reaching for
+    /// one fails here instead of silently defining an unpinned baseline that
+    /// every later release is then compared against.
+    ///
+    /// The two constructors are not a deprecation: `new` stays open because
+    /// exercising these expressions at a chosen shape — a four-row design, a
+    /// width the suites never measure — is a legitimate thing to do, and only
+    /// *timing* against a history needs the roster.
+    ///
+    /// ```
+    /// use ferricml::datasets::{BenchmarkFixture, BenchmarkLane, DatasetError};
+    ///
+    /// // A shape the forest suite measures.
+    /// assert!(BenchmarkFixture::recorded(BenchmarkLane::ForestBinary, 512, 16).is_ok());
+    ///
+    /// // The same lane one row wider: a valid dataset, and not one any
+    /// // recorded result could be compared against.
+    /// assert_eq!(
+    ///     BenchmarkFixture::recorded(BenchmarkLane::ForestBinary, 512, 17),
+    ///     Err(DatasetError::UnpinnedBenchmarkShape {
+    ///         lane: BenchmarkLane::ForestBinary,
+    ///         rows: 512,
+    ///         columns: 17,
+    ///     }),
+    /// );
+    /// # Ok::<(), DatasetError>(())
+    /// ```
+    pub fn recorded(
+        lane: BenchmarkLane,
+        rows: usize,
+        columns: usize,
+    ) -> Result<Self, DatasetError> {
+        let fixture = Self::new(lane, rows, columns)?;
+        if RECORDED_SHAPES.contains(&(lane, rows, columns)) {
+            Ok(fixture)
+        } else {
+            Err(DatasetError::UnpinnedBenchmarkShape {
+                lane,
+                rows,
+                columns,
+            })
+        }
     }
 
     /// Returns the lane this fixture reproduces.

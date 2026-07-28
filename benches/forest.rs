@@ -22,7 +22,7 @@ use std::hint::black_box;
 /// untested in a benchmark file — see
 /// `the_absorbed_benchmark_fixtures_reproduce_their_recorded_bytes`.
 fn fixture(rows: usize, columns: usize) -> (DenseMatrix, BinaryTargets) {
-    let dataset = BenchmarkFixture::new(BenchmarkLane::ForestBinary, rows, columns)
+    let dataset = BenchmarkFixture::recorded(BenchmarkLane::ForestBinary, rows, columns)
         .unwrap()
         .generate();
     let targets = match dataset.target() {
@@ -35,7 +35,7 @@ fn fixture(rows: usize, columns: usize) -> (DenseMatrix, BinaryTargets) {
 /// Regression targets over the same design the classifier lanes use, so the
 /// regressor lanes measure the same dataset.
 fn regression_targets(rows: usize, columns: usize) -> RegressionTargets {
-    let dataset = BenchmarkFixture::new(BenchmarkLane::ForestRegression, rows, columns)
+    let dataset = BenchmarkFixture::recorded(BenchmarkLane::ForestRegression, rows, columns)
         .unwrap()
         .generate();
     match dataset.target() {

@@ -491,6 +491,47 @@ def dataset_generator_lives_only_in_numeric(root: Path) -> list[str]:
     return findings
 
 
+def benchmark_fixtures_are_drawn_at_pinned_shapes(root: Path) -> list[str]:
+    """A benchmark reaches fixtures only through the shape-checked constructor.
+
+    `BenchmarkFixture::recorded` refuses a `(lane, rows, columns)` no recorded
+    digest pins, and `src/datasets/tests.rs` asserts that roster against the
+    digest table in both directions. That closes the hole from inside the crate.
+
+    It does not close it from `benches/`, because `BenchmarkFixture::new` is
+    public and unrestricted — deliberately, since exercising these lanes at a
+    chosen shape is legitimate. A bench calling `new` would generate a valid
+    fixture at an unwatched shape, measure it, and enter it into `bench-history`
+    as the immutable baseline every later release is compared against, with
+    nothing in the repository able to detect that fixture changing underneath
+    those results. A timing lane cannot notice: a differently distributed design
+    of the same shape runs at very nearly the same speed.
+
+    So the tree that feeds `bench-history` gets the restricted constructor and
+    only that one. The rule is textual, like its siblings above: a bench that
+    reached the lane's target expressions by some *third* route would pass, and
+    that is the same accepted boundary — this closes the door that is actually
+    open.
+
+    The restricted constructor has to be reachable for the rule to mean
+    anything, so its absence from the crate is itself a finding rather than a
+    silently vacuous pass.
+    """
+    fixtures = root / "src" / "datasets" / "benchmarks.rs"
+    if "pub fn recorded(" not in read_if_present(fixtures):
+        return ["BenchmarkFixture::recorded is missing from the datasets module"]
+
+    text = tree_text(root / "benches")
+    if not text:
+        return ["benchmark tree is missing"]
+    if "BenchmarkFixture::new" in text:
+        return [
+            "benchmark draws a fixture at an unpinned shape: the benchmark tree "
+            "calls BenchmarkFixture::new, which does not check the shape roster"
+        ]
+    return []
+
+
 def preprocessing_sits_below_composition(root: Path) -> list[str]:
     """Transformers are consumed by composition, never the other way round.
 
@@ -842,6 +883,10 @@ RULES: tuple[tuple[str, Callable[[Path], list[str]]], ...] = (
     ("rng-single-source", rng_definition_lives_only_in_numeric),
     ("test-rng-single-source", rng_definition_in_tests_lives_only_in_shared_support),
     ("dataset-generator-single-source", dataset_generator_lives_only_in_numeric),
+    (
+        "absorbed-benchmark-shapes-are-pinned",
+        benchmark_fixtures_are_drawn_at_pinned_shapes,
+    ),
     ("preprocessing-below-composition", preprocessing_sits_below_composition),
     ("inspection-public-surfaces-only", inspection_uses_only_public_surfaces),
     ("loss-below-estimators", loss_depends_on_no_estimator),
@@ -905,6 +950,14 @@ def write_clean_tree(root: Path) -> Path:
         "tree/grower.rs": "//! grower\nuse crate::numeric::kernel;\npub struct DecisionTreeRegressor;\n",
         "tree/split/mod.rs": "//! split search\nuse crate::numeric::kernel;\n",
         "numeric/mod.rs": "//! numeric\npub(crate) fn kernel() {}\n",
+        # `absorbed-benchmark-shapes-are-pinned` refuses to run at all when the
+        # restricted constructor is missing, so the clean tree has to carry it
+        # for that rule's plant below to be reached rather than short-circuited.
+        "datasets/mod.rs": "//! datasets\nmod benchmarks;\n",
+        "datasets/benchmarks.rs": (
+            "//! benchmark fixtures\n"
+            "impl BenchmarkFixture { pub fn recorded() -> Self { unimplemented!() } }\n"
+        ),
         "numeric/rng/mod.rs": (
             "//! rng\npub(crate) struct OwnedRng { state: u64 }\n"
             "const INCREMENT: u64 = 0x9e37_79b9_7f4a_7c15;\n"
@@ -1101,6 +1154,18 @@ SYNTHETIC_VIOLATIONS: tuple[tuple[str, Callable[[Path], None], str], ...] = (
             root / "benches" / "models.rs", "fn mix64(value: u64) -> u64 { value }\n"
         ),
         "generator defined in the benchmark tree",
+    ),
+    (
+        # The unrestricted constructor, in the one tree that must not reach it:
+        # this is exactly the shape a new bench arm takes when someone copies an
+        # existing helper and changes the shape, which is how an unwatched
+        # fixture would enter `bench-history` in the first place.
+        "absorbed-benchmark-shapes-are-pinned",
+        lambda root: append(
+            root / "benches" / "models.rs",
+            "fn wider() { BenchmarkFixture::new(BenchmarkLane::ModelsRegression, 4096, 64); }\n",
+        ),
+        "benchmark draws a fixture at an unpinned shape",
     ),
     (
         "preprocessing-below-composition",
@@ -1334,6 +1399,18 @@ CHILD_MODULE_VIOLATIONS: tuple[tuple[str, Callable[[Path], None], str], ...] = (
         "generator defined in the benchmark tree",
     ),
     (
+        # Below the bench facade: the rule reads `benches/` recursively, and a
+        # plant in the top-level bench alone cannot tell a recursive reader from
+        # a facade-only one. A shared bench helper is where a fixture call
+        # actually lives once two arms want it.
+        "absorbed-benchmark-shapes-are-pinned",
+        lambda root: append(
+            root / "benches" / "support" / "fixture.rs",
+            "fn wider() { BenchmarkFixture::new(BenchmarkLane::ModelsRegression, 4096, 64); }\n",
+        ),
+        "benchmark draws a fixture at an unpinned shape",
+    ),
+    (
         "preprocessing-below-composition",
         lambda root: append(
             root / "src" / "preprocessing" / "standard_scaler" / "mod.rs",
@@ -1449,7 +1526,7 @@ CLEAN_TREE_PROVEN_RECURSION: dict[str, str] = {
 # an explicit edit to this number with a reason attached, which is the same
 # treatment the reach floors in `tests/artifact_hardening.rs` get. Raise it when
 # proofs are added; lower it only alongside the rule being retired.
-MINIMUM_CHILD_MODULE_PROOFS = 20
+MINIMUM_CHILD_MODULE_PROOFS = 21
 
 
 def rules_reading_a_module_directory() -> set[str]:
