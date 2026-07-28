@@ -1070,7 +1070,7 @@ impl core::marker::StructuralPartialEq for ferricml::datasets::BenchmarkLane
 #[non_exhaustive] pub enum ferricml::datasets::BinaryKind
 pub ferricml::datasets::BinaryKind::Checkerboard
 pub ferricml::datasets::BinaryKind::Circles
-pub ferricml::datasets::BinaryKind::Moons
+pub ferricml::datasets::BinaryKind::Sinusoid
 pub ferricml::datasets::BinaryKind::Xor
 impl core::clone::Clone for ferricml::datasets::BinaryKind
 pub fn ferricml::datasets::BinaryKind::clone(&self) -> ferricml::datasets::BinaryKind

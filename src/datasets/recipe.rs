@@ -15,18 +15,20 @@ use sha2::{Digest, Sha256};
 /// with it, and it carries a version so a later phase can extend the encoding
 /// without silently reusing a digest that meant something else.
 ///
-/// **Version four, because a recipe's output moved under an unchanged
-/// encoding.** The rule the tag was introduced for is that one identifier must
-/// never mean two things, and the earlier bumps served it by moving whenever the
-/// *encoding* moved. This one serves the same rule from the other side: the byte
-/// layout below is character-for-character what `v3` hashed, and yet every
-/// recipe carrying a task family now generates different data, because the task
-/// dials left [`Recipe::stream_digest`]. A `v3` digest and a `v4` digest of one
+/// **Version five, for the same reason version four was cut: a recipe's output
+/// moved under an unchanged encoding.** The rule the tag was introduced for is
+/// that one identifier must never mean two things, and the earliest bumps served
+/// it by moving whenever the *encoding* moved. `v4` served it from the other
+/// side, when the task dials left [`Recipe::stream_digest`]; `v5` serves it
+/// again. [`BinaryKind::Sinusoid`](super::BinaryKind::Sinusoid) evaluates a
+/// different expression than the boundary it replaced, so every recipe carrying
+/// it draws different data under a byte layout that did not move. A `v4` digest
+/// and a `v5` digest of one
 /// recipe name two different datasets, so they must not be one number. Nothing
 /// outside this crate has recorded any of them — the feature is unreleased — so
 /// the bump costs a cache invalidation nobody can observe, and a stale
 /// materialized container now refuses to load rather than being served as a hit.
-const SPEC_DOMAIN: &[u8] = b"ferricml.dataset.spec.v4";
+const SPEC_DOMAIN: &[u8] = b"ferricml.dataset.spec.v5";
 
 /// The domain tag the task families' auxiliary stream seeds are derived under.
 ///
@@ -1168,7 +1170,7 @@ const fn nonlinear_tag(kind: NonlinearKind) -> u8 {
 const fn binary_tag(kind: BinaryKind) -> u8 {
     match kind {
         BinaryKind::Xor => 1,
-        BinaryKind::Moons => 2,
+        BinaryKind::Sinusoid => 2,
         BinaryKind::Circles => 3,
         BinaryKind::Checkerboard => 4,
     }

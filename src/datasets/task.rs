@@ -374,8 +374,17 @@ pub enum BinaryKind {
     /// The exclusive-or boundary: the sign of the first two columns' product.
     /// A linear classifier's best achievable accuracy is the majority rate.
     Xor,
-    /// Two interleaved crescents: the second column against a sine of the first.
-    Moons,
+    /// A sine boundary: the second column against a full-period sine of the
+    /// first.
+    ///
+    /// The boundary is `x₂ = sin(2π x₁)`, one whole period across the design's
+    /// `[-1, 1)` support, at the full amplitude of that support. Both properties
+    /// are load-bearing. A sine of *fractional* period is nearly its own tangent
+    /// line, and a boundary of amplitude much below one leaves a rule on `x₂`
+    /// alone almost nothing to get wrong; the family's own shortfall instrument
+    /// measured an earlier `x₂ = 0.6 sin(2 x₁)` boundary as linearly solvable to
+    /// within half a point of its Bayes ceiling.
+    Sinusoid,
     /// A circular boundary: inside or outside a disc centred at the origin.
     Circles,
     /// A four-cell checkerboard over the first two columns, so the boundary
@@ -397,7 +406,7 @@ impl BinaryKind {
     pub(super) const fn boundary_portability(self) -> Portability {
         match self {
             Self::Xor | Self::Circles | Self::Checkerboard => Portability::BitExact,
-            Self::Moons => Portability::PerRunner,
+            Self::Sinusoid => Portability::PerRunner,
         }
     }
 
@@ -406,7 +415,14 @@ impl BinaryKind {
         let (first, second) = (f64::from(row[0]), f64::from(row[1]));
         match self {
             Self::Xor => 4.0 * first * second,
-            Self::Moons => second - 0.6 * (2.0 * first).sin(),
+            // The leading `2.0` is the same device as `Xor`'s `4.0` below: the
+            // boundary's own expression carries the scale that makes its scores
+            // comparable with the other three, so `separation` stays a dial the
+            // caller turns rather than a correction the caller has to apply.
+            // Without it the best linear rule falls only `0.15` short of Bayes
+            // at the suite's `separation`, straddling the threshold the family
+            // test holds curved boundaries to.
+            Self::Sinusoid => 2.0 * (second - (2.0 * std::f64::consts::PI * first).sin()),
             Self::Circles => 0.5 - (first * first + second * second),
             Self::Checkerboard => {
                 // `floor` is exact on every target — it is an IEEE-754

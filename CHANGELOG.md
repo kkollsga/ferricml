@@ -107,7 +107,13 @@ and releases use [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   generalized linear count or positive response with a known rate, an
   ill-conditioned design built to a requested condition number and rank, a
   logistic binary problem at a requested prevalence, and four nonlinear binary
-  boundaries. Every one of them records what it knows through `Truth` —
+  boundaries. **All four of those boundaries defeat a linear rule**, which is
+  measured rather than asserted: the family's own instrument scores the best
+  least-squares linear rule against each boundary's Bayes accuracy, and the
+  smallest gap is `0.188`. `BinaryKind::Sinusoid` is named for the curve it
+  draws — `x₂ = sin(2π x₁)`, one full period across the design's support — and
+  is the boundary that reading forced into its present shape. Every one of them
+  records what it knows through `Truth` —
   coefficients, an intercept, a per-row conditional mean, a per-row Bayes
   probability, an exact algebraic rank — which is what turns "where do two
   libraries disagree" into "which one is closer to right".

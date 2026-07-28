@@ -514,7 +514,7 @@ const fn nonlinear_label(kind: NonlinearKind) -> &'static str {
 const fn binary_label(kind: BinaryKind) -> &'static str {
     match kind {
         BinaryKind::Xor => "xor",
-        BinaryKind::Moons => "moons",
+        BinaryKind::Sinusoid => "sinusoid",
         BinaryKind::Circles => "circles",
         BinaryKind::Checkerboard => "checkerboard",
     }
@@ -1096,7 +1096,7 @@ impl<'a> Cursor<'a> {
                 self.key("boundary")?;
                 let kind = match self.string()? {
                     "xor" => BinaryKind::Xor,
-                    "moons" => BinaryKind::Moons,
+                    "sinusoid" => BinaryKind::Sinusoid,
                     "circles" => BinaryKind::Circles,
                     "checkerboard" => BinaryKind::Checkerboard,
                     _ => return Err(self.fault()),

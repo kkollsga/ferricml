@@ -692,7 +692,8 @@ fn the_glm_families_stay_inside_their_support_and_recover_their_rate() {
 /// [`Task::LinearBinary`] recipe and required them to disagree on more than a
 /// quarter of the rows. That recipe's coefficients are a *random draw*, so the
 /// quantity being thresholded was which way an unrelated vector happened to
-/// point. Swept over eight seeds at the same shape, the moons disagreement ran
+/// point. Swept over eight seeds at the same shape, the sine boundary's
+/// disagreement ran
 /// `0.2388, 0.6909, 0.5874, 0.5879, 0.4932, 0.4277, 0.6299, 0.5708` — and the
 /// assertion's own logic scored the anti-correlated draws at `0.69` as *more*
 /// nonlinear than the aligned one at `0.24`, which a sign flip alone produces.
@@ -701,32 +702,39 @@ fn the_glm_families_stay_inside_their_support_and_recover_their_rate() {
 ///
 /// The replacement fits the least-squares linear rule to the boundary's own
 /// labels and places its threshold at the labels' own positive rate, so it is
-/// invariant to sign and to any other recipe. Measured over seeds `13..=17`:
+/// invariant to sign and to any other recipe. Measured over seeds `13..=32` at
+/// both `2048 x 4` and `4096 x 8`:
 ///
-/// | boundary | Bayes − best linear |
-/// |---|---|
-/// | `Checkerboard` | `0.449 .. 0.470` |
-/// | `Xor` | `0.334 .. 0.353` |
-/// | `Circles` | `0.228 .. 0.250` |
-/// | `Moons` | `-0.009 .. 0.014` |
-/// | `LinearBinary` (control) | `-0.015 .. 0.006` |
+/// | boundary | Bayes − best linear | Bayes accuracy |
+/// |---|---|---|
+/// | `Checkerboard` | `0.449 .. 0.483` | `0.974 .. 0.982` |
+/// | `Xor` | `0.329 .. 0.358` | `0.857 .. 0.873` |
+/// | `Circles` | `0.228 .. 0.266` | `0.759 .. 0.771` |
+/// | `Sinusoid` | `0.188 .. 0.220` | `0.921 .. 0.930` |
+/// | `LinearBinary` (control) | `-0.015 .. 0.006` | — |
 ///
-/// # Moons is linearly solvable at this design's width, and says so
+/// # The sine boundary was redesigned because it read its own null
 ///
 /// The control is what makes the rest of the table readable: on a genuinely
 /// linear problem the gap is zero to within a percent, which is the instrument
-/// reading its own null. Moons sits in that null band. Its boundary is
-/// `x₂ = 0.6 sin(2 x₁)`, and over `x₁ ∈ [-1, 1)` a sine of that argument is
-/// nearly its own tangent line, so the curvature costs the best linear rule
-/// under two points of accuracy. Asserting that rather than hiding it is the
-/// point: a consumer choosing a boundary to defeat a linear model should choose
-/// one of the other three, and a consumer wanting a *mildly* curved boundary
-/// now has one that is documented as mild.
+/// reading its own null. The boundary now called [`BinaryKind::Sinusoid`] used
+/// to sit in that null band, at `-0.009 .. 0.014`, because it was
+/// `x₂ = 0.6 sin(2 x₁)` and over `x₁ ∈ [-1, 1)` a sine of that argument is
+/// nearly its own tangent line. A caller asking for a curved binary boundary
+/// was handed one a line solves, which is not a documentable property so much
+/// as a family that does not do what its name says.
+///
+/// The replacement is `x₂ = sin(2π x₁)` — one full period across the support,
+/// at the support's own amplitude — scored through a leading `2.0` the way
+/// `Xor` carries a leading `4.0`. Frequency and amplitude alone were measured
+/// insufficient: at `x₂ = sin(2π x₁)` unscaled the reading is `0.145 .. 0.158`,
+/// straddling `CURVED_SHORTFALL` rather than clearing it. All four boundaries
+/// are now curved boundaries, which is what the family claims to offer.
 #[test]
 fn the_nonlinear_binary_boundaries_are_four_different_problems() {
     let kinds = [
         BinaryKind::Xor,
-        BinaryKind::Moons,
+        BinaryKind::Sinusoid,
         BinaryKind::Circles,
         BinaryKind::Checkerboard,
     ];
@@ -781,19 +789,20 @@ fn the_nonlinear_binary_boundaries_are_four_different_problems() {
 
     for (kind, dataset) in &datasets {
         let shortfall = linear_shortfall(dataset);
+        // Every boundary is curved, repeating or enclosing, and none of them is
+        // a problem a linear rule comes close on: the smallest reading is still
+        // nearly four times the null band the control sits inside. Written as an
+        // exhaustive match rather than a bare loop so a boundary added later
+        // fails to compile until someone decides which population it joins —
+        // this family already shipped one boundary that quietly joined the
+        // wrong one.
         match kind {
-            // A curved, repeating or enclosing boundary: no linear rule comes
-            // close, and the smallest of the three reads fifteen times the null
-            // band the control and the moons boundary sit inside.
-            BinaryKind::Xor | BinaryKind::Circles | BinaryKind::Checkerboard => assert!(
+            BinaryKind::Xor
+            | BinaryKind::Sinusoid
+            | BinaryKind::Circles
+            | BinaryKind::Checkerboard => assert!(
                 shortfall > CURVED_SHORTFALL,
                 "{kind:?} left the best linear rule only {shortfall} short of Bayes"
-            ),
-            // Documented above: mild curvature a line absorbs.
-            BinaryKind::Moons => assert!(
-                shortfall.abs() < NULL_SHORTFALL,
-                "the moons boundary read {shortfall}, outside the null band it is \
-                 documented to sit in"
             ),
         }
     }
@@ -802,10 +811,9 @@ fn the_nonlinear_binary_boundaries_are_four_different_problems() {
 /// The largest shortfall a *linearly solvable* problem produced over seeds
 /// `13..=17`, rounded up by a factor of three.
 ///
-/// The measured extreme was `0.015` across the linear control and the moons
-/// boundary together, so this is loose enough that a different libm's logistic
-/// cannot reach it and tight enough that it stays an order of magnitude below
-/// the smallest curved reading.
+/// The measured extreme was `0.015`, on the linear control, so this is loose
+/// enough that a different libm's logistic cannot reach it and tight enough that
+/// it stays well below the smallest curved reading.
 const NULL_SHORTFALL: f64 = 0.05;
 
 /// The smallest shortfall a *curved* boundary produced over the same seeds,
@@ -814,6 +822,9 @@ const NULL_SHORTFALL: f64 = 0.05;
 /// The measured minimum was `0.228`, on `Circles`. Three times the null band and
 /// two thirds of the minimum, so the two populations are separated by a factor
 /// of ten in either direction rather than by a margin that had to be fitted.
+/// [`BinaryKind::Sinusoid`], the closest boundary to it after its redesign,
+/// reads `0.188` at its own minimum — a quarter above this threshold rather than
+/// against it.
 const CURVED_SHORTFALL: f64 = 0.15;
 
 /// How far the best linear rule over a design falls short of the Bayes accuracy
@@ -1541,7 +1552,7 @@ fn the_declared_portability_envelope_is_the_weaker_of_the_task_and_the_contamina
         );
     }
     assert_eq!(
-        BinaryKind::Moons.boundary_portability(),
+        BinaryKind::Sinusoid.boundary_portability(),
         Portability::PerRunner
     );
 
