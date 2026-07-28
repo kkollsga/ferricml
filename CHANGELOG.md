@@ -211,6 +211,40 @@ and releases use [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   and its outcome agrees with the recorded utility order exactly, so the data is
   separable by the recorded coefficients by construction.
 
+- **`datasets::Family`, `AccuracySuite` and `PerformanceGrid`: two catalogues
+  that span the generator.** `Family` is a task family with its parameters
+  removed, `Task::family` is the projection, and `Family::ALL` is the roster.
+  `AccuracySuite::cases` is every family as one small, clean problem at `256x8`
+  whose answer is recorded; `PerformanceGrid::cases` is every family at every
+  point of a `256/1024/4096` × `8/32/128` sweep, because a source draws per
+  element, a linear target costs a dot product per row, a ranking family sorts
+  within each query block, and a one-dimensional sweep would attribute all of
+  that to the wrong axis. Both hand back `SuiteCase`s carrying a `Recipe`, so a
+  robustness run is a suite crossed with a `Contamination` ladder rather than a
+  third table.
+
+  **A family added without a case is loud.** Four things fail before such a
+  change reaches a reader, and the first three are the compiler: a new `Task`
+  variant does not compile until `Task::family` names its family; a new `Family`
+  variant does not compile until the crate-internal declaration-order walk places
+  it; placing it moves `Family::COUNT`, which is the declared length of
+  `Family::ALL`, so the roster literal stops matching its own type. Only then
+  does anything run, and `every_family_has_an_accuracy_case` fails by name —
+  because both `cases` functions are written-out tables rather than a `match`
+  over the roster, which would have made the test incapable of failing. Verified
+  by planting each link in turn, including the eleventh-variant case.
+
+  **Half the accuracy suite is `Portability::PerRunner`, and says which half.**
+  The GLM, ill-conditioned, linear-binary, nonlinear-binary and multiclass cases
+  evaluate a transcendental; the other five reproduce byte for byte anywhere.
+  The split is pinned in a test as well as documented, so a family changing its
+  envelope has to move both.
+
+- **`docs/dataset-suites.md`,** the narrative page for the above, wired into the
+  documentation site's navigation and into the `doc_pages` doctest carrier — so
+  its five Rust samples are compiled and executed by `cargo test` like every
+  other sample FerricML publishes, rather than being illustrations.
+
 ### Changed
 
 - **`Recipe::spec_digest` is now `ferricml.dataset.spec.v3`.** The encoding

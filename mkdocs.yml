@@ -97,6 +97,7 @@ nav:
   - Evaluation:
       - Evaluation and model selection: evaluation-and-model-selection.md
       - Pairwise ranking: pairwise-ranking.md
+      - Synthetic dataset suites: dataset-suites.md
   - Project:
       - Performance: model-performance.md
       - Dependency security: security.md

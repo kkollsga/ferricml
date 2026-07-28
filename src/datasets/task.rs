@@ -132,6 +132,155 @@ impl Portability {
     }
 }
 
+/// Which kind of problem a [`Task`] describes, with its parameters removed.
+///
+/// A `Task` is a family *and* a parameterisation, so a linear regression at two
+/// noise levels is two values. A catalogue that has to span the generator asks
+/// the coarser question — *which kinds of problem exist at all* — and this is
+/// the answer to it. [`Task::family`] is the projection, and
+/// [`AccuracySuite`](super::AccuracySuite) and
+/// [`PerformanceGrid`](super::PerformanceGrid) are the two catalogues held to
+/// covering every value of this type.
+///
+/// # The roster grows with the enum, and the compiler is what says so
+///
+/// A taxonomy nobody can enumerate is a taxonomy the suites can silently stop
+/// spanning, so [`Family::ALL`] exists — and the interesting question is what
+/// stops it going stale. Rust cannot enumerate an enum's variants, so the roster
+/// is data; what keeps it honest is that four separate things fail before a
+/// missing suite entry can reach a reader:
+///
+/// 1. A new [`Task`] variant does not compile until [`Task::family`]'s
+///    exhaustive match names its family.
+/// 2. A new `Family` variant does not compile until the crate-internal
+///    declaration-order walk behind [`Family::COUNT`] places it.
+/// 3. Placing it changes `COUNT`, which is the declared length of
+///    [`Family::ALL`], so the roster literal stops matching its own type.
+/// 4. Only then does anything reach a test, and `suite_tests.rs`'s
+///    `every_family_has_an_accuracy_case` is what fails: the suites are
+///    hand-written tables rather than a map over the roster, precisely so that
+///    forgetting one is a red test rather than an unreachable branch.
+///
+/// The one gap left is a family declared to follow nothing while another family
+/// already does — an actively wrong total order rather than an omission. It is
+/// written down here rather than papered over.
+///
+/// It is `#[non_exhaustive]` because a new family must not be a breaking change
+/// for a caller matching only the ones it asked for.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum Family {
+    /// [`Task::LinearRegression`].
+    LinearRegression,
+    /// [`Task::NonlinearRegression`].
+    NonlinearRegression,
+    /// [`Task::GlmRegression`].
+    GlmRegression,
+    /// [`Task::IllConditioned`].
+    IllConditioned,
+    /// [`Task::LinearBinary`].
+    LinearBinary,
+    /// [`Task::NonlinearBinary`].
+    NonlinearBinary,
+    /// [`Task::Multiclass`].
+    Multiclass,
+    /// [`Task::Clustered`].
+    Clustered,
+    /// [`Task::TimeOrdered`].
+    TimeOrdered,
+    /// [`Task::Ranking`].
+    Ranking,
+}
+
+impl Family {
+    /// How many families there are.
+    ///
+    /// Counted at compile time by walking the crate-internal `Family::next` from
+    /// the first family, rather than written down: a new family placed in that
+    /// order moves this number, and this number is the declared length of
+    /// [`Family::ALL`]. A roster that did not grow with the enum would therefore
+    /// fail to compile rather than fail to be noticed.
+    pub const COUNT: usize = {
+        let mut count = 1;
+        let mut family = Self::LinearRegression;
+        while let Some(next) = family.next() {
+            family = next;
+            count += 1;
+        }
+        count
+    };
+
+    /// Every family, in declaration order.
+    ///
+    /// ```
+    /// use ferricml::datasets::Family;
+    ///
+    /// assert_eq!(Family::ALL.len(), Family::COUNT);
+    /// assert_eq!(Family::ALL[0], Family::LinearRegression);
+    /// ```
+    pub const ALL: [Self; Self::COUNT] = [
+        Self::LinearRegression,
+        Self::NonlinearRegression,
+        Self::GlmRegression,
+        Self::IllConditioned,
+        Self::LinearBinary,
+        Self::NonlinearBinary,
+        Self::Multiclass,
+        Self::Clustered,
+        Self::TimeOrdered,
+        Self::Ranking,
+    ];
+
+    /// The family after this one in declaration order, or `None` at the end.
+    ///
+    /// Crate-internal, because it is machinery rather than vocabulary: its only
+    /// callers are [`Family::COUNT`] and the test that asserts [`Family::ALL`]
+    /// *is* this order. Exhaustive, so a new family cannot compile until it is
+    /// placed.
+    pub(super) const fn next(self) -> Option<Self> {
+        match self {
+            Self::LinearRegression => Some(Self::NonlinearRegression),
+            Self::NonlinearRegression => Some(Self::GlmRegression),
+            Self::GlmRegression => Some(Self::IllConditioned),
+            Self::IllConditioned => Some(Self::LinearBinary),
+            Self::LinearBinary => Some(Self::NonlinearBinary),
+            Self::NonlinearBinary => Some(Self::Multiclass),
+            Self::Multiclass => Some(Self::Clustered),
+            Self::Clustered => Some(Self::TimeOrdered),
+            Self::TimeOrdered => Some(Self::Ranking),
+            Self::Ranking => None,
+        }
+    }
+
+    /// A stable, lower-case, hyphenated name for this family.
+    ///
+    /// Stable in the sense that matters for measurement: it is the identity a
+    /// recorded benchmark row or an accuracy report is filed under, so renaming
+    /// one silently orphans every historical record that named it. It is not
+    /// derived from the variant's spelling, so a Rust-level rename and a
+    /// record-level rename are two decisions rather than one.
+    ///
+    /// ```
+    /// use ferricml::datasets::Family;
+    ///
+    /// assert_eq!(Family::IllConditioned.label(), "ill-conditioned");
+    /// ```
+    pub const fn label(self) -> &'static str {
+        match self {
+            Self::LinearRegression => "linear-regression",
+            Self::NonlinearRegression => "nonlinear-regression",
+            Self::GlmRegression => "glm-regression",
+            Self::IllConditioned => "ill-conditioned",
+            Self::LinearBinary => "linear-binary",
+            Self::NonlinearBinary => "nonlinear-binary",
+            Self::Multiclass => "multiclass",
+            Self::Clustered => "clustered",
+            Self::TimeOrdered => "time-ordered",
+            Self::Ranking => "ranking",
+        }
+    }
+}
+
 /// Which nonlinear shape a regression target takes.
 ///
 /// Two of these are transcendental-free and two are not, which is exactly why
@@ -531,6 +680,38 @@ pub enum Task {
 impl Eq for Task {}
 
 impl Task {
+    /// Which family this task belongs to, with its parameters dropped.
+    ///
+    /// The match is exhaustive, which is the point: a new variant of this enum
+    /// does not compile until it says which family it joins, and [`Family`]'s
+    /// own machinery then carries that as far as the suites. See [`Family`] for
+    /// the whole chain and for the one gap left in it.
+    ///
+    /// ```
+    /// use ferricml::datasets::{Family, NonlinearKind, Task};
+    ///
+    /// let task = Task::NonlinearRegression {
+    ///     kind: NonlinearKind::Friedman,
+    ///     noise_scale: 0.1,
+    /// };
+    /// assert_eq!(task.family(), Family::NonlinearRegression);
+    /// assert_eq!(task.family().label(), "nonlinear-regression");
+    /// ```
+    pub const fn family(&self) -> Family {
+        match self {
+            Self::LinearRegression { .. } => Family::LinearRegression,
+            Self::NonlinearRegression { .. } => Family::NonlinearRegression,
+            Self::GlmRegression { .. } => Family::GlmRegression,
+            Self::IllConditioned { .. } => Family::IllConditioned,
+            Self::LinearBinary { .. } => Family::LinearBinary,
+            Self::NonlinearBinary { .. } => Family::NonlinearBinary,
+            Self::Multiclass { .. } => Family::Multiclass,
+            Self::Clustered { .. } => Family::Clustered,
+            Self::TimeOrdered { .. } => Family::TimeOrdered,
+            Self::Ranking { .. } => Family::Ranking,
+        }
+    }
+
     /// This family's determinism envelope.
     ///
     /// ```

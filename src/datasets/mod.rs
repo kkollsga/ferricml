@@ -116,6 +116,17 @@
 //! would choose — they are transcriptions, pinned by value, and the module
 //! documentation in `presets.rs` says which parts of the arithmetic are
 //! load-bearing.
+//!
+//! # Two catalogues that span the whole of it
+//!
+//! A generator with ten families is a kit until something says *which ten*.
+//! [`Family`] is that vocabulary, [`AccuracySuite`] is every family as one small
+//! problem with a recoverable answer, and [`PerformanceGrid`] is every family at
+//! every point of a rows × columns sweep. Both are held to covering
+//! [`Family::ALL`] by tests that fail by name, so a family added without a case
+//! is a red suite rather than a quiet gap; `docs/dataset-suites.md` is the
+//! narrative version, and its samples are compiled and run like every other page
+//! FerricML publishes.
 
 mod benchmarks;
 mod contamination;
@@ -125,12 +136,15 @@ mod presets;
 mod recipe;
 mod source;
 mod structural;
+mod suites;
 mod task;
 
 #[cfg(test)]
 mod family_tests;
 #[cfg(test)]
 mod structural_tests;
+#[cfg(test)]
+mod suite_tests;
 #[cfg(test)]
 mod tests;
 
@@ -141,4 +155,5 @@ pub use error::{DatasetError, Parameter};
 pub use presets::{ReferenceLane, ReferenceQuality};
 pub use recipe::{Recipe, Source};
 pub use structural::{ClassBalance, ClassGeometry, GroupPattern};
-pub use task::{BinaryKind, GlmLink, NonlinearKind, Portability, Task};
+pub use suites::{AccuracySuite, PerformanceGrid, SuiteCase};
+pub use task::{BinaryKind, Family, GlmLink, NonlinearKind, Portability, Task};

@@ -90,6 +90,9 @@ mod doc_pages {
     #[doc = include_str!("../docs/artifact-envelope.md")]
     mod artifact_envelope {}
 
+    #[doc = include_str!("../docs/dataset-suites.md")]
+    mod dataset_suites {}
+
     #[doc = include_str!("../docs/determinism.md")]
     mod determinism {}
 

@@ -1160,6 +1160,30 @@ pub fn ferricml::datasets::DatasetError::fmt(&self, &mut core::fmt::Formatter<'_
 impl core::fmt::Display for ferricml::datasets::DatasetError
 pub fn ferricml::datasets::DatasetError::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
 impl core::marker::StructuralPartialEq for ferricml::datasets::DatasetError
+#[non_exhaustive] pub enum ferricml::datasets::Family
+pub ferricml::datasets::Family::Clustered
+pub ferricml::datasets::Family::GlmRegression
+pub ferricml::datasets::Family::IllConditioned
+pub ferricml::datasets::Family::LinearBinary
+pub ferricml::datasets::Family::LinearRegression
+pub ferricml::datasets::Family::Multiclass
+pub ferricml::datasets::Family::NonlinearBinary
+pub ferricml::datasets::Family::NonlinearRegression
+pub ferricml::datasets::Family::Ranking
+pub ferricml::datasets::Family::TimeOrdered
+impl ferricml::datasets::Family
+pub const ferricml::datasets::Family::ALL: [Self; 10]
+pub const ferricml::datasets::Family::COUNT: usize
+pub const fn ferricml::datasets::Family::label(self) -> &'static str
+impl core::clone::Clone for ferricml::datasets::Family
+pub fn ferricml::datasets::Family::clone(&self) -> ferricml::datasets::Family
+impl core::cmp::Eq for ferricml::datasets::Family
+impl core::cmp::PartialEq for ferricml::datasets::Family
+pub fn ferricml::datasets::Family::eq(&self, &ferricml::datasets::Family) -> bool
+impl core::fmt::Debug for ferricml::datasets::Family
+pub fn ferricml::datasets::Family::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for ferricml::datasets::Family
+impl core::marker::StructuralPartialEq for ferricml::datasets::Family
 #[non_exhaustive] pub enum ferricml::datasets::GlmLink
 pub ferricml::datasets::GlmLink::LogCount
 pub ferricml::datasets::GlmLink::LogPositive
@@ -1339,6 +1363,7 @@ pub ferricml::datasets::Task::TimeOrdered::informative: usize
 pub ferricml::datasets::Task::TimeOrdered::intercept: f32
 pub ferricml::datasets::Task::TimeOrdered::noise_scale: f32
 impl ferricml::datasets::Task
+pub const fn ferricml::datasets::Task::family(&self) -> ferricml::datasets::Family
 pub const fn ferricml::datasets::Task::portability(&self) -> ferricml::datasets::Portability
 impl core::clone::Clone for ferricml::datasets::Task
 pub fn ferricml::datasets::Task::clone(&self) -> ferricml::datasets::Task
@@ -1427,6 +1452,11 @@ impl core::fmt::Debug for ferricml::datasets::WeightPattern
 pub fn ferricml::datasets::WeightPattern::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
 impl core::marker::Copy for ferricml::datasets::WeightPattern
 impl core::marker::StructuralPartialEq for ferricml::datasets::WeightPattern
+#[non_exhaustive] pub struct ferricml::datasets::AccuracySuite
+impl ferricml::datasets::AccuracySuite
+pub const ferricml::datasets::AccuracySuite::COLUMNS: usize
+pub const ferricml::datasets::AccuracySuite::ROWS: usize
+pub fn ferricml::datasets::AccuracySuite::cases() -> alloc::vec::Vec<ferricml::datasets::SuiteCase>
 pub struct ferricml::datasets::BenchmarkFixture
 impl ferricml::datasets::BenchmarkFixture
 pub fn ferricml::datasets::BenchmarkFixture::generate(&self) -> ferricml::datasets::Dataset
@@ -1489,6 +1519,11 @@ pub fn ferricml::datasets::Dataset::eq(&self, &ferricml::datasets::Dataset) -> b
 impl core::fmt::Debug for ferricml::datasets::Dataset
 pub fn ferricml::datasets::Dataset::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
 impl core::marker::StructuralPartialEq for ferricml::datasets::Dataset
+#[non_exhaustive] pub struct ferricml::datasets::PerformanceGrid
+impl ferricml::datasets::PerformanceGrid
+pub const ferricml::datasets::PerformanceGrid::COLUMNS: [usize; 3]
+pub const ferricml::datasets::PerformanceGrid::ROWS: [usize; 3]
+pub fn ferricml::datasets::PerformanceGrid::cases() -> alloc::vec::Vec<ferricml::datasets::SuiteCase>
 pub struct ferricml::datasets::Recipe
 impl ferricml::datasets::Recipe
 pub const fn ferricml::datasets::Recipe::columns(&self) -> usize
@@ -1540,6 +1575,22 @@ impl core::fmt::Debug for ferricml::datasets::ReferenceQuality
 pub fn ferricml::datasets::ReferenceQuality::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
 impl core::marker::Copy for ferricml::datasets::ReferenceQuality
 impl core::marker::StructuralPartialEq for ferricml::datasets::ReferenceQuality
+pub struct ferricml::datasets::SuiteCase
+impl ferricml::datasets::SuiteCase
+pub const fn ferricml::datasets::SuiteCase::family(&self) -> ferricml::datasets::Family
+pub fn ferricml::datasets::SuiteCase::generate(&self) -> ferricml::datasets::Dataset
+pub const fn ferricml::datasets::SuiteCase::name(&self) -> &'static str
+pub fn ferricml::datasets::SuiteCase::portability(&self) -> ferricml::datasets::Portability
+pub const fn ferricml::datasets::SuiteCase::recipe(&self) -> ferricml::datasets::Recipe
+impl core::clone::Clone for ferricml::datasets::SuiteCase
+pub fn ferricml::datasets::SuiteCase::clone(&self) -> ferricml::datasets::SuiteCase
+impl core::cmp::Eq for ferricml::datasets::SuiteCase
+impl core::cmp::PartialEq for ferricml::datasets::SuiteCase
+pub fn ferricml::datasets::SuiteCase::eq(&self, &ferricml::datasets::SuiteCase) -> bool
+impl core::fmt::Debug for ferricml::datasets::SuiteCase
+pub fn ferricml::datasets::SuiteCase::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for ferricml::datasets::SuiteCase
+impl core::marker::StructuralPartialEq for ferricml::datasets::SuiteCase
 pub mod ferricml::dummy
 pub struct ferricml::dummy::DummyClassifier
 impl ferricml::dummy::DummyClassifier
