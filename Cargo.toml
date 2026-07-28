@@ -143,6 +143,21 @@ criterion = { version = "0.7", default-features = false }
 ferricml = { path = ".", features = ["datasets"] }
 tempfile = "3"
 
+# The writing half of the cross-language exchange. `required-features` rather
+# than a `cfg` inside the source, because a binary whose whole subject is the
+# `datasets` surface should not exist at all when that surface does not: with
+# the feature off Cargo skips the target, and with it on the target builds.
+#
+# `src/bin/` is legal beside the crate-root rule in
+# `scripts/check_source_layout.py`, which globs `src/*.rs` rather than
+# recursing, so `src/lib.rs` remains the only crate-root Rust source. The
+# directory ships inside `src/`, so `make package-check`'s external consumer
+# builds the archive with the binary in it and default features off.
+[[bin]]
+name = "ferricml-datagen"
+path = "src/bin/ferricml-datagen.rs"
+required-features = ["datasets"]
+
 [[bench]]
 name = "forest"
 harness = false

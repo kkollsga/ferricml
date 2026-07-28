@@ -242,8 +242,54 @@ and releases use [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 - **`docs/dataset-suites.md`,** the narrative page for the above, wired into the
   documentation site's navigation and into the `doc_pages` doctest carrier — so
-  its five Rust samples are compiled and executed by `cargo test` like every
-  other sample FerricML publishes, rather than being illustrations.
+  its Rust samples are compiled and executed by `cargo test` like every other
+  sample FerricML publishes, rather than being illustrations.
+
+- **An exchange container, so the *file* is the cross-language boundary.**
+  `datasets::DatasetExchange` writes a recipe to `<name>.manifest.json` plus
+  `<name>.bin` and reads the pair back as a `MaterializedDataset`. The manifest
+  is text — the recipe in full, its spec digest, the determinism envelope, and a
+  table of `{name, dtype, rows, columns, byte_offset, len}` — and the array file
+  is those arrays concatenated little-endian, `f32` for features, targets and
+  truth, `u8` for labels, `u64` for groups and indices. It carries no header of
+  its own, because the point is that `json.load` and `numpy.memmap` are enough
+  to read it.
+
+  **Why a file rather than a recipe.** Most families evaluate a transcendental,
+  so their bytes are `Portability::PerRunner` and a recipe alone cannot hand the
+  same problem to another machine or another language. Generating once and
+  shipping the bytes closes that, and `MaterializedDataset::portability` travels
+  with them so a reader knows which of the two statements it holds.
+
+  **The cache is the digest, not the name.** `DatasetExchange::ensure` reuses a
+  container only when the recipe recorded inside it is the recipe being asked
+  for, so a repeated request is a file read and a changed knob regenerates under
+  the same name. A name-keyed cache would have handed back the previous problem.
+
+  **Read the way a model artifact is read.** The recipe is checked against its
+  recorded digest — an edited recipe still hashes to something, and what makes
+  the edit visible is that it no longer hashes to the value beside it — the
+  array file against its own digest, and the array table has to describe the
+  file exactly: contiguous, in order, uniquely named, ending on the last byte.
+  Above all, **no allocation is sized from a declared length before the bytes
+  behind it are read.** That is the Sprint R defect class, where a 148-byte
+  artifact reserved 32 MB while returning the correct error, so
+  `tests/dataset_exchange.rs` measures peak allocation rather than asserting a
+  refusal: six hostile array tables, each declaring four billion `f32` values,
+  each refused inside a budget of 4 KiB plus three times the container's length,
+  with a control that proves the meter still fires.
+
+  No new dependency: there is no `serde` and no JSON library in the graph, so
+  the manifest is written and parsed by hand in `src/datasets/manifest.rs`. The
+  reader accepts exactly the schema the writer emits, in exactly its order, and
+  borrows every string out of the text rather than copying it.
+
+- **`ferricml-datagen`, the exchange writer as a command.** A `[[bin]]` with
+  `required-features = ["datasets"]`, so it does not exist when the generator
+  does not. Its catalogue is `AccuracySuite` and `PerformanceGrid` rather than a
+  list of its own, so a family added to the crate appears in the tool without
+  anyone remembering to add it; `--list` prints the catalogue with each entry's
+  digest, and a run reports for every entry whether it generated or reused.
 
 ### Changed
 

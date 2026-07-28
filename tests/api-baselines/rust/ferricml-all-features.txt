@@ -1037,6 +1037,22 @@ impl ferricml::data::ClassificationTargets for ferricml::data::ClassTargets
 pub fn ferricml::data::ClassTargets::as_slice(&self) -> &[u8]
 pub fn ferricml::data::ClassTargets::select(&self, &[usize]) -> core::result::Result<Self, ferricml::data::SelectionError>
 pub mod ferricml::datasets
+#[non_exhaustive] pub enum ferricml::datasets::ArrayDtype
+pub ferricml::datasets::ArrayDtype::F32
+pub ferricml::datasets::ArrayDtype::U64
+pub ferricml::datasets::ArrayDtype::U8
+impl ferricml::datasets::ArrayDtype
+pub const fn ferricml::datasets::ArrayDtype::label(self) -> &'static str
+pub const fn ferricml::datasets::ArrayDtype::stride(self) -> usize
+impl core::clone::Clone for ferricml::datasets::ArrayDtype
+pub fn ferricml::datasets::ArrayDtype::clone(&self) -> ferricml::datasets::ArrayDtype
+impl core::cmp::Eq for ferricml::datasets::ArrayDtype
+impl core::cmp::PartialEq for ferricml::datasets::ArrayDtype
+pub fn ferricml::datasets::ArrayDtype::eq(&self, &ferricml::datasets::ArrayDtype) -> bool
+impl core::fmt::Debug for ferricml::datasets::ArrayDtype
+pub fn ferricml::datasets::ArrayDtype::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for ferricml::datasets::ArrayDtype
+impl core::marker::StructuralPartialEq for ferricml::datasets::ArrayDtype
 #[non_exhaustive] pub enum ferricml::datasets::BenchmarkLane
 pub ferricml::datasets::BenchmarkLane::BoostingRegression
 pub ferricml::datasets::BenchmarkLane::ForestBinary
@@ -1065,6 +1081,18 @@ impl core::fmt::Debug for ferricml::datasets::BinaryKind
 pub fn ferricml::datasets::BinaryKind::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
 impl core::marker::Copy for ferricml::datasets::BinaryKind
 impl core::marker::StructuralPartialEq for ferricml::datasets::BinaryKind
+#[non_exhaustive] pub enum ferricml::datasets::CacheOutcome
+pub ferricml::datasets::CacheOutcome::Generated
+pub ferricml::datasets::CacheOutcome::Reused
+impl core::clone::Clone for ferricml::datasets::CacheOutcome
+pub fn ferricml::datasets::CacheOutcome::clone(&self) -> ferricml::datasets::CacheOutcome
+impl core::cmp::Eq for ferricml::datasets::CacheOutcome
+impl core::cmp::PartialEq for ferricml::datasets::CacheOutcome
+pub fn ferricml::datasets::CacheOutcome::eq(&self, &ferricml::datasets::CacheOutcome) -> bool
+impl core::fmt::Debug for ferricml::datasets::CacheOutcome
+pub fn ferricml::datasets::CacheOutcome::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for ferricml::datasets::CacheOutcome
+impl core::marker::StructuralPartialEq for ferricml::datasets::CacheOutcome
 #[non_exhaustive] pub enum ferricml::datasets::ClassBalance
 pub ferricml::datasets::ClassBalance::Balanced
 pub ferricml::datasets::ClassBalance::Imbalanced
@@ -1160,6 +1188,28 @@ pub fn ferricml::datasets::DatasetError::fmt(&self, &mut core::fmt::Formatter<'_
 impl core::fmt::Display for ferricml::datasets::DatasetError
 pub fn ferricml::datasets::DatasetError::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
 impl core::marker::StructuralPartialEq for ferricml::datasets::DatasetError
+#[non_exhaustive] pub enum ferricml::datasets::ExchangeError
+pub ferricml::datasets::ExchangeError::DataChecksumMismatch
+pub ferricml::datasets::ExchangeError::InvalidArrayTable
+pub ferricml::datasets::ExchangeError::InvalidName
+pub ferricml::datasets::ExchangeError::InvalidRecipe(ferricml::datasets::DatasetError)
+pub ferricml::datasets::ExchangeError::Io
+pub ferricml::datasets::ExchangeError::Io::path: std::path::PathBuf
+pub ferricml::datasets::ExchangeError::Io::source: core::io::error::Error
+pub ferricml::datasets::ExchangeError::MalformedManifest
+pub ferricml::datasets::ExchangeError::MalformedManifest::offset: usize
+pub ferricml::datasets::ExchangeError::SizeLimitExceeded
+pub ferricml::datasets::ExchangeError::SizeLimitExceeded::actual: u64
+pub ferricml::datasets::ExchangeError::SizeLimitExceeded::limit: usize
+pub ferricml::datasets::ExchangeError::SpecDigestMismatch
+pub ferricml::datasets::ExchangeError::UnsupportedFormat
+pub ferricml::datasets::ExchangeError::UnsupportedFormat::found: u64
+impl core::error::Error for ferricml::datasets::ExchangeError
+pub fn ferricml::datasets::ExchangeError::source(&self) -> core::option::Option<&(dyn core::error::Error + 'static)>
+impl core::fmt::Debug for ferricml::datasets::ExchangeError
+pub fn ferricml::datasets::ExchangeError::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::fmt::Display for ferricml::datasets::ExchangeError
+pub fn ferricml::datasets::ExchangeError::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
 #[non_exhaustive] pub enum ferricml::datasets::Family
 pub ferricml::datasets::Family::Clustered
 pub ferricml::datasets::Family::GlmRegression
@@ -1519,6 +1569,61 @@ pub fn ferricml::datasets::Dataset::eq(&self, &ferricml::datasets::Dataset) -> b
 impl core::fmt::Debug for ferricml::datasets::Dataset
 pub fn ferricml::datasets::Dataset::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
 impl core::marker::StructuralPartialEq for ferricml::datasets::Dataset
+pub struct ferricml::datasets::DatasetArray
+impl ferricml::datasets::DatasetArray
+pub const fn ferricml::datasets::DatasetArray::columns(&self) -> usize
+pub const fn ferricml::datasets::DatasetArray::dtype(&self) -> ferricml::datasets::ArrayDtype
+pub fn ferricml::datasets::DatasetArray::f32_values(&self) -> core::option::Option<&[f32]>
+pub fn ferricml::datasets::DatasetArray::is_empty(&self) -> bool
+pub fn ferricml::datasets::DatasetArray::len(&self) -> usize
+pub fn ferricml::datasets::DatasetArray::name(&self) -> &str
+pub const fn ferricml::datasets::DatasetArray::rows(&self) -> usize
+pub fn ferricml::datasets::DatasetArray::u64_values(&self) -> core::option::Option<&[u64]>
+pub fn ferricml::datasets::DatasetArray::u8_values(&self) -> core::option::Option<&[u8]>
+impl core::clone::Clone for ferricml::datasets::DatasetArray
+pub fn ferricml::datasets::DatasetArray::clone(&self) -> ferricml::datasets::DatasetArray
+impl core::cmp::PartialEq for ferricml::datasets::DatasetArray
+pub fn ferricml::datasets::DatasetArray::eq(&self, &ferricml::datasets::DatasetArray) -> bool
+impl core::fmt::Debug for ferricml::datasets::DatasetArray
+pub fn ferricml::datasets::DatasetArray::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::StructuralPartialEq for ferricml::datasets::DatasetArray
+pub struct ferricml::datasets::DatasetExchange
+impl ferricml::datasets::DatasetExchange
+pub const ferricml::datasets::DatasetExchange::FORMAT_VERSION: u32
+pub const ferricml::datasets::DatasetExchange::MAX_DATA_BYTES: usize
+pub const ferricml::datasets::DatasetExchange::MAX_MANIFEST_BYTES: usize
+pub fn ferricml::datasets::DatasetExchange::data_path(&self, &str) -> core::result::Result<std::path::PathBuf, ferricml::datasets::ExchangeError>
+pub fn ferricml::datasets::DatasetExchange::ensure(&self, &str, &ferricml::datasets::Recipe) -> core::result::Result<(ferricml::datasets::MaterializedDataset, ferricml::datasets::CacheOutcome), ferricml::datasets::ExchangeError>
+pub fn ferricml::datasets::DatasetExchange::load(&self, &str) -> core::result::Result<ferricml::datasets::MaterializedDataset, ferricml::datasets::ExchangeError>
+pub fn ferricml::datasets::DatasetExchange::manifest_path(&self, &str) -> core::result::Result<std::path::PathBuf, ferricml::datasets::ExchangeError>
+pub fn ferricml::datasets::DatasetExchange::materialize(&self, &str, &ferricml::datasets::Recipe) -> core::result::Result<ferricml::datasets::MaterializedDataset, ferricml::datasets::ExchangeError>
+pub fn ferricml::datasets::DatasetExchange::new(impl core::convert::Into<std::path::PathBuf>) -> Self
+pub fn ferricml::datasets::DatasetExchange::root(&self) -> &std::path::Path
+impl core::clone::Clone for ferricml::datasets::DatasetExchange
+pub fn ferricml::datasets::DatasetExchange::clone(&self) -> ferricml::datasets::DatasetExchange
+impl core::cmp::Eq for ferricml::datasets::DatasetExchange
+impl core::cmp::PartialEq for ferricml::datasets::DatasetExchange
+pub fn ferricml::datasets::DatasetExchange::eq(&self, &ferricml::datasets::DatasetExchange) -> bool
+impl core::fmt::Debug for ferricml::datasets::DatasetExchange
+pub fn ferricml::datasets::DatasetExchange::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::StructuralPartialEq for ferricml::datasets::DatasetExchange
+pub struct ferricml::datasets::MaterializedDataset
+impl ferricml::datasets::MaterializedDataset
+pub fn ferricml::datasets::MaterializedDataset::array(&self, &str) -> core::option::Option<&ferricml::datasets::DatasetArray>
+pub fn ferricml::datasets::MaterializedDataset::arrays(&self) -> &[ferricml::datasets::DatasetArray]
+pub const fn ferricml::datasets::MaterializedDataset::data_bytes(&self) -> usize
+pub const fn ferricml::datasets::MaterializedDataset::data_digest(&self) -> [u8; 32]
+pub fn ferricml::datasets::MaterializedDataset::new(&ferricml::datasets::Recipe) -> Self
+pub const fn ferricml::datasets::MaterializedDataset::portability(&self) -> ferricml::datasets::Portability
+pub const fn ferricml::datasets::MaterializedDataset::recipe(&self) -> ferricml::datasets::Recipe
+pub const fn ferricml::datasets::MaterializedDataset::spec_digest(&self) -> [u8; 32]
+impl core::clone::Clone for ferricml::datasets::MaterializedDataset
+pub fn ferricml::datasets::MaterializedDataset::clone(&self) -> ferricml::datasets::MaterializedDataset
+impl core::cmp::PartialEq for ferricml::datasets::MaterializedDataset
+pub fn ferricml::datasets::MaterializedDataset::eq(&self, &ferricml::datasets::MaterializedDataset) -> bool
+impl core::fmt::Debug for ferricml::datasets::MaterializedDataset
+pub fn ferricml::datasets::MaterializedDataset::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::StructuralPartialEq for ferricml::datasets::MaterializedDataset
 #[non_exhaustive] pub struct ferricml::datasets::PerformanceGrid
 impl ferricml::datasets::PerformanceGrid
 pub const ferricml::datasets::PerformanceGrid::COLUMNS: [usize; 3]

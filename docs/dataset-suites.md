@@ -209,6 +209,69 @@ this crate cannot keep across a libm change it does not control.
 > rational approximation, or a bit-exact family acquiring a transcendental — and
 > it has to move the test and this page together.
 
+## Handing the data to another language
+
+A per-runner recipe is not enough to give another language the same problem, and
+reimplementing the generator there would be a second thing to keep
+byte-identical by hand. So the *file* is the boundary: generate once, write it
+down, and let every consumer read the same bytes.
+
+A container is two files sharing a stem. `<name>.manifest.json` is text — the
+recipe in full, its spec digest, the determinism envelope, and a table of
+`{name, dtype, rows, columns, byte_offset, len}` — and `<name>.bin` is those
+arrays concatenated little-endian: `f32` for features, targets and truth, `u8`
+for labels, `u64` for groups and indices. Nothing in the array file needs
+parsing, which is why it carries no header: the pair opens with `json.load` and
+`numpy.memmap` and needs no FerricML code at all.
+
+```rust
+use ferricml::datasets::{AccuracySuite, CacheOutcome, DatasetExchange};
+
+let exchange = DatasetExchange::new(std::env::temp_dir().join("ferricml-docs-exchange"));
+let case = AccuracySuite::cases()[0];
+
+let (container, _) = exchange.ensure("accuracy_linear-regression", &case.recipe())?;
+
+// Every array is named and shaped, so a reader slices the file without
+// knowing which family produced it.
+let features = container.array("features").expect("every container has a design");
+assert_eq!((features.rows(), features.columns()), (256, 8));
+assert_eq!(features.dtype().label(), "f32");
+
+// The answer travels with the data, which is the whole reason for the format.
+assert!(container.array("truth_coefficients").is_some());
+
+// Asking again for the same recipe is a file read.
+let (again, outcome) = exchange.ensure("accuracy_linear-regression", &case.recipe())?;
+assert_eq!(outcome, CacheOutcome::Reused);
+assert_eq!(again, container);
+# Ok::<(), ferricml::datasets::ExchangeError>(())
+```
+
+The cache is keyed on the recipe's digest rather than on the name.
+`DatasetExchange::ensure` reuses a container only when the recipe recorded in it
+is the recipe being asked for, so a repeated request costs a file read and a
+changed knob regenerates under the same name — the failure a name-keyed cache
+would have is handing back the previous problem.
+
+`ferricml-datagen` is the same thing from a shell. It builds only with
+`--features datasets`, takes its catalogue from the two suites on this page, and
+reports for each entry whether it generated or reused:
+
+```text
+$ cargo run --release --features datasets --bin ferricml-datagen -- --out data --suite all
+accuracy_linear-regression	generated	ad78ef4e…	10276 bytes
+```
+
+> A container is untrusted input, and `src/datasets/exchange.rs` reads it the
+> way `src/artifact/` reads a model. The recipe is checked against its recorded
+> digest, so editing it cannot quietly redefine what the data is; the array file
+> is checked against its own; the table has to describe the file exactly; and no
+> allocation is ever sized from a declared length before the bytes behind it are
+> read. `tests/dataset_exchange.rs` measures that last one rather than asserting
+> it, because the defect it guards against returns the *correct* error and only
+> the cost is wrong.
+
 ## The performance grid
 
 Nine grid points, ten families, ninety cases. Generation cost is not one number:

@@ -127,11 +127,40 @@
 //! is a red suite rather than a quiet gap; `docs/dataset-suites.md` is the
 //! narrative version, and its samples are compiled and run like every other page
 //! FerricML publishes.
+//!
+//! # The file is the cross-language boundary
+//!
+//! A recipe is not enough to hand a problem to another language. Most families
+//! evaluate a transcendental somewhere, so their bytes are [`Portability::PerRunner`]
+//! — reproducible here, not necessarily on the machine the comparison runs on —
+//! and a second implementation of the generator in another language would be a
+//! second thing to keep byte-identical by hand, which is the duplication this
+//! module was built to remove.
+//!
+//! [`DatasetExchange`] is the answer: generate once, write a
+//! `<name>.manifest.json` and a `<name>.bin`, and let every consumer read the
+//! same bytes. The manifest is text — the recipe in full, its spec digest, the
+//! determinism envelope, and a table of `{name, dtype, shape, byte_offset, len}`
+//! — and the array file is those arrays concatenated little-endian, so the pair
+//! opens with `json.load` and `numpy.memmap` and needs no FerricML code at all.
+//! [`MaterializedDataset`] is what a container holds on either side of the trip,
+//! and it compares equal across it.
+//!
+//! The digest is what makes the directory a cache rather than a pile of files.
+//! [`DatasetExchange::ensure`] reuses a container only when the recipe recorded
+//! in it is the recipe being asked for, so a repeated request is a file read and
+//! a changed knob is a regeneration under the same name. Reading is hardened the
+//! way `src/artifact/` is: the recipe is checked against its recorded digest,
+//! the array file against its own, the table against the file it describes, and
+//! no allocation is ever sized from a length field before the bytes behind it
+//! are read.
 
 mod benchmarks;
 mod contamination;
 mod dataset;
 mod error;
+mod exchange;
+mod manifest;
 mod presets;
 mod recipe;
 mod source;
@@ -139,6 +168,8 @@ mod structural;
 mod suites;
 mod task;
 
+#[cfg(test)]
+mod exchange_tests;
 #[cfg(test)]
 mod family_tests;
 #[cfg(test)]
@@ -151,7 +182,8 @@ mod tests;
 pub use benchmarks::{BenchmarkFixture, BenchmarkLane};
 pub use contamination::{Contamination, WeightPattern};
 pub use dataset::{Dataset, Target, Truth};
-pub use error::{DatasetError, Parameter};
+pub use error::{DatasetError, ExchangeError, Parameter};
+pub use exchange::{ArrayDtype, CacheOutcome, DatasetArray, DatasetExchange, MaterializedDataset};
 pub use presets::{ReferenceLane, ReferenceQuality};
 pub use recipe::{Recipe, Source};
 pub use structural::{ClassBalance, ClassGeometry, GroupPattern};

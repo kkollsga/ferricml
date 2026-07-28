@@ -1,5 +1,7 @@
 use std::error::Error;
 use std::fmt;
+use std::io;
+use std::path::PathBuf;
 
 /// A named scalar knob on a task family, a contamination, or a weight pattern.
 ///
@@ -500,3 +502,124 @@ impl fmt::Display for DatasetError {
 }
 
 impl Error for DatasetError {}
+
+/// An error encountered while materializing or loading an exchange container.
+///
+/// A separate type from [`DatasetError`] rather than more variants on it,
+/// because the two answer different questions: `DatasetError` says what was
+/// wrong with a *request to produce data*, and these say what was wrong with a
+/// *stored container* — a file that may have been written by another version,
+/// truncated by a failed copy, or edited outright. A caller building recipes
+/// should not have to consider a checksum mismatch, and a caller reading files
+/// should not have to consider a prevalence out of range.
+///
+/// It carries [`std::io::Error`] and therefore derives neither `Clone` nor
+/// `PartialEq`. The refusals are matched with `matches!` in this crate's own
+/// tests, which is what a `#[non_exhaustive]` error is for.
+#[derive(Debug)]
+#[non_exhaustive]
+pub enum ExchangeError {
+    /// The container name is not a single lower-case file stem.
+    ///
+    /// Names become file names, so anything that could reach outside the
+    /// exchange directory — a separator, a parent reference, an empty
+    /// string — is refused before a path is built rather than after.
+    InvalidName,
+    /// The filesystem refused an operation.
+    Io {
+        /// The path the operation was attempted on.
+        path: PathBuf,
+        /// What the filesystem reported.
+        source: io::Error,
+    },
+    /// A container file is longer than this reader will read.
+    ///
+    /// Checked against the file's own length before it is read, so an
+    /// oversized file is refused rather than loaded and then rejected.
+    SizeLimitExceeded {
+        /// Hard byte limit for this file.
+        limit: usize,
+        /// Length the file actually has.
+        actual: u64,
+    },
+    /// The manifest is not the schema this crate writes.
+    ///
+    /// The reader accepts one field order, one set of keys, and no string
+    /// escapes, so this covers a foreign manifest as much as a corrupt one.
+    MalformedManifest {
+        /// Byte offset the reader stopped at.
+        offset: usize,
+    },
+    /// The manifest declares a container format this reader does not know.
+    UnsupportedFormat {
+        /// Format version read from the manifest.
+        found: u64,
+    },
+    /// The recipe in the manifest does not hash to the digest recorded beside
+    /// it.
+    ///
+    /// This is what makes the recipe in a manifest trustworthy: an edited
+    /// recipe still hashes to something, and what makes the edit visible is
+    /// that it no longer hashes to the value written with it. The recorded
+    /// determinism envelope is checked the same way, because a container
+    /// promising bit-exact bytes for a transcendental family would mislead a
+    /// harness comparing two machines.
+    SpecDigestMismatch,
+    /// The array file does not hash to the digest the manifest recorded.
+    DataChecksumMismatch,
+    /// The array table does not describe the array file exactly.
+    ///
+    /// Entries must be contiguous, in order, consistent with their own shapes,
+    /// uniquely named, and must end on the file's last byte. Anything else is
+    /// a second encoding of the same data, which is what a canonical container
+    /// format refuses.
+    InvalidArrayTable,
+    /// The manifest describes a recipe this crate refuses to construct.
+    InvalidRecipe(
+        /// Why the recipe was refused.
+        DatasetError,
+    ),
+}
+
+impl fmt::Display for ExchangeError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::InvalidName => f.write_str(
+                "a container name must be a non-empty stem of lower-case letters, digits, \
+                 hyphens and underscores",
+            ),
+            Self::Io { path, source } => {
+                write!(f, "{}: {source}", path.display())
+            }
+            Self::SizeLimitExceeded { limit, actual } => {
+                write!(f, "container file size {actual} exceeds limit {limit}")
+            }
+            Self::MalformedManifest { offset } => {
+                write!(f, "dataset manifest is malformed at byte {offset}")
+            }
+            Self::UnsupportedFormat { found } => {
+                write!(f, "unsupported dataset container format {found}")
+            }
+            Self::SpecDigestMismatch => {
+                f.write_str("the manifest's recipe does not match its recorded spec digest")
+            }
+            Self::DataChecksumMismatch => f.write_str("dataset array file checksum mismatch"),
+            Self::InvalidArrayTable => {
+                f.write_str("the array table does not describe the array file")
+            }
+            Self::InvalidRecipe(error) => {
+                write!(f, "the manifest describes no valid recipe: {error}")
+            }
+        }
+    }
+}
+
+impl Error for ExchangeError {
+    fn source(&self) -> Option<&(dyn Error + 'static)> {
+        match self {
+            Self::Io { source, .. } => Some(source),
+            Self::InvalidRecipe(error) => Some(error),
+            _ => None,
+        }
+    }
+}
