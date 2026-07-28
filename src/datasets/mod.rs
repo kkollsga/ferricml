@@ -64,9 +64,28 @@
 //! A [`Task`] family records what it actually knows and nothing more. A linear
 //! family knows its coefficients; a nonlinear one knows only its conditional
 //! mean, because no coefficient vector produces it; a binary family knows the
-//! Bayes probability behind every label it drew. None of them reaches for
-//! [`Truth::Unrecorded`], which stays what it was: a statement about the
-//! absorbed lanes.
+//! Bayes probability behind every label it drew; a multiclass family knows the
+//! whole probability row; a clustered family knows the assignment and has no
+//! target to be right about; a time-ordered family knows both ends of its
+//! drifting coefficients; a ranking family knows the utility behind every grade.
+//! None of them reaches for [`Truth::Unrecorded`], which stays what it was: a
+//! statement about the absorbed lanes.
+//!
+//! # Structure is data too
+//!
+//! Three things this module produces are not the design matrix and not the
+//! target: group labels, per-row times, and preference pairs. Each of them exists
+//! in the vocabulary the consumer already takes —
+//! [`Dataset::groups`] is `&[u64]` because
+//! [`GroupKFold::split`](crate::model_selection::GroupKFold::split) takes
+//! `&[u64]`; [`Dataset::pairs`] is a slice of
+//! [`PairwiseObservation`](crate::ranking::PairwiseObservation) because that is
+//! what [`PairwiseLinearRanker::fit`](crate::ranking::PairwiseLinearRanker::fit)
+//! takes; row order is time order because
+//! [`TimeSeriesSplit`](crate::model_selection::TimeSeriesSplit) reads nothing
+//! else. A generator that made its consumer write an adapter would have moved
+//! the work rather than done it, and `structural_tests.rs` asserts the absence of
+//! every one of those adapters by calling the consumers directly.
 //!
 //! # Two determinism envelopes, declared rather than assumed
 //!
@@ -105,10 +124,13 @@ mod error;
 mod presets;
 mod recipe;
 mod source;
+mod structural;
 mod task;
 
 #[cfg(test)]
 mod family_tests;
+#[cfg(test)]
+mod structural_tests;
 #[cfg(test)]
 mod tests;
 
@@ -118,4 +140,5 @@ pub use dataset::{Dataset, Target, Truth};
 pub use error::{DatasetError, Parameter};
 pub use presets::{ReferenceLane, ReferenceQuality};
 pub use recipe::{Recipe, Source};
+pub use structural::{ClassBalance, ClassGeometry, GroupPattern};
 pub use task::{BinaryKind, GlmLink, NonlinearKind, Portability, Task};

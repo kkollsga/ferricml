@@ -1,5 +1,10 @@
-//! The regression and binary-classification task families, and the ground truth
-//! each of them records.
+//! The [`Task`] vocabulary, the regression and binary-classification families,
+//! and the ground truth each of them records.
+//!
+//! The structural families — many classes, clusters, time order, ranked pairs —
+//! are named by [`Task`] here and drawn in `structural.rs`, because each of them
+//! produces a second array that has to agree with the design row for row and
+//! that would otherwise be buried in a match arm beside a scalar target.
 //!
 //! # Why these live apart from `source.rs`
 //!
@@ -50,8 +55,13 @@ use super::contamination::Contamination;
 use super::dataset::{Target, Truth};
 use super::error::{DatasetError, Parameter};
 use super::source::sampled_unit;
+use super::structural::{
+    ClassBalance, ClassGeometry, draw_clustered, draw_multiclass, draw_ranking, drifting_predictor,
+    shape_clustered, validate_clustered, validate_multiclass, validate_ranking,
+};
 use crate::data::{BinaryTargets, DenseMatrix, RegressionTargets};
 use crate::numeric::{OwnedRng, sigmoid_f64, sum_in_order};
+use crate::ranking::PairwiseObservation;
 
 /// Stream word carrying a family's true coefficients.
 pub(super) const STREAM_COEFFICIENTS: usize = 0;
@@ -301,8 +311,8 @@ pub enum GlmLink {
 /// None of them reports [`Truth::Unrecorded`] — that is reserved for the
 /// absorbed lanes, whose correct answer was never kept.
 ///
-/// It is `#[non_exhaustive]` because the multiclass, clustered, grouped,
-/// time-ordered and ranking families arrive next.
+/// It is `#[non_exhaustive]` because a new family must not be a breaking change
+/// for a caller that only ever matches the ones it asked for.
 #[derive(Clone, Copy, Debug, PartialEq)]
 #[non_exhaustive]
 pub enum Task {
@@ -413,6 +423,104 @@ pub enum Task {
         /// Requested marginal positive rate, strictly between zero and one.
         prevalence: f32,
     },
+    /// Labels over many classes, drawn from a known softmax of a known geometry
+    /// at a requested class balance.
+    ///
+    /// Two knobs that are usually conflated are separated here. [`ClassBalance`]
+    /// is *how often* each class occurs, solved for rather than observed, in
+    /// exactly the sense [`Task::LinearBinary`]'s prevalence is. [`ClassGeometry`]
+    /// is *which classes are confusable with which*, and the two available
+    /// geometries differ in precisely that: blob centres confuse whichever pairs
+    /// happen to land near each other, and a hierarchy confuses siblings far more
+    /// than cousins. A metric that claims to be hierarchy-aware has to tell those
+    /// two datasets apart at the same balance.
+    ///
+    /// The recorded [`Truth::MulticlassBayes`] is the whole probability row of
+    /// every observation, because a scalar cannot say what a multiclass log loss
+    /// or a one-versus-rest calibration curve should have been.
+    Multiclass {
+        /// Number of classes, at least two and at most `256`.
+        classes: usize,
+        /// How often each class occurs.
+        balance: ClassBalance,
+        /// Which classes are confusable with which.
+        geometry: ClassGeometry,
+        /// How steeply the class probabilities move with the geometry's scores.
+        /// Normalized by the design's width, so it means the same thing at any
+        /// column count.
+        separation: f32,
+    },
+    /// Rows drawn around a known set of centres, with a known assignment and no
+    /// target at all.
+    ///
+    /// This is the family that makes [`Dataset::target`](super::Dataset::target)
+    /// an `Option`. An unsupervised problem has no targets, and handing back an
+    /// empty or all-zero target vector would be a claim that one exists. What it
+    /// does have is [`Truth::ClusterAssignment`], which is what a clusterer's
+    /// output is scored against.
+    Clustered {
+        /// Number of clusters. Rows are dealt to them in turn, so the clusters
+        /// are as equal as the row count allows.
+        blobs: usize,
+        /// How much of its own scatter each row keeps around its centre. Zero
+        /// collapses every cluster to a point, which is the degenerate case a
+        /// clusterer has no excuse on.
+        spread: f32,
+    },
+    /// A regression target whose coefficients move linearly with the row's time.
+    ///
+    /// Row order is time order, and every row's time is recorded, so this data
+    /// is correct for [`TimeSeriesSplit`](crate::model_selection::TimeSeriesSplit)
+    /// without an adapter — that splitter takes a sample count and reads nothing
+    /// but the order.
+    ///
+    /// [`Truth::DriftingPredictor`] records *both ends* of the coefficient
+    /// vector rather than an average, which is what makes the drift a
+    /// measurement: fit two windows, and the difference between the recovered
+    /// coefficients is a number the recorded ends predict in advance.
+    TimeOrdered {
+        /// Leading columns carrying a non-zero coefficient.
+        informative: usize,
+        /// Magnitude of the coefficients at the first row.
+        coefficient_scale: f32,
+        /// How far each informative coefficient moves between the first row and
+        /// the last. Zero gives a stationary series, which is the control case a
+        /// drift detector must not fire on.
+        drift: f32,
+        /// The intercept added to the linear predictor. It does not drift.
+        intercept: f32,
+        /// Half-width of the uniform noise added to the target.
+        noise_scale: f32,
+    },
+    /// Graded relevance over query blocks, with the within-query preference
+    /// pairs already drawn.
+    ///
+    /// The design is `queries` blocks of `docs_per_query` rows. Each document's
+    /// relevance grade is its rank within its own query under a known linear
+    /// utility, so the pairs are exactly separable by the recorded coefficients
+    /// and a ranker that fails on them has failed on the data rather than on the
+    /// problem.
+    ///
+    /// The dataset carries the pairs as [`PairwiseObservation`]s and the query
+    /// identifiers as `u64` groups, so it feeds
+    /// [`PairwiseLinearRanker::fit`](crate::ranking::PairwiseLinearRanker::fit)
+    /// and [`GroupKFold::split`](crate::model_selection::GroupKFold::split)
+    /// without either one being adapted to it.
+    Ranking {
+        /// Number of query blocks.
+        queries: usize,
+        /// Documents in every query block, at least two. `queries *
+        /// docs_per_query` must equal the recipe's row count.
+        docs_per_query: usize,
+        /// Number of distinct relevance grades, at least two. Fewer grades than
+        /// documents produces tied pairs, which is what a real judgement looks
+        /// like.
+        grades: usize,
+        /// Leading columns carrying a non-zero utility coefficient.
+        informative: usize,
+        /// Magnitude of the drawn utility coefficients.
+        coefficient_scale: f32,
+    },
 }
 
 /// Every parameter a task carries is refused unless it is finite, so no `Task`
@@ -457,14 +565,32 @@ impl Task {
             Self::IllConditioned { .. } => Portability::PerRunner,
             // The logistic link, whichever boundary feeds it.
             Self::LinearBinary { .. } | Self::NonlinearBinary { .. } => Portability::PerRunner,
+            // A softmax is a sum of exponentials, whichever geometry feeds it —
+            // so a blob geometry whose own arithmetic is exact still reports
+            // per-runner, exactly as an exact nonlinear boundary does.
+            Self::Multiclass { .. } => Portability::PerRunner,
+            // A centre draw, a multiply and an add.
+            Self::Clustered { .. } => Portability::BitExact,
+            // A time is a division of two integers, and the drifting predictor is
+            // a dot product of interpolated coefficients.
+            Self::TimeOrdered { .. } => Portability::BitExact,
+            // A dot product, a sort, and integer grade arithmetic.
+            Self::Ranking { .. } => Portability::BitExact,
         }
     }
 
-    /// Whether this family draws labels rather than continuous targets.
+    /// Whether this family's labels are the thing label noise and class
+    /// balancing act on.
+    ///
+    /// [`Task::Ranking`] is deliberately excluded even though its target is a
+    /// label vector: its grades are ranks within a query and its pairs are
+    /// derived from them, so flipping a grade would leave the pairs describing an
+    /// order the target contradicts. Refusing the combination is the same
+    /// discipline the rest of the contamination checks follow.
     pub(super) const fn draws_labels(&self) -> bool {
         matches!(
             self,
-            Self::LinearBinary { .. } | Self::NonlinearBinary { .. }
+            Self::LinearBinary { .. } | Self::NonlinearBinary { .. } | Self::Multiclass { .. }
         )
     }
 
@@ -480,14 +606,57 @@ impl Task {
             Self::LinearRegression { .. }
                 | Self::NonlinearRegression { .. }
                 | Self::IllConditioned { .. }
+                | Self::TimeOrdered { .. }
         )
+    }
+
+    /// Whether this family has a continuous target an outlier can displace.
+    ///
+    /// Named positively rather than as "does not draw labels", which is what it
+    /// used to be. That negation was correct only while every family either drew
+    /// labels or drew a continuous target; [`Task::Clustered`] draws neither, and
+    /// under the old spelling would have accepted an outlier fraction with
+    /// nothing at all to displace.
+    pub(super) const fn carries_outliers(self) -> bool {
+        matches!(
+            self,
+            Self::LinearRegression { .. }
+                | Self::NonlinearRegression { .. }
+                | Self::GlmRegression { .. }
+                | Self::IllConditioned { .. }
+                | Self::TimeOrdered { .. }
+        )
+    }
+
+    /// Whether this family's recorded truth is a function of the row *index*,
+    /// which a row duplication would falsify.
+    ///
+    /// Only [`Task::Clustered`] is: its assignment is `row % blobs`, so a
+    /// duplicated row would carry another cluster's features under its own
+    /// recorded label. Every other family derives its truth from the finished
+    /// design, so duplication reaches the truth and the data together.
+    pub(super) const fn truth_is_positional(self) -> bool {
+        matches!(self, Self::Clustered { .. })
+    }
+
+    /// Whether this family assigns the dataset's group labels itself.
+    pub(super) const fn assigns_groups(self) -> bool {
+        matches!(self, Self::Ranking { .. })
+    }
+
+    /// Whether this family produces targets at all.
+    ///
+    /// [`Task::Clustered`] does not, which is why "carries a task" and "has
+    /// targets" are two questions rather than one.
+    pub(super) const fn draws_target(self) -> bool {
+        !matches!(self, Self::Clustered { .. })
     }
 
     /// Checks every parameter against its range and against the design's shape.
     ///
     /// Called by [`Recipe::with_task`](super::Recipe::with_task), before
     /// anything is allocated.
-    pub(super) fn validate(&self, columns: usize) -> Result<(), DatasetError> {
+    pub(super) fn validate(&self, rows: usize, columns: usize) -> Result<(), DatasetError> {
         match *self {
             Self::LinearRegression {
                 informative,
@@ -572,30 +741,147 @@ impl Task {
                 check_positive(separation, Parameter::Separation)?;
                 check_prevalence(prevalence)?;
             }
+            Self::Multiclass {
+                classes,
+                balance,
+                separation,
+                ..
+            } => validate_multiclass(classes, balance, separation, columns)?,
+            Self::Clustered { blobs, spread } => validate_clustered(blobs, spread, rows)?,
+            Self::TimeOrdered {
+                informative,
+                coefficient_scale,
+                drift,
+                intercept,
+                noise_scale,
+            } => {
+                check_informative(informative, columns)?;
+                check_positive(coefficient_scale, Parameter::CoefficientScale)?;
+                check_at_least_zero(drift, Parameter::Drift)?;
+                check_finite(intercept, Parameter::Intercept)?;
+                check_at_least_zero(noise_scale, Parameter::NoiseScale)?;
+            }
+            Self::Ranking {
+                queries,
+                docs_per_query,
+                grades,
+                informative,
+                coefficient_scale,
+            } => validate_ranking(
+                queries,
+                docs_per_query,
+                grades,
+                informative,
+                coefficient_scale,
+                rows,
+                columns,
+            )?,
         }
         Ok(())
     }
 
     /// Reshapes the design this family needs before its target is drawn.
     ///
-    /// Only [`Task::IllConditioned`] does anything here: the conditioning *is*
-    /// the design, so it has to happen before the truth is recorded and before
-    /// any consumer sees the matrix. Every other family draws over the design as
-    /// the source produced it.
-    pub(super) fn shape_design(&self, rows: usize, columns: usize, values: &mut [f32]) {
-        if let Self::IllConditioned {
-            condition_number,
-            rank,
-            ..
-        } = *self
-        {
-            condition_columns(rows, columns, condition_number, values);
-            duplicate_columns(rows, columns, rank, values);
+    /// Two families do anything here, and for the same reason: their structure
+    /// *is* the design, so it has to exist before the truth is recorded and
+    /// before any consumer sees the matrix. [`Task::IllConditioned`] scales and
+    /// duplicates columns; [`Task::Clustered`] moves every row onto its centre.
+    /// Every other family draws over the design as the source produced it.
+    ///
+    /// The stream digest is passed in rather than derived here because a family
+    /// that reshapes the design and a family that draws over it must read the
+    /// *same* auxiliary streams — a clustered design's centres are recorded as
+    /// truth, and two derivations of one number is how a design and its truth
+    /// drift apart.
+    pub(super) fn shape_design(
+        &self,
+        rows: usize,
+        columns: usize,
+        values: &mut [f32],
+        digest: &[u8; 32],
+    ) {
+        match *self {
+            Self::IllConditioned {
+                condition_number,
+                rank,
+                ..
+            } => {
+                condition_columns(rows, columns, condition_number, values);
+                duplicate_columns(rows, columns, rank, values);
+            }
+            Self::Clustered { blobs, spread } => {
+                shape_clustered(rows, columns, blobs, spread, values, digest);
+            }
+            _ => {}
         }
     }
 
     /// Draws the family's target over a generated design, and records its truth.
+    ///
+    /// The two-stage split below is not ceremony: the structural families are
+    /// the ones that produce a group vector or a pair list beside their target,
+    /// and folding them into the scalar match would put four `None`s on every
+    /// arm that never had either.
     pub(super) fn draw(
+        &self,
+        design: &DenseMatrix,
+        contamination: &Contamination,
+        digest: &[u8; 32],
+    ) -> Drawn {
+        match *self {
+            Self::Multiclass {
+                classes,
+                balance,
+                geometry,
+                separation,
+            } => {
+                let (target, truth) = draw_multiclass(
+                    design,
+                    classes,
+                    balance,
+                    geometry,
+                    separation,
+                    contamination.label_noise(),
+                    digest,
+                );
+                Drawn::plain(target, truth)
+            }
+            Self::Clustered { blobs, .. } => {
+                let (target, truth) = draw_clustered(design, blobs, digest);
+                Drawn::plain(target, truth)
+            }
+            Self::Ranking {
+                queries,
+                docs_per_query,
+                grades,
+                informative,
+                coefficient_scale,
+            } => {
+                let (target, truth, groups, pairs) = draw_ranking(
+                    design,
+                    queries,
+                    docs_per_query,
+                    grades,
+                    informative,
+                    coefficient_scale,
+                    digest,
+                );
+                Drawn {
+                    target,
+                    truth,
+                    groups: Some(groups),
+                    pairs: Some(pairs),
+                }
+            }
+            _ => {
+                let (target, truth) = self.draw_scalar(design, contamination, digest);
+                Drawn::plain(Some(target), truth)
+            }
+        }
+    }
+
+    /// Draws the families whose whole output is one target value per row.
+    fn draw_scalar(
         &self,
         design: &DenseMatrix,
         contamination: &Contamination,
@@ -715,6 +1001,66 @@ impl Task {
                 let (labels, probabilities) = draw_labels(&scores, offset, contamination, digest);
                 (Target::Binary(labels), Truth::Bayes { probabilities })
             }
+            Self::TimeOrdered {
+                informative,
+                coefficient_scale,
+                drift,
+                intercept,
+                noise_scale,
+            } => {
+                let (start_coefficients, end_coefficients, mean, times) = drifting_predictor(
+                    design,
+                    informative,
+                    coefficient_scale,
+                    drift,
+                    intercept,
+                    digest,
+                );
+                let targets = add_noise(design, &mean, noise_scale, contamination, digest);
+                (
+                    regression_target(targets),
+                    Truth::DriftingPredictor {
+                        start_coefficients,
+                        end_coefficients,
+                        intercept,
+                        conditional_mean: mean,
+                        times,
+                    },
+                )
+            }
+            // Reached only through `draw`, which routes every structural family
+            // to its own arm before this one runs.
+            Self::Multiclass { .. } | Self::Clustered { .. } | Self::Ranking { .. } => {
+                unreachable!("a structural family is drawn by `draw`, not by `draw_scalar`")
+            }
+        }
+    }
+}
+
+/// Everything a task family produces beside the design matrix.
+///
+/// A struct rather than a four-tuple because three of the four fields are `None`
+/// for most families, and a tuple would make every call site count positions to
+/// find out which.
+pub(super) struct Drawn {
+    /// The targets, or `None` for an unsupervised family.
+    pub(super) target: Option<Target>,
+    /// What the family is right about.
+    pub(super) truth: Truth,
+    /// Group labels the family assigned itself.
+    pub(super) groups: Option<Vec<u64>>,
+    /// Preference pairs the family drew.
+    pub(super) pairs: Option<Vec<PairwiseObservation>>,
+}
+
+impl Drawn {
+    /// A family that produced neither groups nor pairs.
+    fn plain(target: Option<Target>, truth: Truth) -> Self {
+        Self {
+            target,
+            truth,
+            groups: None,
+            pairs: None,
         }
     }
 }
@@ -748,7 +1094,7 @@ pub(super) fn unit_draw(rng: &mut OwnedRng) -> f32 {
 /// Zero rather than a small value on the uninformative columns, deliberately: a
 /// consumer measuring whether a model *declined* to use a noise feature needs
 /// the correct answer there to be zero and not merely small.
-fn draw_coefficients(
+pub(super) fn draw_coefficients(
     columns: usize,
     informative: usize,
     scale: f32,
@@ -771,7 +1117,7 @@ fn draw_coefficients(
 }
 
 /// `x · β` at one row, accumulated in `f64` in ascending column order.
-fn dot(row: &[f32], coefficients: &[f32]) -> f64 {
+pub(super) fn dot(row: &[f32], coefficients: &[f32]) -> f64 {
     sum_in_order(
         row.iter()
             .zip(coefficients)
@@ -1054,7 +1400,7 @@ fn check_finite(value: f32, parameter: Parameter) -> Result<(), DatasetError> {
     }
 }
 
-fn check_positive(value: f32, parameter: Parameter) -> Result<(), DatasetError> {
+pub(super) fn check_positive(value: f32, parameter: Parameter) -> Result<(), DatasetError> {
     check_finite(value, parameter)?;
     if value > 0.0 {
         Ok(())
@@ -1063,7 +1409,7 @@ fn check_positive(value: f32, parameter: Parameter) -> Result<(), DatasetError> 
     }
 }
 
-fn check_at_least_zero(value: f32, parameter: Parameter) -> Result<(), DatasetError> {
+pub(super) fn check_at_least_zero(value: f32, parameter: Parameter) -> Result<(), DatasetError> {
     check_finite(value, parameter)?;
     if value >= 0.0 {
         Ok(())
@@ -1083,7 +1429,7 @@ fn check_prevalence(value: f32) -> Result<(), DatasetError> {
     }
 }
 
-fn check_informative(informative: usize, columns: usize) -> Result<(), DatasetError> {
+pub(super) fn check_informative(informative: usize, columns: usize) -> Result<(), DatasetError> {
     if informative == 0 {
         return Err(DatasetError::ZeroInformativeColumns);
     }

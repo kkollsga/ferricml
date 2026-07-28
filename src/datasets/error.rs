@@ -29,6 +29,14 @@ pub enum Parameter {
     Separation,
     /// The requested marginal positive rate of a binary family.
     Prevalence,
+    /// The ratio between a multiclass family's most and least common class.
+    BalanceRatio,
+    /// Within-cluster spread of a clustered design.
+    Spread,
+    /// How far a time-ordered family's coefficients move across the whole span.
+    Drift,
+    /// The ratio between an unbalanced grouping's largest and smallest group.
+    GroupSizeRatio,
     /// Fraction of labels flipped after they are drawn.
     LabelNoise,
     /// Fraction of rows whose target is displaced by an outlier.
@@ -52,7 +60,8 @@ pub enum Parameter {
 }
 
 impl Parameter {
-    /// The name a caller wrote in their own source.
+    /// The name a caller wrote in their own source, qualified where two knobs
+    /// share a field name.
     const fn name(self) -> &'static str {
         match self {
             Self::CoefficientScale => "coefficient_scale",
@@ -62,6 +71,14 @@ impl Parameter {
             Self::Dispersion => "dispersion",
             Self::Separation => "separation",
             Self::Prevalence => "prevalence",
+            // Both of these are spelled `ratio` at the call site, so the name
+            // carries the qualifier the variant already knows: two knobs that
+            // rendered identically would make a message ambiguous exactly when a
+            // recipe sets both.
+            Self::BalanceRatio => "balance ratio",
+            Self::Spread => "spread",
+            Self::Drift => "drift",
+            Self::GroupSizeRatio => "group size ratio",
             Self::LabelNoise => "label_noise",
             Self::OutlierFraction => "outlier_fraction",
             Self::HeavyTail => "heavy_tail",
@@ -88,10 +105,14 @@ impl Parameter {
         match self {
             Self::CoefficientScale | Self::Separation => "a finite value above 0",
             Self::Intercept => "a finite value",
-            Self::NoiseScale | Self::Heteroscedastic | Self::FeatureScaleSpread => {
-                "a finite value at or above 0"
+            Self::NoiseScale
+            | Self::Heteroscedastic
+            | Self::FeatureScaleSpread
+            | Self::Spread
+            | Self::Drift => "a finite value at or above 0",
+            Self::ConditionNumber | Self::BalanceRatio | Self::GroupSizeRatio => {
+                "a finite value at or above 1"
             }
-            Self::ConditionNumber => "a finite value at or above 1",
             Self::Dispersion => {
                 "at or above 1 for a count response, and above 0 and below 1 for a positive one"
             }
@@ -256,6 +277,103 @@ pub enum DatasetError {
     /// regression target has none. Refused at the constructor rather than
     /// silently degraded to uniform weights, which would look like it worked.
     WeightPatternNeedsLabels,
+    /// A multiclass family was asked for fewer than two classes.
+    ///
+    /// One class is not a classification problem: every prediction is correct,
+    /// every metric is degenerate, and the requested balance describes nothing.
+    /// The two-class case is [`Task::LinearBinary`](super::Task::LinearBinary),
+    /// which records a scalar Bayes probability rather than a row of them.
+    TooFewClasses {
+        /// Requested class count.
+        classes: usize,
+    },
+    /// A multiclass family was asked for more classes than a label can hold.
+    ///
+    /// Labels are `u8`, which is the vocabulary
+    /// [`ClassTargets`](crate::data::ClassTargets) validates and every
+    /// classifier in this crate consumes, so the largest label is `255` and the
+    /// largest class count is `256`.
+    TooManyClasses {
+        /// Requested class count.
+        classes: usize,
+        /// The largest class count a `u8` label can express.
+        limit: usize,
+    },
+    /// A clustered design was asked for no clusters.
+    ZeroBlobs,
+    /// A clustered design was asked for more clusters than it has rows.
+    ///
+    /// Some cluster would then be empty, and a fixture whose recorded truth
+    /// names a cluster no row belongs to measures nothing about a clusterer.
+    BlobsExceedRows {
+        /// Requested cluster count.
+        blobs: usize,
+        /// Rows the design has.
+        rows: usize,
+    },
+    /// A ranking family's `queries * docs_per_query` is not the recipe's row
+    /// count.
+    ///
+    /// A ranking design is a stack of query blocks, and a partial trailing block
+    /// would leave a query with a different pair count from every other one.
+    /// Refused rather than truncated, because the caller's two numbers and the
+    /// recipe's row count cannot all three be what they meant.
+    RankingShapeMismatch {
+        /// Rows the recipe produces.
+        rows: usize,
+        /// Requested query count.
+        queries: usize,
+        /// Requested documents per query.
+        docs_per_query: usize,
+    },
+    /// A ranking family was asked for fewer than two documents per query.
+    ///
+    /// A query holding one document yields no pair at all, and the pairs are
+    /// the whole output of the family.
+    TooFewDocumentsPerQuery {
+        /// Requested documents per query.
+        docs_per_query: usize,
+    },
+    /// A ranking family was asked for fewer than two relevance grades.
+    ///
+    /// One grade makes every pair a tie, which is a dataset with no preference
+    /// information in it.
+    TooFewGrades {
+        /// Requested grade count.
+        grades: usize,
+    },
+    /// A group pattern was asked for no groups.
+    ZeroGroups,
+    /// A group pattern was asked for more groups than the design has rows.
+    ///
+    /// The labels must partition the rows, so an empty group would be an
+    /// identifier no row carries — and a splitter counting distinct groups
+    /// would disagree with the number the caller asked for.
+    GroupsExceedRows {
+        /// Requested group count.
+        groups: usize,
+        /// Rows the design has.
+        rows: usize,
+    },
+    /// A group pattern was asked for over a task that assigns groups itself.
+    ///
+    /// [`Task::Ranking`](super::Task::Ranking) labels each row with its query,
+    /// and those labels are what make its pairs within-query. Overwriting them
+    /// with a pattern would leave the pairs and the groups describing different
+    /// partitions of the same rows, so the combination is refused rather than
+    /// resolved by precedence.
+    GroupPatternConflictsWithTask,
+    /// A contamination knob would falsify the truth the current task records.
+    ///
+    /// Row duplication over a clustered design is the case this exists for: the
+    /// recorded cluster assignment is a function of the row index, and copying
+    /// a row's features without copying its recorded cluster would make the
+    /// truth wrong for exactly the duplicated rows. A silently wrong ground
+    /// truth is worse than any contamination, so the request is refused.
+    ContaminationConflictsWithTask {
+        /// The knob whose effect the task's truth cannot survive.
+        parameter: Parameter,
+    },
 }
 
 impl fmt::Display for DatasetError {
@@ -329,6 +447,53 @@ impl fmt::Display for DatasetError {
             ),
             Self::WeightPatternNeedsLabels => f.write_str(
                 "a class-balancing weight pattern needs a task that draws labels",
+            ),
+            Self::TooFewClasses { classes } => write!(
+                f,
+                "a multiclass task needs at least 2 classes, not {classes}"
+            ),
+            Self::TooManyClasses { classes, limit } => write!(
+                f,
+                "a multiclass task of {classes} classes exceeds the {limit} a u8 label holds"
+            ),
+            Self::ZeroBlobs => f.write_str("a clustered design must have at least 1 cluster"),
+            Self::BlobsExceedRows { blobs, rows } => write!(
+                f,
+                "a clustered design of {blobs} clusters over {rows} rows would leave a \
+                 cluster empty"
+            ),
+            Self::RankingShapeMismatch {
+                rows,
+                queries,
+                docs_per_query,
+            } => write!(
+                f,
+                "a ranking design of {queries} queries holding {docs_per_query} documents is \
+                 {} rows, not {rows}",
+                queries.saturating_mul(*docs_per_query)
+            ),
+            Self::TooFewDocumentsPerQuery { docs_per_query } => write!(
+                f,
+                "a query of {docs_per_query} documents yields no pair; at least 2 are needed"
+            ),
+            Self::TooFewGrades { grades } => write!(
+                f,
+                "a ranking task of {grades} relevance grade makes every pair a tie; at least \
+                 2 are needed"
+            ),
+            Self::ZeroGroups => f.write_str("a group pattern must have at least 1 group"),
+            Self::GroupsExceedRows { groups, rows } => write!(
+                f,
+                "a grouping of {groups} groups over {rows} rows would leave a group empty"
+            ),
+            Self::GroupPatternConflictsWithTask => f.write_str(
+                "the task assigns groups itself, so a group pattern would describe a \
+                 different partition from its pairs",
+            ),
+            Self::ContaminationConflictsWithTask { parameter } => write!(
+                f,
+                "{} would falsify the truth this task records",
+                parameter.name()
             ),
         }
     }

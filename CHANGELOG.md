@@ -157,14 +157,76 @@ and releases use [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - **`Recipe::target_values` and `Recipe::target_values_into`,** the numeric view
   of a task's targets with a caller-owned form that reuses its buffer.
 
+- **Multiclass and structural task families.** `datasets::Task` gained four
+  more: `Multiclass` over a chosen balance and geometry, `Clustered`,
+  `TimeOrdered` with a controlled drift, and `Ranking` over query blocks. Each
+  records real ground truth rather than reaching for `Truth::Unrecorded` —
+  `Truth::MulticlassBayes` carries the whole probability *row* of every
+  observation, `Truth::ClusterAssignment` the assignment and the centres,
+  `Truth::DriftingPredictor` both ends of the coefficient vector and every row's
+  time, `Truth::RankingUtility` the utility behind every relevance grade — with
+  `class_probabilities`, `classes`, `cluster_assignments`, `cluster_centres`,
+  `blobs`, `start_coefficients`, `end_coefficients`, `times`, `utilities` and
+  `grades` accessors to read them.
+
+  **Balance and geometry are two knobs, not one.** `ClassBalance` is how often
+  each class occurs — solved for through the softmax offsets, so the requested
+  marginal is a property of the *correct answer* rather than an outcome, in
+  exactly the sense the binary family's prevalence already was. `ClassGeometry`
+  is which classes are confusable with which: blob centres confuse whichever
+  pairs land near each other, while a hierarchy's expected score gap to a cousin
+  is exactly twice its gap to a sibling, so the confusion is nested. Realized
+  class rates land within four binomial deviations of the request at every
+  swept case, and the offset solver's own residual is six orders of magnitude
+  smaller than that.
+
+  **A clustered dataset has no target, and says so.** `Dataset::target` is an
+  `Option` for this family: an unsupervised problem has no target vector, and
+  handing back an empty or all-zero one would claim otherwise. The assignment is
+  still recorded, and is recoverable from the design by nearest centre wherever
+  the requested spread leaves the clusters separated.
+
+  **Drift is measurable, not merely present.** Row order is time order and every
+  row's time is recorded, so `TimeSeriesSplit` is correct on this data
+  unadapted. Because both ends of the coefficient vector are recorded, a fit
+  over any window predicts a value the record names in advance: fitting the
+  first and last quarters recovers the drift between them to within `0.03` on a
+  signal of `0.75`, and a `drift = 0` recipe measures as stationary under the
+  same bound.
+
+- **`datasets::GroupPattern` and `Recipe::with_groups`.** Three deterministic
+  groupings — round-robin, contiguous, and contiguous with linearly falling
+  sizes — that **partition** the rows: one label per row, exactly `0..groups`
+  with none unused, and no group empty. `Dataset::groups` is `&[u64]` because
+  that is what `GroupKFold::split` and `GroupShuffleSplit::split` take, so a
+  generated dataset feeds them with no adapter between. Sizes interpolate
+  linearly rather than geometrically so a grouping stays transcendental-free and
+  cannot weaken a bit-exact recipe's determinism envelope.
+
+- **`Dataset::pairs`, preference pairs in the crate's own vocabulary.** The
+  ranking family emits `ranking::PairwiseObservation`s directly, so they go into
+  `PairwiseLinearRanker::fit` unchanged; the pairs are carried on the dataset
+  rather than derived at the call site, because which pairs exist and which way
+  each points is what the family *produced*. Every pair lies inside one query
+  and its outcome agrees with the recorded utility order exactly, so the data is
+  separable by the recorded coefficients by construction.
+
 ### Changed
 
-- **`Recipe::spec_digest` is now `ferricml.dataset.spec.v2`.** The encoding
-  gained a task, a contamination and a weight pattern, each hashed under a
-  discriminant that fixes the field layout so the encoding stays injective. The
-  version moved rather than the fields being appended silently, which is what the
-  domain tag exists for. Nothing outside this crate has recorded a `v1` digest —
-  the feature is unreleased.
+- **`Recipe::spec_digest` is now `ferricml.dataset.spec.v3`.** The encoding
+  gained a task, a contamination, a weight pattern and — in this step — a group
+  pattern, each hashed under a discriminant that fixes the field layout so the
+  encoding stays injective. The version moves whenever the encoding does, rather
+  than fields being appended silently, which is what the domain tag exists for.
+  Nothing outside this crate has recorded an earlier digest — the feature is
+  unreleased.
+
+- **`WeightPattern::ClassBalanced` generalizes past two classes.** Each
+  *observed* class now carries a total weight of `rows / classes`; at two
+  classes that is the half-each it always was. The class count is the observed
+  one rather than the requested one, because a class the draw never produced has
+  no rows to weigh and inventing a share for it would down-weight every class
+  that does exist.
 
 - **The exact public-API snapshot now covers feature-gated surface.**
   `scripts/rust_api_profiles.py` captured one profile, the default one, and

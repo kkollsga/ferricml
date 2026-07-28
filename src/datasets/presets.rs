@@ -210,6 +210,7 @@ impl ReferenceQuality {
             None,
             Truth::Unrecorded,
             None,
+            None,
             recipe.spec_digest(),
         )
     }

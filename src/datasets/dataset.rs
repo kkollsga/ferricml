@@ -1,4 +1,5 @@
 use crate::data::{BinaryTargets, ClassTargets, DenseMatrix, RegressionTargets, SampleWeights};
+use crate::ranking::PairwiseObservation;
 
 /// A generated dataset's targets, in whichever validated vocabulary its task
 /// uses.
@@ -132,6 +133,73 @@ pub enum Truth {
         /// The design's exact algebraic rank.
         rank: usize,
     },
+    /// Labels were drawn from a known probability over every class.
+    ///
+    /// The whole row is recorded, not the winning class's probability, because a
+    /// multiclass log loss, a one-versus-rest calibration curve and a confusion
+    /// structure all need the probabilities the *other* classes should have had.
+    /// A scalar cannot say what a model got wrong about the class it did not
+    /// predict.
+    ///
+    /// As with [`Truth::LinearBayes`], the recorded values are
+    /// `P(observed label = k | x)` — after any label noise — so a perfectly
+    /// calibrated model matches them exactly.
+    MulticlassBayes {
+        /// `P(y = k | x)`, row-major: row `i`'s probabilities occupy
+        /// `i * classes .. (i + 1) * classes` and sum to one.
+        probabilities: Vec<f32>,
+        /// Number of classes, which is the row stride of `probabilities`.
+        classes: usize,
+    },
+    /// Rows were drawn around known centres, and every row's cluster is known.
+    ///
+    /// Reported by the clustered family, which draws no target at all. The
+    /// assignment is the answer a clusterer is scored against — up to a
+    /// relabelling, which is a property of the *problem* and not of this record.
+    ClusterAssignment {
+        /// The cluster every row belongs to, in `0..blobs`.
+        assignments: Vec<usize>,
+        /// The centres, row-major: cluster `k`'s coordinates occupy
+        /// `k * columns .. (k + 1) * columns`.
+        centres: Vec<f32>,
+        /// Number of clusters.
+        blobs: usize,
+    },
+    /// The target's conditional mean is a linear predictor whose coefficients
+    /// move with time.
+    ///
+    /// Both ends are recorded rather than an average, and that is the whole
+    /// point: the coefficient vector at time `t` is
+    /// `start + t * (end - start)`, so a fit over any window predicts a value
+    /// the record names in advance, and the difference between two windows is
+    /// the drift a detector claims to have found.
+    DriftingPredictor {
+        /// The coefficients at the first row.
+        start_coefficients: Vec<f32>,
+        /// The coefficients at the last row.
+        end_coefficients: Vec<f32>,
+        /// The intercept, which does not drift.
+        intercept: f32,
+        /// `E[y | x]` at each row, under that row's own coefficients.
+        conditional_mean: Vec<f32>,
+        /// Each row's time, non-decreasing, on `[0, 1]`.
+        times: Vec<f32>,
+    },
+    /// Relevance grades were assigned by a known linear utility.
+    ///
+    /// The grades a consumer sees are ranks within a query, which is a
+    /// deliberately lossy view: two documents in one query can share a grade and
+    /// still have an unambiguous correct order. The recorded utilities are that
+    /// order, so a ranker can be scored past the resolution of its own training
+    /// labels.
+    RankingUtility {
+        /// The true utility coefficient of each column.
+        coefficients: Vec<f32>,
+        /// The utility of every document, in row order.
+        utilities: Vec<f32>,
+        /// Number of distinct relevance grades the utilities were bucketed into.
+        grades: usize,
+    },
 }
 
 impl Truth {
@@ -165,7 +233,12 @@ impl Truth {
         match self {
             Self::LinearPredictor { coefficients, .. }
             | Self::LinearBayes { coefficients, .. }
-            | Self::ConditionedDesign { coefficients, .. } => Some(coefficients),
+            | Self::ConditionedDesign { coefficients, .. }
+            | Self::RankingUtility { coefficients, .. } => Some(coefficients),
+            // A drifting family has two coefficient vectors and no single one.
+            // Returning either would be a wrong answer to this question, so it
+            // answers `None` and offers [`Truth::start_coefficients`] and
+            // [`Truth::end_coefficients`] instead.
             _ => None,
         }
     }
@@ -175,7 +248,8 @@ impl Truth {
         match *self {
             Self::LinearPredictor { intercept, .. }
             | Self::LinearBayes { intercept, .. }
-            | Self::ConditionedDesign { intercept, .. } => Some(intercept),
+            | Self::ConditionedDesign { intercept, .. }
+            | Self::DriftingPredictor { intercept, .. } => Some(intercept),
             _ => None,
         }
     }
@@ -187,6 +261,9 @@ impl Truth {
                 conditional_mean, ..
             }
             | Self::ConditionedDesign {
+                conditional_mean, ..
+            }
+            | Self::DriftingPredictor {
                 conditional_mean, ..
             } => Some(conditional_mean),
             Self::ConditionalMean { values } => Some(values),
@@ -208,6 +285,126 @@ impl Truth {
     pub fn rank(&self) -> Option<usize> {
         match *self {
             Self::ConditionedDesign { rank, .. } => Some(rank),
+            _ => None,
+        }
+    }
+
+    /// `P(y = k | x)` for every class of every row, row-major, when the family
+    /// draws over more than two classes.
+    ///
+    /// The stride is [`Truth::classes`]. The binary families report a scalar
+    /// through [`Truth::probabilities`] instead, and deliberately do not also
+    /// answer here: a caller writing one code path over both would otherwise
+    /// index a one-wide row as if it were two-wide.
+    ///
+    /// ```
+    /// use ferricml::datasets::{ClassBalance, ClassGeometry, Recipe, Task};
+    ///
+    /// let dataset = Recipe::seeded(64, 4, 5)?
+    ///     .with_task(Task::Multiclass {
+    ///         classes: 3,
+    ///         balance: ClassBalance::Balanced,
+    ///         geometry: ClassGeometry::Blob,
+    ///         separation: 2.0,
+    ///     })?
+    ///     .generate();
+    ///
+    /// let probabilities = dataset.truth().class_probabilities().expect("a multiclass family");
+    /// let classes = dataset.truth().classes().expect("a multiclass family");
+    /// assert_eq!(classes, 3);
+    /// assert_eq!(probabilities.len(), 64 * 3);
+    ///
+    /// // Every row is a distribution.
+    /// for row in probabilities.chunks_exact(classes) {
+    ///     let total: f64 = row.iter().map(|&p| f64::from(p)).sum();
+    ///     assert!((total - 1.0).abs() < 1e-5, "row summed to {total}");
+    /// }
+    /// # Ok::<(), ferricml::datasets::DatasetError>(())
+    /// ```
+    pub fn class_probabilities(&self) -> Option<&[f32]> {
+        match self {
+            Self::MulticlassBayes { probabilities, .. } => Some(probabilities),
+            _ => None,
+        }
+    }
+
+    /// The number of classes, when the family drew over a known set of them.
+    pub fn classes(&self) -> Option<usize> {
+        match *self {
+            Self::MulticlassBayes { classes, .. } => Some(classes),
+            _ => None,
+        }
+    }
+
+    /// The cluster every row belongs to, when the family assigned one.
+    pub fn cluster_assignments(&self) -> Option<&[usize]> {
+        match self {
+            Self::ClusterAssignment { assignments, .. } => Some(assignments),
+            _ => None,
+        }
+    }
+
+    /// The cluster centres, row-major, when the family drew around them.
+    pub fn cluster_centres(&self) -> Option<&[f32]> {
+        match self {
+            Self::ClusterAssignment { centres, .. } => Some(centres),
+            _ => None,
+        }
+    }
+
+    /// The number of clusters, when the family drew around them.
+    pub fn blobs(&self) -> Option<usize> {
+        match *self {
+            Self::ClusterAssignment { blobs, .. } => Some(blobs),
+            _ => None,
+        }
+    }
+
+    /// The coefficients at the first row, when the family's coefficients drift.
+    pub fn start_coefficients(&self) -> Option<&[f32]> {
+        match self {
+            Self::DriftingPredictor {
+                start_coefficients, ..
+            } => Some(start_coefficients),
+            _ => None,
+        }
+    }
+
+    /// The coefficients at the last row, when the family's coefficients drift.
+    pub fn end_coefficients(&self) -> Option<&[f32]> {
+        match self {
+            Self::DriftingPredictor {
+                end_coefficients, ..
+            } => Some(end_coefficients),
+            _ => None,
+        }
+    }
+
+    /// Each row's time, when the family ordered its rows in time.
+    pub fn times(&self) -> Option<&[f32]> {
+        match self {
+            Self::DriftingPredictor { times, .. } => Some(times),
+            _ => None,
+        }
+    }
+
+    /// The true utility of every document, when the family ranked them.
+    ///
+    /// This is finer than the relevance grades a consumer trains on: two
+    /// documents can share a grade and still have a correct order, and this is
+    /// that order.
+    pub fn utilities(&self) -> Option<&[f32]> {
+        match self {
+            Self::RankingUtility { utilities, .. } => Some(utilities),
+            _ => None,
+        }
+    }
+
+    /// The number of relevance grades, when the family bucketed a utility into
+    /// them.
+    pub fn grades(&self) -> Option<usize> {
+        match *self {
+            Self::RankingUtility { grades, .. } => Some(grades),
             _ => None,
         }
     }
@@ -243,6 +440,7 @@ pub struct Dataset {
     weights: Option<SampleWeights>,
     truth: Truth,
     groups: Option<Vec<u64>>,
+    pairs: Option<Vec<PairwiseObservation>>,
     spec_digest: [u8; 32],
 }
 
@@ -259,6 +457,7 @@ impl Dataset {
         weights: Option<SampleWeights>,
         truth: Truth,
         groups: Option<Vec<u64>>,
+        pairs: Option<Vec<PairwiseObservation>>,
         spec_digest: [u8; 32],
     ) -> Self {
         debug_assert!(
@@ -275,12 +474,20 @@ impl Dataset {
             groups.as_ref().is_none_or(|g| g.len() == features.rows()),
             "group count disagrees with the design's row count"
         );
+        debug_assert!(
+            pairs.as_ref().is_none_or(|pairs| pairs
+                .iter()
+                .all(|pair| pair.pair().left() < features.rows()
+                    && pair.pair().right() < features.rows())),
+            "a pair references a row outside the design"
+        );
         Self {
             features,
             target,
             weights,
             truth,
             groups,
+            pairs,
             spec_digest,
         }
     }
@@ -323,6 +530,44 @@ impl Dataset {
     #[inline]
     pub fn groups(&self) -> Option<&[u64]> {
         self.groups.as_deref()
+    }
+
+    /// Returns the preference pairs, or `None` when no family drew any.
+    ///
+    /// Carried on the dataset rather than derived by a caller, and that is the
+    /// point: which pairs exist, which way each one points and what it weighs is
+    /// what the ranking family *produced*, and re-deriving it at the call site
+    /// would be a second implementation of the family's own judgement rule. The
+    /// slice is already in the crate's own vocabulary, so it feeds
+    /// [`PairwiseLinearRanker::fit`](crate::ranking::PairwiseLinearRanker::fit)
+    /// with no adaptation at all.
+    ///
+    /// ```
+    /// use ferricml::datasets::{Recipe, Task};
+    /// use ferricml::ranking::{PairwiseLinearRanker, PairwiseLinearRankerParams};
+    ///
+    /// let dataset = Recipe::seeded(64, 5, 21)?
+    ///     .with_task(Task::Ranking {
+    ///         queries: 16,
+    ///         docs_per_query: 4,
+    ///         grades: 3,
+    ///         informative: 3,
+    ///         coefficient_scale: 1.0,
+    ///     })?
+    ///     .generate();
+    ///
+    /// let pairs = dataset.pairs().expect("a ranking family");
+    /// let ranker = PairwiseLinearRanker::fit(
+    ///     &dataset.features().as_view(),
+    ///     pairs,
+    ///     PairwiseLinearRankerParams::default(),
+    /// )?;
+    /// assert_eq!(ranker.n_features_in(), 5);
+    /// # Ok::<(), Box<dyn std::error::Error>>(())
+    /// ```
+    #[inline]
+    pub fn pairs(&self) -> Option<&[PairwiseObservation]> {
+        self.pairs.as_deref()
     }
 
     /// Returns the digest of the recipe that produced this dataset.

@@ -392,13 +392,19 @@ pub enum WeightPattern {
         /// Weight of the odd rows.
         second: f32,
     },
-    /// Each class carries the same total weight.
+    /// Each observed class carries the same total weight.
     ///
-    /// A row of a class with `k` members weighs `rows / (2k)`, so the two
-    /// classes each total half the row count whatever their prevalence. This is
-    /// what turns [`Task::LinearBinary`](super::Task::LinearBinary)'s controlled
-    /// prevalence into a controlled *imbalance* experiment: the same data,
-    /// fitted with and without the correction.
+    /// A row of a class with `k` members, out of `c` observed classes, weighs
+    /// `rows / (c * k)`, so every class totals `rows / c` whatever its
+    /// prevalence. This is what turns
+    /// [`Task::LinearBinary`](super::Task::LinearBinary)'s controlled prevalence
+    /// and [`Task::Multiclass`](super::Task::Multiclass)'s controlled balance
+    /// into controlled *imbalance* experiments: the same data, fitted with and
+    /// without the correction.
+    ///
+    /// The class count is the one *observed* rather than the one requested. A
+    /// class the draw never produced has no rows to weigh, and inventing a share
+    /// for it would silently down-weight every class that does exist.
     ClassBalanced,
 }
 
@@ -453,16 +459,23 @@ impl WeightPattern {
                 .collect(),
             Self::ClassBalanced => {
                 let labels = labels.unwrap_or(&[]);
-                let positives = labels.iter().filter(|&&label| label == 1).count();
-                let negatives = labels.len() - positives;
+                // One pass over a 256-entry table rather than a map: labels are
+                // `u8`, so the whole class space fits in a fixed array and the
+                // count is linear in the rows regardless of how many classes
+                // there are.
+                let mut members = [0_usize; 256];
+                for &label in labels {
+                    members[label as usize] += 1;
+                }
+                let observed = members.iter().filter(|&&count| count > 0).count();
                 labels
                     .iter()
                     .map(|&label| {
-                        let members = if label == 1 { positives } else { negatives };
-                        if members == 0 {
+                        let count = members[label as usize];
+                        if count == 0 || observed == 0 {
                             1.0
                         } else {
-                            rows as f32 / (2.0 * members as f32)
+                            rows as f32 / (observed as f32 * count as f32)
                         }
                     })
                     .collect()

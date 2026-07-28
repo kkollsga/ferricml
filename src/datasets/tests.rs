@@ -433,6 +433,7 @@ fn a_dataset_reports_the_parts_it_was_assembled_from() {
         Some(SampleWeights::new(vec![1.0, 2.0, 0.5, 1.0]).unwrap()),
         Truth::DesignOnly,
         Some(vec![7, 7, 9, 9]),
+        None,
         recipe.spec_digest(),
     );
     assert_eq!(
@@ -456,6 +457,7 @@ fn a_dataset_reports_the_parts_it_was_assembled_from() {
         )),
         None,
         Truth::DesignOnly,
+        None,
         None,
         recipe.spec_digest(),
     );
@@ -489,6 +491,7 @@ fn a_dataset_whose_target_is_the_wrong_length_is_a_defect() {
         Some(Target::Binary(BinaryTargets::new(vec![0, 1]).unwrap())),
         None,
         Truth::DesignOnly,
+        None,
         None,
         recipe.spec_digest(),
     );

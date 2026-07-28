@@ -187,6 +187,7 @@ impl BenchmarkFixture {
             None,
             Truth::Unrecorded,
             None,
+            None,
             self.recipe.spec_digest(),
         )
     }

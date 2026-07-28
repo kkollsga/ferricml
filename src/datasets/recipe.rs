@@ -2,6 +2,7 @@ use super::contamination::{Contamination, WeightPattern};
 use super::dataset::{Dataset, Target, Truth};
 use super::error::DatasetError;
 use super::source::{LATTICE_MODULUS_LIMIT, fill_design};
+use super::structural::{ClassBalance, ClassGeometry, GroupPattern};
 use super::task::{BinaryKind, GlmLink, NonlinearKind, Portability, Task};
 use crate::data::DenseMatrix;
 use crate::numeric::derive_dataset_stream;
@@ -14,15 +15,15 @@ use sha2::{Digest, Sha256};
 /// with it, and it carries a version so a later phase can extend the encoding
 /// without silently reusing a digest that meant something else.
 ///
-/// **Version two, because this phase extended the encoding.** A recipe now
-/// carries a task, a contamination and a weight pattern, and every one of them
-/// changes the data. The version moved rather than the fields being appended
-/// silently, which is the discipline the tag was introduced for: a `v1` digest
-/// described a recipe that could not express a task at all, so reusing it for a
-/// recipe that can would make one identifier mean two things. Nothing outside
-/// this crate has recorded a `v1` digest — the feature is unreleased — so the
-/// bump costs a cache invalidation nobody can observe.
-const SPEC_DOMAIN: &[u8] = b"ferricml.dataset.spec.v2";
+/// **Version three, because this phase extended the encoding again.** A recipe
+/// now also carries a group pattern. The version moves whenever the encoding
+/// does, rather than fields being appended silently, which is the discipline the
+/// tag was introduced for: a `v2` digest described a recipe that could not
+/// express a grouping at all, so reusing it for a recipe that can would make one
+/// identifier mean two things. Nothing outside this crate has recorded either
+/// earlier digest — the feature is unreleased — so the bump costs a cache
+/// invalidation nobody can observe.
+const SPEC_DOMAIN: &[u8] = b"ferricml.dataset.spec.v3";
 
 /// The domain tag the task families' auxiliary stream seeds are derived under.
 ///
@@ -176,6 +177,7 @@ pub struct Recipe {
     task: Option<Task>,
     contamination: Contamination,
     weight_pattern: Option<WeightPattern>,
+    group_pattern: Option<GroupPattern>,
 }
 
 impl Recipe {
@@ -220,6 +222,7 @@ impl Recipe {
             task: None,
             contamination: Contamination::none(),
             weight_pattern: None,
+            group_pattern: None,
         })
     }
 
@@ -275,7 +278,7 @@ impl Recipe {
     /// # Ok::<(), DatasetError>(())
     /// ```
     pub fn with_task(mut self, task: Task) -> Result<Self, DatasetError> {
-        task.validate(self.columns)?;
+        task.validate(self.rows, self.columns)?;
         self.task = Some(task);
         self.check_task_dependent_requests()?;
         Ok(self)
@@ -308,6 +311,42 @@ impl Recipe {
         Ok(self)
     }
 
+    /// Adds a group pattern, checking it against the design's row count.
+    ///
+    /// Group labels mark rows that are not independent, and every pattern
+    /// **partitions** the rows: exactly `groups` identifiers, none of them
+    /// unused, one per row. They are `u64` because that is what this crate's
+    /// grouped splitters take, so
+    /// [`Dataset::groups`](super::Dataset::groups) feeds
+    /// [`GroupKFold::split`](crate::model_selection::GroupKFold::split) with no
+    /// adapter between them.
+    ///
+    /// A pattern is refused over a task that assigns groups itself — today that
+    /// is [`Task::Ranking`], whose group labels are its query identifiers and
+    /// whose pairs are within-query by construction. Letting a pattern win would
+    /// leave the pairs and the groups describing two different partitions of the
+    /// same rows.
+    ///
+    /// ```
+    /// use ferricml::datasets::{GroupPattern, Recipe};
+    /// use ferricml::model_selection::GroupKFold;
+    ///
+    /// let dataset = Recipe::seeded(120, 4, 9)?
+    ///     .with_groups(GroupPattern::Contiguous { groups: 12 })?
+    ///     .generate();
+    ///
+    /// let groups = dataset.groups().expect("a grouped recipe");
+    /// let folds = GroupKFold::new(4).split(groups)?.count();
+    /// assert_eq!(folds, 4);
+    /// # Ok::<(), Box<dyn std::error::Error>>(())
+    /// ```
+    pub fn with_groups(mut self, pattern: GroupPattern) -> Result<Self, DatasetError> {
+        pattern.validate(self.rows)?;
+        self.group_pattern = Some(pattern);
+        self.check_task_dependent_requests()?;
+        Ok(self)
+    }
+
     /// Rejects any request the current task cannot carry.
     ///
     /// Run after every builder call rather than only after `with_task`, so the
@@ -325,7 +364,7 @@ impl Recipe {
             // displaces it multiplicatively so a count stays a count; the other
             // two reshape an additive term that response does not have.
             let carried = if matches!(parameter, super::error::Parameter::OutlierFraction) {
-                self.task.is_some_and(|task| !task.draws_labels())
+                self.task.is_some_and(Task::carries_outliers)
             } else {
                 additive_noise
             };
@@ -335,6 +374,20 @@ impl Recipe {
         }
         if self.weight_pattern.is_some_and(WeightPattern::needs_labels) && !draws_labels {
             return Err(DatasetError::WeightPatternNeedsLabels);
+        }
+        if self.contamination.duplicate_rows() != 0.0
+            && self.task.is_some_and(Task::truth_is_positional)
+        {
+            // The clustered family's recorded assignment is a function of the
+            // row index, so a duplicated row would carry another cluster's
+            // features under its own recorded label. A silently wrong ground
+            // truth is worse than any contamination.
+            return Err(DatasetError::ContaminationConflictsWithTask {
+                parameter: super::error::Parameter::DuplicateRows,
+            });
+        }
+        if self.group_pattern.is_some() && self.task.is_some_and(Task::assigns_groups) {
+            return Err(DatasetError::GroupPatternConflictsWithTask);
         }
         Ok(())
     }
@@ -373,6 +426,16 @@ impl Recipe {
     #[inline]
     pub const fn weight_pattern(&self) -> Option<WeightPattern> {
         self.weight_pattern
+    }
+
+    /// Returns the per-row group pattern, if any.
+    ///
+    /// `None` does not mean the generated dataset has no groups: a task that
+    /// assigns its own — [`Task::Ranking`] — reports none here and still
+    /// produces [`Dataset::groups`](super::Dataset::groups).
+    #[inline]
+    pub const fn group_pattern(&self) -> Option<GroupPattern> {
+        self.group_pattern
     }
 
     /// Returns this recipe's determinism envelope.
@@ -459,6 +522,7 @@ impl Recipe {
         self.update_task_digest(&mut digest);
         self.update_contamination_digest(&mut digest);
         self.update_weight_digest(&mut digest);
+        self.update_group_digest(&mut digest);
         digest.finalize().into()
     }
 
@@ -579,6 +643,54 @@ impl Recipe {
                 digest.update(separation.to_bits().to_le_bytes());
                 digest.update(prevalence.to_bits().to_le_bytes());
             }
+            Task::Multiclass {
+                classes,
+                balance,
+                geometry,
+                separation,
+            } => {
+                let (balance_tag, ratio) = match balance {
+                    ClassBalance::Balanced => (1_u8, 1.0_f32),
+                    ClassBalance::Imbalanced { ratio } => (2, ratio),
+                };
+                digest.update([7_u8, balance_tag, geometry_tag(geometry)]);
+                digest.update((classes as u64).to_le_bytes());
+                digest.update(ratio.to_bits().to_le_bytes());
+                digest.update(separation.to_bits().to_le_bytes());
+            }
+            Task::Clustered { blobs, spread } => {
+                digest.update([8_u8]);
+                digest.update((blobs as u64).to_le_bytes());
+                digest.update(spread.to_bits().to_le_bytes());
+            }
+            Task::TimeOrdered {
+                informative,
+                coefficient_scale,
+                drift,
+                intercept,
+                noise_scale,
+            } => {
+                digest.update([9_u8]);
+                digest.update((informative as u64).to_le_bytes());
+                digest.update(coefficient_scale.to_bits().to_le_bytes());
+                digest.update(drift.to_bits().to_le_bytes());
+                digest.update(intercept.to_bits().to_le_bytes());
+                digest.update(noise_scale.to_bits().to_le_bytes());
+            }
+            Task::Ranking {
+                queries,
+                docs_per_query,
+                grades,
+                informative,
+                coefficient_scale,
+            } => {
+                digest.update([10_u8]);
+                digest.update((queries as u64).to_le_bytes());
+                digest.update((docs_per_query as u64).to_le_bytes());
+                digest.update((grades as u64).to_le_bytes());
+                digest.update((informative as u64).to_le_bytes());
+                digest.update(coefficient_scale.to_bits().to_le_bytes());
+            }
         }
     }
 
@@ -614,6 +726,23 @@ impl Recipe {
         digest.update([tag]);
         digest.update(first.to_bits().to_le_bytes());
         digest.update(second.to_bits().to_le_bytes());
+    }
+
+    /// Hashes the group pattern: a discriminant, a count and one float, always.
+    ///
+    /// Fixed width for the reason the weight pattern is: the unused ratio is
+    /// zeroed rather than omitted, so the tag alone separates the patterns and
+    /// the encoding stays injective.
+    fn update_group_digest(&self, digest: &mut Sha256) {
+        let (tag, groups, ratio) = match self.group_pattern {
+            None => (0_u8, 0_usize, 0.0_f32),
+            Some(GroupPattern::RoundRobin { groups }) => (1, groups, 0.0),
+            Some(GroupPattern::Contiguous { groups }) => (2, groups, 0.0),
+            Some(GroupPattern::Unbalanced { groups, ratio }) => (3, groups, ratio),
+        };
+        digest.update([tag]);
+        digest.update((groups as u64).to_le_bytes());
+        digest.update(ratio.to_bits().to_le_bytes());
     }
 
     /// Generates the design matrix.
@@ -657,7 +786,11 @@ impl Recipe {
     pub fn design_into(&self, values: &mut Vec<f32>) {
         fill_design(&self.source, self.rows, self.columns, values);
         if let Some(task) = self.task {
-            task.shape_design(self.rows, self.columns, values);
+            // The digest is formed only for a recipe that carries a task, and
+            // only one of them reads it. A SHA-256 over a few dozen fixed-width
+            // bytes is a fixed cost against a fill that is already `rows *
+            // columns` draws, so it does not change what this method is for.
+            task.shape_design(self.rows, self.columns, values, &self.stream_digest());
         }
         self.contamination
             .shape_design(self.rows, self.columns, values);
@@ -692,13 +825,12 @@ impl Recipe {
     pub fn generate(&self) -> Dataset {
         let design = self.design();
         let spec_digest = self.spec_digest();
-        let (target, truth) = match self.task {
-            None => (None, Truth::DesignOnly),
-            Some(task) => {
-                let (target, truth) =
-                    task.draw(&design, &self.contamination, &self.stream_digest());
-                (Some(target), truth)
-            }
+        let drawn = self
+            .task
+            .map(|task| task.draw(&design, &self.contamination, &self.stream_digest()));
+        let (target, truth, task_groups, pairs) = match drawn {
+            None => (None, Truth::DesignOnly, None, None),
+            Some(drawn) => (drawn.target, drawn.truth, drawn.groups, drawn.pairs),
         };
         let weights = self.weight_pattern.map(|pattern| {
             let labels = match target.as_ref() {
@@ -708,7 +840,11 @@ impl Recipe {
             };
             pattern.weights(self.rows, labels)
         });
-        Dataset::from_parts(design, target, weights, truth, None, spec_digest)
+        // A task's own grouping and a caller's pattern never both exist: the
+        // combination is refused at the constructor, so this is a choice between
+        // one source and none rather than a precedence rule.
+        let groups = task_groups.or_else(|| self.group_pattern.map(|p| p.labels(self.rows)));
+        Dataset::from_parts(design, target, weights, truth, groups, pairs, spec_digest)
     }
 
     /// The task's targets as one value per row, allocated.
@@ -739,7 +875,13 @@ impl Recipe {
     /// # Ok::<(), ferricml::datasets::DatasetError>(())
     /// ```
     pub fn target_values(&self) -> Option<Vec<f32>> {
-        self.task?;
+        let task = self.task?;
+        // An unsupervised family carries a task and still has no targets, so
+        // "has a task" stopped being the same question as "has targets" when
+        // `Task::Clustered` arrived.
+        if !task.draws_target() {
+            return None;
+        }
         let mut values = Vec::new();
         self.target_values_into(&mut values);
         Some(values)
@@ -752,7 +894,7 @@ impl Recipe {
     /// it wants the numbers rather than the containers.
     pub fn target_values_into(&self, values: &mut Vec<f32>) {
         values.clear();
-        if self.task.is_none() {
+        if !self.task.is_some_and(Task::draws_target) {
             return;
         }
         values.reserve(self.rows);
@@ -798,5 +940,13 @@ const fn link_tag(link: GlmLink) -> u8 {
     match link {
         GlmLink::LogCount => 1,
         GlmLink::LogPositive => 2,
+    }
+}
+
+/// The digest discriminant of a multiclass geometry.
+const fn geometry_tag(geometry: ClassGeometry) -> u8 {
+    match geometry {
+        ClassGeometry::Blob => 1,
+        ClassGeometry::Hierarchical => 2,
     }
 }
