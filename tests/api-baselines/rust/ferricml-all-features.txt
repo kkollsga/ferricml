@@ -1475,38 +1475,38 @@ pub fn ferricml::datasets::Task::fmt(&self, &mut core::fmt::Formatter<'_>) -> co
 impl core::marker::Copy for ferricml::datasets::Task
 impl core::marker::StructuralPartialEq for ferricml::datasets::Task
 #[non_exhaustive] pub enum ferricml::datasets::Truth
-pub ferricml::datasets::Truth::Bayes
+#[non_exhaustive] pub ferricml::datasets::Truth::Bayes
 pub ferricml::datasets::Truth::Bayes::probabilities: alloc::vec::Vec<f32>
-pub ferricml::datasets::Truth::ClusterAssignment
+#[non_exhaustive] pub ferricml::datasets::Truth::ClusterAssignment
 pub ferricml::datasets::Truth::ClusterAssignment::assignments: alloc::vec::Vec<usize>
 pub ferricml::datasets::Truth::ClusterAssignment::blobs: usize
 pub ferricml::datasets::Truth::ClusterAssignment::centres: alloc::vec::Vec<f32>
-pub ferricml::datasets::Truth::ConditionalMean
+#[non_exhaustive] pub ferricml::datasets::Truth::ConditionalMean
 pub ferricml::datasets::Truth::ConditionalMean::values: alloc::vec::Vec<f32>
-pub ferricml::datasets::Truth::ConditionedDesign
+#[non_exhaustive] pub ferricml::datasets::Truth::ConditionedDesign
 pub ferricml::datasets::Truth::ConditionedDesign::coefficients: alloc::vec::Vec<f32>
 pub ferricml::datasets::Truth::ConditionedDesign::conditional_mean: alloc::vec::Vec<f32>
 pub ferricml::datasets::Truth::ConditionedDesign::intercept: f32
 pub ferricml::datasets::Truth::ConditionedDesign::rank: usize
 pub ferricml::datasets::Truth::DesignOnly
-pub ferricml::datasets::Truth::DriftingPredictor
+#[non_exhaustive] pub ferricml::datasets::Truth::DriftingPredictor
 pub ferricml::datasets::Truth::DriftingPredictor::conditional_mean: alloc::vec::Vec<f32>
 pub ferricml::datasets::Truth::DriftingPredictor::end_coefficients: alloc::vec::Vec<f32>
 pub ferricml::datasets::Truth::DriftingPredictor::intercept: f32
 pub ferricml::datasets::Truth::DriftingPredictor::start_coefficients: alloc::vec::Vec<f32>
 pub ferricml::datasets::Truth::DriftingPredictor::times: alloc::vec::Vec<f32>
-pub ferricml::datasets::Truth::LinearBayes
+#[non_exhaustive] pub ferricml::datasets::Truth::LinearBayes
 pub ferricml::datasets::Truth::LinearBayes::coefficients: alloc::vec::Vec<f32>
 pub ferricml::datasets::Truth::LinearBayes::intercept: f32
 pub ferricml::datasets::Truth::LinearBayes::probabilities: alloc::vec::Vec<f32>
-pub ferricml::datasets::Truth::LinearPredictor
+#[non_exhaustive] pub ferricml::datasets::Truth::LinearPredictor
 pub ferricml::datasets::Truth::LinearPredictor::coefficients: alloc::vec::Vec<f32>
 pub ferricml::datasets::Truth::LinearPredictor::conditional_mean: alloc::vec::Vec<f32>
 pub ferricml::datasets::Truth::LinearPredictor::intercept: f32
-pub ferricml::datasets::Truth::MulticlassBayes
+#[non_exhaustive] pub ferricml::datasets::Truth::MulticlassBayes
 pub ferricml::datasets::Truth::MulticlassBayes::classes: usize
 pub ferricml::datasets::Truth::MulticlassBayes::probabilities: alloc::vec::Vec<f32>
-pub ferricml::datasets::Truth::RankingUtility
+#[non_exhaustive] pub ferricml::datasets::Truth::RankingUtility
 pub ferricml::datasets::Truth::RankingUtility::coefficients: alloc::vec::Vec<f32>
 pub ferricml::datasets::Truth::RankingUtility::grades: usize
 pub ferricml::datasets::Truth::RankingUtility::utilities: alloc::vec::Vec<f32>

@@ -31,6 +31,11 @@ pub enum Target {
 /// The variant list grows with the task families. It is `#[non_exhaustive]`
 /// because a family that arrives with a new kind of ground truth must not be a
 /// breaking change for a caller that only ever matches the arms it asked for.
+/// The field-carrying variants are individually `#[non_exhaustive]` for the
+/// other half of that: this is the enum whose whole purpose is recording what a
+/// family knows, so a family that learns to record *more* must be able to say so
+/// additively. Read the fields through the accessors below, or destructure with
+/// `..`.
 #[derive(Clone, Debug, PartialEq)]
 #[non_exhaustive]
 pub enum Truth {
@@ -63,6 +68,7 @@ pub enum Truth {
     /// with its noise removed, which is what a mean-squared error should be
     /// measured against when the question is how much of the *recoverable*
     /// signal a model found.
+    #[non_exhaustive]
     LinearPredictor {
         /// The true coefficient of each column, exactly zero on the
         /// uninformative ones.
@@ -79,6 +85,7 @@ pub enum Truth {
     /// is the statement: a consumer must not read "no coefficients recorded" as
     /// "the coefficients are zero", and the two are different variants here for
     /// exactly that reason.
+    #[non_exhaustive]
     ConditionalMean {
         /// `E[y | x]` at each row.
         values: Vec<f32>,
@@ -91,6 +98,7 @@ pub enum Truth {
     /// probabilities are `P(y = 1 | x)` for the labels as generated, including
     /// any label noise the contamination applied, so a perfectly calibrated
     /// model matches them exactly.
+    #[non_exhaustive]
     LinearBayes {
         /// The true coefficient of each column of the score.
         coefficients: Vec<f32>,
@@ -106,6 +114,7 @@ pub enum Truth {
     /// Reported by the nonlinear binary family. As with
     /// [`Truth::ConditionalMean`], the missing coefficients are a statement
     /// rather than an omission.
+    #[non_exhaustive]
     Bayes {
         /// `P(y = 1 | x)` at each row.
         probabilities: Vec<f32>,
@@ -123,6 +132,7 @@ pub enum Truth {
     /// returns the minimum-norm point of that set. The drawn coefficients are
     /// one other point in it. Recovering them is only meaningful when
     /// [`Truth::ConditionedDesign::rank`] equals the design's column count.
+    #[non_exhaustive]
     ConditionedDesign {
         /// The coefficients the target was drawn from.
         coefficients: Vec<f32>,
@@ -144,6 +154,7 @@ pub enum Truth {
     /// As with [`Truth::LinearBayes`], the recorded values are
     /// `P(observed label = k | x)` — after any label noise — so a perfectly
     /// calibrated model matches them exactly.
+    #[non_exhaustive]
     MulticlassBayes {
         /// `P(y = k | x)`, row-major: row `i`'s probabilities occupy
         /// `i * classes .. (i + 1) * classes` and sum to one.
@@ -156,6 +167,7 @@ pub enum Truth {
     /// Reported by the clustered family, which draws no target at all. The
     /// assignment is the answer a clusterer is scored against — up to a
     /// relabelling, which is a property of the *problem* and not of this record.
+    #[non_exhaustive]
     ClusterAssignment {
         /// The cluster every row belongs to, in `0..blobs`.
         assignments: Vec<usize>,
@@ -173,6 +185,7 @@ pub enum Truth {
     /// `start + t * (end - start)`, so a fit over any window predicts a value
     /// the record names in advance, and the difference between two windows is
     /// the drift a detector claims to have found.
+    #[non_exhaustive]
     DriftingPredictor {
         /// The coefficients at the first row.
         start_coefficients: Vec<f32>,
@@ -192,6 +205,7 @@ pub enum Truth {
     /// still have an unambiguous correct order. The recorded utilities are that
     /// order, so a ranker can be scored past the resolution of its own training
     /// labels.
+    #[non_exhaustive]
     RankingUtility {
         /// The true utility coefficient of each column.
         coefficients: Vec<f32>,

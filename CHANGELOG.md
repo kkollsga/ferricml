@@ -133,6 +133,17 @@ and releases use [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   rather than with an empty vector. A nonlinear shape reports its conditional
   mean and *no* coefficients, because none produce it.
 
+  **`Truth`'s field-carrying variants are individually `#[non_exhaustive]`.**
+  It is the enum whose whole job is recording what a family knows, so a family
+  that learns to record more should be able to say so without breaking anyone;
+  read its fields through the accessors, or destructure with `..`. `Task` is
+  deliberately the other way round — its variants stay literal-constructible,
+  because a recipe is a complete, named, compiler-checked request, and losing
+  that would cost more than the field-add it would insure against. Adding a knob
+  to an existing family is therefore a deliberate breaking change; new shapes
+  arrive as new variants and kinds, and cross-cutting knobs arrive through
+  `Contamination`.
+
   **A dial moves the difficulty; a structural field moves the problem.** Two
   recipes differing only in a dial draw from the same streams, so a ladder over
   one of them is a ladder over one problem rather than over a sequence of

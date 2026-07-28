@@ -513,6 +513,33 @@ pub enum GlmLink {
 ///
 /// It is `#[non_exhaustive]` because a new family must not be a breaking change
 /// for a caller that only ever matches the ones it asked for.
+///
+/// # The variant fields are deliberately literal-constructible
+///
+/// The variants below carry no `#[non_exhaustive]` of their own, unlike
+/// [`Truth`]'s, and that asymmetry is a recorded decision rather than an
+/// oversight. `Truth` is an output: nothing constructs one, so protecting it
+/// costs a `..` in a pattern that was optional anyway. A `Task` is a *request*,
+/// and the property this API leans on is that the request is complete: the
+/// compiler refuses a recipe that fails to state a knob, so `separation` and
+/// `prevalence` cannot be transposed, and a family's four positional `usize`
+/// fields cannot be permuted, in a way that still compiles. Constructors would
+/// keep completeness and lose the names; builders would keep the names and lose
+/// completeness, because no dial here has a neutral default — a `separation` of
+/// zero is a coin, not an absence.
+///
+/// The cost of that choice is stated rather than hidden: **adding a knob to an
+/// existing family is a breaking change**, taken deliberately as a minor
+/// version, and `make semver-check` fails it offered as anything less. The
+/// architecture keeps that rare by channelling growth elsewhere. A new shape is
+/// a new variant, kind or link; a cross-cutting knob is a
+/// [`Contamination`](super::Contamination) setting, on an already-opaque
+/// builder; and any future knob has to default to reproducing today's bytes
+/// regardless, because [`Recipe::spec_digest`](super::Recipe::spec_digest) is an
+/// identity. The two family-design questions open when this was written both
+/// resolved without a field: the sine boundary was redesigned as an expression,
+/// and `informative` and `rank` were reclassified as dials — a digest-routing
+/// change, not a new parameter.
 #[derive(Clone, Copy, Debug, PartialEq)]
 #[non_exhaustive]
 pub enum Task {
