@@ -78,6 +78,29 @@ and releases use [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   that a task exists, and inventing a coefficient vector would claim more than
   the lanes support.
 
+- **The benchmark fixtures are now part of the generator too.**
+  `datasets::BenchmarkFixture` reproduces the three private `fixture` functions
+  FerricML's own benchmark suite used — the forest suite's lattice design with
+  its separable labels and the regression target derived from them, and the
+  xorshift32 designs and targets behind the model and boosting suites — at any
+  shape. The originals in `benches/` are gone, and the benches call the
+  generator.
+
+  **Byte identity was the whole requirement.** `bench-history` gates a release
+  against immutable per-release results at a `1.10` ratio limit, and a timing
+  lane cannot notice a changed fixture: a differently distributed design of the
+  same shape runs at very nearly the same speed while meaning something else, so
+  every historical baseline would silently become non-comparable. The outgoing
+  bytes were therefore captured first, at every shape the benches actually call:
+  `the_absorbed_benchmark_fixtures_reproduce_their_recorded_bytes` pins a
+  SHA-256 over each design's full value vector and over each target vector, ten
+  `(lane, shape)` pairs in all, against digests read out of the functions this
+  commit deletes.
+
+  Like the conformance presets, these are transcriptions rather than recipes:
+  `f32` throughout, association order preserved, and a design narrower than a
+  target expression's score columns still sums only the columns it has.
+
 ### Changed
 
 - **The exact public-API snapshot now covers feature-gated surface.**

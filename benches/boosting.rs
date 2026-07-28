@@ -2,6 +2,7 @@ use criterion::{BatchSize, BenchmarkId, Criterion, Throughput, criterion_group, 
 use ferricml::api::ProbabilisticClassifier;
 use ferricml::artifact::ModelArtifact;
 use ferricml::data::{BinaryTargets, DenseMatrix, RegressionTargets, SampleWeights};
+use ferricml::datasets::{BenchmarkFixture, BenchmarkLane, Target};
 use ferricml::ensemble::{
     HistGradientBoostingClassifier, HistGradientBoostingClassifierParams,
     HistGradientBoostingRegressor, HistGradientBoostingRegressorParams,
@@ -12,38 +13,22 @@ const TRAIN_ROWS: usize = 2_048;
 const COLUMNS: usize = 48;
 const SCALAR_REPETITIONS: usize = 256;
 
+/// The suite's design matrix and its six-term regression target.
+///
+/// The generator owns the expression; this is the shape adapter. It moved into
+/// `ferricml::datasets` so the bytes every `bench-history` baseline was measured
+/// on are pinned by digest in the crate's own test suite rather than living
+/// untested in a benchmark file — see
+/// `the_absorbed_benchmark_fixtures_reproduce_their_recorded_bytes`.
 fn fixture(rows: usize, columns: usize) -> (DenseMatrix, RegressionTargets) {
-    let mut state = 0x243f_6a88_u32;
-    let mut values = Vec::with_capacity(rows * columns);
-    let mut targets = Vec::with_capacity(rows);
-    for row in 0..rows {
-        let mut selected = [0.0_f32; 12];
-        for column in 0..columns {
-            state ^= state << 13;
-            state ^= state >> 17;
-            state ^= state << 5;
-            let value = (state as f32 / u32::MAX as f32) * 2.0 - 1.0;
-            values.push(value);
-            if column < selected.len() {
-                selected[column] = value;
-            }
-        }
-        let target = 2.0 * selected[0] - selected[1]
-            + 1.5 * selected[2] * selected[3]
-            + if selected[4] > 0.0 { 1.2 } else { -1.2 }
-            + if selected[5] + selected[6] > 0.25 {
-                0.9
-            } else {
-                -0.4
-            }
-            + 0.3 * selected[7] * selected[8]
-            + 0.15 * ((row % 17) as f32 - 8.0);
-        targets.push(target);
-    }
-    (
-        DenseMatrix::new(values, rows, columns).unwrap(),
-        RegressionTargets::new(targets).unwrap(),
-    )
+    let dataset = BenchmarkFixture::new(BenchmarkLane::BoostingRegression, rows, columns)
+        .unwrap()
+        .generate();
+    let targets = match dataset.target() {
+        Some(Target::Regression(targets)) => targets.clone(),
+        other => panic!("the boosting regression lane produced {other:?}"),
+    };
+    (dataset.into_features(), targets)
 }
 
 fn params(trees: usize, leaves: usize) -> HistGradientBoostingRegressorParams {

@@ -1037,6 +1037,20 @@ impl ferricml::data::ClassificationTargets for ferricml::data::ClassTargets
 pub fn ferricml::data::ClassTargets::as_slice(&self) -> &[u8]
 pub fn ferricml::data::ClassTargets::select(&self, &[usize]) -> core::result::Result<Self, ferricml::data::SelectionError>
 pub mod ferricml::datasets
+#[non_exhaustive] pub enum ferricml::datasets::BenchmarkLane
+pub ferricml::datasets::BenchmarkLane::BoostingRegression
+pub ferricml::datasets::BenchmarkLane::ForestBinary
+pub ferricml::datasets::BenchmarkLane::ForestRegression
+pub ferricml::datasets::BenchmarkLane::ModelsRegression
+impl core::clone::Clone for ferricml::datasets::BenchmarkLane
+pub fn ferricml::datasets::BenchmarkLane::clone(&self) -> ferricml::datasets::BenchmarkLane
+impl core::cmp::Eq for ferricml::datasets::BenchmarkLane
+impl core::cmp::PartialEq for ferricml::datasets::BenchmarkLane
+pub fn ferricml::datasets::BenchmarkLane::eq(&self, &ferricml::datasets::BenchmarkLane) -> bool
+impl core::fmt::Debug for ferricml::datasets::BenchmarkLane
+pub fn ferricml::datasets::BenchmarkLane::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for ferricml::datasets::BenchmarkLane
+impl core::marker::StructuralPartialEq for ferricml::datasets::BenchmarkLane
 #[non_exhaustive] pub enum ferricml::datasets::DatasetError
 pub ferricml::datasets::DatasetError::DimensionOverflow
 pub ferricml::datasets::DatasetError::DimensionOverflow::columns: usize
@@ -1114,6 +1128,21 @@ pub fn ferricml::datasets::Truth::eq(&self, &ferricml::datasets::Truth) -> bool
 impl core::fmt::Debug for ferricml::datasets::Truth
 pub fn ferricml::datasets::Truth::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
 impl core::marker::StructuralPartialEq for ferricml::datasets::Truth
+pub struct ferricml::datasets::BenchmarkFixture
+impl ferricml::datasets::BenchmarkFixture
+pub fn ferricml::datasets::BenchmarkFixture::generate(&self) -> ferricml::datasets::Dataset
+pub const fn ferricml::datasets::BenchmarkFixture::lane(&self) -> ferricml::datasets::BenchmarkLane
+pub fn ferricml::datasets::BenchmarkFixture::new(ferricml::datasets::BenchmarkLane, usize, usize) -> core::result::Result<Self, ferricml::datasets::DatasetError>
+pub const fn ferricml::datasets::BenchmarkFixture::recipe(&self) -> ferricml::datasets::Recipe
+impl core::clone::Clone for ferricml::datasets::BenchmarkFixture
+pub fn ferricml::datasets::BenchmarkFixture::clone(&self) -> ferricml::datasets::BenchmarkFixture
+impl core::cmp::Eq for ferricml::datasets::BenchmarkFixture
+impl core::cmp::PartialEq for ferricml::datasets::BenchmarkFixture
+pub fn ferricml::datasets::BenchmarkFixture::eq(&self, &ferricml::datasets::BenchmarkFixture) -> bool
+impl core::fmt::Debug for ferricml::datasets::BenchmarkFixture
+pub fn ferricml::datasets::BenchmarkFixture::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for ferricml::datasets::BenchmarkFixture
+impl core::marker::StructuralPartialEq for ferricml::datasets::BenchmarkFixture
 pub struct ferricml::datasets::Dataset
 impl ferricml::datasets::Dataset
 pub const fn ferricml::datasets::Dataset::features(&self) -> &ferricml::data::DenseMatrix

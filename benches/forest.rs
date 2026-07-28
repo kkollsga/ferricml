@@ -1,6 +1,7 @@
 use criterion::{BatchSize, BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
 use ferricml::artifact::ModelArtifact;
 use ferricml::data::{BinaryTargets, ClassTargets, DenseMatrix, RegressionTargets, SampleWeights};
+use ferricml::datasets::{BenchmarkFixture, BenchmarkLane, Target};
 use ferricml::ensemble::{
     ExtraTreesClassifier, ExtraTreesClassifierParams, ExtraTreesRegressor,
     ExtraTreesRegressorParams, RandomForestClassifier, RandomForestClassifierParams,
@@ -13,38 +14,34 @@ use ferricml::tree::{
 };
 use std::hint::black_box;
 
+/// The suite's design matrix and its separable labels.
+///
+/// The generator owns the expression; this is the shape adapter. It moved into
+/// `ferricml::datasets` so the bytes every `bench-history` baseline was measured
+/// on are pinned by digest in the crate's own test suite rather than living
+/// untested in a benchmark file — see
+/// `the_absorbed_benchmark_fixtures_reproduce_their_recorded_bytes`.
 fn fixture(rows: usize, columns: usize) -> (DenseMatrix, BinaryTargets) {
-    let mut values = Vec::with_capacity(rows * columns);
-    let mut targets = Vec::with_capacity(rows);
-    for row in 0..rows {
-        let mut score = 0.0_f32;
-        for column in 0..columns {
-            let value = (((row * 131 + column * 17) % 1009) as f32 / 504.5) - 1.0;
-            values.push(value);
-            if column < 4 {
-                score += value * (column + 1) as f32;
-            }
-        }
-        targets.push(u8::from(score > 0.0));
-    }
-    (
-        DenseMatrix::new(values, rows, columns).unwrap(),
-        BinaryTargets::new(targets).unwrap(),
-    )
+    let dataset = BenchmarkFixture::new(BenchmarkLane::ForestBinary, rows, columns)
+        .unwrap()
+        .generate();
+    let targets = match dataset.target() {
+        Some(Target::Binary(targets)) => targets.clone(),
+        other => panic!("the forest binary lane produced {other:?}"),
+    };
+    (dataset.into_features(), targets)
 }
 
-/// Regression targets derived from the shared fixture's separable score, so
-/// the regressor lanes measure the same dataset the classifier lanes use.
-fn regression_targets(labels: &BinaryTargets) -> RegressionTargets {
-    RegressionTargets::new(
-        labels
-            .as_slice()
-            .iter()
-            .enumerate()
-            .map(|(row, &label)| f32::from(label) * 4.0 + (row % 11) as f32)
-            .collect(),
-    )
-    .unwrap()
+/// Regression targets over the same design the classifier lanes use, so the
+/// regressor lanes measure the same dataset.
+fn regression_targets(rows: usize, columns: usize) -> RegressionTargets {
+    let dataset = BenchmarkFixture::new(BenchmarkLane::ForestRegression, rows, columns)
+        .unwrap()
+        .generate();
+    match dataset.target() {
+        Some(Target::Regression(targets)) => targets.clone(),
+        other => panic!("the forest regression lane produced {other:?}"),
+    }
 }
 
 fn regressor(
@@ -53,8 +50,8 @@ fn regressor(
     trees: usize,
     max_depth: usize,
 ) -> (DenseMatrix, RandomForestRegressor) {
-    let (data, labels) = fixture(rows, columns);
-    let targets = regression_targets(&labels);
+    let data = fixture(rows, columns).0;
+    let targets = regression_targets(rows, columns);
     let model = RandomForestRegressor::fit(
         &data.as_view(),
         &targets,
@@ -186,7 +183,7 @@ fn artifact(c: &mut Criterion) {
 fn weighted_training(c: &mut Criterion) {
     let (rows, columns, trees) = (2048, 64, 20);
     let (data, targets) = fixture(rows, columns);
-    let regression = regression_targets(&targets);
+    let regression = regression_targets(rows, columns);
     let weights = SampleWeights::new(
         (0..rows)
             .map(|row| 0.25 + ((row % 7) as f32) * 0.5)
@@ -363,7 +360,7 @@ fn regressor_inference(c: &mut Criterion) {
 fn tree_training(c: &mut Criterion) {
     let (rows, columns) = (2048, 64);
     let (data, targets) = fixture(rows, columns);
-    let regression = regression_targets(&targets);
+    let regression = regression_targets(rows, columns);
     let tree_classifier = DecisionTreeClassifierParams::default()
         .with_max_depth(Some(12))
         .with_max_features(MaxFeatures::Sqrt)
@@ -424,7 +421,7 @@ fn tree_training(c: &mut Criterion) {
 fn tree_inference(c: &mut Criterion) {
     let (rows, columns) = (2048, 64);
     let (data, targets) = fixture(rows, columns);
-    let regression = regression_targets(&targets);
+    let regression = regression_targets(rows, columns);
     let tree = DecisionTreeClassifier::fit(
         &data.as_view(),
         &targets,

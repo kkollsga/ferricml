@@ -69,6 +69,7 @@
 //! documentation in `presets.rs` says which parts of the arithmetic are
 //! load-bearing.
 
+mod benchmarks;
 mod dataset;
 mod error;
 mod presets;
@@ -78,6 +79,7 @@ mod source;
 #[cfg(test)]
 mod tests;
 
+pub use benchmarks::{BenchmarkFixture, BenchmarkLane};
 pub use dataset::{Dataset, Target, Truth};
 pub use error::DatasetError;
 pub use presets::{ReferenceLane, ReferenceQuality};

@@ -6,6 +6,7 @@ use ferricml::calibration::{
     PlattParams,
 };
 use ferricml::data::{BinaryTargets, ClassTargets, DenseMatrix, RegressionTargets};
+use ferricml::datasets::{BenchmarkFixture, BenchmarkLane, Target};
 use ferricml::dummy::{
     DummyClassifier, DummyClassifierParams, DummyRegressor, DummyRegressorParams,
 };
@@ -64,31 +65,22 @@ const WIDE_MULTICLASS_ROWS: usize = 1_024;
 const PENALTY_ALPHA: f32 = 0.05;
 const MULTICLASS_FOREST_TREES: usize = 16;
 
+/// The suite's design matrix and its nonlinear regression target.
+///
+/// The generator owns the expression; this is the shape adapter. It moved into
+/// `ferricml::datasets` so the bytes every `bench-history` baseline was measured
+/// on are pinned by digest in the crate's own test suite rather than living
+/// untested in a benchmark file — see
+/// `the_absorbed_benchmark_fixtures_reproduce_their_recorded_bytes`.
 fn fixture(rows: usize, columns: usize) -> (DenseMatrix, RegressionTargets) {
-    let mut state = 0x9e37_79b9_u32;
-    let mut values = Vec::with_capacity(rows * columns);
-    let mut targets = Vec::with_capacity(rows);
-    for row in 0..rows {
-        let mut selected = [0.0_f32; 6];
-        for column in 0..columns {
-            state ^= state << 13;
-            state ^= state >> 17;
-            state ^= state << 5;
-            let value = (state as f32 / u32::MAX as f32) * 2.0 - 1.0;
-            values.push(value);
-            if column < selected.len() {
-                selected[column] = value;
-            }
-        }
-        let nonlinear = selected[2] * selected[3]
-            + if selected[4] > 0.0 { 0.8 } else { -0.8 }
-            + 0.25 * ((row % 11) as f32 - 5.0);
-        targets.push(1.7 * selected[0] - 0.9 * selected[1] + nonlinear);
-    }
-    (
-        DenseMatrix::new(values, rows, columns).unwrap(),
-        RegressionTargets::new(targets).unwrap(),
-    )
+    let dataset = BenchmarkFixture::new(BenchmarkLane::ModelsRegression, rows, columns)
+        .unwrap()
+        .generate();
+    let targets = match dataset.target() {
+        Some(Target::Regression(targets)) => targets.clone(),
+        other => panic!("the models regression lane produced {other:?}"),
+    };
+    (dataset.into_features(), targets)
 }
 
 /// Non-contiguous, non-zero-based labels derived from the shared fixture.

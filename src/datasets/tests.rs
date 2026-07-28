@@ -1,13 +1,10 @@
 use super::*;
 use crate::data::{BinaryTargets, RegressionTargets, SampleWeights};
-
-/// The lattice the absorbed benchmark fixture uses, named once so the frozen
-/// values below and the recipe under test cannot drift apart.
-const FOREST_LATTICE: Source = Source::Lattice {
-    row_stride: 131,
-    column_stride: 17,
-    modulus: 1009,
-};
+// The lattice the absorbed benchmark fixture draws from, taken from the module
+// that owns it rather than restated, so the frozen values below and the recipe
+// under test cannot drift apart.
+use super::benchmarks::FOREST_LATTICE;
+use sha2::{Digest, Sha256};
 
 #[test]
 fn an_invalid_shape_is_refused_by_name_before_anything_is_generated() {
@@ -1029,4 +1026,369 @@ fn regenerating_a_preset_reproduces_its_bytes() {
         preset,
         ReferenceQuality::new(ReferenceLane::NonlinearBinary, 22)
     );
+}
+
+/// Every absorbed benchmark fixture, digested at every shape its suite calls it
+/// at.
+///
+/// `(lane, rows, columns, design digest, target digest)`. The design digest is
+/// SHA-256 over the whole value vector's little-endian `f32` bytes, in row-major
+/// order; the target digest is over the label bytes for a binary lane and over
+/// the little-endian `f32` bytes for a regression one.
+///
+/// Every literal here was captured by running the private `fixture` functions in
+/// `benches/forest.rs`, `benches/models.rs` and `benches/boosting.rs` — extracted
+/// mechanically from those files rather than retyped — before this module
+/// replaced them, in the commit that deleted them. The shapes are the ones the
+/// benches actually call: `2048x64` and `512x16` for the forest suite, the five
+/// shapes between `256x8` and `1024x512` the model suite reaches, and `2048x48`
+/// for the boosted one.
+const ABSORBED_BENCHMARK_DIGESTS: [(BenchmarkLane, usize, usize, &str, &str); 10] = [
+    (
+        BenchmarkLane::ForestBinary,
+        2048,
+        64,
+        "8e72b704312cd30f8dd8ddcd322099134b46e9653e308268d09cfa5a16e59b3b",
+        "d4abb5ae935dc4f94fa3653ddad024bd8aff57e83df56fd5730766446edcccf1",
+    ),
+    (
+        BenchmarkLane::ForestRegression,
+        2048,
+        64,
+        "8e72b704312cd30f8dd8ddcd322099134b46e9653e308268d09cfa5a16e59b3b",
+        "e1ec9d23210ffc7e899e4c65352de893538b00fae2e5b4d42d081e8dd4b2acf0",
+    ),
+    (
+        BenchmarkLane::ForestBinary,
+        512,
+        16,
+        "8185887127313368be00e385f6aee76f5161a799c775e67700a50b37122e2779",
+        "bca462f253414db5361faa5fd48a5189024e58972ad4e1e313f342d49b9a3956",
+    ),
+    (
+        BenchmarkLane::ForestRegression,
+        512,
+        16,
+        "8185887127313368be00e385f6aee76f5161a799c775e67700a50b37122e2779",
+        "9d78970fca27880448b6176b9c018e453b4b30be282734ebd7166e0153d00262",
+    ),
+    (
+        BenchmarkLane::ModelsRegression,
+        2048,
+        48,
+        "025f1786748d2a5c2b03c827582b984b98023074f02807633370b5cad4e55560",
+        "55cf8811d3ac7d3c86bdc96473aeefae750838561cb54f902cff14c87fd13a9a",
+    ),
+    (
+        BenchmarkLane::ModelsRegression,
+        1024,
+        48,
+        "34b7d132a47abb19125a2c1e70a4a1c862919ec730aa74f40ca6b1b85e1dcbb1",
+        "6e28d765fa4544e4535edcd4f3aefa4f71aac2788deded4377625bca71ab3f01",
+    ),
+    (
+        BenchmarkLane::ModelsRegression,
+        1024,
+        512,
+        "767748fc61311a61b8f29b9d6ddda43749eea888d0b1fcbf0b661be1814fab38",
+        "7e67a5e78ee278c5f4c011db966655ecd8beb47d840314ebcea0d7279af99cf0",
+    ),
+    (
+        BenchmarkLane::ModelsRegression,
+        256,
+        12,
+        "e1f456af845dc0e8fdbeecfce81203845e0125d294321cb79c7ca812061ff3a5",
+        "c18efa2cf9fc614f18807a1e552b87d72acb6641d6d42795474c79bd55915236",
+    ),
+    (
+        BenchmarkLane::ModelsRegression,
+        256,
+        8,
+        "881a3ba08880b65fa46f0a57139d07cc98839a006377d54bbcf77a277ecbb19e",
+        "9cfd72e3f14f69aedd7e696bd1f9b936e034d3cab05d50bc1dc469e5041d23d0",
+    ),
+    (
+        BenchmarkLane::BoostingRegression,
+        2048,
+        48,
+        "873e751520bec55ca6e145b51b0e8c57743bd97de78d90a728ae31bf27299d68",
+        "e8e61ce111f762e4074de7a30a4b5e4eaf412b3543682ae71e67882f6226cd04",
+    ),
+];
+
+/// Lowercase hexadecimal, so a moved digest reads as a digest in the failure.
+fn hex(bytes: [u8; 32]) -> String {
+    bytes.iter().map(|byte| format!("{byte:02x}")).collect()
+}
+
+/// SHA-256 over a design matrix's little-endian `f32` bytes, in row-major order.
+fn design_digest(dataset: &Dataset) -> String {
+    let mut digest = Sha256::new();
+    for value in dataset.features().as_slice() {
+        digest.update(value.to_le_bytes());
+    }
+    hex(digest.finalize().into())
+}
+
+/// SHA-256 over a target vector, in whichever vocabulary the lane drew.
+fn target_digest(dataset: &Dataset) -> String {
+    let mut digest = Sha256::new();
+    match dataset.target() {
+        Some(Target::Binary(targets)) => digest.update(targets.as_slice()),
+        Some(Target::Regression(targets)) => {
+            for value in targets.as_slice() {
+                digest.update(value.to_le_bytes());
+            }
+        }
+        other => panic!("a benchmark lane produced {other:?}"),
+    }
+    hex(digest.finalize().into())
+}
+
+/// The absorbed benchmark fixtures emit the bytes their originals emitted.
+///
+/// This is the whole evidence P3 rests on, and it has to be byte identity rather
+/// than anything weaker. `bench-history` compares each release against immutable
+/// per-release results at a `1.10` ratio limit, so a fixture that changed by one
+/// value would leave every historical baseline non-comparable — and unlike a
+/// quality lane, a *timing* lane cannot notice that at all: a differently
+/// distributed design of the same shape runs at very nearly the same speed while
+/// meaning something else entirely.
+#[test]
+fn the_absorbed_benchmark_fixtures_reproduce_their_recorded_bytes() {
+    for (lane, rows, columns, design, target) in ABSORBED_BENCHMARK_DIGESTS {
+        let dataset = BenchmarkFixture::new(lane, rows, columns)
+            .unwrap()
+            .generate();
+        assert_eq!(dataset.features().rows(), rows);
+        assert_eq!(dataset.features().columns(), columns);
+        assert_eq!(
+            design_digest(&dataset),
+            design,
+            "{lane:?} {rows}x{columns} design moved — every bench-history baseline \
+             measured on it is now non-comparable"
+        );
+        assert_eq!(
+            target_digest(&dataset),
+            target,
+            "{lane:?} {rows}x{columns} target moved"
+        );
+        assert_eq!(dataset.truth(), &Truth::Unrecorded);
+    }
+}
+
+/// The head of every absorbed benchmark fixture, spelled out.
+///
+/// The digests above pin the whole vectors; these say *what* each lane is
+/// supposed to emit, which is what a reader compares against when a digest does
+/// move. The forest heads are the same at both shapes because the lattice's first
+/// row is the same cells at any width — an identity worth seeing rather than
+/// rediscovering.
+#[test]
+fn the_absorbed_benchmark_fixtures_emit_their_recorded_first_values() {
+    let forest_design_head = [
+        -1.0, -0.9663033, -0.9326065, -0.8989098, -0.8652131, -0.8315164, -0.7978196, -0.7641229,
+    ];
+    for (rows, columns, positives) in [(2048_usize, 64_usize, 1023_usize), (512, 16, 253)] {
+        let binary = BenchmarkFixture::new(BenchmarkLane::ForestBinary, rows, columns)
+            .unwrap()
+            .generate();
+        assert_eq!(&binary.features().as_slice()[..8], forest_design_head);
+        let labels = match binary.target() {
+            Some(Target::Binary(targets)) => targets.as_slice(),
+            other => panic!("the forest binary lane produced {other:?}"),
+        };
+        assert_eq!(&labels[..12], [0, 0, 0, 0, 1, 1, 1, 1, 0, 0, 0, 0]);
+        assert_eq!(
+            labels.iter().filter(|&&label| label == 1).count(),
+            positives,
+            "the forest fixture's prevalence at {rows}x{columns} moved"
+        );
+
+        let regression = BenchmarkFixture::new(BenchmarkLane::ForestRegression, rows, columns)
+            .unwrap()
+            .generate();
+        assert_eq!(
+            regression.features().as_slice(),
+            binary.features().as_slice(),
+            "the two forest lanes must share one design"
+        );
+        let values = match regression.target() {
+            Some(Target::Regression(targets)) => targets.as_slice(),
+            other => panic!("the forest regression lane produced {other:?}"),
+        };
+        // Four units of class separation on top of a sawtooth in the row index:
+        // rows 0-3 are negative and rows 4-7 positive, so the second group is the
+        // first group plus four.
+        assert_eq!(&values[..8], [0.0, 1.0, 2.0, 3.0, 8.0, 9.0, 10.0, 11.0]);
+    }
+
+    let models = BenchmarkFixture::new(BenchmarkLane::ModelsRegression, 2048, 48)
+        .unwrap()
+        .generate();
+    assert_eq!(
+        &models.features().as_slice()[..8],
+        [
+            -0.36681294,
+            0.75141394,
+            -0.0333997,
+            -0.9881696,
+            0.7984444,
+            0.94951844,
+            0.45425916,
+            0.9764383,
+        ]
+    );
+    assert_eq!(
+        match models.target() {
+            Some(Target::Regression(targets)) => &targets.as_slice()[..8],
+            other => panic!("the models lane produced {other:?}"),
+        },
+        [
+            -1.7168499, -2.4857368, -3.8307328, 1.2398754, 0.8283434, -2.685411, -1.7159778,
+            0.19300494,
+        ]
+    );
+
+    let boosting = BenchmarkFixture::new(BenchmarkLane::BoostingRegression, 2048, 48)
+        .unwrap()
+        .generate();
+    assert_eq!(
+        &boosting.features().as_slice()[..8],
+        [
+            0.78661466,
+            0.36769938,
+            -0.4735734,
+            0.7154708,
+            -0.82400614,
+            0.5394697,
+            0.3655858,
+            -0.81354034,
+        ]
+    );
+    assert_eq!(
+        match boosting.target() {
+            Some(Target::Regression(targets)) => &targets.as_slice()[..8],
+            other => panic!("the boosting lane produced {other:?}"),
+        },
+        [
+            -1.0230119,
+            -1.7656684,
+            2.1884053,
+            -1.4441595,
+            -0.42575365,
+            1.5665402,
+            1.3162644,
+            -3.4956913,
+        ]
+    );
+}
+
+/// A shorter fixture is a prefix of a longer one at the same width.
+///
+/// The benches rely on this without stating it: `benches/models.rs` trains on
+/// `2048x48` and measures inference on `1024x48`, and `benches/boosting.rs`
+/// slices the first `32` and `1024` rows out of its training matrix. Both are
+/// only measuring the same data because every source fills row by row from a
+/// fixed start.
+#[test]
+fn a_shorter_benchmark_fixture_is_a_prefix_of_a_longer_one() {
+    for lane in [
+        BenchmarkLane::ForestBinary,
+        BenchmarkLane::ForestRegression,
+        BenchmarkLane::ModelsRegression,
+        BenchmarkLane::BoostingRegression,
+    ] {
+        let long = BenchmarkFixture::new(lane, 2048, 48).unwrap().generate();
+        let short = BenchmarkFixture::new(lane, 1024, 48).unwrap().generate();
+        assert_eq!(
+            short.features().as_slice(),
+            &long.features().as_slice()[..1024 * 48],
+            "{lane:?} is not a prefix of itself at a taller shape"
+        );
+    }
+
+    // The width is not a prefix dimension: widening the design moves every value
+    // after the first row, because the source advances once per element.
+    let narrow = BenchmarkFixture::new(BenchmarkLane::ModelsRegression, 4, 8)
+        .unwrap()
+        .generate();
+    let wide = BenchmarkFixture::new(BenchmarkLane::ModelsRegression, 4, 12)
+        .unwrap()
+        .generate();
+    assert_eq!(
+        narrow.features().row(0).unwrap(),
+        &wide.features().row(0).unwrap()[..8]
+    );
+    assert_ne!(
+        narrow.features().row(1).unwrap(),
+        &wide.features().row(1).unwrap()[..8]
+    );
+}
+
+/// A benchmark fixture reports what it was asked for and refuses what it cannot
+/// generate.
+#[test]
+fn a_benchmark_fixture_validates_its_shape_and_names_its_lane() {
+    let fixture = BenchmarkFixture::new(BenchmarkLane::ForestBinary, 512, 16).unwrap();
+    assert_eq!(fixture.lane(), BenchmarkLane::ForestBinary);
+    assert_eq!(fixture.recipe().rows(), 512);
+    assert_eq!(fixture.recipe().columns(), 16);
+    assert_eq!(fixture.recipe().source(), FOREST_LATTICE);
+    assert_eq!(
+        fixture.generate().spec_digest(),
+        fixture.recipe().spec_digest()
+    );
+
+    // The two xorshift lanes are different streams, which is what stops the two
+    // suites from measuring the same matrix under two names.
+    let models = BenchmarkFixture::new(BenchmarkLane::ModelsRegression, 4, 8).unwrap();
+    let boosting = BenchmarkFixture::new(BenchmarkLane::BoostingRegression, 4, 8).unwrap();
+    assert_ne!(models.recipe().source(), boosting.recipe().source());
+    assert_ne!(
+        models.generate().features().as_slice(),
+        boosting.generate().features().as_slice()
+    );
+
+    // Validation is the recipe's, so a refused shape is refused by name before
+    // anything is generated.
+    assert_eq!(
+        BenchmarkFixture::new(BenchmarkLane::ModelsRegression, 0, 8),
+        Err(DatasetError::ZeroRows)
+    );
+    assert_eq!(
+        BenchmarkFixture::new(BenchmarkLane::ForestBinary, 8, 0),
+        Err(DatasetError::ZeroColumns)
+    );
+}
+
+/// The two forest lanes draw different tasks over one design.
+///
+/// Without this they could collapse onto each other and both digests would still
+/// be whatever the surviving expression emits.
+#[test]
+fn the_forest_lanes_are_two_tasks_over_one_design() {
+    let binary = BenchmarkFixture::new(BenchmarkLane::ForestBinary, 64, 8)
+        .unwrap()
+        .generate();
+    let regression = BenchmarkFixture::new(BenchmarkLane::ForestRegression, 64, 8)
+        .unwrap()
+        .generate();
+    assert_eq!(binary.features(), regression.features());
+    assert!(matches!(binary.target(), Some(Target::Binary(_))));
+    assert!(matches!(regression.target(), Some(Target::Regression(_))));
+
+    // The regression target is derived from the binary lane's own labels, so the
+    // class separation is recoverable from it exactly.
+    let labels = match binary.target() {
+        Some(Target::Binary(targets)) => targets.as_slice(),
+        other => panic!("{other:?}"),
+    };
+    let values = match regression.target() {
+        Some(Target::Regression(targets)) => targets.as_slice(),
+        other => panic!("{other:?}"),
+    };
+    for (row, (&label, &value)) in labels.iter().zip(values).enumerate() {
+        assert_eq!(value, f32::from(label) * 4.0 + (row % 11) as f32);
+    }
 }
