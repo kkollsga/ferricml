@@ -95,6 +95,18 @@ fn mean(values: &[f32]) -> f64 {
 /// fixed by IEEE-754 rather than by a libm. A moved literal here is a defect in
 /// this crate, never a platform difference — which is exactly the claim
 /// [`Portability::BitExact`] makes, asserted rather than described.
+///
+/// **Re-frozen once, when the task dials left `Recipe::stream_digest`.** That
+/// change was the whole point of moving them — a dial had been reseeding the
+/// auxiliary streams — so every drawn coefficient and every drawn noise term
+/// here moved with it, deliberately and in one commit.
+///
+/// The re-freeze carries its own evidence that only the *auxiliary* streams
+/// moved: the two nonlinear conditional means below are byte-identical to their
+/// pre-change literals, because a nonlinear shape is a function of the design
+/// alone and the design a `NonlinearRegression` recipe draws never passed
+/// through the task's digest. Their *targets* moved, because the additive noise
+/// did. A change that had disturbed the design stream would have moved both.
 #[test]
 fn the_bit_exact_families_emit_their_recorded_first_values() {
     let recipe = Recipe::seeded(6, 4, 11)
@@ -113,29 +125,29 @@ fn the_bit_exact_families_emit_their_recorded_first_values() {
     // is a statement a consumer must be able to check, not merely believe.
     assert_eq!(
         dataset.truth().coefficients().unwrap(),
-        [0.42996418, 0.7120615, 0.0, 0.0]
+        [0.31747937, -0.26101267, 0.0, 0.0]
     );
     assert_eq!(dataset.truth().intercept(), Some(0.25));
     assert_eq!(
         dataset.truth().conditional_mean().unwrap(),
         [
-            0.3234312,
-            -0.22032747,
-            -0.4658184,
-            -0.50610447,
-            0.7097757,
-            -0.14667632,
+            -0.06952426,
+            0.017645527,
+            0.23827066,
+            0.06384924,
+            0.14391439,
+            0.5539454,
         ]
     );
     assert_eq!(
         regression_values(&dataset),
         [
-            0.3401413,
-            -0.28982565,
-            -0.41951388,
-            -0.5211508,
-            0.7769728,
-            -0.19078127,
+            -0.14038074,
+            0.009581805,
+            0.22630431,
+            0.024172205,
+            0.082978025,
+            0.5472678,
         ]
     );
 
@@ -146,12 +158,7 @@ fn the_bit_exact_families_emit_their_recorded_first_values() {
                 1.4157436, 2.0203612, 1.654461, 1.0635431, -0.7834641, 0.882303,
             ],
             [
-                1.4444151,
-                1.9756651,
-                1.6774952,
-                0.9683543,
-                -0.74712276,
-                0.8727031,
+                1.394437, 1.9905711, 1.6079082, 0.98611003, -0.6835806, 0.7957359,
             ],
         ),
         (
@@ -160,7 +167,7 @@ fn the_bit_exact_families_emit_their_recorded_first_values() {
                 -2.345626, -2.1884937, 0.8635033, -1.0202256, 1.2385874, -1.6798728,
             ],
             [
-                -2.3020856, -2.264271, 0.8726815, -1.0565585, 1.2076473, -1.7118979,
+                -2.4009402, -2.115744, 0.7740759, -1.0105724, 1.2599751, -1.6995444,
             ],
         ),
     ];
@@ -671,14 +678,50 @@ fn the_glm_families_stay_inside_their_support_and_recover_their_rate() {
     );
 }
 
-/// The four nonlinear boundaries are four different problems, and each is a
-/// problem a linear model cannot solve.
+/// The four nonlinear boundaries are four different problems, and three of them
+/// are problems no linear model can solve.
 ///
 /// Without the first half the four variants could collapse onto one expression
 /// and every other assertion about them would still hold. The second half is
-/// what makes them worth having: each boundary is checked against the labels a
-/// linear score assigns, and must disagree with it on a substantial fraction of
-/// rows.
+/// what makes them worth having: it measures how far the *best* linear rule over
+/// the same design falls short of the boundary's own Bayes accuracy.
+///
+/// # The instrument this replaced was measuring the wrong thing
+///
+/// It compared each boundary's labels against the labels of one
+/// [`Task::LinearBinary`] recipe and required them to disagree on more than a
+/// quarter of the rows. That recipe's coefficients are a *random draw*, so the
+/// quantity being thresholded was which way an unrelated vector happened to
+/// point. Swept over eight seeds at the same shape, the moons disagreement ran
+/// `0.2388, 0.6909, 0.5874, 0.5879, 0.4932, 0.4277, 0.6299, 0.5708` — and the
+/// assertion's own logic scored the anti-correlated draws at `0.69` as *more*
+/// nonlinear than the aligned one at `0.24`, which a sign flip alone produces.
+/// The threshold passed on the draw that existed when it was written and failed
+/// the moment the draw moved, which is what surfaced it.
+///
+/// The replacement fits the least-squares linear rule to the boundary's own
+/// labels and places its threshold at the labels' own positive rate, so it is
+/// invariant to sign and to any other recipe. Measured over seeds `13..=17`:
+///
+/// | boundary | Bayes − best linear |
+/// |---|---|
+/// | `Checkerboard` | `0.449 .. 0.470` |
+/// | `Xor` | `0.334 .. 0.353` |
+/// | `Circles` | `0.228 .. 0.250` |
+/// | `Moons` | `-0.009 .. 0.014` |
+/// | `LinearBinary` (control) | `-0.015 .. 0.006` |
+///
+/// # Moons is linearly solvable at this design's width, and says so
+///
+/// The control is what makes the rest of the table readable: on a genuinely
+/// linear problem the gap is zero to within a percent, which is the instrument
+/// reading its own null. Moons sits in that null band. Its boundary is
+/// `x₂ = 0.6 sin(2 x₁)`, and over `x₁ ∈ [-1, 1)` a sine of that argument is
+/// nearly its own tangent line, so the curvature costs the best linear rule
+/// under two points of accuracy. Asserting that rather than hiding it is the
+/// point: a consumer choosing a boundary to defeat a linear model should choose
+/// one of the other three, and a consumer wanting a *mildly* curved boundary
+/// now has one that is documented as mild.
 #[test]
 fn the_nonlinear_binary_boundaries_are_four_different_problems() {
     let kinds = [
@@ -687,7 +730,7 @@ fn the_nonlinear_binary_boundaries_are_four_different_problems() {
         BinaryKind::Circles,
         BinaryKind::Checkerboard,
     ];
-    let mut label_sets = Vec::new();
+    let mut datasets = Vec::new();
     for kind in kinds {
         let recipe = Recipe::seeded(2048, 4, 13)
             .unwrap()
@@ -706,20 +749,21 @@ fn the_nonlinear_binary_boundaries_are_four_different_problems() {
         // variant rather than with zeros.
         assert_eq!(dataset.truth().coefficients(), None);
         assert!(dataset.truth().probabilities().is_some());
-        label_sets.push((kind, binary_labels(&dataset).to_vec()));
+        datasets.push((kind, dataset));
     }
-    for (index, (left_kind, left)) in label_sets.iter().enumerate() {
-        for (right_kind, right) in &label_sets[index + 1..] {
+    for (index, (left_kind, left)) in datasets.iter().enumerate() {
+        for (right_kind, right) in &datasets[index + 1..] {
             assert_ne!(
-                left, right,
+                binary_labels(left),
+                binary_labels(right),
                 "{left_kind:?} and {right_kind:?} produced the same labels"
             );
         }
     }
 
-    // Each boundary disagrees with the best linear rule over the same design on
-    // a substantial share of rows. A quarter is well past what a linear boundary
-    // would leave, and well below the half a coin would.
+    // The instrument's null: a linear problem, where the best linear rule *is*
+    // the Bayes rule and the gap must therefore read zero. Without this the
+    // three positive readings below would have no scale.
     let linear = Recipe::seeded(2048, 4, 13)
         .unwrap()
         .with_task(Task::LinearBinary {
@@ -729,20 +773,117 @@ fn the_nonlinear_binary_boundaries_are_four_different_problems() {
         })
         .unwrap()
         .generate();
-    let linear_labels = binary_labels(&linear);
-    for (kind, labels) in &label_sets {
-        let disagreement = labels
-            .iter()
-            .zip(linear_labels)
-            .filter(|(left, right)| left != right)
-            .count() as f64
-            / labels.len() as f64;
-        assert!(
-            disagreement > 0.25,
-            "{kind:?} agrees with a linear rule on {}% of rows",
-            (1.0 - disagreement) * 100.0
-        );
+    assert!(
+        linear_shortfall(&linear).abs() < NULL_SHORTFALL,
+        "the control read {} on a linear problem",
+        linear_shortfall(&linear)
+    );
+
+    for (kind, dataset) in &datasets {
+        let shortfall = linear_shortfall(dataset);
+        match kind {
+            // A curved, repeating or enclosing boundary: no linear rule comes
+            // close, and the smallest of the three reads fifteen times the null
+            // band the control and the moons boundary sit inside.
+            BinaryKind::Xor | BinaryKind::Circles | BinaryKind::Checkerboard => assert!(
+                shortfall > CURVED_SHORTFALL,
+                "{kind:?} left the best linear rule only {shortfall} short of Bayes"
+            ),
+            // Documented above: mild curvature a line absorbs.
+            BinaryKind::Moons => assert!(
+                shortfall.abs() < NULL_SHORTFALL,
+                "the moons boundary read {shortfall}, outside the null band it is \
+                 documented to sit in"
+            ),
+        }
     }
+}
+
+/// The largest shortfall a *linearly solvable* problem produced over seeds
+/// `13..=17`, rounded up by a factor of three.
+///
+/// The measured extreme was `0.015` across the linear control and the moons
+/// boundary together, so this is loose enough that a different libm's logistic
+/// cannot reach it and tight enough that it stays an order of magnitude below
+/// the smallest curved reading.
+const NULL_SHORTFALL: f64 = 0.05;
+
+/// The smallest shortfall a *curved* boundary produced over the same seeds,
+/// rounded down by a third.
+///
+/// The measured minimum was `0.228`, on `Circles`. Three times the null band and
+/// two thirds of the minimum, so the two populations are separated by a factor
+/// of ten in either direction rather than by a margin that had to be fitted.
+const CURVED_SHORTFALL: f64 = 0.15;
+
+/// How far the best linear rule over a design falls short of the Bayes accuracy
+/// the family recorded for it.
+///
+/// The rule is the least-squares fit to the labels themselves — the linear
+/// discriminant direction, up to a scale a threshold absorbs — and its threshold
+/// is placed at the labels' own positive rate, so the rule is scored at the same
+/// prevalence the labels carry and the reading cannot be moved by an intercept.
+/// Both properties matter: the measurement is then a function of the boundary
+/// and the design alone, invariant to the sign of any coefficient vector and to
+/// every other recipe in the file.
+fn linear_shortfall(dataset: &Dataset) -> f64 {
+    let labels = binary_labels(dataset);
+    let design = dataset.features();
+    let targets =
+        crate::data::RegressionTargets::new(labels.iter().map(|&label| f32::from(label)).collect())
+            .expect("a label is zero or one");
+    let fit = LinearRegression::fit(
+        &design.as_view(),
+        &targets,
+        LinearRegressionParams::default(),
+    )
+    .expect("a generated design fits");
+    let scores: Vec<f64> = design
+        .iter_rows()
+        .map(|row| dot_f64(row, fit.coefficients()) + f64::from(fit.intercept()))
+        .collect();
+
+    // The rule calls the highest-scoring `positives` rows positive, so it spends
+    // exactly the positive budget the labels do and its accuracy is comparable
+    // with a Bayes accuracy that also predicts the majority side of each row.
+    let positives = labels.iter().filter(|&&label| label == 1).count();
+    let mut ordered = scores.clone();
+    ordered.sort_by(f64::total_cmp);
+    let threshold = ordered[ordered.len() - positives.max(1)];
+    let correct = scores
+        .iter()
+        .zip(labels)
+        .filter(|&(&score, &label)| u8::from(score >= threshold) == label)
+        .count();
+    let linear = correct as f64 / labels.len() as f64;
+
+    bayes_accuracy(dataset) - linear
+}
+
+/// `x · β` in `f64`, for the scoring above.
+fn dot_f64(row: &[f32], coefficients: &[f32]) -> f64 {
+    row.iter()
+        .zip(coefficients)
+        .map(|(&value, &coefficient)| f64::from(value) * f64::from(coefficient))
+        .sum()
+}
+
+/// The accuracy of the Bayes rule the family recorded, which is the mean of
+/// `max(p, 1 - p)` over the recorded probabilities.
+///
+/// This is what makes a difficulty dial measurable without fitting anything: it
+/// is a property of the *problem*, so a sweep over it reports what the knob did
+/// rather than what a particular estimator did with it.
+fn bayes_accuracy(dataset: &Dataset) -> f64 {
+    let probabilities = dataset
+        .truth()
+        .probabilities()
+        .expect("a binary family records its Bayes probabilities");
+    probabilities
+        .iter()
+        .map(|&p| f64::from(p).max(1.0 - f64::from(p)))
+        .sum::<f64>()
+        / probabilities.len() as f64
 }
 
 /// Every task parameter is refused by name, before anything is generated.
@@ -1781,4 +1922,156 @@ fn the_caller_owned_target_form_matches_the_allocating_one_and_reuses_its_buffer
     bare.target_values_into(&mut buffer);
     assert!(buffer.is_empty());
     assert_eq!(bare.target_values(), None);
+}
+
+/// A conditioning dial scales a draw it did not change.
+///
+/// `condition_number` is a dial that reaches the design matrix, which is the one
+/// shape of dial that byte identity cannot express. What holds instead is
+/// stated here directly: the two recipes share a stream, so the *drawn* design
+/// and the drawn coefficients are the same values, and the conditioned design is
+/// exactly the crate's own column scaling applied to the unconditioned one.
+///
+/// The scaling function is the family's own rather than a restatement of it,
+/// deliberately. What is under test is that the draw underneath the dial did not
+/// move; whether `scale_columns` computes the right scales is
+/// `the_realized_condition_number_is_within_a_factor_of_the_request`'s question,
+/// and answering it twice in two spellings would only mean the spellings agree.
+#[test]
+fn a_conditioning_dial_scales_a_fixed_draw() {
+    const ROWS: usize = 64;
+    const COLUMNS: usize = 6;
+    const CONDITION: f32 = 1.0e4;
+
+    let unconditioned = Recipe::seeded(ROWS, COLUMNS, 7)
+        .unwrap()
+        .with_task(Task::IllConditioned {
+            // One leaves the design as the source drew it, so this recipe's
+            // design *is* the draw the dial is applied to.
+            condition_number: 1.0,
+            rank: COLUMNS,
+            coefficient_scale: 1.0,
+            noise_scale: 0.1,
+        })
+        .unwrap();
+    let conditioned = Recipe::seeded(ROWS, COLUMNS, 7)
+        .unwrap()
+        .with_task(Task::IllConditioned {
+            condition_number: CONDITION,
+            rank: COLUMNS,
+            coefficient_scale: 1.0,
+            noise_scale: 0.1,
+        })
+        .unwrap();
+
+    assert_eq!(unconditioned.stream_digest(), conditioned.stream_digest());
+    let (flat, steep) = (unconditioned.generate(), conditioned.generate());
+    assert_eq!(
+        flat.truth().coefficients(),
+        steep.truth().coefficients(),
+        "a conditioning sweep redrew the coefficients"
+    );
+
+    let mut expected = flat.features().as_slice().to_vec();
+    super::task::scale_columns(
+        ROWS,
+        COLUMNS,
+        f64::from(CONDITION).log10() as f32,
+        &mut expected,
+    );
+    assert_eq!(steep.features().as_slice(), expected.as_slice());
+
+    // The leading column is scaled by exactly one, so byte identity does hold
+    // there — the part of the design the dial does not reach is untouched rather
+    // than merely close.
+    for row in 0..ROWS {
+        assert_eq!(
+            steep.features().get(row, 0),
+            flat.features().get(row, 0),
+            "row {row}"
+        );
+    }
+}
+
+/// Bayes accuracy climbs with `separation` and falls with `prevalence`, step by
+/// step.
+///
+/// This is the measurement the partition exists to make possible, and it is the
+/// one that surfaced the defect. Bayes accuracy is a property of the *problem* —
+/// the mean of `max(p, 1 - p)` over the recorded probabilities — so a ladder over
+/// one dial reports what the dial did, with no estimator in the way. Both
+/// ladders are strict: a knob whose whole purpose is to order the difficulty of
+/// a family must produce an ordering.
+///
+/// # What it read before the dials left the stream digest
+///
+/// Every step of the separation ladder redrew the coefficients, so the ladder
+/// measured the gap between unrelated draws. At `20000 x 8`, seed `31`, four
+/// informative columns, it read:
+///
+/// | separation | 0.9 | 1.0 | 1.1 | 1.5 | 2.0 | 2.5 | 3.0 | 4.0 |
+/// |---|---|---|---|---|---|---|---|---|
+/// | before | 0.6198 | 0.5543 | 0.6707 | 0.6409 | 0.7195 | 0.7610 | 0.7280 | 0.7960 |
+/// | after | 0.5976 | 0.6076 | 0.6173 | 0.6540 | 0.6939 | 0.7278 | 0.7563 | 0.8007 |
+///
+/// Three reversals before, none after, and the largest reversal — `0.0655`
+/// between `0.9` and `1.0` — was six times the `0.0100` the knob is worth across
+/// that interval. The prevalence ladder happened to be monotone before as well,
+/// because a marginal rate dominates the accuracy of a rare-class problem, and
+/// was confounded all the same: the coefficients behind each rung were a
+/// different draw.
+#[test]
+fn bayes_accuracy_is_monotone_in_the_binary_dials() {
+    const ROWS: usize = 20_000;
+    const COLUMNS: usize = 8;
+    const SEED: u64 = 31;
+
+    let separated = |separation: f32| {
+        bayes_accuracy(
+            &Recipe::seeded(ROWS, COLUMNS, SEED)
+                .unwrap()
+                .with_task(Task::LinearBinary {
+                    informative: 4,
+                    separation,
+                    prevalence: 0.5,
+                })
+                .unwrap()
+                .generate(),
+        )
+    };
+    let mut previous = f64::NEG_INFINITY;
+    for separation in [0.9_f32, 1.0, 1.1, 1.5, 2.0, 2.5, 3.0, 4.0] {
+        let accuracy = separated(separation);
+        assert!(
+            accuracy > previous,
+            "separation {separation} read {accuracy}, below the {previous} before it"
+        );
+        previous = accuracy;
+    }
+
+    // A prevalence away from a half is an easier problem, because predicting the
+    // majority class is already right that often. The ladder therefore falls,
+    // and at `0.05` it is pinned near `0.95` by the base rate alone.
+    let prevalent = |prevalence: f32| {
+        bayes_accuracy(
+            &Recipe::seeded(ROWS, COLUMNS, SEED)
+                .unwrap()
+                .with_task(Task::LinearBinary {
+                    informative: 4,
+                    separation: 2.0,
+                    prevalence,
+                })
+                .unwrap()
+                .generate(),
+        )
+    };
+    let mut previous = f64::INFINITY;
+    for prevalence in [0.05_f32, 0.1, 0.2, 0.3, 0.4, 0.5] {
+        let accuracy = prevalent(prevalence);
+        assert!(
+            accuracy < previous,
+            "prevalence {prevalence} read {accuracy}, above the {previous} before it"
+        );
+        previous = accuracy;
+    }
 }

@@ -4,6 +4,10 @@ use crate::data::{BinaryTargets, RegressionTargets, SampleWeights};
 // that owns it rather than restated, so the frozen values below and the recipe
 // under test cannot drift apart.
 use super::benchmarks::FOREST_LATTICE;
+// The field classification, read out of the encoder that owns it rather than
+// restated here: a sweep that carried its own copy of the partition would prove
+// only that the copy agrees with itself.
+use super::recipe::task_field_counts;
 use sha2::{Digest, Sha256};
 
 #[test]
@@ -1393,5 +1397,622 @@ fn the_forest_lanes_are_two_tasks_over_one_design() {
     };
     for (row, (&label, &value)) in labels.iter().zip(values).enumerate() {
         assert_eq!(value, f32::from(label) * 4.0 + (row % 11) as f32);
+    }
+}
+
+/// Which side of the task partition a field falls on, and what that costs the
+/// design.
+///
+/// Three values rather than two, because two dials do reach the design matrix
+/// and calling them structural would hide the property that makes them dials:
+/// the draw underneath them is unchanged, and what moved is a closed-form
+/// transform of it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Role {
+    /// In the stream digest. The two recipes are two different problems.
+    Structural,
+    /// Out of the stream digest, and the design is byte-identical across it.
+    Dial,
+    /// Out of the stream digest, and applied to the design as a transform of an
+    /// unchanged draw. The transform itself is asserted by
+    /// `family_tests::a_conditioning_dial_scales_a_fixed_draw` and
+    /// `structural_tests::a_spread_dial_scatters_a_fixed_draw`.
+    DesignDial,
+}
+
+/// One field of one task, moved on its own.
+struct FieldMove {
+    /// The field's name, for the failure message.
+    field: &'static str,
+    /// The task before the move.
+    left: Task,
+    /// The task after it.
+    right: Task,
+    /// Which side of the partition the field is on.
+    role: Role,
+    /// How many fields this move covers. One, except where two fields cannot be
+    /// varied independently at a fixed shape.
+    covers: usize,
+}
+
+impl FieldMove {
+    /// A move of exactly one field.
+    fn one(field: &'static str, left: Task, right: Task, role: Role) -> Self {
+        Self {
+            field,
+            left,
+            right,
+            role,
+            covers: 1,
+        }
+    }
+}
+
+/// Every field of one family, each moved on its own, over one shape.
+struct FamilySweep {
+    rows: usize,
+    columns: usize,
+    /// The unmoved task, whose field counts the sweep is held to.
+    base: Task,
+    moves: Vec<FieldMove>,
+}
+
+/// A dial holds the stream and a structural field moves it, for every field of
+/// every family.
+///
+/// This is the assertion the partition exists to make, and it is made per field
+/// rather than sampled. For a dial: the two recipes share a stream digest, the
+/// design is byte-identical, and the dataset still says something different —
+/// the knob moved what it names and nothing else. For a structural field: the
+/// stream digest differs, which is the honest answer when the two recipes
+/// describe different problems. For both: the *spec* digest differs, because the
+/// data does and a cache keyed on it must not serve one for the other.
+///
+/// # Why it cannot go stale
+///
+/// The table below is data, and data rots. What stops it is that
+/// [`task_field_counts`] reads the classification out of `encode_task` itself:
+/// each family's moves must cover exactly as many structural fields and exactly
+/// as many dials as the encoder classified. A field added to a `Task` variant
+/// does not compile until `encode_task` classifies it, and the moment it does,
+/// this test fails until the table covers it. The compiler enforces that a field
+/// *has* a role; this enforces that the role was checked against behaviour.
+///
+/// # The two joint moves
+///
+/// Two fields cannot be varied alone at a fixed shape, and both are declared as
+/// covering what they move rather than pretended otherwise.
+///
+/// `Task::Ranking`'s `queries` and `docs_per_query` multiply to the row count, so
+/// no recipe differs in one of them alone. They are swept as a swapped pair
+/// covering both fields.
+///
+/// `Task::GlmRegression`'s `link` and `dispersion` have disjoint admissible
+/// ranges — a Poisson count cannot be under-dispersed and a positive continuous
+/// response cannot be over-dispersed by one — so no recipe differs in the link
+/// alone either. That pair is still conclusive rather than merely suggestive:
+/// the `dispersion` move directly below it holds the stream fixed on its own, so
+/// the stream that the joint move disturbs was disturbed by the link.
+#[test]
+fn every_task_dial_holds_the_stream_and_every_structural_field_moves_it() {
+    let sweeps = task_partition_sweeps();
+
+    // The catalogue rule the suites follow: a family that exists is a family
+    // that is swept, and the roster is the compiler-backed one.
+    for family in Family::ALL {
+        assert!(
+            sweeps.iter().any(|sweep| sweep.base.family() == family),
+            "{family:?} has no field sweep"
+        );
+    }
+
+    for sweep in &sweeps {
+        let family = sweep.base.family();
+        let counts = task_field_counts(sweep.base);
+        let covered = |role: Role| -> usize {
+            sweep
+                .moves
+                .iter()
+                .filter(|entry| entry.role == role)
+                .map(|entry| entry.covers)
+                .sum()
+        };
+        assert_eq!(
+            covered(Role::Structural),
+            counts.structural,
+            "{family:?} sweeps {} structural fields, the encoder classified {}",
+            covered(Role::Structural),
+            counts.structural
+        );
+        assert_eq!(
+            covered(Role::Dial) + covered(Role::DesignDial),
+            counts.dials,
+            "{family:?} sweeps {} dials, the encoder classified {}",
+            covered(Role::Dial) + covered(Role::DesignDial),
+            counts.dials
+        );
+
+        for entry in &sweep.moves {
+            let name = entry.field;
+            let left = Recipe::seeded(sweep.rows, sweep.columns, 41)
+                .unwrap()
+                .with_task(entry.left)
+                .unwrap();
+            let right = Recipe::seeded(sweep.rows, sweep.columns, 41)
+                .unwrap()
+                .with_task(entry.right)
+                .unwrap();
+
+            // Whatever the role, the recipe's *identity* moves: the data does,
+            // so a cache keyed on the digest must not serve one for the other.
+            assert_ne!(
+                left.spec_digest(),
+                right.spec_digest(),
+                "{family:?}.{name} left the spec digest where it was"
+            );
+
+            match entry.role {
+                Role::Structural => assert_ne!(
+                    left.stream_digest(),
+                    right.stream_digest(),
+                    "{family:?}.{name} is structural and must redraw"
+                ),
+                Role::Dial | Role::DesignDial => assert_eq!(
+                    left.stream_digest(),
+                    right.stream_digest(),
+                    "{family:?}.{name} is a dial and reseeded the streams"
+                ),
+            }
+
+            let (left_design, right_design) = (left.design(), right.design());
+            match entry.role {
+                Role::Dial => {
+                    assert_eq!(
+                        left_design.as_slice(),
+                        right_design.as_slice(),
+                        "{family:?}.{name} is a dial and moved the design"
+                    );
+                    // "The target changed" is too narrow for one dial and would
+                    // have to be excepted rather than stated: `Task::Ranking`'s
+                    // `coefficient_scale` multiplies every utility by one
+                    // positive constant, and a sort cannot notice that, so the
+                    // grades and the pairs are identical and only the recorded
+                    // utilities move. What every dial must do is change *what
+                    // the dataset says*, in the target or in the truth.
+                    let (left_data, right_data) = (left.generate(), right.generate());
+                    assert!(
+                        left_data.target() != right_data.target()
+                            || left_data.truth() != right_data.truth(),
+                        "{family:?}.{name} is a dial that changed nothing"
+                    );
+                }
+                Role::DesignDial => assert_ne!(
+                    left_design.as_slice(),
+                    right_design.as_slice(),
+                    "{family:?}.{name} shapes the design and left it unmoved"
+                ),
+                Role::Structural => {}
+            }
+        }
+    }
+}
+
+/// One move of every field of every family.
+///
+/// The shapes are wide enough that a dial which moved only a handful of drawn
+/// labels still shows up as a changed target vector, and small enough that the
+/// whole sweep is a few milliseconds.
+fn task_partition_sweeps() -> Vec<FamilySweep> {
+    const ROWS: usize = 256;
+    const COLUMNS: usize = 6;
+
+    let linear = |informative, coefficient_scale, intercept, noise_scale| Task::LinearRegression {
+        informative,
+        coefficient_scale,
+        intercept,
+        noise_scale,
+    };
+    let glm = |link, informative, coefficient_scale, intercept, dispersion| Task::GlmRegression {
+        link,
+        informative,
+        coefficient_scale,
+        intercept,
+        dispersion,
+    };
+    let conditioned =
+        |condition_number, rank, coefficient_scale, noise_scale| Task::IllConditioned {
+            condition_number,
+            rank,
+            coefficient_scale,
+            noise_scale,
+        };
+    let binary = |informative, separation, prevalence| Task::LinearBinary {
+        informative,
+        separation,
+        prevalence,
+    };
+    let curved = |kind, separation, prevalence| Task::NonlinearBinary {
+        kind,
+        separation,
+        prevalence,
+    };
+    let multiclass = |classes, balance, geometry, separation| Task::Multiclass {
+        classes,
+        balance,
+        geometry,
+        separation,
+    };
+    let timed = |informative, coefficient_scale, drift, intercept, noise_scale| Task::TimeOrdered {
+        informative,
+        coefficient_scale,
+        drift,
+        intercept,
+        noise_scale,
+    };
+    let ranked = |queries, docs_per_query, grades, informative, coefficient_scale| Task::Ranking {
+        queries,
+        docs_per_query,
+        grades,
+        informative,
+        coefficient_scale,
+    };
+
+    vec![
+        FamilySweep {
+            rows: ROWS,
+            columns: COLUMNS,
+            base: linear(2, 1.0, 0.25, 0.1),
+            moves: vec![
+                FieldMove::one(
+                    "informative",
+                    linear(2, 1.0, 0.25, 0.1),
+                    linear(3, 1.0, 0.25, 0.1),
+                    Role::Structural,
+                ),
+                FieldMove::one(
+                    "coefficient_scale",
+                    linear(2, 1.0, 0.25, 0.1),
+                    linear(2, 2.0, 0.25, 0.1),
+                    Role::Dial,
+                ),
+                FieldMove::one(
+                    "intercept",
+                    linear(2, 1.0, 0.25, 0.1),
+                    linear(2, 1.0, 0.75, 0.1),
+                    Role::Dial,
+                ),
+                FieldMove::one(
+                    "noise_scale",
+                    linear(2, 1.0, 0.25, 0.1),
+                    linear(2, 1.0, 0.25, 0.3),
+                    Role::Dial,
+                ),
+            ],
+        },
+        FamilySweep {
+            rows: ROWS,
+            columns: COLUMNS,
+            base: Task::NonlinearRegression {
+                kind: NonlinearKind::Interaction,
+                noise_scale: 0.1,
+            },
+            moves: vec![
+                FieldMove::one(
+                    "kind",
+                    Task::NonlinearRegression {
+                        kind: NonlinearKind::Interaction,
+                        noise_scale: 0.1,
+                    },
+                    Task::NonlinearRegression {
+                        kind: NonlinearKind::Piecewise,
+                        noise_scale: 0.1,
+                    },
+                    Role::Structural,
+                ),
+                FieldMove::one(
+                    "noise_scale",
+                    Task::NonlinearRegression {
+                        kind: NonlinearKind::Interaction,
+                        noise_scale: 0.1,
+                    },
+                    Task::NonlinearRegression {
+                        kind: NonlinearKind::Interaction,
+                        noise_scale: 0.3,
+                    },
+                    Role::Dial,
+                ),
+            ],
+        },
+        FamilySweep {
+            rows: ROWS,
+            columns: COLUMNS,
+            base: glm(GlmLink::LogPositive, 2, 0.5, 0.0, 0.3),
+            moves: vec![
+                FieldMove::one(
+                    "link",
+                    glm(GlmLink::LogPositive, 2, 0.5, 0.0, 0.3),
+                    glm(GlmLink::LogCount, 2, 0.5, 0.0, 1.5),
+                    Role::Structural,
+                ),
+                FieldMove::one(
+                    "informative",
+                    glm(GlmLink::LogPositive, 2, 0.5, 0.0, 0.3),
+                    glm(GlmLink::LogPositive, 3, 0.5, 0.0, 0.3),
+                    Role::Structural,
+                ),
+                FieldMove::one(
+                    "coefficient_scale",
+                    glm(GlmLink::LogPositive, 2, 0.5, 0.0, 0.3),
+                    glm(GlmLink::LogPositive, 2, 1.0, 0.0, 0.3),
+                    Role::Dial,
+                ),
+                FieldMove::one(
+                    "intercept",
+                    glm(GlmLink::LogPositive, 2, 0.5, 0.0, 0.3),
+                    glm(GlmLink::LogPositive, 2, 0.5, 0.5, 0.3),
+                    Role::Dial,
+                ),
+                FieldMove::one(
+                    "dispersion",
+                    glm(GlmLink::LogPositive, 2, 0.5, 0.0, 0.3),
+                    glm(GlmLink::LogPositive, 2, 0.5, 0.0, 0.7),
+                    Role::Dial,
+                ),
+            ],
+        },
+        FamilySweep {
+            rows: ROWS,
+            columns: COLUMNS,
+            base: conditioned(10.0, 4, 1.0, 0.1),
+            moves: vec![
+                FieldMove::one(
+                    "condition_number",
+                    conditioned(10.0, 4, 1.0, 0.1),
+                    conditioned(1000.0, 4, 1.0, 0.1),
+                    Role::DesignDial,
+                ),
+                FieldMove::one(
+                    "rank",
+                    conditioned(10.0, 4, 1.0, 0.1),
+                    conditioned(10.0, 5, 1.0, 0.1),
+                    Role::Structural,
+                ),
+                FieldMove::one(
+                    "coefficient_scale",
+                    conditioned(10.0, 4, 1.0, 0.1),
+                    conditioned(10.0, 4, 2.0, 0.1),
+                    Role::Dial,
+                ),
+                FieldMove::one(
+                    "noise_scale",
+                    conditioned(10.0, 4, 1.0, 0.1),
+                    conditioned(10.0, 4, 1.0, 0.3),
+                    Role::Dial,
+                ),
+            ],
+        },
+        FamilySweep {
+            rows: ROWS,
+            columns: COLUMNS,
+            base: binary(2, 1.0, 0.3),
+            moves: vec![
+                FieldMove::one(
+                    "informative",
+                    binary(2, 1.0, 0.3),
+                    binary(3, 1.0, 0.3),
+                    Role::Structural,
+                ),
+                FieldMove::one(
+                    "separation",
+                    binary(2, 1.0, 0.3),
+                    binary(2, 2.0, 0.3),
+                    Role::Dial,
+                ),
+                FieldMove::one(
+                    "prevalence",
+                    binary(2, 1.0, 0.3),
+                    binary(2, 1.0, 0.6),
+                    Role::Dial,
+                ),
+            ],
+        },
+        FamilySweep {
+            rows: ROWS,
+            columns: COLUMNS,
+            base: curved(BinaryKind::Xor, 1.0, 0.3),
+            moves: vec![
+                FieldMove::one(
+                    "kind",
+                    curved(BinaryKind::Xor, 1.0, 0.3),
+                    curved(BinaryKind::Circles, 1.0, 0.3),
+                    Role::Structural,
+                ),
+                FieldMove::one(
+                    "separation",
+                    curved(BinaryKind::Xor, 1.0, 0.3),
+                    curved(BinaryKind::Xor, 2.0, 0.3),
+                    Role::Dial,
+                ),
+                FieldMove::one(
+                    "prevalence",
+                    curved(BinaryKind::Xor, 1.0, 0.3),
+                    curved(BinaryKind::Xor, 1.0, 0.6),
+                    Role::Dial,
+                ),
+            ],
+        },
+        FamilySweep {
+            rows: ROWS,
+            columns: COLUMNS,
+            base: multiclass(3, ClassBalance::Balanced, ClassGeometry::Blob, 1.0),
+            moves: vec![
+                FieldMove::one(
+                    "classes",
+                    multiclass(3, ClassBalance::Balanced, ClassGeometry::Blob, 1.0),
+                    multiclass(4, ClassBalance::Balanced, ClassGeometry::Blob, 1.0),
+                    Role::Structural,
+                ),
+                FieldMove::one(
+                    "geometry",
+                    multiclass(3, ClassBalance::Balanced, ClassGeometry::Blob, 1.0),
+                    multiclass(3, ClassBalance::Balanced, ClassGeometry::Hierarchical, 1.0),
+                    Role::Structural,
+                ),
+                FieldMove::one(
+                    "balance",
+                    multiclass(3, ClassBalance::Balanced, ClassGeometry::Blob, 1.0),
+                    multiclass(
+                        3,
+                        ClassBalance::Imbalanced { ratio: 4.0 },
+                        ClassGeometry::Blob,
+                        1.0,
+                    ),
+                    Role::Dial,
+                ),
+                FieldMove::one(
+                    "separation",
+                    multiclass(3, ClassBalance::Balanced, ClassGeometry::Blob, 1.0),
+                    multiclass(3, ClassBalance::Balanced, ClassGeometry::Blob, 3.0),
+                    Role::Dial,
+                ),
+            ],
+        },
+        FamilySweep {
+            rows: ROWS,
+            columns: COLUMNS,
+            base: Task::Clustered {
+                blobs: 3,
+                spread: 0.1,
+            },
+            moves: vec![
+                FieldMove::one(
+                    "blobs",
+                    Task::Clustered {
+                        blobs: 3,
+                        spread: 0.1,
+                    },
+                    Task::Clustered {
+                        blobs: 4,
+                        spread: 0.1,
+                    },
+                    Role::Structural,
+                ),
+                FieldMove::one(
+                    "spread",
+                    Task::Clustered {
+                        blobs: 3,
+                        spread: 0.1,
+                    },
+                    Task::Clustered {
+                        blobs: 3,
+                        spread: 0.4,
+                    },
+                    Role::DesignDial,
+                ),
+            ],
+        },
+        FamilySweep {
+            rows: ROWS,
+            columns: COLUMNS,
+            base: timed(2, 1.0, 0.5, 0.25, 0.1),
+            moves: vec![
+                FieldMove::one(
+                    "informative",
+                    timed(2, 1.0, 0.5, 0.25, 0.1),
+                    timed(3, 1.0, 0.5, 0.25, 0.1),
+                    Role::Structural,
+                ),
+                FieldMove::one(
+                    "coefficient_scale",
+                    timed(2, 1.0, 0.5, 0.25, 0.1),
+                    timed(2, 2.0, 0.5, 0.25, 0.1),
+                    Role::Dial,
+                ),
+                FieldMove::one(
+                    "drift",
+                    timed(2, 1.0, 0.5, 0.25, 0.1),
+                    timed(2, 1.0, 1.5, 0.25, 0.1),
+                    Role::Dial,
+                ),
+                FieldMove::one(
+                    "intercept",
+                    timed(2, 1.0, 0.5, 0.25, 0.1),
+                    timed(2, 1.0, 0.5, 0.75, 0.1),
+                    Role::Dial,
+                ),
+                FieldMove::one(
+                    "noise_scale",
+                    timed(2, 1.0, 0.5, 0.25, 0.1),
+                    timed(2, 1.0, 0.5, 0.25, 0.3),
+                    Role::Dial,
+                ),
+            ],
+        },
+        FamilySweep {
+            rows: 240,
+            columns: COLUMNS,
+            base: ranked(60, 4, 3, 2, 1.0),
+            moves: vec![
+                FieldMove {
+                    field: "queries and docs_per_query",
+                    left: ranked(60, 4, 3, 2, 1.0),
+                    right: ranked(40, 6, 3, 2, 1.0),
+                    role: Role::Structural,
+                    covers: 2,
+                },
+                FieldMove::one(
+                    "grades",
+                    ranked(60, 4, 3, 2, 1.0),
+                    ranked(60, 4, 4, 2, 1.0),
+                    Role::Structural,
+                ),
+                FieldMove::one(
+                    "informative",
+                    ranked(60, 4, 3, 2, 1.0),
+                    ranked(60, 4, 3, 3, 1.0),
+                    Role::Structural,
+                ),
+                FieldMove::one(
+                    "coefficient_scale",
+                    ranked(60, 4, 3, 2, 1.0),
+                    ranked(60, 4, 3, 2, 2.0),
+                    Role::Dial,
+                ),
+            ],
+        },
+    ]
+}
+
+/// The frozen presets and benchmark fixtures carry no task at all, so no dial of
+/// theirs could have moved.
+///
+/// Verified rather than assumed. The partition changed what a recipe *carrying a
+/// task* draws, and the whole safety argument for the absorbed streams is that
+/// none of them carries one: `encode_task` writes tag zero and nothing else for
+/// `None`, and `Recipe::design_into` and `Recipe::generate` never form a stream
+/// digest without a task, so a taskless recipe cannot read the changed encoding
+/// even by accident.
+///
+/// The pinned literals in this file are the other half of the evidence and are
+/// byte-unchanged, which only means something because this test says the reason.
+#[test]
+fn the_frozen_presets_and_benchmark_fixtures_carry_no_task() {
+    for lane in ReferenceLane::ALL {
+        for seed in [11_u64, 22, 33, 44, 55] {
+            let preset = ReferenceQuality::new(lane, seed);
+            assert_eq!(
+                preset.recipe().task(),
+                None,
+                "{lane:?} at seed {seed} acquired a task"
+            );
+        }
+    }
+    for (lane, rows, columns, _, _) in ABSORBED_BENCHMARK_DIGESTS {
+        let fixture = BenchmarkFixture::new(lane, rows, columns).unwrap();
+        assert_eq!(
+            fixture.recipe().task(),
+            None,
+            "{lane:?} at {rows}x{columns} acquired a task"
+        );
     }
 }

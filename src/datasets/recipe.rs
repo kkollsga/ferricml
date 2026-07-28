@@ -15,15 +15,18 @@ use sha2::{Digest, Sha256};
 /// with it, and it carries a version so a later phase can extend the encoding
 /// without silently reusing a digest that meant something else.
 ///
-/// **Version three, because this phase extended the encoding again.** A recipe
-/// now also carries a group pattern. The version moves whenever the encoding
-/// does, rather than fields being appended silently, which is the discipline the
-/// tag was introduced for: a `v2` digest described a recipe that could not
-/// express a grouping at all, so reusing it for a recipe that can would make one
-/// identifier mean two things. Nothing outside this crate has recorded either
-/// earlier digest — the feature is unreleased — so the bump costs a cache
-/// invalidation nobody can observe.
-const SPEC_DOMAIN: &[u8] = b"ferricml.dataset.spec.v3";
+/// **Version four, because a recipe's output moved under an unchanged
+/// encoding.** The rule the tag was introduced for is that one identifier must
+/// never mean two things, and the earlier bumps served it by moving whenever the
+/// *encoding* moved. This one serves the same rule from the other side: the byte
+/// layout below is character-for-character what `v3` hashed, and yet every
+/// recipe carrying a task family now generates different data, because the task
+/// dials left [`Recipe::stream_digest`]. A `v3` digest and a `v4` digest of one
+/// recipe name two different datasets, so they must not be one number. Nothing
+/// outside this crate has recorded any of them — the feature is unreleased — so
+/// the bump costs a cache invalidation nobody can observe, and a stale
+/// materialized container now refuses to load rather than being served as a hit.
+const SPEC_DOMAIN: &[u8] = b"ferricml.dataset.spec.v4";
 
 /// The domain tag the task families' auxiliary stream seeds are derived under.
 ///
@@ -31,7 +34,13 @@ const SPEC_DOMAIN: &[u8] = b"ferricml.dataset.spec.v3";
 /// collide: they cover different fields and mean different things, and a stream
 /// seed that happened to equal an identity would be a coincidence a reader would
 /// have to rule out.
-const STREAM_DOMAIN: &[u8] = b"ferricml.dataset.stream.v1";
+///
+/// **Version two, because this encoding really did change**: the task's dials
+/// are no longer hashed here. Nothing outside this file reads a stream digest,
+/// so the bump invalidates nothing; it exists so the two version numbers cannot
+/// be read as a claim that the stream encoding stood still while the spec
+/// encoding moved. It is the other way around.
+const STREAM_DOMAIN: &[u8] = b"ferricml.dataset.stream.v2";
 
 /// Where a design matrix's numbers come from.
 ///
@@ -519,7 +528,7 @@ impl Recipe {
             }
             Source::Xorshift32 { state } => digest.update(u64::from(state).to_le_bytes()),
         }
-        self.update_task_digest(&mut digest);
+        encode_task(self.task, &mut TaskFields::whole(&mut digest));
         self.update_contamination_digest(&mut digest);
         self.update_weight_digest(&mut digest);
         self.update_group_digest(&mut digest);
@@ -528,25 +537,76 @@ impl Recipe {
 
     /// The digest the task families seed their auxiliary streams from.
     ///
-    /// Shape, source and task — and deliberately **not** contamination or
-    /// weights. That exclusion is what makes contamination an overlay rather
-    /// than a reseed: two recipes differing only in their contamination draw the
-    /// same coefficients, the same noise, the same clean labels and the same
-    /// per-row selectors, so switching a knob on changes exactly what the knob
-    /// describes and nothing else.
+    /// Shape, source, and the task's **structural** fields — and deliberately
+    /// not the task's dials, not the contamination, and not the weights. Those
+    /// exclusions are what make a knob an overlay rather than a reseed: two
+    /// recipes differing only in an excluded field draw the same coefficients,
+    /// the same noise, the same clean labels and the same per-row selectors, so
+    /// switching a knob changes exactly what the knob describes and nothing
+    /// else.
     ///
-    /// It is not a hypothetical. Seeding the streams from the full spec digest
-    /// made a five-percent label-noise request flip fifty-six percent of the
-    /// labels, because the "clean" and "contaminated" datasets were two
-    /// independent draws and the measured difference was the draw rather than
-    /// the noise. A robustness sweep built on that would have compared a model
-    /// against a different problem at every contamination level and called the
-    /// difference sensitivity.
+    /// It is not a hypothetical, and it has now been measured twice.
+    ///
+    /// Seeding the streams from the full spec digest made a five-percent
+    /// label-noise request flip fifty-six percent of the labels, because the
+    /// "clean" and "contaminated" datasets were two independent draws and the
+    /// measured difference was the draw rather than the noise. A robustness
+    /// sweep built on that would have compared a model against a different
+    /// problem at every contamination level and called the difference
+    /// sensitivity. That is why the contamination sits outside this digest.
+    ///
+    /// The task was left on the *other* side of that exclusion and the identical
+    /// failure followed. With every task field hashed here, a difficulty sweep
+    /// redrew the coefficients at every step, so the measured difference was
+    /// again the draw rather than the knob. Bayes accuracy over
+    /// [`Task::LinearBinary`] at `20000 x 8`, seed `31`, four informative
+    /// columns, separation `0.9 / 1.0 / 1.1`, read `0.6198 / 0.5543 / 0.6707` —
+    /// non-monotone in the one parameter whose whole purpose is monotonicity,
+    /// with a step-to-step reversal larger than the knob's own effect across the
+    /// interval. [`Task::Multiclass`] at the same shape read
+    /// `0.5916 / 0.6411 / 0.6024`. Both ladders are swept as assertions now, in
+    /// `family_tests.rs` and `structural_tests.rs`.
+    ///
+    /// # Which fields are which, and why the compiler decides
+    ///
+    /// A field is **structural** when it changes *what is drawn*: the support of
+    /// the true coefficient vector, the number of classes or clusters or
+    /// queries, the shape of a boundary, the algebraic rank. A redraw is the
+    /// honest answer there — the two recipes describe two different problems,
+    /// and holding one stream across them would only make the difference harder
+    /// to read.
+    ///
+    /// A field is a **dial** when it modulates a *fixed* draw: how steeply, how
+    /// noisily, how imbalanced, how ill-conditioned. Two recipes differing in a
+    /// dial are one problem at two settings, and a sweep over one is
+    /// interpretable only while the problem underneath it holds still.
+    ///
+    /// Two dials do reach the design matrix — [`Task::IllConditioned`]'s
+    /// `condition_number` scales its columns and [`Task::Clustered`]'s `spread`
+    /// moves its rows toward their centres — and they are dials all the same,
+    /// because each applies a closed-form transform to a draw that is itself
+    /// unchanged. Their evidence is stated as that transform rather than as byte
+    /// identity.
+    ///
+    /// A partition maintained by hand rots, so this one is not maintained by
+    /// hand. [`encode_task`] destructures every variant with no `..` rest
+    /// pattern, so a new task field does not compile until the pattern names it
+    /// (`E0027`), and naming it without routing it through
+    /// [`TaskFields`] leaves an `unused_variables` warning the crate's clippy
+    /// gate denies. One encoding serves both digests, so a field is classified
+    /// exactly once or not at all.
     ///
     /// The full [`Recipe::spec_digest`] remains the recipe's identity: it is
     /// what a cache keys on and what a materialized dataset is checked against,
-    /// and it must move when the contamination moves, because the data does.
-    fn stream_digest(&self) -> [u8; 32] {
+    /// and it must move when a dial moves, because the data does.
+    ///
+    /// Visible to the sibling test modules rather than private to this file,
+    /// because "these two recipes share a stream" is the invariant the whole
+    /// partition exists to provide and asserting it directly is stronger
+    /// evidence than any consequence of it: a per-dial sweep can compare the
+    /// digests themselves instead of inferring stream identity from bytes that
+    /// happened to match.
+    pub(super) fn stream_digest(&self) -> [u8; 32] {
         let mut digest = Sha256::new();
         digest.update(STREAM_DOMAIN);
         digest.update((self.rows as u64).to_le_bytes());
@@ -565,133 +625,8 @@ impl Recipe {
             }
             Source::Xorshift32 { state } => digest.update(u64::from(state).to_le_bytes()),
         }
-        self.update_task_digest(&mut digest);
+        encode_task(self.task, &mut TaskFields::structure_only(&mut digest));
         digest.finalize().into()
-    }
-
-    /// Hashes the task: a discriminant that fixes the field layout, then the
-    /// fields.
-    ///
-    /// Zero means no task, and every other tag determines exactly how many
-    /// fixed-width fields follow, so the encoding stays injective as the variant
-    /// list grows. Floats are hashed as their bits rather than as a formatting,
-    /// because two distinct values must never reach the same digest and a
-    /// decimal rendering does not promise that.
-    fn update_task_digest(&self, digest: &mut Sha256) {
-        let Some(task) = self.task else {
-            digest.update([0_u8]);
-            return;
-        };
-        match task {
-            Task::LinearRegression {
-                informative,
-                coefficient_scale,
-                intercept,
-                noise_scale,
-            } => {
-                digest.update([1_u8]);
-                digest.update((informative as u64).to_le_bytes());
-                digest.update(coefficient_scale.to_bits().to_le_bytes());
-                digest.update(intercept.to_bits().to_le_bytes());
-                digest.update(noise_scale.to_bits().to_le_bytes());
-            }
-            Task::NonlinearRegression { kind, noise_scale } => {
-                digest.update([2_u8, nonlinear_tag(kind)]);
-                digest.update(noise_scale.to_bits().to_le_bytes());
-            }
-            Task::GlmRegression {
-                link,
-                informative,
-                coefficient_scale,
-                intercept,
-                dispersion,
-            } => {
-                digest.update([3_u8, link_tag(link)]);
-                digest.update((informative as u64).to_le_bytes());
-                digest.update(coefficient_scale.to_bits().to_le_bytes());
-                digest.update(intercept.to_bits().to_le_bytes());
-                digest.update(dispersion.to_bits().to_le_bytes());
-            }
-            Task::IllConditioned {
-                condition_number,
-                rank,
-                coefficient_scale,
-                noise_scale,
-            } => {
-                digest.update([4_u8]);
-                digest.update(condition_number.to_bits().to_le_bytes());
-                digest.update((rank as u64).to_le_bytes());
-                digest.update(coefficient_scale.to_bits().to_le_bytes());
-                digest.update(noise_scale.to_bits().to_le_bytes());
-            }
-            Task::LinearBinary {
-                informative,
-                separation,
-                prevalence,
-            } => {
-                digest.update([5_u8]);
-                digest.update((informative as u64).to_le_bytes());
-                digest.update(separation.to_bits().to_le_bytes());
-                digest.update(prevalence.to_bits().to_le_bytes());
-            }
-            Task::NonlinearBinary {
-                kind,
-                separation,
-                prevalence,
-            } => {
-                digest.update([6_u8, binary_tag(kind)]);
-                digest.update(separation.to_bits().to_le_bytes());
-                digest.update(prevalence.to_bits().to_le_bytes());
-            }
-            Task::Multiclass {
-                classes,
-                balance,
-                geometry,
-                separation,
-            } => {
-                let (balance_tag, ratio) = match balance {
-                    ClassBalance::Balanced => (1_u8, 1.0_f32),
-                    ClassBalance::Imbalanced { ratio } => (2, ratio),
-                };
-                digest.update([7_u8, balance_tag, geometry_tag(geometry)]);
-                digest.update((classes as u64).to_le_bytes());
-                digest.update(ratio.to_bits().to_le_bytes());
-                digest.update(separation.to_bits().to_le_bytes());
-            }
-            Task::Clustered { blobs, spread } => {
-                digest.update([8_u8]);
-                digest.update((blobs as u64).to_le_bytes());
-                digest.update(spread.to_bits().to_le_bytes());
-            }
-            Task::TimeOrdered {
-                informative,
-                coefficient_scale,
-                drift,
-                intercept,
-                noise_scale,
-            } => {
-                digest.update([9_u8]);
-                digest.update((informative as u64).to_le_bytes());
-                digest.update(coefficient_scale.to_bits().to_le_bytes());
-                digest.update(drift.to_bits().to_le_bytes());
-                digest.update(intercept.to_bits().to_le_bytes());
-                digest.update(noise_scale.to_bits().to_le_bytes());
-            }
-            Task::Ranking {
-                queries,
-                docs_per_query,
-                grades,
-                informative,
-                coefficient_scale,
-            } => {
-                digest.update([10_u8]);
-                digest.update((queries as u64).to_le_bytes());
-                digest.update((docs_per_query as u64).to_le_bytes());
-                digest.update((grades as u64).to_le_bytes());
-                digest.update((informative as u64).to_le_bytes());
-                digest.update(coefficient_scale.to_bits().to_le_bytes());
-            }
-        }
     }
 
     /// Hashes the contamination. Fixed width, so no discriminant is needed.
@@ -907,6 +842,310 @@ impl Recipe {
             }
             Some(Target::Regression(targets)) => values.extend_from_slice(targets.as_slice()),
             None => {}
+        }
+    }
+}
+
+/// A task's fields on their way into a digest, tagged by the role that decides
+/// which digests see them.
+///
+/// One sink with two settings rather than two encoders, because the whole
+/// content of the partition is that each field is classified *once*. Two
+/// encoders would be two lists to keep in step, which is the arrangement
+/// [`Recipe::stream_digest`] explains this crate has already been burned by.
+///
+/// [`TaskFields::whole`] hashes everything and is what [`Recipe::spec_digest`]
+/// uses; [`TaskFields::structure_only`] drops the dials and is what
+/// [`Recipe::stream_digest`] uses. Dropping rather than zeroing is deliberate:
+/// the variant tag still determines exactly how many fixed-width fields follow
+/// it, so the shortened encoding is injective on its own terms, and a zeroed
+/// placeholder would only invite a reader to think the value was meaningful.
+struct TaskFields<'a> {
+    digest: &'a mut Sha256,
+    /// Whether the dials reach the digest.
+    dials: bool,
+    /// How many fields have been classified, by role.
+    ///
+    /// Test-only, and it is the second half of the enforcement: the per-dial
+    /// sweep in `tests.rs` reads these counts and requires its own table to
+    /// cover exactly that many fields for each family. A field that is
+    /// classified here and never swept is then a red test rather than a silent
+    /// gap, which matters because the compiler can insist a field be classified
+    /// and cannot insist the classification be *right*.
+    #[cfg(test)]
+    counts: FieldCounts,
+}
+
+/// How many task fields fall on each side of the partition.
+#[cfg(test)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(super) struct FieldCounts {
+    /// Fields in the stream digest.
+    pub(super) structural: usize,
+    /// Fields excluded from it.
+    pub(super) dials: usize,
+}
+
+impl<'a> TaskFields<'a> {
+    /// The encoding that carries every field: a recipe's identity.
+    fn whole(digest: &'a mut Sha256) -> Self {
+        Self {
+            digest,
+            dials: true,
+            #[cfg(test)]
+            counts: FieldCounts::default(),
+        }
+    }
+
+    /// The encoding that carries only the structural fields: a recipe's stream.
+    fn structure_only(digest: &'a mut Sha256) -> Self {
+        Self {
+            digest,
+            dials: false,
+            #[cfg(test)]
+            counts: FieldCounts::default(),
+        }
+    }
+
+    /// The variant's own discriminant, which is not a field of it.
+    ///
+    /// Separate from [`TaskFields::structural_tag`] so the counts below are a
+    /// count of *fields*: the discriminant is what fixes the layout the fields
+    /// are read under, and counting it would make every family look one field
+    /// wider than it is.
+    fn variant(&mut self, tag: u8) {
+        self.digest.update([tag]);
+    }
+
+    /// A field that is a discriminant — a kind, a link, a geometry — naming
+    /// which expression is evaluated at all.
+    fn structural_tag(&mut self, tag: u8) {
+        #[cfg(test)]
+        {
+            self.counts.structural += 1;
+        }
+        self.digest.update([tag]);
+    }
+
+    /// A count that changes how many things are drawn, or which of them matter.
+    fn structural_count(&mut self, value: usize) {
+        #[cfg(test)]
+        {
+            self.counts.structural += 1;
+        }
+        self.digest.update((value as u64).to_le_bytes());
+    }
+
+    /// A continuous knob applied to a draw that is already fixed.
+    ///
+    /// Hashed as its bits rather than as a formatting, because two distinct
+    /// values must never reach the same digest and a decimal rendering does not
+    /// promise that.
+    fn dial(&mut self, value: f32) {
+        #[cfg(test)]
+        {
+            self.counts.dials += 1;
+        }
+        if self.dials {
+            self.digest.update(value.to_bits().to_le_bytes());
+        }
+    }
+
+    /// The one dial that is an enum: a class balance.
+    ///
+    /// Both of its variants read the same drawn scores and differ only in the
+    /// marginals solved onto them, so the balance is a dial whole — tag and
+    /// ratio together, one field, hashed in the two pieces the pre-partition
+    /// encoding wrote them as. Splitting the write across this method and
+    /// [`TaskFields::dial_balance_ratio`] exists only to keep those two pieces
+    /// at the byte offsets they already occupied, with the geometry's
+    /// discriminant between them; only this half counts the field, because there
+    /// is one field.
+    fn dial_balance_tag(&mut self, balance: ClassBalance) {
+        #[cfg(test)]
+        {
+            self.counts.dials += 1;
+        }
+        if self.dials {
+            let tag = match balance {
+                ClassBalance::Balanced => 1_u8,
+                ClassBalance::Imbalanced { .. } => 2,
+            };
+            self.digest.update([tag]);
+        }
+    }
+
+    /// The ratio half of the balance dial counted by
+    /// [`TaskFields::dial_balance_tag`].
+    fn dial_balance_ratio(&mut self, balance: ClassBalance) {
+        if self.dials {
+            let ratio = match balance {
+                ClassBalance::Balanced => 1.0_f32,
+                ClassBalance::Imbalanced { ratio } => ratio,
+            };
+            self.digest.update(ratio.to_bits().to_le_bytes());
+        }
+    }
+}
+
+/// How many fields of a task fall on each side of the partition.
+///
+/// Reads the classification out of [`encode_task`] itself rather than restating
+/// it, so the sweep that consumes it cannot drift from the encoder it is
+/// checking.
+#[cfg(test)]
+pub(super) fn task_field_counts(task: Task) -> FieldCounts {
+    let mut digest = Sha256::new();
+    let mut fields = TaskFields::whole(&mut digest);
+    encode_task(Some(task), &mut fields);
+    fields.counts
+}
+
+/// Writes a task's fields into a digest, each through the role it was
+/// classified under.
+///
+/// Zero means no task, and every other tag determines exactly how many
+/// fixed-width fields follow it, so both encodings stay injective as the variant
+/// list grows.
+///
+/// **Every arm destructures its variant completely, with no `..`.** That is the
+/// enforcement mechanism [`Recipe::stream_digest`] describes: a task field added
+/// without a classification fails to compile here, rather than defaulting into
+/// one of the two roles and being noticed by whichever measurement it later
+/// spoils. The bytes this emits under [`TaskFields::whole`] are exactly the
+/// bytes the pre-partition encoding emitted, field for field and in the same
+/// order — the spec digest's *layout* did not move in this change, only what the
+/// data behind it is.
+fn encode_task(task: Option<Task>, fields: &mut TaskFields<'_>) {
+    let Some(task) = task else {
+        fields.variant(0);
+        return;
+    };
+    match task {
+        Task::LinearRegression {
+            informative,
+            coefficient_scale,
+            intercept,
+            noise_scale,
+        } => {
+            fields.variant(1);
+            fields.structural_count(informative);
+            fields.dial(coefficient_scale);
+            fields.dial(intercept);
+            fields.dial(noise_scale);
+        }
+        Task::NonlinearRegression { kind, noise_scale } => {
+            fields.variant(2);
+            fields.structural_tag(nonlinear_tag(kind));
+            fields.dial(noise_scale);
+        }
+        Task::GlmRegression {
+            link,
+            informative,
+            coefficient_scale,
+            intercept,
+            dispersion,
+        } => {
+            fields.variant(3);
+            // The link decides which response is drawn — a count or a positive
+            // continuous value — so it is structural even though `dispersion`,
+            // which shapes that response's scatter, is not.
+            fields.structural_tag(link_tag(link));
+            fields.structural_count(informative);
+            fields.dial(coefficient_scale);
+            fields.dial(intercept);
+            fields.dial(dispersion);
+        }
+        Task::IllConditioned {
+            condition_number,
+            rank,
+            coefficient_scale,
+            noise_scale,
+        } => {
+            fields.variant(4);
+            // A dial that reaches the design: the columns are scaled after they
+            // are drawn, so the draw underneath a conditioning sweep holds.
+            fields.dial(condition_number);
+            // The rank is not, because duplicating a column replaces drawn
+            // values with copies rather than transforming them.
+            fields.structural_count(rank);
+            fields.dial(coefficient_scale);
+            fields.dial(noise_scale);
+        }
+        Task::LinearBinary {
+            informative,
+            separation,
+            prevalence,
+        } => {
+            fields.variant(5);
+            fields.structural_count(informative);
+            fields.dial(separation);
+            fields.dial(prevalence);
+        }
+        Task::NonlinearBinary {
+            kind,
+            separation,
+            prevalence,
+        } => {
+            fields.variant(6);
+            fields.structural_tag(binary_tag(kind));
+            fields.dial(separation);
+            fields.dial(prevalence);
+        }
+        Task::Multiclass {
+            classes,
+            balance,
+            geometry,
+            separation,
+        } => {
+            fields.variant(7);
+            // The balance's two pieces straddle the geometry's discriminant,
+            // which is what the pre-partition encoding did and is why they are
+            // written through two methods rather than one. It is a single dial.
+            fields.dial_balance_tag(balance);
+            fields.structural_tag(geometry_tag(geometry));
+            fields.structural_count(classes);
+            fields.dial_balance_ratio(balance);
+            fields.dial(separation);
+        }
+        Task::Clustered { blobs, spread } => {
+            fields.variant(8);
+            fields.structural_count(blobs);
+            // The second dial that reaches the design. The centres and the
+            // per-row scatter are both already drawn; the spread only decides
+            // how much of the scatter survives the move onto the centre.
+            fields.dial(spread);
+        }
+        Task::TimeOrdered {
+            informative,
+            coefficient_scale,
+            drift,
+            intercept,
+            noise_scale,
+        } => {
+            fields.variant(9);
+            fields.structural_count(informative);
+            fields.dial(coefficient_scale);
+            fields.dial(drift);
+            fields.dial(intercept);
+            fields.dial(noise_scale);
+        }
+        Task::Ranking {
+            queries,
+            docs_per_query,
+            grades,
+            informative,
+            coefficient_scale,
+        } => {
+            fields.variant(10);
+            fields.structural_count(queries);
+            fields.structural_count(docs_per_query);
+            fields.structural_count(grades);
+            fields.structural_count(informative);
+            // The utilities scale linearly with it, so the within-query order,
+            // the grades and the pairs are all unchanged and only the recorded
+            // utilities move — the clearest dial in the enum.
+            fields.dial(coefficient_scale);
         }
     }
 }

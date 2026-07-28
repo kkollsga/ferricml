@@ -349,13 +349,15 @@ and releases use [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   Nothing outside this crate has written a version-1 container; the feature is
   unreleased.
 
-- **`Recipe::spec_digest` is now `ferricml.dataset.spec.v3`.** The encoding
-  gained a task, a contamination, a weight pattern and — in this step — a group
-  pattern, each hashed under a discriminant that fixes the field layout so the
-  encoding stays injective. The version moves whenever the encoding does, rather
-  than fields being appended silently, which is what the domain tag exists for.
-  Nothing outside this crate has recorded an earlier digest — the feature is
-  unreleased.
+- **`Recipe::spec_digest` is now `ferricml.dataset.spec.v4`.** The encoding
+  gained a task, a contamination, a weight pattern and a group pattern, each
+  hashed under a discriminant that fixes the field layout so the encoding stays
+  injective. The version moves whenever the encoding does, rather than fields
+  being appended silently, which is what the domain tag exists for — and it
+  moved once more without an encoding change, because the *data* behind an
+  unchanged encoding moved when the task dials left the stream digest (below).
+  One identifier must not name two datasets, in either direction. Nothing
+  outside this crate has recorded an earlier digest — the feature is unreleased.
 
 - **`WeightPattern::ClassBalanced` generalizes past two classes.** Each
   *observed* class now carries a total weight of `rows / classes`; at two
@@ -371,6 +373,46 @@ and releases use [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   profile alongside the default one, with its own frozen baseline, and its
   self-test fails if that baseline ever stops recording rows the default one
   does not.
+
+### Fixed
+
+- **A `Task` difficulty dial no longer redraws the problem it was supposed to
+  make harder.** Every field of a task fed the digest the family's auxiliary
+  streams are seeded from, so two recipes differing only in `separation` drew
+  different coefficients: a difficulty sweep measured the gap between unrelated
+  draws rather than the effect of the knob. Bayes accuracy over
+  `Task::LinearBinary` at `20000 x 8`, seed `31`, read `0.6198 / 0.5543 /
+  0.6707` across separation `0.9 / 1.0 / 1.1` — non-monotone in the one
+  parameter whose whole purpose is monotonicity, with a step-to-step reversal
+  six times the size of the knob's own effect across that interval. The same
+  ladder now reads `0.5976 / 0.6076 / 0.6173`. `Task::Multiclass` behaved the
+  same way and now climbs step by step as well.
+
+  This is the defect `Contamination` was already excluded from that digest to
+  avoid — a five-percent label-noise request had flipped fifty-six percent of
+  the labels — and the task had simply been left on the other side of the
+  exclusion.
+
+  A task's fields are now partitioned by role. **Structural** fields —
+  `informative`, `classes`, `blobs`, `queries`, `docs_per_query`, `grades`,
+  `geometry`, `kind`, `link`, `rank` — change what is drawn and stay in the
+  stream digest; two recipes differing in one of them are two different
+  problems. **Dials** — `separation`, `prevalence`, `noise_scale`, `drift`,
+  `spread`, `coefficient_scale`, `intercept`, `condition_number`, `dispersion`,
+  `balance` — modulate a fixed draw and leave it. `Recipe::spec_digest` still
+  moves for both, because the data does.
+
+  The partition is compiler-enforced rather than maintained by hand: one
+  encoding serves both digests and destructures every task variant with no rest
+  pattern, so a new task field does not compile until it is classified. Every
+  field of every family is swept as an assertion, and the sweep is held to the
+  encoder's own field counts, so a field that is classified but never checked is
+  a red test.
+
+  **Generated data therefore moved for every recipe carrying a task.** The
+  frozen reference lanes and the absorbed benchmark fixtures carry no task at
+  all, which is asserted rather than assumed, so their streams and every pinned
+  literal and digest they are held to are byte-unchanged.
 
 ## [0.2.1] - 2026-07-27
 

@@ -462,11 +462,12 @@ pub(super) fn drifting_predictor(
 ) -> (Vec<f32>, Vec<f32>, Vec<f32>, Vec<f32>) {
     let columns = design.columns();
     let mut rng = stream(digest, STREAM_COEFFICIENTS);
-    // Both vectors consume one draw per column, informative or not, so widening
-    // the informative prefix leaves the columns that were already informative
-    // where they were — the discipline `draw_coefficients` follows for the same
-    // reason. Start and delta are drawn in two separate passes rather than
-    // interleaved, so a design with more columns does not reshuffle the drift.
+    // Both vectors consume one draw per column, informative or not, so each end
+    // of column `j` is a function of `j` and the stream alone — the discipline
+    // `draw_coefficients` follows, with the same caveat recorded there about
+    // `informative` being structural. Start and delta are drawn in two separate
+    // passes rather than interleaved, so a design with more columns does not
+    // reshuffle the drift.
     let start: Vec<f32> = (0..columns)
         .map(|column| {
             let draw = signed_draw(&mut rng);

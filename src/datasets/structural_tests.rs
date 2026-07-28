@@ -122,6 +122,18 @@ fn fit_window(dataset: &Dataset, from: usize, to: usize) -> LinearRegression {
 /// evaluates a transcendental, so a moved literal here is a defect in this crate
 /// and never a platform difference — which is what [`Portability::BitExact`]
 /// claims, asserted rather than described.
+///
+/// **Re-frozen once, when the task dials left `Recipe::stream_digest`.** Every
+/// drawn value below came from an auxiliary stream that a dial had been
+/// reseeding, so moving the dials moved all of them at once, deliberately and in
+/// one commit.
+///
+/// Three groups of literals did *not* move, and they are the re-freeze's own
+/// evidence that it moved only what it meant to. The cluster assignments are
+/// `row % blobs`, the ranked grades are ranks within a query, and the query
+/// groups are `row / docs_per_query`: none of the three reads a drawn value, and
+/// the relevance grades in particular survive because `coefficient_scale` scales
+/// every utility by one positive constant and a sort does not notice.
 #[test]
 fn the_bit_exact_structural_families_emit_their_recorded_values() {
     let clustered = Recipe::seeded(6, 3, 11)
@@ -136,38 +148,38 @@ fn the_bit_exact_structural_families_emit_their_recorded_values() {
     assert_eq!(
         clustered.truth().cluster_centres().unwrap(),
         [
-            0.5341575,
-            -0.15752995,
-            0.18214095,
-            0.021734715,
-            -0.80112684,
-            -0.6121378,
-            -0.372234,
-            0.064558506,
-            -0.044912457,
+            0.6806656,
+            -0.8902818,
+            0.84120107,
+            0.5346799,
+            0.5567621,
+            -0.72249687,
+            -0.20714462,
+            -0.40627325,
+            -0.8426727,
         ]
     );
     assert_eq!(
         clustered.features().as_slice(),
         [
-            0.4725672,
-            -0.11002739,
-            0.096132,
-            -0.067390524,
-            -0.88632333,
-            -0.6267451,
-            -0.42296356,
-            -0.028363302,
-            -0.10261122,
-            0.46847016,
-            -0.11479499,
-            0.15346709,
-            -0.07578597,
-            -0.84842616,
-            -0.68372166,
-            -0.3942931,
-            0.07770334,
-            0.011719953,
+            0.6190753,
+            -0.8427792,
+            0.7551921,
+            0.44555464,
+            0.47156557,
+            -0.7371042,
+            -0.2578742,
+            -0.49919504,
+            -0.9003715,
+            0.61497825,
+            -0.8475468,
+            0.81252724,
+            0.4371592,
+            0.5094628,
+            -0.79408073,
+            -0.22920373,
+            -0.3931284,
+            -0.7860403,
         ]
     );
     assert_eq!(
@@ -193,11 +205,11 @@ fn the_bit_exact_structural_families_emit_their_recorded_values() {
     // drift detector has to be checkable against.
     assert_eq!(
         timed.truth().start_coefficients().unwrap(),
-        [-0.16027308, 0.18930042, 0.0, 0.0]
+        [0.45322812, -0.15990639, 0.0, 0.0]
     );
     assert_eq!(
         timed.truth().end_coefficients().unwrap(),
-        [0.22536999, 0.13616359, 0.0, 0.0]
+        [-0.0157606, -0.21080309, 0.0, 0.0]
     );
     assert_eq!(
         timed.truth().times().unwrap(),
@@ -206,18 +218,23 @@ fn the_bit_exact_structural_families_emit_their_recorded_values() {
     assert_eq!(
         timed.truth().conditional_mean().unwrap(),
         [
-            0.43863523, 0.2947369, 0.1430863, 0.10619249, 0.35261735, 0.22191614,
+            -0.10510425,
+            -0.031377234,
+            0.21514462,
+            0.17250443,
+            0.1466398,
+            0.40465248,
         ]
     );
     assert_eq!(
         regression_values(&timed),
         [
-            0.33969685,
-            0.28984722,
-            0.108372755,
-            0.08172676,
-            0.25502843,
-            0.1702217,
+            -0.049607117,
+            -0.12997325,
+            0.23383884,
+            0.09396485,
+            0.14392065,
+            0.34857976,
         ]
     );
 
@@ -235,23 +252,23 @@ fn the_bit_exact_structural_families_emit_their_recorded_values() {
     let ranked = ranked.generate();
     assert_eq!(
         ranked.truth().coefficients().unwrap(),
-        [0.9085052, 0.4818691, 0.0]
+        [0.54718494, 0.19836342, 0.0]
     );
     assert_eq!(
         ranked.truth().utilities().unwrap(),
         [
-            -0.33065102,
-            -1.2202431,
-            -0.9086422,
-            -0.39084652,
-            -1.1139015,
-            -0.13706721,
-            -0.22317916,
-            -0.68870586,
-            0.23152404,
-            -0.55346364,
-            0.7310799,
-            -0.3483056,
+            -0.24278522,
+            -0.6566786,
+            -0.4619074,
+            -0.27466083,
+            -0.62744313,
+            -0.094629556,
+            -0.2027956,
+            -0.41489163,
+            0.19324021,
+            -0.3737892,
+            0.38672507,
+            -0.24450049,
         ]
     );
     assert_eq!(class_labels(&ranked), [2, 0, 1, 2, 0, 2, 2, 1, 2, 0, 2, 1]);
@@ -1729,5 +1746,111 @@ fn every_structural_family_generates_a_finite_design() {
         if let Some(Target::Regression(targets)) = dataset.target() {
             assert!(targets.as_slice().iter().all(|value| value.is_finite()));
         }
+    }
+}
+
+/// A spread dial scatters a draw it did not change.
+///
+/// `spread` is the second dial that reaches the design matrix, and what holds
+/// across it is the transform rather than byte identity: the centres are the
+/// same draw and every row is its own unchanged scatter, shrunk toward its
+/// centre by exactly the requested factor. Asserted against the *taskless*
+/// design at the same seed, which is the source's raw output — so the claim is
+/// that the clustered design is a closed-form function of two things the dial
+/// did not touch.
+#[test]
+fn a_spread_dial_scatters_a_fixed_draw() {
+    const ROWS: usize = 64;
+    const COLUMNS: usize = 3;
+    const BLOBS: usize = 4;
+
+    let raw = Recipe::seeded(ROWS, COLUMNS, 7).unwrap().design();
+    let clustered = |spread: f32| {
+        Recipe::seeded(ROWS, COLUMNS, 7)
+            .unwrap()
+            .with_task(Task::Clustered {
+                blobs: BLOBS,
+                spread,
+            })
+            .unwrap()
+    };
+
+    let (tight, loose) = (clustered(0.1), clustered(0.6));
+    assert_eq!(tight.stream_digest(), loose.stream_digest());
+    let (tight, loose) = (tight.generate(), loose.generate());
+    assert_eq!(
+        tight.truth().cluster_centres(),
+        loose.truth().cluster_centres(),
+        "a spread sweep redrew the centres"
+    );
+    assert_eq!(
+        tight.truth().cluster_assignments(),
+        loose.truth().cluster_assignments()
+    );
+
+    let centres = tight.truth().cluster_centres().unwrap();
+    for (spread, dataset) in [(0.1_f32, &tight), (0.6, &loose)] {
+        for row in 0..ROWS {
+            for column in 0..COLUMNS {
+                let centre = centres[(row % BLOBS) * COLUMNS + column];
+                let scatter = raw.get(row, column).expect("an in-bounds cell");
+                assert_eq!(
+                    dataset.features().get(row, column),
+                    Some(centre + spread * scatter),
+                    "spread {spread} at ({row}, {column})"
+                );
+            }
+        }
+    }
+}
+
+/// Multiclass Bayes accuracy climbs with `separation`, step by step.
+///
+/// The binary ladder's twin, on the family the defect was first measured on. The
+/// recorded truth here is the whole probability *row* of every observation, so
+/// the Bayes accuracy is the mean of each row's largest entry.
+///
+/// At `20000 x 8`, three classes, hierarchical geometry, balanced, seed `31`:
+///
+/// | separation | 0.9 | 1.0 | 1.1 | 1.5 | 2.0 | 2.5 | 3.0 | 4.0 |
+/// |---|---|---|---|---|---|---|---|---|
+/// | before | 0.5916 | 0.6411 | 0.6024 | 0.6863 | 0.6879 | 0.8140 | 0.8239 | 0.8719 |
+/// | after | 0.6381 | 0.6599 | 0.6797 | 0.7423 | 0.7950 | 0.8308 | 0.8564 | 0.8902 |
+///
+/// The `1.0 → 1.1` step used to *fall* by `0.0387` — four times what the knob is
+/// worth over that interval — because the two rungs were two independent draws
+/// of the splits the geometry projects on.
+#[test]
+fn multiclass_bayes_accuracy_is_monotone_in_separation() {
+    const ROWS: usize = 20_000;
+    const COLUMNS: usize = 8;
+    const CLASSES: usize = 3;
+
+    let mut previous = f64::NEG_INFINITY;
+    for separation in [0.9_f32, 1.0, 1.1, 1.5, 2.0, 2.5, 3.0, 4.0] {
+        let dataset = Recipe::seeded(ROWS, COLUMNS, 31)
+            .unwrap()
+            .with_task(Task::Multiclass {
+                classes: CLASSES,
+                balance: ClassBalance::Balanced,
+                geometry: ClassGeometry::Hierarchical,
+                separation,
+            })
+            .unwrap()
+            .generate();
+        let probabilities = dataset
+            .truth()
+            .class_probabilities()
+            .expect("a multiclass family records its Bayes rows");
+        let accuracy = probabilities
+            .chunks_exact(CLASSES)
+            .map(|row| row.iter().fold(0.0_f64, |best, &p| best.max(f64::from(p))))
+            .sum::<f64>()
+            / (probabilities.len() / CLASSES) as f64;
+        assert!(
+            accuracy > previous,
+            "separation {separation} read {accuracy}, below the {previous} before it"
+        );
+        previous = accuracy;
     }
 }

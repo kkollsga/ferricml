@@ -44,12 +44,15 @@
 //! give four streams that cannot interleave, and two recipes differing anywhere
 //! in that encoding draw different values.
 //!
-//! **The contamination is deliberately outside that digest.** It is an overlay,
-//! not a reseed: switching a knob on has to change exactly what the knob
-//! describes and leave every other draw where it was. Every selector is drawn
-//! unconditionally, whether or not the knob that reads it is set, so the streams
-//! stay aligned across contamination levels. `Recipe::stream_digest` records
-//! what a version of this that got it wrong actually did.
+//! **The contamination and the task's own dials are deliberately outside that
+//! digest.** They are overlays, not reseeds: switching a knob has to change
+//! exactly what the knob describes and leave every other draw where it was.
+//! Every selector is drawn unconditionally, whether or not the knob that reads
+//! it is set, so the streams stay aligned across contamination levels — and a
+//! difficulty ladder over `separation`, `noise_scale` or `prevalence` walks one
+//! problem rather than a sequence of unrelated ones. `Recipe::stream_digest`
+//! records what the two versions of this that got it wrong actually did, and
+//! [`Task`]'s own documentation lists which fields are which.
 
 use super::contamination::Contamination;
 use super::dataset::{Target, Truth};
@@ -459,6 +462,28 @@ pub enum GlmLink {
 /// produces it; a binary family knows the Bayes probability behind each label.
 /// None of them reports [`Truth::Unrecorded`] — that is reserved for the
 /// absorbed lanes, whose correct answer was never kept.
+///
+/// # A dial moves the difficulty; a structural field moves the problem
+///
+/// The fields here are not all the same kind of thing, and the difference is
+/// what a sweep over one of them is entitled to conclude.
+///
+/// `separation`, `prevalence`, `noise_scale`, `drift`, `spread`,
+/// `coefficient_scale`, `intercept`, `condition_number`, `dispersion` and
+/// `balance` are **dials**. Two recipes differing only in a dial draw from the
+/// same streams: the same design, the same coefficients or centres, the same
+/// noise and label draws. A ladder over one of them is a ladder over one
+/// problem, so the difference between two rungs is the knob.
+///
+/// `informative`, `classes`, `blobs`, `queries`, `docs_per_query`, `grades`,
+/// `geometry`, `kind`, `link` and `rank` are **structural**. They change what
+/// the problem is — which columns matter, how many classes exist, which
+/// expression is evaluated — and two recipes differing in one of them are two
+/// different draws, deliberately.
+///
+/// Both move [`Recipe::spec_digest`](super::Recipe::spec_digest), because the
+/// data moves either way. `Recipe::stream_digest`'s documentation records why
+/// the partition exists and what a version without it measured.
 ///
 /// It is `#[non_exhaustive]` because a new family must not be a breaking change
 /// for a caller that only ever matches the ones it asked for.
@@ -1284,9 +1309,14 @@ pub(super) fn draw_coefficients(
     let mut rng = stream(digest, STREAM_COEFFICIENTS);
     (0..columns)
         .map(|column| {
-            // Every column consumes a draw, informative or not, so widening the
-            // informative prefix does not shift the coefficients of the columns
-            // that were already informative.
+            // Every column consumes a draw, informative or not, so the
+            // coefficient of column `j` is a function of `j` and the stream
+            // alone. Note what that does *not* buy: `informative` is a
+            // structural field, so two recipes differing in it do not share a
+            // stream and the nesting this positional encoding would give them is
+            // not observable today. It is written this way so that a decision to
+            // reclassify `informative` as a dial would be a one-line change with
+            // the nesting already in place, rather than a second redesign.
             let draw = signed_draw(&mut rng);
             if column < informative {
                 scale * draw
