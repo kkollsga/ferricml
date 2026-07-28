@@ -8,19 +8,27 @@
 
 use ferricml::calibration::{Calibrator, PlattCalibrator, PlattParams};
 use ferricml::data::{BinaryTargets, DenseMatrix, SampleWeights};
+use ferricml::datasets::{Recipe, Target, Task};
 use ferricml::linear_model::{LogisticRegression, LogisticRegressionParams};
 
+#[path = "support/rng.rs"]
+mod rng;
+
 /// A deliberately overlapping one-dimensional problem.
+///
+/// The scores are a fixed ramp and only the Bernoulli draw is random, so this
+/// is a *scoring* input rather than a design matrix — the class the dataset
+/// generator deliberately does not own. Its draw therefore comes from the
+/// shared test generator, which is what every other sweep and fuzz stream in
+/// `tests/` uses; it used to come from a private xorshift32 core written
+/// inline, which `dataset-generator-single-source` now forbids.
 fn scores_and_labels() -> (Vec<f32>, BinaryTargets) {
     let mut scores = Vec::new();
     let mut labels = Vec::new();
-    let mut state = 0x2545_f491_u32;
+    let mut stream = rng::TestRng::new(0x2545_f491);
     for step in 0..120 {
-        state ^= state << 13;
-        state ^= state >> 17;
-        state ^= state << 5;
         let score = (step as f32) / 40.0 - 1.5;
-        let noise = (state >> 8) as f32 / (1u32 << 24) as f32;
+        let noise = stream.unit() as f32;
         labels.push(u8::from(noise < 1.0 / (1.0 + (-1.7 * score).exp())));
         scores.push(score);
     }
@@ -156,32 +164,100 @@ use ferricml::model_selection::{
 };
 use ferricml::tree::MaxFeatures;
 
+/// Rows in the one draw every fold below is a slice of.
+///
+/// The named folds consume `0..1126`; the tail `1126..1326` is the region
+/// [`disagreeing_fold`] was searched over. The count itself is part of the
+/// recipe's stream identity, so trimming it to the last row actually read would
+/// be a different draw and would invalidate that search.
+const POPULATION: usize = 1326;
+
 /// A noisy two-feature problem no model can fit perfectly.
 ///
 /// The label noise is what makes calibration meaningful: a model that
 /// memorises its training rows is *certain* about rows it cannot actually be
 /// certain about, which is exactly the miscalibration to correct.
-fn problem(rows: usize, seed: u32) -> (DenseMatrix, BinaryTargets) {
-    let mut state = seed | 1;
-    let mut next = || {
-        state ^= state << 13;
-        state ^= state >> 17;
-        state ^= state << 5;
-        (state >> 8) as f32 / (1u32 << 24) as f32
+///
+/// This used to be a private xorshift32 generator written inline, drawing two
+/// uniform features and a Bernoulli label from a logistic function of their
+/// sum — a design generator with its own RNG core, which is exactly what
+/// `dataset-generator-single-source` now forbids in `tests/`. It is the same
+/// problem asked for by name here: [`Task::LinearBinary`] is a Bernoulli label
+/// drawn from a logistic function of a linear score. `separation` is `1.75`
+/// because that is where this recipe's realized Bayes accuracy, `0.713`, is
+/// nearest the `0.710` of the problem it replaces — the difficulty is carried
+/// over rather than re-chosen, which is what keeps every claim below about the
+/// same strength of model the file was written against. Nothing here was
+/// frozen against the old stream: every assertion in this file is a structural
+/// claim about calibration, not a pinned value, which is why the swap is a
+/// refactor rather than a re-baselining.
+fn population() -> (DenseMatrix, BinaryTargets) {
+    let generated = Recipe::seeded(POPULATION, 2, 0x1234_5678)
+        .expect("a two-column design of at least one row is a valid shape")
+        .with_task(Task::LinearBinary {
+            informative: 2,
+            separation: 1.75,
+            prevalence: 0.5,
+        })
+        .expect("both columns informative is admissible at two columns")
+        .generate();
+    let Some(Target::Binary(labels)) = generated.target().cloned() else {
+        unreachable!("a binary task draws binary targets")
     };
-    let mut values = Vec::with_capacity(rows * 2);
-    let mut labels = Vec::with_capacity(rows);
-    for _ in 0..rows {
-        let (first, second) = (next(), next());
-        let probability = 1.0 / (1.0 + (-3.0 * (first + second - 1.0)).exp());
-        labels.push(u8::from(next() < probability));
-        values.push(first);
-        values.push(second);
-    }
+    (generated.into_features(), labels)
+}
+
+/// A contiguous row range of [`population`], as its own fitted-input pair.
+///
+/// The folds are ranges of **one** draw rather than one recipe per fold, and
+/// that is the substance of the port rather than a convenience. A recipe draws
+/// its coefficient vector from its own stream, so two recipes differing in seed
+/// — or in row count — describe two unrelated boundaries, and a model fitted on
+/// one has no reason to rank the other above chance. The replaced generator hid
+/// that by hard-coding one boundary and varying only the draw. Rows are i.i.d.
+/// and the fill is row-major, so a contiguous range is an unbiased sample of
+/// the same problem, which is the same argument the reference lanes' train
+/// split rests on.
+fn fold(start: usize, rows: usize) -> (DenseMatrix, BinaryTargets) {
+    let (design, labels) = population();
+    let indices: Vec<usize> = (start..start + rows).collect();
     (
-        DenseMatrix::new(values, rows, 2).unwrap(),
-        BinaryTargets::new(labels).unwrap(),
+        design.select_rows(&indices).unwrap(),
+        BinaryTargets::new(labels.as_slice()[start..start + rows].to_vec()).unwrap(),
     )
+}
+
+/// The rows the memorising forest is fitted on.
+fn training_fold() -> (DenseMatrix, BinaryTargets) {
+    fold(0, 240)
+}
+
+/// Held-out rows the calibrator is fitted on.
+fn calibration_fold() -> (DenseMatrix, BinaryTargets) {
+    fold(240, 240)
+}
+
+/// Rows neither the model nor the calibrator has seen.
+fn evaluation_fold() -> (DenseMatrix, BinaryTargets) {
+    fold(480, 400)
+}
+
+/// A six-row calibration fold the fitted forest happens to rank backwards.
+///
+/// Small folds are exactly where a held-out fold disagrees with the model, and
+/// the disagreement is what
+/// [`a_held_out_fold_that_disagrees_with_the_model_inverts_its_ranking`] is
+/// about. The offset is a search result, not a derivation — which is why that
+/// test asserts the negative class mean gap as a precondition instead of
+/// assuming it, and would fail loudly rather than quietly measuring nothing if
+/// a later change moved the draw.
+fn disagreeing_fold() -> (DenseMatrix, BinaryTargets) {
+    fold(1130, 6)
+}
+
+/// A second training fold, disjoint from every other range.
+fn second_training_fold() -> (DenseMatrix, BinaryTargets) {
+    fold(886, 240)
 }
 
 /// One unpruned tree with no bootstrap: it memorises whatever it is fitted on.
@@ -204,9 +280,9 @@ fn gather(data: &DenseMatrix, indices: &[usize]) -> DenseMatrix {
 
 #[test]
 fn calibrating_on_the_training_fold_is_a_different_model_from_calibrating_on_held_out_rows() {
-    let (train, train_labels) = problem(240, 0x1234_5678);
-    let (holdout, holdout_labels) = problem(240, 0x2bad_c0de);
-    let (evaluation, evaluation_labels) = problem(400, 0x0f0f_1234);
+    let (train, train_labels) = training_fold();
+    let (holdout, holdout_labels) = calibration_fold();
+    let (evaluation, evaluation_labels) = evaluation_fold();
     let forest = memorising_forest(&train, &train_labels);
 
     // The forest reproduces its training labels exactly, so every training
@@ -279,9 +355,9 @@ fn calibrating_on_the_training_fold_is_a_different_model_from_calibrating_on_hel
 
 #[test]
 fn platt_calibration_also_separates_the_training_fold_from_a_held_out_one() {
-    let (train, train_labels) = problem(240, 0x1234_5678);
-    let (holdout, holdout_labels) = problem(240, 0x2bad_c0de);
-    let (evaluation, evaluation_labels) = problem(400, 0x0f0f_1234);
+    let (train, train_labels) = training_fold();
+    let (holdout, holdout_labels) = calibration_fold();
+    let (evaluation, evaluation_labels) = evaluation_fold();
     let forest = memorising_forest(&train, &train_labels);
 
     let leaky = CalibratedClassifier::fit_platt(
@@ -320,9 +396,9 @@ fn platt_calibration_also_separates_the_training_fold_from_a_held_out_one() {
 
 #[test]
 fn calibration_preserves_the_ranking_it_recalibrates() {
-    let (train, train_labels) = problem(240, 0x1234_5678);
-    let (holdout, holdout_labels) = problem(240, 0x2bad_c0de);
-    let (evaluation, evaluation_labels) = problem(400, 0x0f0f_1234);
+    let (train, train_labels) = training_fold();
+    let (holdout, holdout_labels) = calibration_fold();
+    let (evaluation, evaluation_labels) = evaluation_fold();
     let forest = memorising_forest(&train, &train_labels);
     let view = evaluation.as_view();
     let expected = evaluation_labels.as_slice();
@@ -388,9 +464,9 @@ fn a_held_out_fold_that_disagrees_with_the_model_inverts_its_ranking() {
     // and the case the module's own documentation recommends: the calibration
     // rows are held out, so nothing stops them from disagreeing with the model.
     // Six rows are enough, and small folds are exactly where this happens.
-    let (train, train_labels) = problem(240, 0x1234_5678);
-    let (holdout, holdout_labels) = problem(6, 0xa);
-    let (evaluation, evaluation_labels) = problem(400, 0x0f0f_1234);
+    let (train, train_labels) = training_fold();
+    let (holdout, holdout_labels) = disagreeing_fold();
+    let (evaluation, evaluation_labels) = evaluation_fold();
     let forest = memorising_forest(&train, &train_labels);
     let view = evaluation.as_view();
     let expected = evaluation_labels.as_slice();
@@ -465,8 +541,8 @@ fn a_held_out_fold_that_disagrees_with_the_model_inverts_its_ranking() {
 
 #[test]
 fn a_calibrated_model_scores_and_cross_validates_through_the_existing_paths() {
-    let (data, labels) = problem(240, 0x51de_beef);
-    let (holdout, holdout_labels) = problem(240, 0x2bad_c0de);
+    let (data, labels) = second_training_fold();
+    let (holdout, holdout_labels) = calibration_fold();
     let forest = memorising_forest(&data, &labels);
     let calibrated = CalibratedClassifier::fit_isotonic(
         forest,

@@ -64,6 +64,37 @@ EXPANSION_SEAM_MARKERS = (
 # either is deriving pseudo-random values of its own.
 RNG_DEFINITION_MARKERS = ("fn mix64", "0x9e37_79b9_7f4a_7c15")
 
+# The observable signature of the crate's *second* generator core: xorshift32's
+# shift triple, `<<13 >>17 <<5`. Unlike the SplitMix64 markers these are a
+# signature only **together** — see [`carries_xorshift_core`].
+XORSHIFT_DEFINITION_MARKERS = ("<< 13", ">> 17", "<< 5")
+
+# A xorshift32 core, as the synthetic trees below plant it. It is nine lines and
+# reads as arithmetic, which is the whole reason it spreads: this is close to
+# verbatim what `tests/calibration.rs` carried twice, unnoticed by every rule in
+# this file, until the rule below was written.
+XORSHIFT_CORE_SOURCE = (
+    "fn next_u32(state: &mut u32) -> u32 {\n"
+    "    *state ^= *state << 13;\n"
+    "    *state ^= *state >> 17;\n"
+    "    *state ^= *state << 5;\n"
+    "    *state\n"
+    "}\n"
+)
+
+
+def carries_xorshift_core(text: str) -> bool:
+    """Whether `text` transcribes xorshift32's shift triple.
+
+    All three shifts or none. A lone shift is arithmetic; the conjunction is
+    what makes it a generator, and it is the form every transcription this rule
+    has met is written in — three statements, in order, because the stream is
+    defined by the order. The conjunction is also what stops the rule firing on
+    `1_u64 << 53`, the divisor in both unit-interval maps, which a bare `"<< 5"`
+    substring match reads as a shift by five.
+    """
+    return all(marker in text for marker in XORSHIFT_DEFINITION_MARKERS)
+
 
 def read_if_present(path: Path) -> str:
     return path.read_text() if path.is_file() else ""
@@ -374,6 +405,85 @@ def rng_definition_in_tests_lives_only_in_shared_support(root: Path) -> list[str
         text = path.read_text()
         findings.extend(
             f"generator definition re-derived outside the shared test support: "
+            f"{path.relative_to(root)} defines {marker!r}"
+            for marker in RNG_DEFINITION_MARKERS
+            if marker in text
+        )
+    return findings
+
+
+def dataset_generator_lives_only_in_numeric(root: Path) -> list[str]:
+    """One xorshift32 core, in the shared kernels, and no generator in `benches/`.
+
+    The two rules above close the SplitMix64 duplication path in `src/` and in
+    `tests/`. They leave two doors open, and this plan walked through both.
+
+    The first is the *other* core. `src/numeric/rng.rs` gained a xorshift32
+    generator as a compatibility surface for three frozen benchmark fixtures
+    (rule 6 in `src/numeric/mod.rs` names it as the only other permitted core),
+    and nothing textual stopped a second copy of it appearing wherever someone
+    wanted reproducible values without reaching for `OwnedRng`. A xorshift32 core
+    is nine lines and looks like arithmetic, which is exactly why it spreads: the
+    two `tests/calibration.rs` design generators found on 2026-07-28 each carried
+    their own, and they were invisible to every rule in this file.
+
+    The second is `benches/` — a tree the rules did not read **at all** until
+    now. Two of the three fixtures this crate's bench history is measured against
+    were private xorshift32 streams living there, unnoticed until the dataset
+    generator's inventory went looking. That is the worst place for a private
+    generator to hide: a bench fixture's bytes are the input to an immutable
+    per-release baseline, so a generator nobody can see is a baseline nobody can
+    reproduce. `benches/` therefore carries *neither* marker family; a benchmark
+    that wants data asks `ferricml::datasets` for a recipe, which is pinned by
+    digest tests beside the fixtures it replaced.
+
+    The core has to be present in `src/numeric/` for this rule to mean anything,
+    so its absence is itself a finding rather than a silently vacuous pass — and
+    that check running first is also what makes the child-module proofs below
+    provable, since a facade-only reader cannot find the core and reports its
+    absence instead of the plants.
+
+    Same deliberate boundary as its two siblings: the markers are textual, so a
+    generator written as some *third* construction passes. This closes the
+    copy-the-shared-one path, which is the one that produces two streams claiming
+    to be one.
+    """
+    source = root / "src"
+    if not carries_xorshift_core(tree_text(source / "numeric")):
+        return ["xorshift32 generator is missing from the shared numeric kernels"]
+
+    findings = []
+    for path in sorted(source.rglob("*.rs")):
+        if "numeric" in path.relative_to(source).parts:
+            continue
+        if carries_xorshift_core(path.read_text()):
+            findings.append(
+                f"xorshift32 generator re-derived outside numeric: "
+                f"{path.relative_to(root)} transcribes the shift triple"
+            )
+
+    tests = root / "tests"
+    if not tree_text(tests):
+        return [*findings, "tests tree is missing"]
+    findings.extend(
+        f"xorshift32 generator re-derived in the test tree: "
+        f"{path.relative_to(root)} transcribes the shift triple"
+        for path in sorted(tests.rglob("*.rs"))
+        if carries_xorshift_core(path.read_text())
+    )
+
+    benches = root / "benches"
+    if not tree_text(benches):
+        return [*findings, "benchmark tree is missing"]
+    for path in sorted(benches.rglob("*.rs")):
+        text = path.read_text()
+        if carries_xorshift_core(text):
+            findings.append(
+                f"generator defined in the benchmark tree: "
+                f"{path.relative_to(root)} transcribes the xorshift32 shift triple"
+            )
+        findings.extend(
+            f"generator defined in the benchmark tree: "
             f"{path.relative_to(root)} defines {marker!r}"
             for marker in RNG_DEFINITION_MARKERS
             if marker in text
@@ -731,6 +841,7 @@ RULES: tuple[tuple[str, Callable[[Path], list[str]]], ...] = (
     ("expansion-seam-single-source", expansion_seam_lives_only_in_its_own_module),
     ("rng-single-source", rng_definition_lives_only_in_numeric),
     ("test-rng-single-source", rng_definition_in_tests_lives_only_in_shared_support),
+    ("dataset-generator-single-source", dataset_generator_lives_only_in_numeric),
     ("preprocessing-below-composition", preprocessing_sits_below_composition),
     ("inspection-public-surfaces-only", inspection_uses_only_public_surfaces),
     ("loss-below-estimators", loss_depends_on_no_estimator),
@@ -797,7 +908,7 @@ def write_clean_tree(root: Path) -> Path:
         "numeric/rng/mod.rs": (
             "//! rng\npub(crate) struct OwnedRng { state: u64 }\n"
             "const INCREMENT: u64 = 0x9e37_79b9_7f4a_7c15;\n"
-            "fn mix64(value: u64) -> u64 { value }\n"
+            "fn mix64(value: u64) -> u64 { value }\n" + XORSHIFT_CORE_SOURCE
         ),
         "numeric/stream/mod.rs": "//! stream\n",
         "numeric/quantile/mod.rs": (
@@ -860,10 +971,37 @@ def write_clean_tree(root: Path) -> Path:
             "//! shared test generator\npub struct TestRng { state: u64 }\n"
             "const INCREMENT: u64 = 0x9e37_79b9_7f4a_7c15;\n"
             "fn mix64(value: u64) -> u64 { value }\n"
+            # The unit-interval map, carried here deliberately. Its divisor is a
+            # shift by *fifty-three*, and this file is exempt from neither
+            # `dataset-generator-single-source` marker, so the clean tree passing
+            # is what proves that rule does not read `<< 53` as a shift by five.
+            "pub fn unit(draw: u64) -> f64 "
+            "{ (draw >> 11) as f64 * (1.0 / (1_u64 << 53) as f64) }\n"
         ),
         "support/conformance.rs": "//! conformance probe\n",
     }.items():
         path = root / "tests" / relative
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(text)
+
+    # The benchmark tree. It carries a child module for the same reason
+    # `tests/support/` does: `dataset-generator-single-source` reads `benches/`
+    # recursively, and a violation planted in a top-level bench cannot tell a
+    # recursive reader from a facade-only one. A bench asks the crate for its
+    # data, which is what the real tree does now that the two private xorshift32
+    # fixtures that used to live here are `ferricml::datasets` recipes.
+    for relative, text in {
+        "models.rs": (
+            "//! model benches\nmod support;\n"
+            "use ferricml::datasets::{BenchmarkFixture, BenchmarkLane};\n"
+        ),
+        "support/mod.rs": "//! bench support\npub mod fixture;\n",
+        "support/fixture.rs": (
+            "//! fixture\nuse ferricml::datasets::BenchmarkFixture;\n"
+            "pub fn lane() -> BenchmarkFixture { unimplemented!() }\n"
+        ),
+    }.items():
+        path = root / "benches" / relative
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(text)
     return root
@@ -945,6 +1083,24 @@ SYNTHETIC_VIOLATIONS: tuple[tuple[str, Callable[[Path], None], str], ...] = (
             "fn mix64(value: u64) -> u64 { value }\n",
         ),
         "generator definition re-derived outside the shared test support",
+    ),
+    (
+        # The second core, in the module the first duplicate hid in.
+        "dataset-generator-single-source",
+        lambda root: append(
+            root / "src" / "model_selection" / "split" / "mod.rs", XORSHIFT_CORE_SOURCE
+        ),
+        "xorshift32 generator re-derived outside numeric",
+    ),
+    (
+        # And the other half of the rule: `benches/` carries *neither* family,
+        # so the SplitMix64 marker that is legal in `src/numeric/` is a finding
+        # here. This is the shape the two real bench fixtures had.
+        "dataset-generator-single-source",
+        lambda root: append(
+            root / "benches" / "models.rs", "fn mix64(value: u64) -> u64 { value }\n"
+        ),
+        "generator defined in the benchmark tree",
     ),
     (
         "preprocessing-below-composition",
@@ -1148,6 +1304,36 @@ CHILD_MODULE_VIOLATIONS: tuple[tuple[str, Callable[[Path], None], str], ...] = (
         "generator definition re-derived outside the shared test support",
     ),
     (
+        # The three trees the rule reads, one plant each, all below a facade.
+        # `src/` first: a private core hides in a splitter's child module.
+        "dataset-generator-single-source",
+        lambda root: append(
+            root / "src" / "model_selection" / "split" / "grouped.rs",
+            XORSHIFT_CORE_SOURCE,
+        ),
+        "xorshift32 generator re-derived outside numeric",
+    ),
+    (
+        # `tests/`: beside the shared generator, which is where the live
+        # duplicate this rule found was — two cores in `tests/calibration.rs`,
+        # each drawing a design matrix its own way.
+        "dataset-generator-single-source",
+        lambda root: append(
+            root / "tests" / "support" / "conformance.rs", XORSHIFT_CORE_SOURCE
+        ),
+        "xorshift32 generator re-derived in the test tree",
+    ),
+    (
+        # `benches/`: the tree no rule read at all until now, and the one where
+        # a private generator does the most damage, because its bytes are the
+        # input to an immutable per-release baseline.
+        "dataset-generator-single-source",
+        lambda root: append(
+            root / "benches" / "support" / "fixture.rs", XORSHIFT_CORE_SOURCE
+        ),
+        "generator defined in the benchmark tree",
+    ),
+    (
         "preprocessing-below-composition",
         lambda root: append(
             root / "src" / "preprocessing" / "standard_scaler" / "mod.rs",
@@ -1248,6 +1434,9 @@ CLEAN_TREE_PROVEN_RECURSION: dict[str, str] = {
     ),
     "rng-single-source": "seeded generator is missing from the shared numeric kernels",
     "test-rng-single-source": "seeded generator is missing from the shared test support",
+    "dataset-generator-single-source": (
+        "xorshift32 generator is missing from the shared numeric kernels"
+    ),
 }
 
 # Floor on the child-module proofs, so the count cannot shrink by attrition.
@@ -1260,7 +1449,7 @@ CLEAN_TREE_PROVEN_RECURSION: dict[str, str] = {
 # an explicit edit to this number with a reason attached, which is the same
 # treatment the reach floors in `tests/artifact_hardening.rs` get. Raise it when
 # proofs are added; lower it only alongside the rule being retired.
-MINIMUM_CHILD_MODULE_PROOFS = 17
+MINIMUM_CHILD_MODULE_PROOFS = 20
 
 
 def rules_reading_a_module_directory() -> set[str]:

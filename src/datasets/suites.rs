@@ -359,8 +359,31 @@ impl AccuracySuite {
 ///
 /// The grid exists to be measured, not asserted: FerricML's performance protocol
 /// records numbers on a registered runner rather than in a test, and the claim
-/// this grid is built to support is that generation is negligible against the
+/// this grid was built to support is that generation is negligible against the
 /// smallest fit it feeds.
+///
+/// # What the grid measured
+///
+/// That claim is true at the wide end and **false at the narrow one**, which is
+/// the answer the second dimension exists to produce. Measured on the registered
+/// runner over all ninety points, each family against the cheapest fit in the
+/// crate that accepts its target, generation runs between `0.002` and `1.275`
+/// times the fit. At 128 columns it is `0.2`–`3.2%` of the fit. At 8 columns it
+/// is `21`–`79%` for seven families, and for [`Task::NonlinearBinary`] it is
+/// *more* than the fit — `1.27` times a `LogisticRegression::fit` at `256 x 8`.
+///
+/// The mechanism is a per-row cost that does not shrink with the width. The
+/// classification families solve for their requested prevalence or balance
+/// rather than reporting whichever one falls out, and that solve evaluates a
+/// logistic over every row per iteration: about `160 ns` per row at any width,
+/// against `12 ns` per row for [`Task::LinearRegression`]. It buys the property
+/// that makes prevalence a knob at all, so it is a trade and not a defect — but
+/// the unconditional sentence above was wrong, and the condition is the width.
+///
+/// Nothing downstream is distorted by this: a benchmark generates once and fits
+/// many times, so a generation cost comparable to a single fit does not enter a
+/// measured fit. What it does mean is that a caller generating *inside* a timed
+/// region at eight columns is timing the generator as much as the model.
 ///
 /// ```
 /// use ferricml::datasets::{Family, PerformanceGrid};
