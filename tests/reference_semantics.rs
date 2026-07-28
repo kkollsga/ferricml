@@ -47,22 +47,24 @@ use rng::TestRng;
 
 const EXACT_TOLERANCE: f32 = 1.0e-6;
 const LOGISTIC_TOLERANCE: f32 = 2.0e-5;
-const QUALITY_SEEDS: [u64; 5] = [11, 22, 33, 44, 55];
+const QUALITY_SEEDS: [u64; 5] = ReferenceQuality::SEEDS;
 const HGB_QUALITY_SEEDS: [u64; 3] = [11, 22, 33];
 
-/// The four classification lanes, paired with the name the frozen reference
-/// table records each of them under.
+/// The four classification lanes, which name themselves.
 ///
-/// The generator moved into `ferricml::datasets` and the fixture's lane strings
-/// did not, because those strings are the reference file's own vocabulary — a
-/// row key in `QUALITY_REFERENCES` — rather than anything the generator knows.
-/// Pairing them here keeps the lookup a lookup instead of pushing fixture
-/// spelling into the crate's public API.
-const QUALITY_LANES: [(&str, ReferenceLane); 4] = [
-    ("nonlinear", ReferenceLane::NonlinearBinary),
-    ("separable", ReferenceLane::SeparableBinary),
-    ("imbalanced", ReferenceLane::ImbalancedBinary),
-    ("noise", ReferenceLane::NoisyBinary),
+/// This list used to pair each lane with a separate string literal, on the
+/// argument that a fixture's row key is the fixture's vocabulary rather than the
+/// generator's. The exchange retired that argument: a derived container records
+/// which lane it holds, so the crate owns a written name for a lane whether or
+/// not this file supplies one — and two spellings that have to agree are worse
+/// than one. `ReferenceLane::label` returns exactly the strings
+/// `QUALITY_REFERENCES` keys its rows on, so the lookup below is now provably
+/// against the same word rather than visibly against a matching one.
+const QUALITY_LANES: [ReferenceLane; 4] = [
+    ReferenceLane::NonlinearBinary,
+    ReferenceLane::SeparableBinary,
+    ReferenceLane::ImbalancedBinary,
+    ReferenceLane::NoisyBinary,
 ];
 
 fn matrix(values: &[f32], rows: usize, columns: usize) -> DenseMatrix {
@@ -1913,7 +1915,8 @@ fn normalized_root_mean_squared_error(expected: &[f32], actual: &[f32]) -> f64 {
 
 #[test]
 fn five_seed_classification_quality_stays_within_approved_deltas() {
-    for (name, lane) in QUALITY_LANES {
+    for lane in QUALITY_LANES {
+        let name = lane.label();
         let mut ferric_accuracy = 0.0;
         let mut ferric_brier = 0.0;
         let mut baseline_accuracy = 0.0;

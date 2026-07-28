@@ -41,6 +41,8 @@
 
 use super::contamination::{Contamination, WeightPattern};
 use super::error::ExchangeError;
+use super::exchange::{Derivation, Payload};
+use super::presets::{ReferenceLane, Split};
 use super::recipe::{Recipe, Source};
 use super::structural::{ClassBalance, ClassGeometry, GroupPattern};
 use super::task::{BinaryKind, Family, GlmLink, NonlinearKind, Portability, Task};
@@ -51,7 +53,12 @@ use super::task::{BinaryKind, Family, GlmLink, NonlinearKind, Portability, Task}
 /// together — because the two are written as a pair and are meaningless apart.
 /// A reader that meets a version it does not know refuses rather than guessing
 /// which half changed.
-pub(super) const FORMAT_VERSION: u32 = 1;
+///
+/// `2` adds the `payload` block. A `1` container has no way to say whether its
+/// arrays are its recipe's output, so a reader that assumed "generated" for the
+/// missing block would be making exactly the claim the block exists to stop it
+/// making — which is why this is a version bump rather than an optional field.
+pub(super) const FORMAT_VERSION: u32 = 2;
 
 /// Largest array table this reader will assemble.
 ///
@@ -107,6 +114,13 @@ pub(super) struct Manifest {
     pub(super) spec_digest: [u8; 32],
     /// The determinism envelope the recorded data was produced under.
     pub(super) portability: Portability,
+    /// Whether the arrays are the recipe's own output or a derived dataset.
+    ///
+    /// Not checkable against anything, unlike the two digests: a derived
+    /// dataset exists precisely because it cannot be recomputed from the recipe
+    /// beside it. What the field buys is that a reader is never *required* to
+    /// assume, which is what the digest alone would force it to do.
+    pub(super) payload: Payload,
     /// Name of the array file beside this manifest.
     pub(super) data_file: String,
     /// Length of the array file.
@@ -128,6 +142,8 @@ pub(super) fn render(manifest: &Manifest) -> String {
     root.u64("format", u64::from(FORMAT_VERSION));
     root.digest("spec_digest", &manifest.spec_digest);
     root.string("portability", portability_label(manifest.portability));
+    root.key("payload");
+    render_payload(root.text, manifest.payload, 1);
     root.key("recipe");
     render_recipe(root.text, &manifest.recipe, 1);
     root.key("data");
@@ -169,6 +185,26 @@ fn render_arrays(text: &mut String, arrays: &[ArrayRecord], depth: usize) {
     text.push('\n');
     indent(text, depth);
     text.push(']');
+}
+
+/// Writes the block saying what the arrays are relative to the recipe.
+///
+/// Flat rather than nested, like `source`: a kind and then that kind's own
+/// fields, so a reader dispatches on one string and every field it then expects
+/// is at the same depth.
+fn render_payload(text: &mut String, payload: Payload, depth: usize) {
+    let mut object = Object::open(text, depth);
+    match payload {
+        Payload::Generated => object.string("kind", "generated"),
+        Payload::Derived(Derivation::ReferenceSplit { lane, seed, split }) => {
+            object.string("kind", "derived");
+            object.string("derivation", "reference-split");
+            object.string("lane", lane.label());
+            object.u64("seed", seed);
+            object.string("split", split.label());
+        }
+    }
+    object.close();
 }
 
 fn render_recipe(text: &mut String, recipe: &Recipe, depth: usize) {
@@ -532,6 +568,10 @@ pub(super) fn parse(text: &str) -> Result<Manifest, ExchangeError> {
     };
     cursor.comma()?;
 
+    cursor.key("payload")?;
+    let payload = cursor.payload()?;
+    cursor.comma()?;
+
     cursor.key("recipe")?;
     let recipe = cursor.recipe()?;
     cursor.comma()?;
@@ -569,6 +609,7 @@ pub(super) fn parse(text: &str) -> Result<Manifest, ExchangeError> {
         recipe,
         spec_digest,
         portability,
+        payload,
         data_file,
         data_bytes,
         data_digest,
@@ -866,6 +907,46 @@ impl<'a> Cursor<'a> {
                 .map_err(ExchangeError::InvalidRecipe)?;
         }
         Ok(recipe)
+    }
+
+    fn payload(&mut self) -> Result<Payload, ExchangeError> {
+        self.expect(b'{')?;
+        self.key("kind")?;
+        let payload = match self.string()? {
+            "generated" => Payload::Generated,
+            "derived" => {
+                self.comma()?;
+                self.key("derivation")?;
+                // One derivation exists, so this reads as a redundant tag. It
+                // is not: without it a second derivation could only be added by
+                // changing what `kind` means, and the whole point of the block
+                // is that a reader can tell derived containers apart.
+                if self.string()? != "reference-split" {
+                    return Err(self.fault());
+                }
+                self.comma()?;
+                self.key("lane")?;
+                let label = self.string()?;
+                let lane = ReferenceLane::ALL
+                    .into_iter()
+                    .find(|lane| lane.label() == label)
+                    .ok_or_else(|| self.fault())?;
+                self.comma()?;
+                self.key("seed")?;
+                let seed = self.u64()?;
+                self.comma()?;
+                self.key("split")?;
+                let label = self.string()?;
+                let split = Split::ALL
+                    .into_iter()
+                    .find(|split| split.label() == label)
+                    .ok_or_else(|| self.fault())?;
+                Payload::Derived(Derivation::ReferenceSplit { lane, seed, split })
+            }
+            _ => return Err(self.fault()),
+        };
+        self.expect(b'}')?;
+        Ok(payload)
     }
 
     fn source(&mut self) -> Result<Source, ExchangeError> {

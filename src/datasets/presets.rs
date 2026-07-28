@@ -56,6 +56,19 @@ use crate::data::{BinaryTargets, DenseMatrix, RegressionTargets};
 ///
 /// It is `#[non_exhaustive]` because absorbing another frozen lane must not be a
 /// breaking change for a caller that matches only the ones it asked for.
+///
+/// # The lane's name is the crate's, not the fixture's
+///
+/// [`ReferenceLane::label`] spells the same four strings the frozen
+/// `QUALITY_REFERENCES` table keys its rows on. That spelling used to live in
+/// `tests/reference_semantics.rs` on the argument that a fixture's row key is
+/// the fixture's vocabulary rather than the generator's. The exchange ended
+/// that: a derived container records *which lane it holds*
+/// ([`Derivation`](super::Derivation)), a manifest is text, and a Python reader
+/// asks for a lane by name — so a written name for a lane exists whether or not
+/// the crate owns one. Owning it makes the fixture key, the manifest field and
+/// the container's file name provably one string instead of three that agree by
+/// inspection.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum ReferenceLane {
@@ -75,6 +88,75 @@ pub enum ReferenceLane {
     NoisyBinary,
     /// A continuous target: linear, squared, interaction and noise terms.
     Regression,
+}
+
+impl ReferenceLane {
+    /// Every absorbed lane, in the order the conformance table reports them.
+    ///
+    /// A roster rather than a convention, for the same reason
+    /// [`Family::ALL`](super::Family::ALL) is one: the exchange catalogue and
+    /// the suite closure tests iterate it, so a lane absorbed later appears in
+    /// both without anyone remembering to add it.
+    pub const ALL: [Self; 5] = [
+        Self::NonlinearBinary,
+        Self::SeparableBinary,
+        Self::ImbalancedBinary,
+        Self::NoisyBinary,
+        Self::Regression,
+    ];
+
+    /// The name this lane is recorded under.
+    ///
+    /// These are the exact strings the frozen `QUALITY_REFERENCES` table keys
+    /// its rows on, and changing one would orphan five fixture rows without
+    /// changing a single number in them.
+    ///
+    /// ```
+    /// use ferricml::datasets::ReferenceLane;
+    ///
+    /// assert_eq!(ReferenceLane::NoisyBinary.label(), "noise");
+    /// ```
+    pub const fn label(self) -> &'static str {
+        match self {
+            Self::NonlinearBinary => "nonlinear",
+            Self::SeparableBinary => "separable",
+            Self::ImbalancedBinary => "imbalanced",
+            Self::NoisyBinary => "noise",
+            Self::Regression => "regression",
+        }
+    }
+}
+
+/// Which half of a frozen lane's single design a caller wants.
+///
+/// The two are halves of *one* generated matrix rather than two matrices, which
+/// is why this is a selector on [`ReferenceQuality`] rather than two recipes:
+/// the test rows are the stream continued past the training rows, and no
+/// [`Recipe`] field expresses "start here".
+///
+/// It is `#[non_exhaustive]` because a lane gaining a third split — a
+/// validation half, say — must not be a breaking change for a caller matching
+/// only the two that exist.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum Split {
+    /// The first [`ReferenceQuality::TRAIN_ROWS`] rows of the design.
+    Train,
+    /// The remaining [`ReferenceQuality::TEST_ROWS`] rows.
+    Test,
+}
+
+impl Split {
+    /// Both splits, in the order the design lays them out.
+    pub const ALL: [Self; 2] = [Self::Train, Self::Test];
+
+    /// The name this split is written under in an exchange manifest.
+    pub const fn label(self) -> &'static str {
+        match self {
+            Self::Train => "train",
+            Self::Test => "test",
+        }
+    }
 }
 
 /// One frozen conformance lane at one recorded seed.
@@ -118,6 +200,15 @@ pub struct ReferenceQuality {
 }
 
 impl ReferenceQuality {
+    /// The five raw stream states every frozen lane was recorded against.
+    ///
+    /// A roster for the same reason [`ReferenceLane::ALL`] is one: the exchange
+    /// catalogue materializes the cross product of these with the lanes and the
+    /// splits, so the set of containers a conformance harness can read is the
+    /// set of lanes that were actually recorded, rather than a list repeated on
+    /// the reading side.
+    pub const SEEDS: [u64; 5] = [11, 22, 33, 44, 55];
+
     /// Rows in the training split of every frozen lane.
     pub const TRAIN_ROWS: usize = 768;
 
@@ -174,7 +265,7 @@ impl ReferenceQuality {
 
     /// Generates the training split.
     pub fn train(&self) -> Dataset {
-        self.split(true)
+        self.split(Split::Train)
     }
 
     /// Generates the test split.
@@ -186,20 +277,36 @@ impl ReferenceQuality {
     /// is one pass over `TEST_ROWS * COLUMNS` values against fitting a model on
     /// the half that is kept.
     pub fn test(&self) -> Dataset {
-        self.split(false)
+        self.split(Split::Test)
     }
 
-    /// Generates one split, with its own row indices starting at zero.
-    fn split(&self, training: bool) -> Dataset {
+    /// Generates one split, named rather than chosen by two methods.
+    ///
+    /// [`ReferenceQuality::train`] and [`ReferenceQuality::test`] call this. It
+    /// is public because every consumer that iterates the lanes — the exchange
+    /// catalogue, a conformance harness — wants the split as a *value* it can
+    /// put in a loop and record in a manifest, and reconstructing that value
+    /// from which of two methods was called is a match every one of them would
+    /// have to write.
+    ///
+    /// ```
+    /// use ferricml::datasets::{ReferenceLane, ReferenceQuality, Split};
+    ///
+    /// let preset = ReferenceQuality::new(ReferenceLane::Regression, 33);
+    /// assert_eq!(preset.split(Split::Train), preset.train());
+    /// assert_eq!(preset.split(Split::Test), preset.test());
+    /// ```
+    pub fn split(&self, split: Split) -> Dataset {
         let recipe = self.recipe();
         let mut values = Vec::new();
         recipe.design_into(&mut values);
         let boundary = Self::TRAIN_ROWS * Self::COLUMNS;
-        let (values, rows) = if training {
-            values.truncate(boundary);
-            (values, Self::TRAIN_ROWS)
-        } else {
-            (values.split_off(boundary), Self::TEST_ROWS)
+        let (values, rows) = match split {
+            Split::Train => {
+                values.truncate(boundary);
+                (values, Self::TRAIN_ROWS)
+            }
+            Split::Test => (values.split_off(boundary), Self::TEST_ROWS),
         };
         let design = DenseMatrix::new(values, rows, Self::COLUMNS)
             .expect("a preset's split is a whole number of generated rows");

@@ -272,6 +272,79 @@ accuracy_linear-regression	generated	ad78ef4e…	10276 bytes
 > it, because the defect it guards against returns the *correct* error and only
 > the cost is wrong.
 
+### The reading half
+
+`python/ferricml_datasets` is the other side of that boundary: NumPy and nothing
+else, about three hundred lines, and no generator of its own. It is committed to
+this repository and excluded from the crate archive, because a Rust consumer
+cannot call it and `cargo` cannot build it.
+
+```python
+from ferricml_datasets import generate
+
+case = generate("accuracy_linear-regression", suite="accuracy")
+
+case.features                 # float32 (256, 8), mapped rather than read
+case.target                   # float32 (256,)
+case.truth["coefficients"]    # float32 (1, 8) — what the answer actually was
+case.payload                  # "generated"
+```
+
+`load` maps every array with `numpy.memmap` at the offset the table names, so
+opening a container costs the manifest text and a handful of `mmap` calls
+whatever the arrays weigh, and an array nothing touches is never read. `generate`
+is `load` with a `cargo run --release … ferricml-datagen` behind it when the
+container is not there yet.
+
+This replaced a real duplicate. FerricML's conformance script used to carry a
+hand-mirrored SplitMix64 and a NumPy rewrite of all five frozen quality lanes,
+kept byte-identical to the Rust original by inspection — and nothing checked
+that pairing, because the lanes it fed compare aggregate accuracy and Brier
+within `0.02`. A mirror off by one rounding step would have emitted a different
+but similarly distributed design, passed every check, and silently moved the
+data behind all 35 frozen reference rows. The mirror is gone; regenerating those
+rows from containers reproduced the frozen fixture byte for byte.
+
+### A container is not always its recipe's output
+
+Reading those lanes is what forced a distinction the format did not have. A
+`ReferenceQuality` split is not `Recipe::generate`'s output — the preset builds
+one 1152-row design, slices it, and draws the lane's own targets over the slice —
+and both halves record the digest of the recipe they were cut from. So the
+digest cannot tell a lane's training split apart from the design it came out of.
+
+Every container therefore records a `payload` block saying which it is, and both
+readers refuse to guess rather than assuming the common case:
+
+```rust
+use ferricml::datasets::{Derivation, MaterializedDataset, Payload, ReferenceLane, ReferenceQuality, Split};
+
+let preset = ReferenceQuality::new(ReferenceLane::NoisyBinary, 22);
+let derivation = Derivation::ReferenceSplit {
+    lane: ReferenceLane::NoisyBinary,
+    seed: 22,
+    split: Split::Train,
+};
+let derived = MaterializedDataset::derived(&preset.recipe(), &preset.train(), derivation);
+
+// The digest agrees with the recipe's own output. The data does not.
+let generated = MaterializedDataset::new(&preset.recipe());
+assert_eq!(derived.spec_digest(), generated.spec_digest());
+assert_ne!(derived.data_digest(), generated.data_digest());
+
+assert_eq!(derived.payload(), Payload::Derived(derivation));
+assert!(derived.regenerate().is_err());
+assert_eq!(generated.regenerate()?, generated);
+# Ok::<(), ferricml::datasets::ExchangeError>(())
+```
+
+`DatasetExchange::ensure` refuses a derived container under the name it is asked
+for rather than serving it as a cache hit or overwriting it, and
+`Container.regenerable_recipe()` on the Python side raises for the same reason.
+The asymmetry is deliberate: a generated container is reproducible from the
+recipe written inside it, so replacing one loses nothing, and a derived
+container is the only copy of something no recipe reproduces.
+
 ## The performance grid
 
 Nine grid points, ten families, ninety cases. Generation cost is not one number:

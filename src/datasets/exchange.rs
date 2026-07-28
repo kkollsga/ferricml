@@ -54,6 +54,7 @@
 use super::dataset::{Dataset, Target, Truth};
 use super::error::ExchangeError;
 use super::manifest::{self, ArrayRecord, Manifest};
+use super::presets::{ReferenceLane, Split};
 use super::recipe::Recipe;
 use super::task::Portability;
 use sha2::{Digest, Sha256};
@@ -256,6 +257,70 @@ pub enum CacheOutcome {
     Reused,
 }
 
+/// Which dataset a container holds, when it is not its recipe's own output.
+///
+/// A derivation is the *identity* of the derived dataset, not a description of
+/// how to compute it: it says which recorded thing the arrays are, so a reader
+/// meeting a container knows what it is looking at and a writer cannot label
+/// two different datasets the same way.
+///
+/// One variant exists because one derived dataset exists. A frozen conformance
+/// lane's split is not `recipe.generate()` — `ReferenceQuality` generates the
+/// whole `TRAIN_ROWS + TEST_ROWS` design, slices it, and draws the lane's own
+/// targets over the slice — so a container holding one of those halves carries
+/// the recipe as provenance and this as identity.
+///
+/// It is `#[non_exhaustive]` because a second kind of derived dataset must not
+/// be a breaking change for a caller matching only the reference splits.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum Derivation {
+    /// One split of one frozen conformance lane at one recorded seed.
+    ReferenceSplit {
+        /// Which lane's targets were drawn over the split.
+        lane: ReferenceLane,
+        /// The raw stream state the lane was recorded against.
+        seed: u64,
+        /// Which half of the lane's single design the arrays are.
+        split: Split,
+    },
+}
+
+/// What a container's arrays are, relative to the recipe recorded beside them.
+///
+/// # Why a container has to say this
+///
+/// Every container carries a recipe and that recipe's spec digest, and for most
+/// of them the arrays are exactly [`Recipe::generate`]'s output — so a consumer
+/// can regenerate the data from the recipe alone and get the same bytes. A
+/// derived container carries the *same kind* of recipe field, records the *same*
+/// digest, and holds different arrays. Nothing in the recipe distinguishes the
+/// two.
+///
+/// That is not hypothetical. Both halves of a [`ReferenceQuality`] lane report
+/// the digest of the single recipe they were sliced out of, so a digest-keyed
+/// cache asked for that recipe's output would hand back a training split and be
+/// right about the digest and wrong about the data. This block is what makes
+/// the difference readable, and
+/// [`MaterializedDataset::regenerate`] is where refusing to ignore it is
+/// executable rather than documented.
+///
+/// [`ReferenceQuality`]: super::ReferenceQuality
+///
+/// It is `#[non_exhaustive]` for the same reason [`Derivation`] is.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum Payload {
+    /// The arrays are the recorded recipe's own output.
+    Generated,
+    /// The arrays are a dataset derived from the recorded recipe, and the
+    /// recipe alone does not reproduce them.
+    Derived(
+        /// Which derived dataset this is.
+        Derivation,
+    ),
+}
+
 /// A dataset that has been reduced to the arrays an exchange container carries.
 ///
 /// This is both halves of the round trip: [`MaterializedDataset::new`] builds
@@ -291,6 +356,7 @@ pub struct MaterializedDataset {
     recipe: Recipe,
     spec_digest: [u8; 32],
     portability: Portability,
+    payload: Payload,
     data_bytes: usize,
     data_digest: [u8; 32],
     arrays: Vec<DatasetArray>,
@@ -303,8 +369,45 @@ impl MaterializedDataset {
     /// This is what [`DatasetExchange::materialize`] writes, so it is also the
     /// value a load is compared against.
     pub fn new(recipe: &Recipe) -> Self {
-        let dataset = recipe.generate();
-        let arrays = arrays_of(&dataset);
+        Self::containing(recipe, &recipe.generate(), Payload::Generated)
+    }
+
+    /// Reduces a dataset that is *not* the recipe's own output to arrays.
+    ///
+    /// The recipe is provenance — it says which stream the design came from,
+    /// and its digest is what a report files the container under — while
+    /// [`Derivation`] is identity, and the container records both. Nothing
+    /// checks that the dataset really is that derivation, because nothing
+    /// could: the point of this entry point is that the pair cannot be
+    /// recomputed from the recipe. What it does guarantee is that the container
+    /// *says so*, so no reader mistakes the arrays for
+    /// [`Recipe::generate`]'s.
+    ///
+    /// ```
+    /// use ferricml::datasets::{
+    ///     Derivation, MaterializedDataset, Payload, ReferenceLane, ReferenceQuality, Split,
+    /// };
+    ///
+    /// let preset = ReferenceQuality::new(ReferenceLane::SeparableBinary, 11);
+    /// let derivation = Derivation::ReferenceSplit {
+    ///     lane: ReferenceLane::SeparableBinary,
+    ///     seed: 11,
+    ///     split: Split::Test,
+    /// };
+    /// let container =
+    ///     MaterializedDataset::derived(&preset.recipe(), &preset.test(), derivation);
+    ///
+    /// assert_eq!(container.payload(), Payload::Derived(derivation));
+    /// // The recipe is recorded, and it is *not* what produced these arrays.
+    /// assert_eq!(container.spec_digest(), preset.recipe().spec_digest());
+    /// assert!(container.regenerate().is_err());
+    /// ```
+    pub fn derived(recipe: &Recipe, dataset: &Dataset, derivation: Derivation) -> Self {
+        Self::containing(recipe, dataset, Payload::Derived(derivation))
+    }
+
+    fn containing(recipe: &Recipe, dataset: &Dataset, payload: Payload) -> Self {
+        let arrays = arrays_of(dataset);
         let mut bytes = Vec::with_capacity(arrays.iter().map(DatasetArray::encoded_bytes).sum());
         for array in &arrays {
             array.write_into(&mut bytes);
@@ -313,16 +416,49 @@ impl MaterializedDataset {
             recipe: *recipe,
             spec_digest: recipe.spec_digest(),
             portability: recipe.portability(),
+            payload,
             data_bytes: bytes.len(),
             data_digest: Sha256::digest(&bytes).into(),
             arrays,
         }
     }
 
-    /// Returns the recipe the data was generated from.
+    /// Regenerates this container's recipe, refusing when the arrays are not
+    /// that recipe's output.
+    ///
+    /// This is the refusal [`Payload`] exists for, as an operation rather than
+    /// a paragraph. For a [`Payload::Generated`] container the result equals
+    /// the original — same arrays, same digests — because that is what
+    /// "generated" claims. For a derived one there is nothing to regenerate:
+    /// the recipe would produce the whole design where the container holds a
+    /// slice of it with another family's targets, so returning that would be a
+    /// silently different dataset under a matching digest.
+    ///
+    /// The error carries the derivation, because a caller that reached here
+    /// asked the wrong question of a container and the useful answer is *what
+    /// it actually holds*.
+    pub fn regenerate(&self) -> Result<Self, ExchangeError> {
+        match self.payload {
+            Payload::Generated => Ok(Self::new(&self.recipe)),
+            Payload::Derived(derivation) => Err(ExchangeError::NotRegenerable { derivation }),
+        }
+    }
+
+    /// Returns the recipe the data was generated from, or derived from.
+    ///
+    /// Which of the two it is, is [`MaterializedDataset::payload`]. A caller
+    /// that wants the recipe's own output rather than the container's should go
+    /// through [`MaterializedDataset::regenerate`], which refuses instead of
+    /// answering when the two are not the same thing.
     #[inline]
     pub const fn recipe(&self) -> Recipe {
         self.recipe
+    }
+
+    /// Returns whether the arrays are the recipe's output or a derived dataset.
+    #[inline]
+    pub const fn payload(&self) -> Payload {
+        self.payload
     }
 
     /// Returns the digest of that recipe.
@@ -514,9 +650,35 @@ impl DatasetExchange {
         name: &str,
         recipe: &Recipe,
     ) -> Result<MaterializedDataset, ExchangeError> {
+        self.write(name, MaterializedDataset::new(recipe))
+    }
+
+    /// Writes a container holding a dataset the recipe does not produce.
+    ///
+    /// The derived counterpart of [`DatasetExchange::materialize`], and the
+    /// entry point a frozen conformance lane reaches the exchange through. The
+    /// dataset is the caller's because it has to be — [`Derivation`] names
+    /// which recorded thing it is, and the exchange has no way to compute it.
+    pub fn materialize_derived(
+        &self,
+        name: &str,
+        recipe: &Recipe,
+        dataset: &Dataset,
+        derivation: Derivation,
+    ) -> Result<MaterializedDataset, ExchangeError> {
+        self.write(
+            name,
+            MaterializedDataset::derived(recipe, dataset, derivation),
+        )
+    }
+
+    fn write(
+        &self,
+        name: &str,
+        container: MaterializedDataset,
+    ) -> Result<MaterializedDataset, ExchangeError> {
         let manifest_path = self.manifest_path(name)?;
         let data_path = self.data_path(name)?;
-        let container = MaterializedDataset::new(recipe);
         let bytes = container.encoded();
         if bytes.len() > Self::MAX_DATA_BYTES {
             return Err(ExchangeError::SizeLimitExceeded {
@@ -528,6 +690,7 @@ impl DatasetExchange {
             recipe: container.recipe,
             spec_digest: container.spec_digest,
             portability: container.portability,
+            payload: container.payload,
             data_file: data_file_name(name),
             data_bytes: container.data_bytes,
             data_digest: container.data_digest,
@@ -580,6 +743,7 @@ impl DatasetExchange {
             recipe: manifest.recipe,
             spec_digest: manifest.spec_digest,
             portability: manifest.portability,
+            payload: manifest.payload,
             data_bytes: manifest.data_bytes,
             data_digest: manifest.data_digest,
             arrays,
@@ -594,17 +758,64 @@ impl DatasetExchange {
     /// recipe's data, and a stale or damaged file is an implementation detail
     /// of the cache. A failure to *write* the replacement is still an error,
     /// because at that point the request cannot be satisfied at all.
+    ///
+    /// # A derived container is refused rather than reused or replaced
+    ///
+    /// A [`Payload::Derived`] container under this name is neither: it is a
+    /// deliberate recording of a dataset the recipe does not produce, and it
+    /// records the recipe's digest, so reusing it would return arrays the
+    /// caller believes it could regenerate and overwriting it would destroy a
+    /// recording on a name collision. Both are worse than
+    /// [`ExchangeError::NotRegenerable`], which names what is actually there.
     pub fn ensure(
         &self,
         name: &str,
         recipe: &Recipe,
     ) -> Result<(MaterializedDataset, CacheOutcome), ExchangeError> {
+        if let Ok(container) = self.load(name) {
+            if let Payload::Derived(derivation) = container.payload {
+                return Err(ExchangeError::NotRegenerable { derivation });
+            }
+            if container.spec_digest == recipe.spec_digest() {
+                return Ok((container, CacheOutcome::Reused));
+            }
+        }
+        Ok((self.materialize(name, recipe)?, CacheOutcome::Generated))
+    }
+
+    /// Returns the container for a derived dataset, writing it only if the one
+    /// on disk is not already that recipe's and that derivation's.
+    ///
+    /// Both halves of the key are checked because neither alone identifies the
+    /// container: a lane's two splits share one recipe and therefore one
+    /// digest, and one derivation at two seeds is two recipes.
+    ///
+    /// Unlike [`DatasetExchange::ensure`] this saves the *write* rather than
+    /// the generation — the caller already holds the dataset, because a derived
+    /// dataset is by definition not something the exchange could produce from
+    /// what it was given. A container found under this name that records a
+    /// generated payload is replaced, which is the mirror image of
+    /// [`DatasetExchange::ensure`]'s refusal rather than an inconsistency with
+    /// it: a generated container is reproducible from the recipe written inside
+    /// it, so overwriting one loses nothing, and a derived container is the
+    /// only copy of something no recipe reproduces.
+    pub fn ensure_derived(
+        &self,
+        name: &str,
+        recipe: &Recipe,
+        dataset: &Dataset,
+        derivation: Derivation,
+    ) -> Result<(MaterializedDataset, CacheOutcome), ExchangeError> {
         if let Ok(container) = self.load(name)
+            && container.payload == Payload::Derived(derivation)
             && container.spec_digest == recipe.spec_digest()
         {
             return Ok((container, CacheOutcome::Reused));
         }
-        Ok((self.materialize(name, recipe)?, CacheOutcome::Generated))
+        Ok((
+            self.materialize_derived(name, recipe, dataset, derivation)?,
+            CacheOutcome::Generated,
+        ))
     }
 }
 

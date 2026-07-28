@@ -21,6 +21,16 @@
 //! list here means a family added to the crate appears in this tool without
 //! anyone remembering to add it.
 //!
+//! The third catalogue is [`ReferenceQuality`]'s frozen lanes, and they arrive
+//! by a different door. A lane's split is not a recipe's output — the preset
+//! generates one design, slices it, and draws the lane's own targets over the
+//! slice — so those entries are written through
+//! [`DatasetExchange::materialize_derived`] and their containers say so in a
+//! `payload` block. That is the whole reason the block exists: the two halves of
+//! a lane share the recipe they were cut from, and therefore share its digest,
+//! so a reader given only the digest would believe it could regenerate either
+//! one.
+//!
 //! # Exit status
 //!
 //! `0` on success, `2` for a usage error, `1` when a container could not be
@@ -29,7 +39,8 @@
 //! failure rather than a directory it has to audit.
 
 use ferricml::datasets::{
-    AccuracySuite, CacheOutcome, DatasetExchange, ExchangeError, PerformanceGrid, Recipe, SuiteCase,
+    AccuracySuite, CacheOutcome, DatasetExchange, Derivation, ExchangeError, PerformanceGrid,
+    Recipe, ReferenceLane, ReferenceQuality, Split, SuiteCase,
 };
 use std::process::ExitCode;
 
@@ -43,7 +54,7 @@ USAGE:
 
 OPTIONS:
     --out <DIR>       Directory the containers are written to. Created if absent.
-    --suite <SUITE>   accuracy, performance, or all. Default: accuracy.
+    --suite <SUITE>   accuracy, performance, reference, or all. Default: accuracy.
     --name <NAME>     Materialize only the entry with this name.
     --list            Print the catalogue and exit without writing anything.
     --force           Regenerate every entry, even one already current on disk.
@@ -59,6 +70,7 @@ regenerated, and the run reports which of the two happened.
 enum Suite {
     Accuracy,
     Performance,
+    Reference,
     All,
 }
 
@@ -67,40 +79,120 @@ impl Suite {
         match text {
             "accuracy" => Some(Self::Accuracy),
             "performance" => Some(Self::Performance),
+            "reference" => Some(Self::Reference),
             "all" => Some(Self::All),
             _ => None,
         }
     }
 
-    /// Every entry of this catalogue, as a name and the recipe behind it.
+    fn includes(self, other: Self) -> bool {
+        self == Self::All || self == other
+    }
+
+    /// Every entry of this catalogue.
     ///
-    /// The two suites share a namespace, so each name carries which suite it
-    /// came from: an accuracy case and a grid point of the same family are
-    /// different problems at different sizes, and a container that overwrote
-    /// the other would be a silent one.
-    fn entries(self) -> Vec<(String, Recipe)> {
+    /// The catalogues share a namespace, so each name carries which one it came
+    /// from: an accuracy case and a grid point of the same family are different
+    /// problems at different sizes, and a container that overwrote the other
+    /// would be a silent one.
+    fn entries(self) -> Vec<Entry> {
         let mut entries = Vec::new();
-        if self != Self::Performance {
-            entries.extend(
-                AccuracySuite::cases()
-                    .iter()
-                    .map(|case| (format!("accuracy_{}", label(case)), case.recipe())),
-            );
-        }
-        if self != Self::Accuracy {
-            entries.extend(PerformanceGrid::cases().iter().map(|case| {
-                (
-                    format!(
-                        "performance_{}_{}x{}",
-                        label(case),
-                        case.recipe().rows(),
-                        case.recipe().columns(),
-                    ),
-                    case.recipe(),
-                )
+        if self.includes(Self::Accuracy) {
+            entries.extend(AccuracySuite::cases().iter().map(|case| Entry {
+                name: format!("accuracy_{}", label(case)),
+                content: Content::Generated(case.recipe()),
             }));
         }
+        if self.includes(Self::Performance) {
+            entries.extend(PerformanceGrid::cases().iter().map(|case| Entry {
+                name: format!(
+                    "performance_{}_{}x{}",
+                    label(case),
+                    case.recipe().rows(),
+                    case.recipe().columns(),
+                ),
+                content: Content::Generated(case.recipe()),
+            }));
+        }
+        if self.includes(Self::Reference) {
+            for lane in ReferenceLane::ALL {
+                for seed in ReferenceQuality::SEEDS {
+                    for split in Split::ALL {
+                        entries.push(Entry {
+                            name: format!("reference_{}_{seed}_{}", lane.label(), split.label(),),
+                            content: Content::Reference(ReferenceQuality::new(lane, seed), split),
+                        });
+                    }
+                }
+            }
+        }
         entries
+    }
+}
+
+/// One catalogue entry, named and not yet generated.
+struct Entry {
+    name: String,
+    content: Content,
+}
+
+/// What an entry will hold.
+///
+/// Two variants because a container has two kinds of payload, and the split is
+/// held here rather than resolved at construction so `--list` costs no
+/// generation: a reference entry knows its recipe and its digest without
+/// drawing a single value.
+enum Content {
+    Generated(Recipe),
+    Reference(ReferenceQuality, Split),
+}
+
+impl Entry {
+    /// The recipe recorded in this entry's container.
+    ///
+    /// For a reference entry that is provenance rather than a reproduction
+    /// instruction — it is the design both splits were cut out of — which is
+    /// what the container's `payload` block says and what a reader is required
+    /// to respect.
+    fn recipe(&self) -> Recipe {
+        match &self.content {
+            Content::Generated(recipe) => *recipe,
+            Content::Reference(preset, _) => preset.recipe(),
+        }
+    }
+
+    /// Writes this entry, reusing a container already current on disk unless
+    /// `force`.
+    fn materialize(
+        &self,
+        exchange: &DatasetExchange,
+        force: bool,
+    ) -> Result<(usize, CacheOutcome), ExchangeError> {
+        let recipe = self.recipe();
+        let (container, outcome) = match &self.content {
+            Content::Generated(_) if force => (
+                exchange.materialize(&self.name, &recipe)?,
+                CacheOutcome::Generated,
+            ),
+            Content::Generated(_) => exchange.ensure(&self.name, &recipe)?,
+            Content::Reference(preset, split) => {
+                let derivation = Derivation::ReferenceSplit {
+                    lane: preset.lane(),
+                    seed: preset.seed(),
+                    split: *split,
+                };
+                let dataset = preset.split(*split);
+                if force {
+                    (
+                        exchange.materialize_derived(&self.name, &recipe, &dataset, derivation)?,
+                        CacheOutcome::Generated,
+                    )
+                } else {
+                    exchange.ensure_derived(&self.name, &recipe, &dataset, derivation)?
+                }
+            }
+        };
+        Ok((container.data_bytes(), outcome))
     }
 }
 
@@ -151,7 +243,9 @@ fn parse(arguments: impl Iterator<Item = String>) -> Result<Option<Arguments>, S
             "--suite" => {
                 let text = value(&mut arguments, "--suite")?;
                 parsed.suite = Suite::parse(&text).ok_or_else(|| {
-                    format!("unknown suite {text:?}; expected accuracy, performance or all")
+                    format!(
+                        "unknown suite {text:?}; expected accuracy, performance, reference or all"
+                    )
                 })?;
             }
             other => return Err(format!("unknown argument {other:?}")),
@@ -185,7 +279,7 @@ fn main() -> ExitCode {
 
     let mut entries = parsed.suite.entries();
     if let Some(name) = &parsed.name {
-        entries.retain(|(entry, _)| entry == name);
+        entries.retain(|entry| &entry.name == name);
         if entries.is_empty() {
             eprintln!("ferricml-datagen: no catalogue entry is named {name:?}");
             return ExitCode::from(2);
@@ -193,9 +287,11 @@ fn main() -> ExitCode {
     }
 
     if parsed.list {
-        for (name, recipe) in &entries {
+        for entry in &entries {
+            let recipe = entry.recipe();
             println!(
-                "{name}\t{}x{}\t{}",
+                "{}\t{}x{}\t{}",
+                entry.name,
                 recipe.rows(),
                 recipe.columns(),
                 hex(&recipe.spec_digest()),
@@ -205,26 +301,19 @@ fn main() -> ExitCode {
     }
 
     let exchange = DatasetExchange::new(parsed.out.expect("--out is required above"));
-    for (name, recipe) in &entries {
-        let outcome = if parsed.force {
-            exchange
-                .materialize(name, recipe)
-                .map(|container| (container, CacheOutcome::Generated))
-        } else {
-            exchange.ensure(name, recipe)
-        };
-        match outcome {
-            Ok((container, outcome)) => println!(
-                "{name}\t{}\t{}\t{} bytes",
+    for entry in &entries {
+        match entry.materialize(&exchange, parsed.force) {
+            Ok((bytes, outcome)) => println!(
+                "{}\t{}\t{}\t{bytes} bytes",
+                entry.name,
                 match outcome {
                     CacheOutcome::Reused => "reused",
                     _ => "generated",
                 },
-                hex(&container.spec_digest()),
-                container.data_bytes(),
+                hex(&entry.recipe().spec_digest()),
             ),
             Err(error) => {
-                report(name, &error);
+                report(&entry.name, &error);
                 return ExitCode::FAILURE;
             }
         }

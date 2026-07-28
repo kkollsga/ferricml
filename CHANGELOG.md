@@ -291,7 +291,63 @@ and releases use [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   anyone remembering to add it; `--list` prints the catalogue with each entry's
   digest, and a run reports for every entry whether it generated or reused.
 
+- **A Python reader, and the end of the hand-mirrored generator.**
+  `python/ferricml_datasets` opens a container with NumPy and nothing else:
+  `load()` maps every array with `numpy.memmap` at the offset the manifest's
+  table names, so opening one costs the manifest text and a handful of `mmap`
+  calls whatever the arrays weigh, and `generate()` is the same with a
+  `cargo run --release … ferricml-datagen` behind it when the container is not
+  there yet. Truth is exposed as arrays under its short names, so what the
+  answer *was* travels with the data into the other language.
+
+  It is committed to the repository and excluded from the crate archive
+  (`/python` in `package.exclude`, which `scripts/check_packaged_crate.sh`
+  already reads rather than repeats): a Rust consumer cannot call it and
+  `cargo` cannot build it.
+
+  **What it replaced was a real duplicate.** FerricML's local conformance
+  script carried a hand-mirrored SplitMix64 and a NumPy rewrite of all five
+  frozen quality lanes, kept byte-identical to the Rust original by inspection.
+  Nothing checked that pairing, and the lanes it fed compare aggregate accuracy
+  and Brier within `0.02` — so a mirror off by one rounding step would have
+  emitted a different but similarly distributed design, passed every check, and
+  silently moved the data behind all 35 frozen reference rows. The mirror was
+  compared against the materialized containers before deletion and agreed on all
+  50 of them, bit pattern for bit pattern; regenerating the fixture from
+  containers reproduced `tests/fixtures/reference_semantics_v1.rs` byte for byte.
+
+- **A container now says whether its arrays are its recipe's output.** Reading
+  the frozen lanes needed something the format did not have. A
+  `ReferenceQuality` split is not `Recipe::generate`'s output — the preset builds
+  one 1152-row design, slices it, and draws the lane's own targets over the slice
+  — and both halves record the digest of the recipe they were cut from, so the
+  digest cannot tell a training split apart from the design it came out of.
+
+  `MaterializedDataset::derived` materializes an arbitrary `(Recipe, Dataset)`
+  pair, and the manifest gains a `payload` block carrying `Payload::Generated`
+  or `Payload::Derived(Derivation)` with the derivation's identity — lane, seed,
+  split. The reading side refuses to guess rather than assuming the common case:
+  `MaterializedDataset::regenerate` returns the new
+  `ExchangeError::NotRegenerable` for a derived container instead of producing
+  the recipe's output under the derived container's digest, and
+  `DatasetExchange::ensure` refuses one rather than serving it as a cache hit or
+  overwriting it. `Container.regenerable_recipe()` raises on the Python side for
+  the same reason. `DatasetExchange::materialize_derived` and `ensure_derived`
+  are the writing half; `ferricml-datagen --suite reference` is the catalogue.
+
+  `ReferenceLane` gained `ALL` and `label()`, `Split` and its two variants are
+  public, and `ReferenceQuality` gained `SEEDS` and `split()`. `label()` returns
+  exactly the strings `QUALITY_REFERENCES` keys its rows on, so the fixture key,
+  the manifest field and the container's file name are now provably one string.
+
 ### Changed
+
+- **The exchange container format is version `2`.** The `payload` block is
+  required rather than optional: a version-1 container has no way to say what
+  its arrays are, so a reader meeting one would have to assume they are its
+  recipe's output — which is the assumption the block exists to prevent.
+  Nothing outside this crate has written a version-1 container; the feature is
+  unreleased.
 
 - **`Recipe::spec_digest` is now `ferricml.dataset.spec.v3`.** The encoding
   gained a task, a contamination, a weight pattern and — in this step — a group

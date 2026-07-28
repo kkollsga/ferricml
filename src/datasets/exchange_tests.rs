@@ -9,11 +9,14 @@
 //! it names.
 
 use super::contamination::{Contamination, WeightPattern};
+use super::dataset::Dataset;
 use super::error::{DatasetError, ExchangeError};
 use super::exchange::{
-    ArrayDtype, CacheOutcome, DatasetArray, DatasetExchange, MaterializedDataset,
+    ArrayDtype, CacheOutcome, DatasetArray, DatasetExchange, Derivation, MaterializedDataset,
+    Payload,
 };
 use super::manifest;
+use super::presets::{ReferenceLane, ReferenceQuality, Split};
 use super::recipe::{Recipe, Source};
 use super::structural::{ClassBalance, ClassGeometry, GroupPattern};
 use super::suites::AccuracySuite;
@@ -343,11 +346,15 @@ fn a_reordered_manifest_is_refused_rather_than_searched() {
 #[test]
 fn an_unknown_format_version_is_refused_before_anything_else() {
     let text = rendered(&Recipe::seeded(16, 4, 1).expect("a valid shape"));
-    let edited = text.replace("\"format\": 1", "\"format\": 2");
+    let edited = text.replace("\"format\": 2", "\"format\": 3");
     assert!(matches!(
         parse(&edited),
-        Err(ExchangeError::UnsupportedFormat { found: 2 }),
+        Err(ExchangeError::UnsupportedFormat { found: 3 }),
     ));
+    // And the version the reader accepts is the one the writer emits, so this
+    // test cannot start passing because it edited a field that is no longer
+    // there.
+    assert!(text.contains("\"format\": 2"));
 }
 
 #[test]
@@ -451,6 +458,169 @@ fn a_missing_container_reports_the_path_it_looked_for() {
         path,
         exchange.manifest_path("absent").expect("a valid name")
     );
+}
+
+// ---------------------------------------------------------------------------
+// Derived containers
+// ---------------------------------------------------------------------------
+
+/// The derivation and dataset of one frozen lane split.
+fn lane(lane: ReferenceLane, seed: u64, split: Split) -> (ReferenceQuality, Dataset, Derivation) {
+    let preset = ReferenceQuality::new(lane, seed);
+    let dataset = preset.split(split);
+    (
+        preset,
+        dataset,
+        Derivation::ReferenceSplit { lane, seed, split },
+    )
+}
+
+#[test]
+fn every_lane_split_and_seed_survives_the_round_trip_carrying_what_it_holds() {
+    let directory = tempfile::tempdir().expect("a temporary directory");
+    let exchange = DatasetExchange::new(directory.path());
+    for reference in ReferenceLane::ALL {
+        for seed in ReferenceQuality::SEEDS {
+            for split in Split::ALL {
+                let (preset, dataset, derivation) = lane(reference, seed, split);
+                let written = exchange
+                    .materialize_derived("probe", &preset.recipe(), &dataset, derivation)
+                    .expect("a lane split materializes");
+                let loaded = exchange.load("probe").expect("it reloads");
+                assert_eq!(loaded, written, "{reference:?} {seed} {split:?}");
+                assert_eq!(loaded.payload(), Payload::Derived(derivation));
+                // The arrays really are the split's, rather than equal copies
+                // of something else the round trip preserved just as faithfully.
+                assert_eq!(
+                    loaded.array("features").and_then(DatasetArray::f32_values),
+                    Some(dataset.features().as_slice()),
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn a_derived_container_is_refused_as_regenerable_while_its_digest_says_otherwise() {
+    // The whole reason `Payload` exists, stated as the two facts that make it
+    // necessary: the digest agrees, and the data does not.
+    let (preset, dataset, derivation) = lane(ReferenceLane::NoisyBinary, 22, Split::Test);
+    let recipe = preset.recipe();
+    let derived = MaterializedDataset::derived(&recipe, &dataset, derivation);
+    let generated = MaterializedDataset::new(&recipe);
+
+    assert_eq!(derived.spec_digest(), generated.spec_digest());
+    assert_ne!(derived.data_digest(), generated.data_digest());
+
+    assert!(matches!(
+        derived.regenerate(),
+        Err(ExchangeError::NotRegenerable { derivation: held }) if held == derivation,
+    ));
+    // And the generated half of the contract holds: a container that claims to
+    // be its recipe's output reproduces itself exactly.
+    assert_eq!(
+        generated
+            .regenerate()
+            .expect("a generated container regenerates"),
+        generated,
+    );
+}
+
+#[test]
+fn ensure_refuses_a_derived_container_rather_than_serving_or_replacing_it() {
+    let directory = tempfile::tempdir().expect("a temporary directory");
+    let exchange = DatasetExchange::new(directory.path());
+    let (preset, dataset, derivation) = lane(ReferenceLane::Regression, 44, Split::Train);
+    let recipe = preset.recipe();
+    let written = exchange
+        .materialize_derived("probe", &recipe, &dataset, derivation)
+        .expect("a lane split materializes");
+
+    // `ensure` is asked for the very recipe the container records, so a
+    // digest-keyed cache would call this a hit and hand back the training half.
+    assert!(matches!(
+        exchange.ensure("probe", &recipe),
+        Err(ExchangeError::NotRegenerable { .. }),
+    ));
+    // Refused rather than overwritten: the recording is still there, and no
+    // recipe could have rebuilt it if it were not.
+    assert_eq!(exchange.load("probe").expect("still readable"), written);
+}
+
+#[test]
+fn a_derived_cache_hit_needs_the_lane_the_seed_and_the_split_to_agree() {
+    let directory = tempfile::tempdir().expect("a temporary directory");
+    let exchange = DatasetExchange::new(directory.path());
+    let (preset, train, train_derivation) = lane(ReferenceLane::SeparableBinary, 11, Split::Train);
+    let recipe = preset.recipe();
+
+    let (first, outcome) = exchange
+        .ensure_derived("probe", &recipe, &train, train_derivation)
+        .expect("writes");
+    assert_eq!(outcome, CacheOutcome::Generated);
+    let (second, outcome) = exchange
+        .ensure_derived("probe", &recipe, &train, train_derivation)
+        .expect("reuses");
+    assert_eq!(outcome, CacheOutcome::Reused);
+    assert_eq!(first, second);
+
+    // The other split of the same lane shares this recipe and therefore this
+    // digest, so only the derivation tells the two apart.
+    let (_, test, test_derivation) = lane(ReferenceLane::SeparableBinary, 11, Split::Test);
+    let (replaced, outcome) = exchange
+        .ensure_derived("probe", &recipe, &test, test_derivation)
+        .expect("rewrites");
+    assert_eq!(outcome, CacheOutcome::Generated);
+    assert_eq!(replaced.spec_digest(), first.spec_digest());
+    assert_ne!(replaced.data_digest(), first.data_digest());
+
+    // A generated container under the name is replaced rather than refused: it
+    // is reproducible from the recipe written inside it, so nothing is lost.
+    exchange
+        .materialize("probe", &recipe)
+        .expect("a generated container");
+    let (_, outcome) = exchange
+        .ensure_derived("probe", &recipe, &train, train_derivation)
+        .expect("rewrites");
+    assert_eq!(outcome, CacheOutcome::Generated);
+}
+
+#[test]
+fn an_edited_payload_block_is_refused_rather_than_partly_understood() {
+    let directory = tempfile::tempdir().expect("a temporary directory");
+    let exchange = DatasetExchange::new(directory.path());
+    let (preset, dataset, derivation) = lane(ReferenceLane::ImbalancedBinary, 33, Split::Test);
+    exchange
+        .materialize_derived("probe", &preset.recipe(), &dataset, derivation)
+        .expect("a lane split materializes");
+    let text = std::fs::read_to_string(exchange.manifest_path("probe").expect("a valid name"))
+        .expect("the manifest was just written");
+
+    for (from, to) in [
+        ("\"kind\": \"derived\"", "\"kind\": \"invented\""),
+        (
+            "\"derivation\": \"reference-split\"",
+            "\"derivation\": \"other\"",
+        ),
+        ("\"lane\": \"imbalanced\"", "\"lane\": \"imbalancd\""),
+        ("\"split\": \"test\"", "\"split\": \"holdout\""),
+    ] {
+        let edited = text.replace(from, to);
+        assert_ne!(edited, text, "the edit {from:?} did not reach the manifest");
+        assert!(
+            matches!(parse(&edited), Err(ExchangeError::MalformedManifest { .. })),
+            "{to} was accepted",
+        );
+    }
+
+    // A generated payload is spelled by one word, and the reader accepts only
+    // that word — so the two kinds cannot be confused by a one-character edit.
+    let generated = rendered(&preset.recipe());
+    assert!(generated.contains("\"kind\": \"generated\""));
+    assert!(matches!(
+        parse(&generated.replace("\"kind\": \"generated\"", "\"kind\": \"generted\"")),
+        Err(ExchangeError::MalformedManifest { .. }),
+    ));
 }
 
 // ---------------------------------------------------------------------------

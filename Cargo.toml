@@ -68,6 +68,12 @@ exclude = [
     "/benchmarks",
     "/dev-docs",
     "/mkdocs.yml",
+    # The cross-language reader. It is committed — one generator with two
+    # consumers is the point — and it is not part of this crate: a Rust
+    # consumer cannot call it, `cargo` cannot build it, and shipping it would
+    # put a second language's package layout inside a crate archive that has no
+    # way to install it.
+    "/python",
     "/research",
     "/requirements",
     "/scripts",

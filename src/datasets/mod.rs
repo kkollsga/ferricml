@@ -154,6 +154,23 @@
 //! the array file against its own, the table against the file it describes, and
 //! no allocation is ever sized from a length field before the bytes behind it
 //! are read.
+//!
+//! # Not every container is its recipe's output
+//!
+//! [`ReferenceQuality`] is the counter-example the exchange had to grow a
+//! vocabulary for. Its two splits are halves of one generated design carrying a
+//! lane's own targets, and both report the digest of the recipe they were
+//! sliced out of — so a container holding one of them is *indistinguishable by
+//! digest* from that recipe's own output while holding different data.
+//!
+//! [`Payload`] is that distinction as a recorded field. A container says whether
+//! its arrays are [`Recipe::generate`]'s or a [`Derivation`]'s, and the reading
+//! side refuses to guess: [`MaterializedDataset::regenerate`] returns
+//! [`ExchangeError::NotRegenerable`] for a derived container rather than
+//! producing the recipe's output under the derived container's digest, and
+//! [`DatasetExchange::ensure`] refuses one rather than serving it as a cache
+//! hit. `python/ferricml_datasets` mirrors both refusals, because the reason
+//! for them is the same in either language.
 
 mod benchmarks;
 mod contamination;
@@ -183,8 +200,11 @@ pub use benchmarks::{BenchmarkFixture, BenchmarkLane};
 pub use contamination::{Contamination, WeightPattern};
 pub use dataset::{Dataset, Target, Truth};
 pub use error::{DatasetError, ExchangeError, Parameter};
-pub use exchange::{ArrayDtype, CacheOutcome, DatasetArray, DatasetExchange, MaterializedDataset};
-pub use presets::{ReferenceLane, ReferenceQuality};
+pub use exchange::{
+    ArrayDtype, CacheOutcome, DatasetArray, DatasetExchange, Derivation, MaterializedDataset,
+    Payload,
+};
+pub use presets::{ReferenceLane, ReferenceQuality, Split};
 pub use recipe::{Recipe, Source};
 pub use structural::{ClassBalance, ClassGeometry, GroupPattern};
 pub use suites::{AccuracySuite, PerformanceGrid, SuiteCase};

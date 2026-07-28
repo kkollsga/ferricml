@@ -579,6 +579,20 @@ pub enum ExchangeError {
         /// Why the recipe was refused.
         DatasetError,
     ),
+    /// The container holds a dataset its recipe does not produce, and was asked
+    /// for as though it did.
+    ///
+    /// A derived container records a recipe as provenance and the *same* spec
+    /// digest that recipe's own output would carry, so nothing about the digest
+    /// distinguishes the two — which is exactly why this refusal exists rather
+    /// than a silently different dataset. Both halves of a frozen conformance
+    /// lane are the case: they are slices of one design carrying a lane's own
+    /// targets, and regenerating their recipe would produce the whole design
+    /// with no targets at all.
+    NotRegenerable {
+        /// What the container actually holds.
+        derivation: super::exchange::Derivation,
+    },
 }
 
 impl fmt::Display for ExchangeError {
@@ -609,6 +623,16 @@ impl fmt::Display for ExchangeError {
             }
             Self::InvalidRecipe(error) => {
                 write!(f, "the manifest describes no valid recipe: {error}")
+            }
+            Self::NotRegenerable { derivation } => {
+                let super::exchange::Derivation::ReferenceSplit { lane, seed, split } = derivation;
+                write!(
+                    f,
+                    "this container holds the {} split of the {} reference lane at seed {seed}, \
+                     which its recipe does not produce",
+                    split.label(),
+                    lane.label(),
+                )
             }
         }
     }
