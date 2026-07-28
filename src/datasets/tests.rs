@@ -326,39 +326,48 @@ fn regenerating_a_recipe_reproduces_its_bytes() {
 /// concatenation would let bleed into each other.
 #[test]
 fn the_spec_digest_distinguishes_recipes_that_differ_anywhere() {
-    let recipes = [
-        Recipe::new(16, 4, Source::Sampled { state: 11 }).unwrap(),
-        Recipe::new(4, 16, Source::Sampled { state: 11 }).unwrap(),
-        Recipe::new(16, 4, Source::Sampled { state: 12 }).unwrap(),
-        // Same numeric state, different source: the discriminant is what has to
-        // separate these, since the field bytes are identical.
-        Recipe::new(16, 4, Source::Xorshift32 { state: 11 }).unwrap(),
-        Recipe::new(
-            16,
-            4,
-            Source::Lattice {
-                row_stride: 131,
-                column_stride: 17,
-                modulus: 1009,
-            },
-        )
-        .unwrap(),
-        // Strides swapped. A digest that summed its fields would miss this.
-        Recipe::new(
-            16,
-            4,
-            Source::Lattice {
-                row_stride: 17,
-                column_stride: 131,
-                modulus: 1009,
-            },
-        )
-        .unwrap(),
-    ];
-    for (index, left) in recipes.iter().enumerate() {
+    let build = || {
+        [
+            Recipe::new(16, 4, Source::Sampled { state: 11 }).unwrap(),
+            Recipe::new(4, 16, Source::Sampled { state: 11 }).unwrap(),
+            Recipe::new(16, 4, Source::Sampled { state: 12 }).unwrap(),
+            // Same numeric state, different source: the discriminant is what has
+            // to separate these, since the field bytes are identical.
+            Recipe::new(16, 4, Source::Xorshift32 { state: 11 }).unwrap(),
+            Recipe::new(
+                16,
+                4,
+                Source::Lattice {
+                    row_stride: 131,
+                    column_stride: 17,
+                    modulus: 1009,
+                },
+            )
+            .unwrap(),
+            // Strides swapped. A digest that summed its fields would miss this.
+            Recipe::new(
+                16,
+                4,
+                Source::Lattice {
+                    row_stride: 17,
+                    column_stride: 131,
+                    modulus: 1009,
+                },
+            )
+            .unwrap(),
+        ]
+    };
+    let recipes = build();
+    // Built a second time from the same requests, through the same constructor
+    // but sharing nothing with the first: calling `spec_digest` twice on one
+    // value could only catch a digest that was not a pure function, whereas this
+    // catches a digest that is a function of anything the recipe does not carry
+    // — an address, a construction order, a process-local counter.
+    let twins = build();
+    for (index, (left, twin)) in recipes.iter().zip(twins.iter()).enumerate() {
         assert_eq!(
             left.spec_digest(),
-            left.spec_digest(),
+            twin.spec_digest(),
             "the digest is not a function of the recipe alone"
         );
         for right in &recipes[index + 1..] {
