@@ -1,0 +1,1097 @@
+//! The regression and binary-classification task families, and the ground truth
+//! each of them records.
+//!
+//! # Why these live apart from `source.rs`
+//!
+//! `source.rs` and the absorbed presets are transcendental-free by requirement:
+//! their output is compared against frozen fixtures with `assert_eq!` on `f32`,
+//! so every value has to be reproducible bit for bit on every target. Most of
+//! the families here cannot be. A Bayes probability is a logistic function, a
+//! log-link mean is an exponential, and a requested condition number is a real
+//! power — `exp`, `ln` and `powf` are correctly rounded on no libm anyone ships,
+//! so their last bits move between platforms and between libm versions.
+//!
+//! That is decision D3 of the generator plan, and the resolution is that the
+//! portability envelope is a property of a **family**, never of the kernel. Each
+//! family declares its own through [`Task::portability`], the declaration is
+//! part of the public API, and the two envelopes are held to different evidence:
+//!
+//! * A [`Portability::BitExact`] family is pinned by literal values in
+//!   `src/datasets/family_tests.rs`, the same way the absorbed lanes are.
+//! * A [`Portability::PerRunner`] family is held to properties and tolerances —
+//!   a recovered coefficient, a realized prevalence, a realized condition
+//!   number — because a pinned literal would be a promise this crate cannot
+//!   keep across a libm change it does not control.
+//!
+//! Nothing here is reachable from `source.rs`, `presets.rs` or `benchmarks.rs`,
+//! so no frozen fixture can acquire a transcendental dependency by accident.
+//!
+//! # Where a family's auxiliary randomness comes from
+//!
+//! A design matrix consumes exactly `rows * columns` draws from the recipe's
+//! source, and a family needs more: coefficients, noise, label draws, selectors
+//! for the contamination knobs. Continuing the design's stream would make the
+//! coefficients a function of the design's shape, so that widening a matrix by
+//! one column would move every coefficient.
+//!
+//! Instead each auxiliary stream is seeded from one 64-bit word of a digest over
+//! the recipe's shape, source and task — see [`stream`]. Four disjoint words
+//! give four streams that cannot interleave, and two recipes differing anywhere
+//! in that encoding draw different values.
+//!
+//! **The contamination is deliberately outside that digest.** It is an overlay,
+//! not a reseed: switching a knob on has to change exactly what the knob
+//! describes and leave every other draw where it was. Every selector is drawn
+//! unconditionally, whether or not the knob that reads it is set, so the streams
+//! stay aligned across contamination levels. `Recipe::stream_digest` records
+//! what a version of this that got it wrong actually did.
+
+use super::contamination::Contamination;
+use super::dataset::{Target, Truth};
+use super::error::{DatasetError, Parameter};
+use super::source::sampled_unit;
+use crate::data::{BinaryTargets, DenseMatrix, RegressionTargets};
+use crate::numeric::{OwnedRng, sigmoid_f64, sum_in_order};
+
+/// Stream word carrying a family's true coefficients.
+pub(super) const STREAM_COEFFICIENTS: usize = 0;
+/// Stream word carrying a regression family's additive noise.
+pub(super) const STREAM_NOISE: usize = 1;
+/// Stream word carrying label draws and label-noise flips.
+pub(super) const STREAM_LABELS: usize = 2;
+/// Stream word carrying the contamination selectors.
+pub(super) const STREAM_CONTAMINATION: usize = 3;
+
+/// The linear predictor is clamped here before a link is applied.
+///
+/// `exp(4)` is about `54.6`, which keeps a Poisson rate small enough that
+/// Knuth's draw terminates in tens of iterations rather than hundreds, and keeps
+/// a positive response inside a range where an `f32` still resolves its own
+/// noise. Without a clamp a wide design with a large `coefficient_scale` reaches
+/// `exp(700)` and the response is an infinity that `RegressionTargets` would
+/// then refuse — turning a caller's parameter choice into a panic deep inside
+/// generation instead of a bounded, documented saturation.
+const LINK_ARGUMENT_LIMIT: f64 = 4.0;
+
+/// How far an outlier displaces a regression target, in units of the target's
+/// own mean absolute value.
+///
+/// Eight, so an outlier is unambiguously one — far outside anything the noise
+/// reaches at a sane `noise_scale`, and still finite and scale-free, so the
+/// knob means the same thing on a target whose values are near `0.01` and on
+/// one whose values are near `10_000`.
+const OUTLIER_DISPLACEMENT: f32 = 8.0;
+
+/// Whether a family's output is reproducible bit for bit everywhere, or only on
+/// one runner.
+///
+/// This is the crate's D3 determinism contract made into a value a caller can
+/// read, rather than a paragraph a caller has to find. A harness comparing
+/// FerricML against another library across two machines needs to know which of
+/// the two statements it is entitled to: that the bytes are identical, or that
+/// they are identical *here*.
+///
+/// It is `#[non_exhaustive]` because a later family may carry a third envelope —
+/// a family reading a system entropy source, say — and a caller matching the two
+/// that exist must not break when it arrives.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum Portability {
+    /// Identical bytes on every target, every libm, and every rerun.
+    ///
+    /// Every operation on the path is an integer operation, an exact conversion,
+    /// or an IEEE-754 arithmetic operation, all of which are correctly rounded
+    /// and therefore fixed by the standard rather than by an implementation.
+    BitExact,
+    /// Identical bytes on one runner, and to within a tolerance elsewhere.
+    ///
+    /// The path evaluates at least one transcendental function — `exp`, `ln`,
+    /// `sin`, `cos` or `powf` — whose last bits are an implementation choice.
+    /// The generator plan's exchange format is what makes such a dataset
+    /// portable: materialize it once, digest it, and ship the bytes.
+    PerRunner,
+}
+
+impl Portability {
+    /// The weaker of two envelopes.
+    pub(super) const fn combine(self, other: Self) -> Self {
+        match (self, other) {
+            (Self::BitExact, Self::BitExact) => Self::BitExact,
+            _ => Self::PerRunner,
+        }
+    }
+}
+
+/// Which nonlinear shape a regression target takes.
+///
+/// Two of these are transcendental-free and two are not, which is exactly why
+/// [`Task::portability`] reads the kind rather than the variant: a caller who
+/// needs bit-exact data can have a nonlinear problem, just not a sinusoidal one.
+///
+/// It is `#[non_exhaustive]` because a new shape must not be a breaking change.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum NonlinearKind {
+    /// A product, a square and a linear term over the first four columns. No
+    /// linear model reproduces it; a depth-two tree nearly does.
+    Interaction,
+    /// Two thresholds and a linear term over the first four columns — the shape
+    /// a tree ensemble represents exactly and a linear model cannot represent at
+    /// all.
+    Piecewise,
+    /// A sum of a sine and a cosine over the first three columns, so the target
+    /// oscillates rather than merely bending.
+    Sinusoid,
+    /// Friedman's first benchmark function over the first five columns, with the
+    /// design mapped from `[-1, 1)` onto the `[0, 1)` the function is defined
+    /// on.
+    Friedman,
+}
+
+impl NonlinearKind {
+    /// Columns the shape reads.
+    const fn columns_read(self) -> usize {
+        match self {
+            Self::Interaction | Self::Piecewise => 4,
+            Self::Sinusoid => 3,
+            Self::Friedman => 5,
+        }
+    }
+
+    /// This shape's determinism envelope.
+    const fn portability(self) -> Portability {
+        match self {
+            Self::Interaction | Self::Piecewise => Portability::BitExact,
+            Self::Sinusoid | Self::Friedman => Portability::PerRunner,
+        }
+    }
+
+    /// The noise-free target at one row.
+    fn conditional_mean(self, row: &[f32]) -> f32 {
+        match self {
+            Self::Interaction => 2.0 * row[0] * row[1] + 1.5 * row[2] * row[2] - row[3],
+            Self::Piecewise => {
+                (if row[0] > 0.0 { 1.5 } else { -1.5 })
+                    + (if row[1] + row[2] > 0.25 { 0.8 } else { -0.4 })
+                    + 0.5 * row[3]
+            }
+            Self::Sinusoid => {
+                (3.0 * f64::from(row[0])).sin() as f32
+                    + 0.5 * (2.0 * f64::from(row[1])).cos() as f32
+                    + 0.3 * row[2]
+            }
+            Self::Friedman => {
+                // The design lives on `[-1, 1)` and Friedman's function is
+                // defined on `[0, 1)`, so each input is mapped rather than the
+                // function rewritten: rewriting it would give a differently
+                // shaped surface under the same name.
+                let unit = |value: f32| f64::from(value) * 0.5 + 0.5;
+                let (u0, u1, u2, u3, u4) = (
+                    unit(row[0]),
+                    unit(row[1]),
+                    unit(row[2]),
+                    unit(row[3]),
+                    unit(row[4]),
+                );
+                (10.0 * (std::f64::consts::PI * u0 * u1).sin()
+                    + 20.0 * (u2 - 0.5) * (u2 - 0.5)
+                    + 10.0 * u3
+                    + 5.0 * u4) as f32
+            }
+        }
+    }
+}
+
+/// Which nonlinear boundary a binary family draws its labels across.
+///
+/// It is `#[non_exhaustive]` because a new boundary must not be a breaking
+/// change.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum BinaryKind {
+    /// The exclusive-or boundary: the sign of the first two columns' product.
+    /// A linear classifier's best achievable accuracy is the majority rate.
+    Xor,
+    /// Two interleaved crescents: the second column against a sine of the first.
+    Moons,
+    /// A circular boundary: inside or outside a disc centred at the origin.
+    Circles,
+    /// A four-cell checkerboard over the first two columns, so the boundary
+    /// repeats rather than merely curving.
+    Checkerboard,
+}
+
+impl BinaryKind {
+    /// This boundary's determinism envelope, before the logistic link.
+    ///
+    /// `cfg(test)` because nothing in the shipped path needs it: the family's
+    /// envelope is [`Task::portability`], which is `PerRunner` for every
+    /// boundary because the link is. What this exists for is the assertion that
+    /// the two differ — three of the four boundaries are exact arithmetic and
+    /// still belong to a per-runner family, which is what "the envelope is a
+    /// property of the family, not of its parts" means when it is checked
+    /// rather than said.
+    #[cfg(test)]
+    pub(super) const fn boundary_portability(self) -> Portability {
+        match self {
+            Self::Xor | Self::Circles | Self::Checkerboard => Portability::BitExact,
+            Self::Moons => Portability::PerRunner,
+        }
+    }
+
+    /// The raw score at one row, before separation and the prevalence offset.
+    fn score(self, row: &[f32]) -> f64 {
+        let (first, second) = (f64::from(row[0]), f64::from(row[1]));
+        match self {
+            Self::Xor => 4.0 * first * second,
+            Self::Moons => second - 0.6 * (2.0 * first).sin(),
+            Self::Circles => 0.5 - (first * first + second * second),
+            Self::Checkerboard => {
+                // `floor` is exact on every target — it is an IEEE-754
+                // operation, not a libm approximation — so the parity below
+                // carries no portability cost of its own.
+                let cell = (2.0 * first).floor() + (2.0 * second).floor();
+                if (cell as i64).rem_euclid(2) == 0 {
+                    1.0
+                } else {
+                    -1.0
+                }
+            }
+        }
+    }
+}
+
+/// How a generalized linear family maps its linear predictor to a response.
+///
+/// It is `#[non_exhaustive]` because a new link must not be a breaking change.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum GlmLink {
+    /// `μ = exp(η)`, and the response is a Poisson count.
+    ///
+    /// `dispersion` scales the drawn rate and rescales the draw, so the mean
+    /// stays `μ` and the variance becomes `μ * dispersion`: at `1.0` this is an
+    /// ordinary Poisson count, and above it an over-dispersed one whose values
+    /// are multiples of the dispersion.
+    ///
+    /// **At least `1.0`, because a Poisson cannot be under-dispersed.** Below it
+    /// the request names no distribution this family offers, and it would also
+    /// be unbounded work: the draw is Knuth's, which costs one uniform per unit
+    /// of rate, and the rate is `μ / dispersion`.
+    LogCount,
+    /// `μ = exp(η)`, and the response is a strictly positive continuous value.
+    ///
+    /// `dispersion` is the multiplicative noise half-width: the response is
+    /// `μ * (1 + dispersion * u)` for `u` uniform on `[-1, 1)`, which stays
+    /// positive exactly while `dispersion` is below `1`.
+    LogPositive,
+}
+
+/// A task family drawn over a recipe's design.
+///
+/// A task is a request, not a promise: its parameters are checked by
+/// [`Recipe::with_task`](super::Recipe::with_task), against the design's shape,
+/// before anything is allocated. A `Recipe` carrying a task therefore generates
+/// without failing.
+///
+/// Every variant records what it actually knows through [`Truth`], and the
+/// variants differ in what that is. A linear family knows its coefficients; a
+/// nonlinear one knows only its conditional mean, because no coefficient vector
+/// produces it; a binary family knows the Bayes probability behind each label.
+/// None of them reports [`Truth::Unrecorded`] — that is reserved for the
+/// absorbed lanes, whose correct answer was never kept.
+///
+/// It is `#[non_exhaustive]` because the multiclass, clustered, grouped,
+/// time-ordered and ranking families arrive next.
+#[derive(Clone, Copy, Debug, PartialEq)]
+#[non_exhaustive]
+pub enum Task {
+    /// A regression target that is a known linear function of the design plus
+    /// uniform noise.
+    ///
+    /// This is the family that makes "which library is closer to right"
+    /// measurable: [`Truth::LinearPredictor`] carries the exact `β` the target
+    /// was drawn from, so a fitted coefficient vector can be compared against
+    /// the answer rather than against another implementation's answer.
+    LinearRegression {
+        /// Leading columns carrying a non-zero coefficient. The rest are noise
+        /// features a model has to decline to use.
+        informative: usize,
+        /// Magnitude of the drawn coefficients.
+        coefficient_scale: f32,
+        /// The intercept added to the linear predictor.
+        intercept: f32,
+        /// Half-width of the uniform noise added to the target. Zero gives a
+        /// noise-free target, which is the case a solver has no excuse on.
+        noise_scale: f32,
+    },
+    /// A regression target with a known conditional mean that no linear model
+    /// reproduces.
+    NonlinearRegression {
+        /// Which shape the conditional mean takes.
+        kind: NonlinearKind,
+        /// Half-width of the uniform noise added to the target.
+        noise_scale: f32,
+    },
+    /// A count or positive-continuous response with a known rate.
+    ///
+    /// The linear predictor is known, so this is the family a generalized linear
+    /// model is measured against: the recorded conditional mean is `E[y | x]`
+    /// exactly, and the recorded coefficients are the ones a correctly specified
+    /// fit should recover.
+    GlmRegression {
+        /// How the linear predictor becomes a response.
+        link: GlmLink,
+        /// Leading columns carrying a non-zero coefficient.
+        informative: usize,
+        /// Magnitude of the drawn coefficients.
+        coefficient_scale: f32,
+        /// The intercept added to the linear predictor.
+        intercept: f32,
+        /// The response's dispersion; see [`GlmLink`] for what it means at each
+        /// link.
+        dispersion: f32,
+    },
+    /// A linear regression problem over a design built to a requested condition
+    /// number and rank.
+    ///
+    /// This is the family the crate's own least-squares path is exercised
+    /// against. The design's columns are scaled geometrically so the ratio
+    /// between the largest and smallest column magnitude is the requested
+    /// condition number, and the columns past `rank` are exact copies of the
+    /// leading ones, so the design's algebraic rank is the requested one exactly
+    /// rather than approximately.
+    ///
+    /// **The recorded coefficients are the ones the target was drawn from, and
+    /// on a rank-deficient design they are not the answer a solver should
+    /// return.** A rank-deficient least-squares problem has an affine set of
+    /// minimizers, and FerricML returns the minimum-norm point of that set;
+    /// recovering the drawn `β` is only meaningful at full rank. The recorded
+    /// [`Truth::ConditionedDesign::rank`] is what says which case a consumer is
+    /// in.
+    IllConditioned {
+        /// Requested ratio between the largest and smallest column scale. `1.0`
+        /// leaves the design as the source drew it.
+        condition_number: f32,
+        /// Requested algebraic rank, realized exactly by duplicating columns.
+        rank: usize,
+        /// Magnitude of the drawn coefficients.
+        coefficient_scale: f32,
+        /// Half-width of the uniform noise added to the target.
+        noise_scale: f32,
+    },
+    /// A binary label drawn from a logistic function of a known linear score,
+    /// at a requested marginal prevalence.
+    ///
+    /// The intercept is not a caller's parameter here: it is solved for, so the
+    /// mean of the Bayes probabilities equals the requested `prevalence`. That
+    /// is what makes prevalence a knob rather than an outcome — a caller asking
+    /// for one positive row in twenty gets a problem whose *correct* answer has
+    /// that prevalence, not a problem whose intercept was guessed at.
+    LinearBinary {
+        /// Leading columns carrying a non-zero coefficient.
+        informative: usize,
+        /// How steeply the Bayes probability moves with the score. A large
+        /// separation approaches a hard boundary and a small one approaches an
+        /// uninformative coin, so this is also what shapes the calibration curve
+        /// a probabilistic classifier is measured against.
+        separation: f32,
+        /// Requested marginal positive rate, strictly between zero and one.
+        prevalence: f32,
+    },
+    /// A binary label drawn from a logistic function of a nonlinear boundary, at
+    /// a requested marginal prevalence.
+    ///
+    /// The Bayes probability is known and recorded; no coefficient vector is,
+    /// because none produces this boundary. That distinction is the difference
+    /// between [`Truth::Bayes`] and [`Truth::LinearBayes`].
+    NonlinearBinary {
+        /// Which boundary the labels are drawn across.
+        kind: BinaryKind,
+        /// How steeply the Bayes probability moves with the boundary score.
+        separation: f32,
+        /// Requested marginal positive rate, strictly between zero and one.
+        prevalence: f32,
+    },
+}
+
+/// Every parameter a task carries is refused unless it is finite, so no `Task`
+/// that exists contains a NaN and `PartialEq` is reflexive on every value this
+/// type can hold. That is the whole content of `Eq`, so it is implemented rather
+/// than derived — `f32` is not `Eq` in general, and it is the *validation* that
+/// makes it true here.
+impl Eq for Task {}
+
+impl Task {
+    /// This family's determinism envelope.
+    ///
+    /// ```
+    /// use ferricml::datasets::{NonlinearKind, Portability, Task};
+    ///
+    /// // A linear target is integer draws, multiplications and additions.
+    /// let linear = Task::LinearRegression {
+    ///     informative: 3,
+    ///     coefficient_scale: 1.0,
+    ///     intercept: 0.0,
+    ///     noise_scale: 0.1,
+    /// };
+    /// assert_eq!(linear.portability(), Portability::BitExact);
+    ///
+    /// // A sinusoidal one is not, and says so rather than promising bytes it
+    /// // cannot deliver across a libm change.
+    /// let wavy = Task::NonlinearRegression {
+    ///     kind: NonlinearKind::Sinusoid,
+    ///     noise_scale: 0.1,
+    /// };
+    /// assert_eq!(wavy.portability(), Portability::PerRunner);
+    /// ```
+    pub const fn portability(&self) -> Portability {
+        match self {
+            // Coefficients, a dot product and a uniform noise term: every
+            // operation is exact or correctly rounded.
+            Self::LinearRegression { .. } => Portability::BitExact,
+            Self::NonlinearRegression { kind, .. } => kind.portability(),
+            // `exp`.
+            Self::GlmRegression { .. } => Portability::PerRunner,
+            // `powf` for the column scales.
+            Self::IllConditioned { .. } => Portability::PerRunner,
+            // The logistic link, whichever boundary feeds it.
+            Self::LinearBinary { .. } | Self::NonlinearBinary { .. } => Portability::PerRunner,
+        }
+    }
+
+    /// Whether this family draws labels rather than continuous targets.
+    pub(super) const fn draws_labels(&self) -> bool {
+        matches!(
+            self,
+            Self::LinearBinary { .. } | Self::NonlinearBinary { .. }
+        )
+    }
+
+    /// Whether this family's target carries the additive noise the
+    /// noise-shaping contamination knobs reshape.
+    ///
+    /// A generalized linear response is excluded deliberately: its scatter is
+    /// its own `dispersion`, and adding a symmetric term to a count or to a
+    /// positive response would take it outside its own support.
+    pub(super) const fn has_additive_noise(&self) -> bool {
+        matches!(
+            self,
+            Self::LinearRegression { .. }
+                | Self::NonlinearRegression { .. }
+                | Self::IllConditioned { .. }
+        )
+    }
+
+    /// Checks every parameter against its range and against the design's shape.
+    ///
+    /// Called by [`Recipe::with_task`](super::Recipe::with_task), before
+    /// anything is allocated.
+    pub(super) fn validate(&self, columns: usize) -> Result<(), DatasetError> {
+        match *self {
+            Self::LinearRegression {
+                informative,
+                coefficient_scale,
+                intercept,
+                noise_scale,
+            } => {
+                check_informative(informative, columns)?;
+                check_positive(coefficient_scale, Parameter::CoefficientScale)?;
+                check_finite(intercept, Parameter::Intercept)?;
+                check_at_least_zero(noise_scale, Parameter::NoiseScale)?;
+            }
+            Self::NonlinearRegression { kind, noise_scale } => {
+                check_informative(kind.columns_read(), columns)?;
+                check_at_least_zero(noise_scale, Parameter::NoiseScale)?;
+            }
+            Self::GlmRegression {
+                link,
+                informative,
+                coefficient_scale,
+                intercept,
+                dispersion,
+            } => {
+                check_informative(informative, columns)?;
+                check_positive(coefficient_scale, Parameter::CoefficientScale)?;
+                check_finite(intercept, Parameter::Intercept)?;
+                check_positive(dispersion, Parameter::Dispersion)?;
+                // The admissible range is link-dependent, and both halves are
+                // the response's own. A multiplicative noise of one reaches
+                // zero and above one reaches a negative response, neither of
+                // which is a positive continuous value; and a Poisson cannot be
+                // under-dispersed, so a count response's dispersion is at least
+                // one — which also bounds Knuth's draw at `exp(4)` uniforms per
+                // row instead of leaving it proportional to `1 / dispersion`.
+                let admissible = match link {
+                    GlmLink::LogCount => dispersion >= 1.0,
+                    GlmLink::LogPositive => dispersion < 1.0,
+                };
+                if !admissible {
+                    return Err(DatasetError::ParameterOutOfRange {
+                        parameter: Parameter::Dispersion,
+                    });
+                }
+            }
+            Self::IllConditioned {
+                condition_number,
+                rank,
+                coefficient_scale,
+                noise_scale,
+            } => {
+                check_finite(condition_number, Parameter::ConditionNumber)?;
+                if condition_number < 1.0 {
+                    return Err(DatasetError::ParameterOutOfRange {
+                        parameter: Parameter::ConditionNumber,
+                    });
+                }
+                if rank == 0 {
+                    return Err(DatasetError::ZeroRank);
+                }
+                if rank > columns {
+                    return Err(DatasetError::RankExceedsDesign { rank, columns });
+                }
+                check_positive(coefficient_scale, Parameter::CoefficientScale)?;
+                check_at_least_zero(noise_scale, Parameter::NoiseScale)?;
+            }
+            Self::LinearBinary {
+                informative,
+                separation,
+                prevalence,
+            } => {
+                check_informative(informative, columns)?;
+                check_positive(separation, Parameter::Separation)?;
+                check_prevalence(prevalence)?;
+            }
+            Self::NonlinearBinary {
+                separation,
+                prevalence,
+                ..
+            } => {
+                // Every boundary reads the first two columns.
+                check_informative(2, columns)?;
+                check_positive(separation, Parameter::Separation)?;
+                check_prevalence(prevalence)?;
+            }
+        }
+        Ok(())
+    }
+
+    /// Reshapes the design this family needs before its target is drawn.
+    ///
+    /// Only [`Task::IllConditioned`] does anything here: the conditioning *is*
+    /// the design, so it has to happen before the truth is recorded and before
+    /// any consumer sees the matrix. Every other family draws over the design as
+    /// the source produced it.
+    pub(super) fn shape_design(&self, rows: usize, columns: usize, values: &mut [f32]) {
+        if let Self::IllConditioned {
+            condition_number,
+            rank,
+            ..
+        } = *self
+        {
+            condition_columns(rows, columns, condition_number, values);
+            duplicate_columns(rows, columns, rank, values);
+        }
+    }
+
+    /// Draws the family's target over a generated design, and records its truth.
+    pub(super) fn draw(
+        &self,
+        design: &DenseMatrix,
+        contamination: &Contamination,
+        digest: &[u8; 32],
+    ) -> (Target, Truth) {
+        match *self {
+            Self::LinearRegression {
+                informative,
+                coefficient_scale,
+                intercept,
+                noise_scale,
+            } => {
+                let coefficients =
+                    draw_coefficients(design.columns(), informative, coefficient_scale, digest);
+                let mean = linear_predictor(design, &coefficients, intercept);
+                let targets = add_noise(design, &mean, noise_scale, contamination, digest);
+                (
+                    regression_target(targets),
+                    Truth::LinearPredictor {
+                        coefficients,
+                        intercept,
+                        conditional_mean: mean,
+                    },
+                )
+            }
+            Self::NonlinearRegression { kind, noise_scale } => {
+                let mean: Vec<f32> = design
+                    .iter_rows()
+                    .map(|row| kind.conditional_mean(row))
+                    .collect();
+                let targets = add_noise(design, &mean, noise_scale, contamination, digest);
+                (
+                    regression_target(targets),
+                    Truth::ConditionalMean { values: mean },
+                )
+            }
+            Self::GlmRegression {
+                link,
+                informative,
+                coefficient_scale,
+                intercept,
+                dispersion,
+            } => {
+                let coefficients =
+                    draw_coefficients(design.columns(), informative, coefficient_scale, digest);
+                let predictor = linear_predictor(design, &coefficients, intercept);
+                let mean: Vec<f32> = predictor
+                    .iter()
+                    .map(|&value| {
+                        f64::from(value)
+                            .clamp(-LINK_ARGUMENT_LIMIT, LINK_ARGUMENT_LIMIT)
+                            .exp() as f32
+                    })
+                    .collect();
+                let targets = draw_glm_response(link, &mean, dispersion, contamination, digest);
+                (
+                    regression_target(targets),
+                    Truth::LinearPredictor {
+                        coefficients,
+                        intercept,
+                        conditional_mean: mean,
+                    },
+                )
+            }
+            Self::IllConditioned {
+                rank,
+                coefficient_scale,
+                noise_scale,
+                ..
+            } => {
+                let columns = design.columns();
+                let coefficients = draw_coefficients(columns, columns, coefficient_scale, digest);
+                let mean = linear_predictor(design, &coefficients, 0.0);
+                let targets = add_noise(design, &mean, noise_scale, contamination, digest);
+                (
+                    regression_target(targets),
+                    Truth::ConditionedDesign {
+                        coefficients,
+                        intercept: 0.0,
+                        conditional_mean: mean,
+                        rank: rank.min(columns),
+                    },
+                )
+            }
+            Self::LinearBinary {
+                informative,
+                separation,
+                prevalence,
+            } => {
+                let coefficients =
+                    draw_coefficients(design.columns(), informative, separation, digest);
+                let scores: Vec<f64> = design
+                    .iter_rows()
+                    .map(|row| dot(row, &coefficients))
+                    .collect();
+                let offset = offset_for_prevalence(&scores, f64::from(prevalence));
+                let (labels, probabilities) = draw_labels(&scores, offset, contamination, digest);
+                (
+                    Target::Binary(labels),
+                    Truth::LinearBayes {
+                        coefficients,
+                        intercept: offset as f32,
+                        probabilities,
+                    },
+                )
+            }
+            Self::NonlinearBinary {
+                kind,
+                separation,
+                prevalence,
+            } => {
+                let scores: Vec<f64> = design
+                    .iter_rows()
+                    .map(|row| f64::from(separation) * kind.score(row))
+                    .collect();
+                let offset = offset_for_prevalence(&scores, f64::from(prevalence));
+                let (labels, probabilities) = draw_labels(&scores, offset, contamination, digest);
+                (Target::Binary(labels), Truth::Bayes { probabilities })
+            }
+        }
+    }
+}
+
+/// One auxiliary stream, seeded from one 64-bit word of a recipe's stream digest.
+///
+/// The digest is a SHA-256 of an injective encoding of the recipe's shape,
+/// source and task, so its four words are four values that differ whenever any
+/// of those differ and agree whenever none do. Slicing them is not a mixing
+/// function of this module's own — `rng-single-source` forbids that, and this
+/// file defines no generator — it is a read of bytes `sha2` already produced.
+pub(super) fn stream(digest: &[u8; 32], word: usize) -> OwnedRng {
+    let mut bytes = [0_u8; 8];
+    bytes.copy_from_slice(&digest[word * 8..word * 8 + 8]);
+    OwnedRng::new(u64::from_le_bytes(bytes))
+}
+
+/// One draw mapped onto `[-1, 1)`, through exactly the map the design uses.
+pub(super) fn signed_draw(rng: &mut OwnedRng) -> f32 {
+    sampled_unit(rng.next_u64()) * 2.0 - 1.0
+}
+
+/// One draw mapped onto `[0, 1)`, through exactly the map the design uses.
+pub(super) fn unit_draw(rng: &mut OwnedRng) -> f32 {
+    sampled_unit(rng.next_u64())
+}
+
+/// The true coefficients: a scaled uniform draw on the informative columns, and
+/// exactly zero elsewhere.
+///
+/// Zero rather than a small value on the uninformative columns, deliberately: a
+/// consumer measuring whether a model *declined* to use a noise feature needs
+/// the correct answer there to be zero and not merely small.
+fn draw_coefficients(
+    columns: usize,
+    informative: usize,
+    scale: f32,
+    digest: &[u8; 32],
+) -> Vec<f32> {
+    let mut rng = stream(digest, STREAM_COEFFICIENTS);
+    (0..columns)
+        .map(|column| {
+            // Every column consumes a draw, informative or not, so widening the
+            // informative prefix does not shift the coefficients of the columns
+            // that were already informative.
+            let draw = signed_draw(&mut rng);
+            if column < informative {
+                scale * draw
+            } else {
+                0.0
+            }
+        })
+        .collect()
+}
+
+/// `x · β` at one row, accumulated in `f64` in ascending column order.
+fn dot(row: &[f32], coefficients: &[f32]) -> f64 {
+    sum_in_order(
+        row.iter()
+            .zip(coefficients)
+            .map(|(&value, &coefficient)| f64::from(value) * f64::from(coefficient)),
+    )
+}
+
+/// `Xβ + b`, one entry per row, narrowed to `f32` once at the end.
+///
+/// Rule 1 of the accumulation policy: the sum widens each term to `f64` and
+/// narrows exactly once, so the conditional mean a consumer compares a fit
+/// against is not itself a victim of cancellation across a wide design.
+fn linear_predictor(design: &DenseMatrix, coefficients: &[f32], intercept: f32) -> Vec<f32> {
+    design
+        .iter_rows()
+        .map(|row| (dot(row, coefficients) + f64::from(intercept)) as f32)
+        .collect()
+}
+
+/// Adds the contamination-shaped noise to a conditional mean.
+///
+/// The three noise knobs compose in a fixed order, and the order is part of the
+/// contract: the base draw is uniform, the heavy-tailed component divides it by
+/// `1 - u`, the heteroscedastic factor scales it by the first feature's
+/// magnitude, and the outlier displaces the finished target. Reordering them
+/// gives a different distribution under the same parameters.
+fn add_noise(
+    design: &DenseMatrix,
+    mean: &[f32],
+    noise_scale: f32,
+    contamination: &Contamination,
+    digest: &[u8; 32],
+) -> Vec<f32> {
+    let mut noise_rng = stream(digest, STREAM_NOISE);
+    let mut selector = stream(digest, STREAM_CONTAMINATION);
+    let heavy_tail = contamination.heavy_tail();
+    let heteroscedastic = contamination.heteroscedastic();
+    let outlier_fraction = contamination.outlier_fraction();
+
+    // The displacement is scale-free, so it is measured against the mean's own
+    // magnitude rather than against an absolute constant a caller would have to
+    // know.
+    let spread = if mean.is_empty() {
+        0.0
+    } else {
+        (sum_in_order(mean.iter().map(|&value| f64::from(value).abs())) / mean.len() as f64) as f32
+    };
+    let displacement = OUTLIER_DISPLACEMENT * spread.max(f32::MIN_POSITIVE);
+
+    design
+        .iter_rows()
+        .zip(mean)
+        .map(|(row, &centre)| {
+            let base = signed_draw(&mut noise_rng);
+            let tail_selector = unit_draw(&mut selector);
+            let tail_magnitude = unit_draw(&mut selector);
+            let outlier_selector = unit_draw(&mut selector);
+            // `1 - u` is at least `2^-24` because `u` comes from a 24-bit map
+            // whose largest value is `1 - 2^-24`, so the reciprocal is at most
+            // `2^24` and the target stays finite by construction rather than by
+            // a clamp.
+            let drawn = if tail_selector < heavy_tail {
+                base / (1.0 - tail_magnitude)
+            } else {
+                base
+            };
+            let scale = 1.0 + heteroscedastic * row.first().copied().unwrap_or(0.0).abs();
+            let mut value = centre + noise_scale * scale * drawn;
+            if outlier_selector < outlier_fraction {
+                // Signed by which half of the selection interval the draw fell
+                // in, so outliers do not all push the target the same way and
+                // shift the target's mean by the contamination rate.
+                let sign = if outlier_selector < outlier_fraction * 0.5 {
+                    1.0
+                } else {
+                    -1.0
+                };
+                value += sign * displacement;
+            }
+            value
+        })
+        .collect()
+}
+
+/// Draws a generalized linear response from a known conditional mean.
+fn draw_glm_response(
+    link: GlmLink,
+    mean: &[f32],
+    dispersion: f32,
+    contamination: &Contamination,
+    digest: &[u8; 32],
+) -> Vec<f32> {
+    let mut rng = stream(digest, STREAM_NOISE);
+    let mut selector = stream(digest, STREAM_CONTAMINATION);
+    let outlier_fraction = contamination.outlier_fraction();
+    mean.iter()
+        .map(|&centre| {
+            let outlier_selector = unit_draw(&mut selector);
+            let value = match link {
+                GlmLink::LogCount => {
+                    let rate = f64::from(centre) / f64::from(dispersion);
+                    (poisson(rate, &mut rng) * f64::from(dispersion)) as f32
+                }
+                GlmLink::LogPositive => centre * (1.0 + dispersion * signed_draw(&mut rng)),
+            };
+            if outlier_selector < outlier_fraction {
+                // Multiplicative rather than additive, so a count stays a
+                // non-negative count and a positive response stays positive.
+                value * OUTLIER_DISPLACEMENT
+            } else {
+                value
+            }
+        })
+        .collect()
+}
+
+/// Knuth's Poisson draw: multiply uniforms until the product falls below
+/// `exp(-rate)`.
+///
+/// Exact for the rates this module reaches — the linear predictor is clamped at
+/// `4`, so the rate is at most about `54.6` and the loop runs tens of times.
+/// The uniforms come from the same 24-bit map every other draw here uses, and
+/// one of them is eventually zero at worst, so the loop terminates for every
+/// finite rate.
+fn poisson(rate: f64, rng: &mut OwnedRng) -> f64 {
+    let limit = (-rate).exp();
+    let mut count = 0.0_f64;
+    let mut product = 1.0_f64;
+    loop {
+        product *= f64::from(unit_draw(rng));
+        if product <= limit {
+            return count;
+        }
+        count += 1.0;
+    }
+}
+
+/// The intercept that makes the mean Bayes probability equal the requested
+/// prevalence.
+///
+/// Bisection rather than a closed form, because there is no closed form: the
+/// mean of a logistic over an arbitrary score vector is not invertible. It is
+/// monotone in the offset, which is what makes bisection exact to the last bit
+/// it can represent — 64 halvings of a 100-wide bracket leave an interval of
+/// about `5e-18`, well below the resolution of the probabilities it decides.
+///
+/// The bracket is `±50`, past which every probability has saturated to `0` or
+/// `1` in `f64` and no further offset changes the mean. A prevalence that even
+/// that cannot reach — every score identical and the request on the wrong side
+/// of it — leaves the offset at the bracket's edge rather than looping, which is
+/// a saturation the realized prevalence then shows.
+fn offset_for_prevalence(scores: &[f64], prevalence: f64) -> f64 {
+    let mut low = -50.0_f64;
+    let mut high = 50.0_f64;
+    for _ in 0..64 {
+        let middle = 0.5 * (low + high);
+        let mean = sum_in_order(scores.iter().map(|&score| sigmoid_f64(score + middle)))
+            / scores.len() as f64;
+        if mean < prevalence {
+            low = middle;
+        } else {
+            high = middle;
+        }
+    }
+    0.5 * (low + high)
+}
+
+/// Draws labels from the Bayes probabilities, then applies label noise.
+///
+/// The returned probabilities are `P(observed label = 1 | x)`, which is what a
+/// consumer measuring calibration needs: with a flip rate `e`, an observed label
+/// is positive with probability `p(1 - e) + (1 - p)e`, and reporting the
+/// pre-noise `p` instead would make a perfectly calibrated model look
+/// mis-calibrated by exactly the noise the caller asked for.
+fn draw_labels(
+    scores: &[f64],
+    offset: f64,
+    contamination: &Contamination,
+    digest: &[u8; 32],
+) -> (BinaryTargets, Vec<f32>) {
+    let mut rng = stream(digest, STREAM_LABELS);
+    let flip_rate = f64::from(contamination.label_noise());
+    let mut labels = Vec::with_capacity(scores.len());
+    let mut probabilities = Vec::with_capacity(scores.len());
+    for &score in scores {
+        let clean = sigmoid_f64(score + offset);
+        let drawn = u8::from(f64::from(unit_draw(&mut rng)) < clean);
+        let flipped = f64::from(unit_draw(&mut rng)) < flip_rate;
+        labels.push(if flipped { 1 - drawn } else { drawn });
+        probabilities.push((clean * (1.0 - flip_rate) + (1.0 - clean) * flip_rate) as f32);
+    }
+    (
+        BinaryTargets::new(labels).expect("a drawn label is 0 or 1 by construction"),
+        probabilities,
+    )
+}
+
+/// Wraps drawn values in the validated regression container.
+fn regression_target(values: Vec<f32>) -> Target {
+    Target::Regression(
+        RegressionTargets::new(values).expect("a bounded expression over finite values is finite"),
+    )
+}
+
+/// Scales column `j` by `condition_number^(-j / (columns - 1))`.
+///
+/// Written as a base-ten power of a base-ten logarithm rather than as a direct
+/// `powf` of the condition number, because that is the expression FerricML's
+/// least-squares corpus conditions its designs with
+/// (`src/linear_model/least_squares.rs`): at the corpus's `1e8` the logarithm is
+/// exactly `8`, the exponent is exactly the corpus's `-8 * column / (columns -
+/// 1)`, and the two paths agree bit for bit. `family_tests.rs` asserts that
+/// rather than describing it.
+///
+/// A condition number of `1.0` gives a logarithm of zero, every scale is exactly
+/// `1.0`, and the design is left as the source drew it.
+pub(super) fn condition_columns(
+    rows: usize,
+    columns: usize,
+    condition_number: f32,
+    values: &mut [f32],
+) {
+    if condition_number == 1.0 {
+        return;
+    }
+    scale_columns(
+        rows,
+        columns,
+        f64::from(condition_number).log10() as f32,
+        values,
+    );
+}
+
+/// Scales column `j` by `10^(-decades * j / (columns - 1))`.
+///
+/// The one place a real power appears in this module, and the whole reason both
+/// the ill-conditioned family and the per-column scale spread report
+/// [`Portability::PerRunner`]. Zero decades returns without touching the values,
+/// so an uncontaminated design is byte-identical to one that never entered here
+/// — which is what keeps the P1-P3 frozen streams unmoved by this phase.
+pub(super) fn scale_columns(rows: usize, columns: usize, decades: f32, values: &mut [f32]) {
+    if decades == 0.0 {
+        return;
+    }
+    let decades = f64::from(decades);
+    let denominator = (columns - 1).max(1) as f64;
+    for column in 0..columns {
+        let scale = 10.0_f64.powf(-decades * column as f64 / denominator) as f32;
+        for row in 0..rows {
+            values[row * columns + column] *= scale;
+        }
+    }
+}
+
+/// Replaces the columns past `rank` with exact copies of the leading ones.
+///
+/// Exact copies, so the design's algebraic rank is `rank` exactly rather than
+/// numerically close to it: a solver's reported rank can then be compared with
+/// `assert_eq!` instead of with a tolerance, which is what makes the rank
+/// contract testable at all. With `rank == columns - 1` the last column becomes
+/// the first, which is precisely the corpus case the crate's rank-deficiency
+/// tests are written against.
+pub(super) fn duplicate_columns(rows: usize, columns: usize, rank: usize, values: &mut [f32]) {
+    if rank >= columns {
+        return;
+    }
+    for column in rank..columns {
+        let source = column - rank;
+        for row in 0..rows {
+            values[row * columns + column] = values[row * columns + source];
+        }
+    }
+}
+
+fn check_finite(value: f32, parameter: Parameter) -> Result<(), DatasetError> {
+    if value.is_finite() {
+        Ok(())
+    } else {
+        Err(DatasetError::NonFiniteParameter { parameter })
+    }
+}
+
+fn check_positive(value: f32, parameter: Parameter) -> Result<(), DatasetError> {
+    check_finite(value, parameter)?;
+    if value > 0.0 {
+        Ok(())
+    } else {
+        Err(DatasetError::ParameterOutOfRange { parameter })
+    }
+}
+
+fn check_at_least_zero(value: f32, parameter: Parameter) -> Result<(), DatasetError> {
+    check_finite(value, parameter)?;
+    if value >= 0.0 {
+        Ok(())
+    } else {
+        Err(DatasetError::ParameterOutOfRange { parameter })
+    }
+}
+
+fn check_prevalence(value: f32) -> Result<(), DatasetError> {
+    check_finite(value, Parameter::Prevalence)?;
+    if value > 0.0 && value < 1.0 {
+        Ok(())
+    } else {
+        Err(DatasetError::ParameterOutOfRange {
+            parameter: Parameter::Prevalence,
+        })
+    }
+}
+
+fn check_informative(informative: usize, columns: usize) -> Result<(), DatasetError> {
+    if informative == 0 {
+        return Err(DatasetError::ZeroInformativeColumns);
+    }
+    if informative > columns {
+        return Err(DatasetError::InformativeColumnsExceedDesign {
+            informative,
+            columns,
+        });
+    }
+    Ok(())
+}

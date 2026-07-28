@@ -1,6 +1,8 @@
-use super::dataset::{Dataset, Truth};
+use super::contamination::{Contamination, WeightPattern};
+use super::dataset::{Dataset, Target, Truth};
 use super::error::DatasetError;
 use super::source::{LATTICE_MODULUS_LIMIT, fill_design};
+use super::task::{BinaryKind, GlmLink, NonlinearKind, Portability, Task};
 use crate::data::DenseMatrix;
 use crate::numeric::derive_dataset_stream;
 use sha2::{Digest, Sha256};
@@ -11,7 +13,24 @@ use sha2::{Digest, Sha256};
 /// same bytes reached through some other encoding in this crate cannot collide
 /// with it, and it carries a version so a later phase can extend the encoding
 /// without silently reusing a digest that meant something else.
-const SPEC_DOMAIN: &[u8] = b"ferricml.dataset.spec.v1";
+///
+/// **Version two, because this phase extended the encoding.** A recipe now
+/// carries a task, a contamination and a weight pattern, and every one of them
+/// changes the data. The version moved rather than the fields being appended
+/// silently, which is the discipline the tag was introduced for: a `v1` digest
+/// described a recipe that could not express a task at all, so reusing it for a
+/// recipe that can would make one identifier mean two things. Nothing outside
+/// this crate has recorded a `v1` digest — the feature is unreleased — so the
+/// bump costs a cache invalidation nobody can observe.
+const SPEC_DOMAIN: &[u8] = b"ferricml.dataset.spec.v2";
+
+/// The domain tag the task families' auxiliary stream seeds are derived under.
+///
+/// Distinct from [`SPEC_DOMAIN`] so the two digests of one recipe can never
+/// collide: they cover different fields and mean different things, and a stream
+/// seed that happened to equal an identity would be a coincidence a reader would
+/// have to rule out.
+const STREAM_DOMAIN: &[u8] = b"ferricml.dataset.stream.v1";
 
 /// Where a design matrix's numbers come from.
 ///
@@ -154,6 +173,9 @@ pub struct Recipe {
     rows: usize,
     columns: usize,
     source: Source,
+    task: Option<Task>,
+    contamination: Contamination,
+    weight_pattern: Option<WeightPattern>,
 }
 
 impl Recipe {
@@ -195,6 +217,9 @@ impl Recipe {
             rows,
             columns,
             source,
+            task: None,
+            contamination: Contamination::none(),
+            weight_pattern: None,
         })
     }
 
@@ -217,6 +242,103 @@ impl Recipe {
         )
     }
 
+    /// Adds a task family, checking its parameters against the design's shape.
+    ///
+    /// Everything a task can get wrong is caught here, before a single value is
+    /// generated: a coefficient scale that is not positive, an informative
+    /// prefix wider than the design, a prevalence outside `(0, 1)`, a requested
+    /// rank above the column count. The recipe that comes back generates without
+    /// failing.
+    ///
+    /// The contamination and weight pattern already on the recipe are rechecked
+    /// against the new task, because their admissibility depends on it: a
+    /// class-balancing weight pattern needs labels, and a noise-shaping knob
+    /// needs a target with additive noise. Order of the builder calls therefore
+    /// does not change which recipes exist.
+    ///
+    /// ```
+    /// use ferricml::datasets::{DatasetError, Recipe, Task};
+    ///
+    /// let task = Task::LinearRegression {
+    ///     informative: 40,
+    ///     coefficient_scale: 1.0,
+    ///     intercept: 0.0,
+    ///     noise_scale: 0.1,
+    /// };
+    /// assert_eq!(
+    ///     Recipe::seeded(64, 8, 3)?.with_task(task),
+    ///     Err(DatasetError::InformativeColumnsExceedDesign {
+    ///         informative: 40,
+    ///         columns: 8,
+    ///     }),
+    /// );
+    /// # Ok::<(), DatasetError>(())
+    /// ```
+    pub fn with_task(mut self, task: Task) -> Result<Self, DatasetError> {
+        task.validate(self.columns)?;
+        self.task = Some(task);
+        self.check_task_dependent_requests()?;
+        Ok(self)
+    }
+
+    /// Adds a contamination, checking its knobs against the design and the task.
+    ///
+    /// A knob whose effect the current task cannot carry is refused rather than
+    /// ignored: a label-noise rate on a regression target, or a heavy tail on a
+    /// count response, would otherwise leave a robustness sweep reporting a
+    /// model as robust to a contamination it never received.
+    pub fn with_contamination(
+        mut self,
+        contamination: Contamination,
+    ) -> Result<Self, DatasetError> {
+        contamination.validate(self.columns)?;
+        self.contamination = contamination;
+        self.check_task_dependent_requests()?;
+        Ok(self)
+    }
+
+    /// Adds a per-row weight pattern.
+    ///
+    /// [`WeightPattern::ClassBalanced`] needs a task that draws labels, and is
+    /// refused without one rather than degraded to uniform weights.
+    pub fn with_weights(mut self, pattern: WeightPattern) -> Result<Self, DatasetError> {
+        pattern.validate()?;
+        self.weight_pattern = Some(pattern);
+        self.check_task_dependent_requests()?;
+        Ok(self)
+    }
+
+    /// Rejects any request the current task cannot carry.
+    ///
+    /// Run after every builder call rather than only after `with_task`, so the
+    /// same set of recipes exists whichever order a caller builds them in.
+    fn check_task_dependent_requests(&self) -> Result<(), DatasetError> {
+        let draws_labels = self.task.is_some_and(|task| task.draws_labels());
+        let additive_noise = self.task.is_some_and(|task| task.has_additive_noise());
+        if self.contamination.label_noise() != 0.0 && !draws_labels {
+            return Err(DatasetError::ContaminationNeedsLabels {
+                parameter: super::error::Parameter::LabelNoise,
+            });
+        }
+        if let Some(parameter) = self.contamination.shapes_noise() {
+            // An outlier fraction survives a generalized linear response, which
+            // displaces it multiplicatively so a count stays a count; the other
+            // two reshape an additive term that response does not have.
+            let carried = if matches!(parameter, super::error::Parameter::OutlierFraction) {
+                self.task.is_some_and(|task| !task.draws_labels())
+            } else {
+                additive_noise
+            };
+            if !carried {
+                return Err(DatasetError::ContaminationNeedsAdditiveNoise { parameter });
+            }
+        }
+        if self.weight_pattern.is_some_and(WeightPattern::needs_labels) && !draws_labels {
+            return Err(DatasetError::WeightPatternNeedsLabels);
+        }
+        Ok(())
+    }
+
     /// Returns the number of rows the recipe produces.
     #[inline]
     pub const fn rows(&self) -> usize {
@@ -233,6 +355,59 @@ impl Recipe {
     #[inline]
     pub const fn source(&self) -> Source {
         self.source
+    }
+
+    /// Returns the task family drawn over the design, if any.
+    #[inline]
+    pub const fn task(&self) -> Option<Task> {
+        self.task
+    }
+
+    /// Returns the contamination applied to the generated data.
+    #[inline]
+    pub const fn contamination(&self) -> Contamination {
+        self.contamination
+    }
+
+    /// Returns the per-row weight pattern, if any.
+    #[inline]
+    pub const fn weight_pattern(&self) -> Option<WeightPattern> {
+        self.weight_pattern
+    }
+
+    /// Returns this recipe's determinism envelope.
+    ///
+    /// The weaker of the task's and the contamination's: one transcendental
+    /// anywhere on the path makes the whole dataset per-runner, and a recipe
+    /// with neither a task nor a scale spread is bit-exact because every source
+    /// is.
+    ///
+    /// ```
+    /// use ferricml::datasets::{Contamination, Portability, Recipe, Task};
+    ///
+    /// let bare = Recipe::seeded(32, 4, 1)?;
+    /// assert_eq!(bare.portability(), Portability::BitExact);
+    ///
+    /// // A scale spread is a real power of ten, and says so.
+    /// let spread = bare.with_contamination(
+    ///     Contamination::none().with_feature_scale_spread(3.0),
+    /// )?;
+    /// assert_eq!(spread.portability(), Portability::PerRunner);
+    ///
+    /// // As does a logistic Bayes probability.
+    /// let logistic = bare.with_task(Task::LinearBinary {
+    ///     informative: 2,
+    ///     separation: 2.0,
+    ///     prevalence: 0.3,
+    /// })?;
+    /// assert_eq!(logistic.portability(), Portability::PerRunner);
+    /// # Ok::<(), ferricml::datasets::DatasetError>(())
+    /// ```
+    pub fn portability(&self) -> Portability {
+        let task = self
+            .task
+            .map_or(Portability::BitExact, |task| task.portability());
+        task.combine(self.contamination.portability())
     }
 
     /// Returns a digest of everything that determines this recipe's output.
@@ -281,7 +456,164 @@ impl Recipe {
             }
             Source::Xorshift32 { state } => digest.update(u64::from(state).to_le_bytes()),
         }
+        self.update_task_digest(&mut digest);
+        self.update_contamination_digest(&mut digest);
+        self.update_weight_digest(&mut digest);
         digest.finalize().into()
+    }
+
+    /// The digest the task families seed their auxiliary streams from.
+    ///
+    /// Shape, source and task — and deliberately **not** contamination or
+    /// weights. That exclusion is what makes contamination an overlay rather
+    /// than a reseed: two recipes differing only in their contamination draw the
+    /// same coefficients, the same noise, the same clean labels and the same
+    /// per-row selectors, so switching a knob on changes exactly what the knob
+    /// describes and nothing else.
+    ///
+    /// It is not a hypothetical. Seeding the streams from the full spec digest
+    /// made a five-percent label-noise request flip fifty-six percent of the
+    /// labels, because the "clean" and "contaminated" datasets were two
+    /// independent draws and the measured difference was the draw rather than
+    /// the noise. A robustness sweep built on that would have compared a model
+    /// against a different problem at every contamination level and called the
+    /// difference sensitivity.
+    ///
+    /// The full [`Recipe::spec_digest`] remains the recipe's identity: it is
+    /// what a cache keys on and what a materialized dataset is checked against,
+    /// and it must move when the contamination moves, because the data does.
+    fn stream_digest(&self) -> [u8; 32] {
+        let mut digest = Sha256::new();
+        digest.update(STREAM_DOMAIN);
+        digest.update((self.rows as u64).to_le_bytes());
+        digest.update((self.columns as u64).to_le_bytes());
+        digest.update([self.source.digest_tag()]);
+        match self.source {
+            Source::Sampled { state } => digest.update(state.to_le_bytes()),
+            Source::Lattice {
+                row_stride,
+                column_stride,
+                modulus,
+            } => {
+                digest.update(row_stride.to_le_bytes());
+                digest.update(column_stride.to_le_bytes());
+                digest.update(modulus.to_le_bytes());
+            }
+            Source::Xorshift32 { state } => digest.update(u64::from(state).to_le_bytes()),
+        }
+        self.update_task_digest(&mut digest);
+        digest.finalize().into()
+    }
+
+    /// Hashes the task: a discriminant that fixes the field layout, then the
+    /// fields.
+    ///
+    /// Zero means no task, and every other tag determines exactly how many
+    /// fixed-width fields follow, so the encoding stays injective as the variant
+    /// list grows. Floats are hashed as their bits rather than as a formatting,
+    /// because two distinct values must never reach the same digest and a
+    /// decimal rendering does not promise that.
+    fn update_task_digest(&self, digest: &mut Sha256) {
+        let Some(task) = self.task else {
+            digest.update([0_u8]);
+            return;
+        };
+        match task {
+            Task::LinearRegression {
+                informative,
+                coefficient_scale,
+                intercept,
+                noise_scale,
+            } => {
+                digest.update([1_u8]);
+                digest.update((informative as u64).to_le_bytes());
+                digest.update(coefficient_scale.to_bits().to_le_bytes());
+                digest.update(intercept.to_bits().to_le_bytes());
+                digest.update(noise_scale.to_bits().to_le_bytes());
+            }
+            Task::NonlinearRegression { kind, noise_scale } => {
+                digest.update([2_u8, nonlinear_tag(kind)]);
+                digest.update(noise_scale.to_bits().to_le_bytes());
+            }
+            Task::GlmRegression {
+                link,
+                informative,
+                coefficient_scale,
+                intercept,
+                dispersion,
+            } => {
+                digest.update([3_u8, link_tag(link)]);
+                digest.update((informative as u64).to_le_bytes());
+                digest.update(coefficient_scale.to_bits().to_le_bytes());
+                digest.update(intercept.to_bits().to_le_bytes());
+                digest.update(dispersion.to_bits().to_le_bytes());
+            }
+            Task::IllConditioned {
+                condition_number,
+                rank,
+                coefficient_scale,
+                noise_scale,
+            } => {
+                digest.update([4_u8]);
+                digest.update(condition_number.to_bits().to_le_bytes());
+                digest.update((rank as u64).to_le_bytes());
+                digest.update(coefficient_scale.to_bits().to_le_bytes());
+                digest.update(noise_scale.to_bits().to_le_bytes());
+            }
+            Task::LinearBinary {
+                informative,
+                separation,
+                prevalence,
+            } => {
+                digest.update([5_u8]);
+                digest.update((informative as u64).to_le_bytes());
+                digest.update(separation.to_bits().to_le_bytes());
+                digest.update(prevalence.to_bits().to_le_bytes());
+            }
+            Task::NonlinearBinary {
+                kind,
+                separation,
+                prevalence,
+            } => {
+                digest.update([6_u8, binary_tag(kind)]);
+                digest.update(separation.to_bits().to_le_bytes());
+                digest.update(prevalence.to_bits().to_le_bytes());
+            }
+        }
+    }
+
+    /// Hashes the contamination. Fixed width, so no discriminant is needed.
+    fn update_contamination_digest(&self, digest: &mut Sha256) {
+        let contamination = self.contamination;
+        for value in [
+            contamination.label_noise(),
+            contamination.outlier_fraction(),
+            contamination.heavy_tail(),
+            contamination.heteroscedastic(),
+            contamination.duplicate_rows(),
+            contamination.feature_scale_spread(),
+        ] {
+            digest.update(value.to_bits().to_le_bytes());
+        }
+        digest.update((contamination.constant_columns() as u64).to_le_bytes());
+        digest.update((contamination.collinear_pairs() as u64).to_le_bytes());
+    }
+
+    /// Hashes the weight pattern: a discriminant and two floats, always.
+    ///
+    /// The unused floats are zeroed rather than omitted, so the field is fixed
+    /// width and the tag alone separates the patterns.
+    fn update_weight_digest(&self, digest: &mut Sha256) {
+        let (tag, first, second) = match self.weight_pattern {
+            None => (0_u8, 0.0_f32, 0.0_f32),
+            Some(WeightPattern::Uniform) => (1, 0.0, 0.0),
+            Some(WeightPattern::Ramp { low, high }) => (2, low, high),
+            Some(WeightPattern::Alternating { first, second }) => (3, first, second),
+            Some(WeightPattern::ClassBalanced) => (4, 0.0, 0.0),
+        };
+        digest.update([tag]);
+        digest.update(first.to_bits().to_le_bytes());
+        digest.update(second.to_bits().to_le_bytes());
     }
 
     /// Generates the design matrix.
@@ -314,8 +646,21 @@ impl Recipe {
     /// the form a sweep over many recipes uses: the buffer is allocated once and
     /// the generator writes through it, so generating `n` datasets costs `n`
     /// fills rather than `n` allocations.
+    ///
+    /// The task's own reshaping and the contamination's are part of the design
+    /// and happen here, in that order: an ill-conditioned design *is* the
+    /// conditioned matrix, and a constant column is a property of the data a
+    /// consumer receives. Both are no-ops for a recipe that asked for neither,
+    /// which is what keeps the absorbed reference and benchmark streams
+    /// byte-identical to the ones this module froze before task families
+    /// existed.
     pub fn design_into(&self, values: &mut Vec<f32>) {
         fill_design(&self.source, self.rows, self.columns, values);
+        if let Some(task) = self.task {
+            task.shape_design(self.rows, self.columns, values);
+        }
+        self.contamination
+            .shape_design(self.rows, self.columns, values);
     }
 
     /// Generates the dataset this recipe describes.
@@ -324,14 +669,134 @@ impl Recipe {
     /// spec digest, and [`Truth::DesignOnly`] — there is nothing to be right
     /// about until a family assigns targets, and saying so with a variant is
     /// more honest than shipping an empty coefficient vector.
+    ///
+    /// ```
+    /// use ferricml::datasets::{Recipe, Task};
+    ///
+    /// let dataset = Recipe::seeded(512, 6, 17)?
+    ///     .with_task(Task::LinearBinary {
+    ///         informative: 4,
+    ///         separation: 3.0,
+    ///         prevalence: 0.2,
+    ///     })?
+    ///     .generate();
+    ///
+    /// // The Bayes probabilities average to the requested prevalence, because
+    /// // the intercept was solved for rather than guessed.
+    /// let probabilities = dataset.truth().probabilities().expect("a binary family");
+    /// let mean: f64 = probabilities.iter().map(|&p| f64::from(p)).sum::<f64>()
+    ///     / probabilities.len() as f64;
+    /// assert!((mean - 0.2).abs() < 1e-6, "mean probability was {mean}");
+    /// # Ok::<(), ferricml::datasets::DatasetError>(())
+    /// ```
     pub fn generate(&self) -> Dataset {
-        Dataset::from_parts(
-            self.design(),
-            None,
-            None,
-            Truth::DesignOnly,
-            None,
-            self.spec_digest(),
-        )
+        let design = self.design();
+        let spec_digest = self.spec_digest();
+        let (target, truth) = match self.task {
+            None => (None, Truth::DesignOnly),
+            Some(task) => {
+                let (target, truth) =
+                    task.draw(&design, &self.contamination, &self.stream_digest());
+                (Some(target), truth)
+            }
+        };
+        let weights = self.weight_pattern.map(|pattern| {
+            let labels = match target.as_ref() {
+                Some(Target::Binary(targets)) => Some(targets.as_slice()),
+                Some(Target::Class(targets)) => Some(targets.as_slice()),
+                _ => None,
+            };
+            pattern.weights(self.rows, labels)
+        });
+        Dataset::from_parts(design, target, weights, truth, None, spec_digest)
+    }
+
+    /// The task's targets as one value per row, allocated.
+    ///
+    /// `None` when the recipe carries no task. A classification task reports
+    /// `0.0` and `1.0`: this is the numeric view, and
+    /// [`Dataset::target`](super::Dataset::target) is the validated-container
+    /// view that keeps the vocabularies apart.
+    ///
+    /// ```
+    /// use ferricml::datasets::{NonlinearKind, Recipe, Task};
+    ///
+    /// let recipe = Recipe::seeded(128, 6, 4)?.with_task(Task::NonlinearRegression {
+    ///     kind: NonlinearKind::Interaction,
+    ///     noise_scale: 0.1,
+    /// })?;
+    ///
+    /// // The caller-owned form writes the same values without allocating.
+    /// let mut buffer = Vec::new();
+    /// recipe.target_values_into(&mut buffer);
+    /// assert_eq!(buffer, recipe.target_values().unwrap());
+    ///
+    /// // A recipe with no task has no targets, and the buffer is left empty.
+    /// let bare = Recipe::seeded(128, 6, 4)?;
+    /// bare.target_values_into(&mut buffer);
+    /// assert!(buffer.is_empty());
+    /// assert_eq!(bare.target_values(), None);
+    /// # Ok::<(), ferricml::datasets::DatasetError>(())
+    /// ```
+    pub fn target_values(&self) -> Option<Vec<f32>> {
+        self.task?;
+        let mut values = Vec::new();
+        self.target_values_into(&mut values);
+        Some(values)
+    }
+
+    /// Writes the task's targets into a caller-owned buffer, one value per row.
+    ///
+    /// The buffer is cleared and refilled, reusing its allocation, and is left
+    /// empty when the recipe carries no task. This is the form a sweep uses when
+    /// it wants the numbers rather than the containers.
+    pub fn target_values_into(&self, values: &mut Vec<f32>) {
+        values.clear();
+        if self.task.is_none() {
+            return;
+        }
+        values.reserve(self.rows);
+        match self.generate().target() {
+            Some(Target::Binary(targets)) => {
+                values.extend(targets.as_slice().iter().map(|&label| f32::from(label)));
+            }
+            Some(Target::Class(targets)) => {
+                values.extend(targets.as_slice().iter().map(|&label| f32::from(label)));
+            }
+            Some(Target::Regression(targets)) => values.extend_from_slice(targets.as_slice()),
+            None => {}
+        }
+    }
+}
+
+/// The digest discriminant of a nonlinear shape.
+///
+/// Written out rather than derived from declaration order, for the reason
+/// [`Source::digest_tag`] is: reordering the variants must not restate what a
+/// recorded digest means.
+const fn nonlinear_tag(kind: NonlinearKind) -> u8 {
+    match kind {
+        NonlinearKind::Interaction => 1,
+        NonlinearKind::Piecewise => 2,
+        NonlinearKind::Sinusoid => 3,
+        NonlinearKind::Friedman => 4,
+    }
+}
+
+/// The digest discriminant of a nonlinear binary boundary.
+const fn binary_tag(kind: BinaryKind) -> u8 {
+    match kind {
+        BinaryKind::Xor => 1,
+        BinaryKind::Moons => 2,
+        BinaryKind::Circles => 3,
+        BinaryKind::Checkerboard => 4,
+    }
+}
+
+/// The digest discriminant of a generalized linear link.
+const fn link_tag(link: GlmLink) -> u8 {
+    match link {
+        GlmLink::LogCount => 1,
+        GlmLink::LogPositive => 2,
     }
 }

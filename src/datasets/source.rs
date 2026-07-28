@@ -53,8 +53,23 @@ pub(super) const LATTICE_MODULUS_LIMIT: u64 = 1 << 24;
 /// interchangeable and swapping one for the other would move every fixture that
 /// depends on this one.
 fn sampled_signed_unit(draw: u64) -> f32 {
-    let fraction = (draw >> 40) as f32 / (1_u32 << 24) as f32;
-    fraction * 2.0 - 1.0
+    sampled_unit(draw) * 2.0 - 1.0
+}
+
+/// One SplitMix64 draw mapped onto `[0, 1)`, from its top 24 bits.
+///
+/// The first half of [`sampled_signed_unit`], factored out rather than
+/// duplicated so the task families draw auxiliary values — noise magnitudes,
+/// label draws, contamination selectors — through exactly the map the design
+/// values use. Splitting it is bit-for-bit inert: the signed form is still
+/// `fraction * 2.0 - 1.0` applied to this quotient, in that order and that
+/// width.
+///
+/// The quotient is exact: a 24-bit numerator over a power-of-two divisor. The
+/// largest value it reaches is `1 - 2^-24`, which is what bounds the
+/// heavy-tailed contamination's reciprocal at `2^24` instead of at infinity.
+pub(super) fn sampled_unit(draw: u64) -> f32 {
+    (draw >> 40) as f32 / (1_u32 << 24) as f32
 }
 
 /// One xorshift32 draw mapped onto `[-1, 1]`, in `f32` throughout.

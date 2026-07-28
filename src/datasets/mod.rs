@@ -61,6 +61,35 @@
 //! than against a right answer. They report `Truth::Unrecorded`, which is a
 //! third statement again.
 //!
+//! A [`Task`] family records what it actually knows and nothing more. A linear
+//! family knows its coefficients; a nonlinear one knows only its conditional
+//! mean, because no coefficient vector produces it; a binary family knows the
+//! Bayes probability behind every label it drew. None of them reaches for
+//! [`Truth::Unrecorded`], which stays what it was: a statement about the
+//! absorbed lanes.
+//!
+//! # Two determinism envelopes, declared rather than assumed
+//!
+//! Every source in this module is transcendental-free and therefore bit-exact
+//! on every target, which is what protects the frozen fixtures. Most task
+//! families are not: a Bayes probability is a logistic function, a log-link mean
+//! is an exponential, a requested condition number is a real power, and no libm
+//! rounds any of those correctly. [`Portability`] is that distinction as a value
+//! rather than a paragraph — [`Task::portability`] and [`Recipe::portability`]
+//! report which of the two statements a caller is entitled to, and the families
+//! are held to matching evidence: a bit-exact family is pinned by literal
+//! values, a per-runner one by properties and tolerances.
+//!
+//! # Contamination is orthogonal to the task
+//!
+//! [`Contamination`] carries label noise, outliers, heavy tails,
+//! heteroscedasticity, duplicated rows, constant columns, collinear pairs and a
+//! per-column scale spread. It composes with every family, so a robustness sweep
+//! holds the task fixed and moves the contamination. A knob the current task
+//! cannot carry is refused at the constructor with a typed error rather than
+//! silently ignored, because a sweep that reported a model robust to a
+//! contamination it never received would be worse than a build failure.
+//!
 //! # Frozen presets
 //!
 //! [`ReferenceQuality`] reproduces the design matrices and targets FerricML's
@@ -70,17 +99,23 @@
 //! load-bearing.
 
 mod benchmarks;
+mod contamination;
 mod dataset;
 mod error;
 mod presets;
 mod recipe;
 mod source;
+mod task;
 
+#[cfg(test)]
+mod family_tests;
 #[cfg(test)]
 mod tests;
 
 pub use benchmarks::{BenchmarkFixture, BenchmarkLane};
+pub use contamination::{Contamination, WeightPattern};
 pub use dataset::{Dataset, Target, Truth};
-pub use error::DatasetError;
+pub use error::{DatasetError, Parameter};
 pub use presets::{ReferenceLane, ReferenceQuality};
 pub use recipe::{Recipe, Source};
+pub use task::{BinaryKind, GlmLink, NonlinearKind, Portability, Task};

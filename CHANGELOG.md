@@ -101,7 +101,70 @@ and releases use [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   `f32` throughout, association order preserved, and a design narrower than a
   target expression's score columns still sums only the columns it has.
 
+- **Regression and binary-classification task families, with recorded ground
+  truth.** `datasets::Task` draws six families over any recipe's design: a
+  linear regression with a known `β`, four nonlinear regression shapes, a
+  generalized linear count or positive response with a known rate, an
+  ill-conditioned design built to a requested condition number and rank, a
+  logistic binary problem at a requested prevalence, and four nonlinear binary
+  boundaries. Every one of them records what it knows through `Truth` —
+  coefficients, an intercept, a per-row conditional mean, a per-row Bayes
+  probability, an exact algebraic rank — which is what turns "where do two
+  libraries disagree" into "which one is closer to right".
+
+  `Truth` gained `coefficients`, `intercept`, `conditional_mean`,
+  `probabilities` and `rank` accessors so a consumer can ask one question of any
+  family, and five variants so a family that knows less says so with a variant
+  rather than with an empty vector. A nonlinear shape reports its conditional
+  mean and *no* coefficients, because none produce it.
+
+  **Prevalence is a knob, not an outcome.** The binary families solve for the
+  intercept by bisection so the mean Bayes probability equals the request
+  exactly; the realized rate is then a binomial draw around it, within four
+  standard deviations at every prevalence swept.
+
+- **`datasets::Contamination`: label noise, outliers, heavy tails,
+  heteroscedasticity, duplicated rows, constant columns, collinear pairs and a
+  per-column scale spread.** Orthogonal to the task, so a robustness sweep holds
+  the family fixed and moves the contamination.
+
+  **A knob the current task cannot carry is refused, not ignored.** Label noise
+  on a regression target, or a heavy tail on a count response, comes back as a
+  typed error. A sweep that silently received clean data would have reported a
+  model as robust to a contamination it never got.
+
+  **Contamination is an overlay, not a reseed.** The families' auxiliary streams
+  are seeded from a digest over the shape, source and task only, so switching a
+  knob on changes exactly what the knob describes and leaves every other draw
+  identical. Seeding them from the full recipe digest made a five-percent
+  label-noise request flip fifty-six percent of the labels, because the clean and
+  contaminated datasets were then two independent draws.
+
+- **`datasets::WeightPattern`,** four deterministic per-row weight patterns for
+  the `fit_weighted` surface, including a class-balancing one that gives each
+  class the same total weight — which is what turns a controlled prevalence into
+  a controlled imbalance experiment.
+
+- **`datasets::Portability`, the determinism envelope as a value.** Every source
+  in the module is transcendental-free and bit-exact everywhere. Most task
+  families are not: a Bayes probability is a logistic, a log-link mean is an
+  exponential, a requested condition number is a real power, and no libm rounds
+  any of those correctly. `Task::portability` and `Recipe::portability` report
+  which of the two statements a caller is entitled to, and the two envelopes
+  carry different evidence — a bit-exact family is pinned by literal values, a
+  per-runner one by properties and derived tolerances.
+
+- **`Recipe::target_values` and `Recipe::target_values_into`,** the numeric view
+  of a task's targets with a caller-owned form that reuses its buffer.
+
 ### Changed
+
+- **`Recipe::spec_digest` is now `ferricml.dataset.spec.v2`.** The encoding
+  gained a task, a contamination and a weight pattern, each hashed under a
+  discriminant that fixes the field layout so the encoding stays injective. The
+  version moved rather than the fields being appended silently, which is what the
+  domain tag exists for. Nothing outside this crate has recorded a `v1` digest —
+  the feature is unreleased.
 
 - **The exact public-API snapshot now covers feature-gated surface.**
   `scripts/rust_api_profiles.py` captured one profile, the default one, and

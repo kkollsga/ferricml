@@ -1051,16 +1051,53 @@ impl core::fmt::Debug for ferricml::datasets::BenchmarkLane
 pub fn ferricml::datasets::BenchmarkLane::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
 impl core::marker::Copy for ferricml::datasets::BenchmarkLane
 impl core::marker::StructuralPartialEq for ferricml::datasets::BenchmarkLane
+#[non_exhaustive] pub enum ferricml::datasets::BinaryKind
+pub ferricml::datasets::BinaryKind::Checkerboard
+pub ferricml::datasets::BinaryKind::Circles
+pub ferricml::datasets::BinaryKind::Moons
+pub ferricml::datasets::BinaryKind::Xor
+impl core::clone::Clone for ferricml::datasets::BinaryKind
+pub fn ferricml::datasets::BinaryKind::clone(&self) -> ferricml::datasets::BinaryKind
+impl core::cmp::Eq for ferricml::datasets::BinaryKind
+impl core::cmp::PartialEq for ferricml::datasets::BinaryKind
+pub fn ferricml::datasets::BinaryKind::eq(&self, &ferricml::datasets::BinaryKind) -> bool
+impl core::fmt::Debug for ferricml::datasets::BinaryKind
+pub fn ferricml::datasets::BinaryKind::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for ferricml::datasets::BinaryKind
+impl core::marker::StructuralPartialEq for ferricml::datasets::BinaryKind
 #[non_exhaustive] pub enum ferricml::datasets::DatasetError
+pub ferricml::datasets::DatasetError::CollinearPairsExceedDesign
+pub ferricml::datasets::DatasetError::CollinearPairsExceedDesign::available: usize
+pub ferricml::datasets::DatasetError::CollinearPairsExceedDesign::pairs: usize
+pub ferricml::datasets::DatasetError::ConstantColumnsLeaveNoSignal
+pub ferricml::datasets::DatasetError::ConstantColumnsLeaveNoSignal::columns: usize
+pub ferricml::datasets::DatasetError::ConstantColumnsLeaveNoSignal::constant_columns: usize
+pub ferricml::datasets::DatasetError::ContaminationNeedsAdditiveNoise
+pub ferricml::datasets::DatasetError::ContaminationNeedsAdditiveNoise::parameter: ferricml::datasets::Parameter
+pub ferricml::datasets::DatasetError::ContaminationNeedsLabels
+pub ferricml::datasets::DatasetError::ContaminationNeedsLabels::parameter: ferricml::datasets::Parameter
 pub ferricml::datasets::DatasetError::DimensionOverflow
 pub ferricml::datasets::DatasetError::DimensionOverflow::columns: usize
 pub ferricml::datasets::DatasetError::DimensionOverflow::rows: usize
+pub ferricml::datasets::DatasetError::InformativeColumnsExceedDesign
+pub ferricml::datasets::DatasetError::InformativeColumnsExceedDesign::columns: usize
+pub ferricml::datasets::DatasetError::InformativeColumnsExceedDesign::informative: usize
 pub ferricml::datasets::DatasetError::LatticeModulusNotRepresentable
 pub ferricml::datasets::DatasetError::LatticeModulusNotRepresentable::limit: u64
 pub ferricml::datasets::DatasetError::LatticeModulusNotRepresentable::modulus: u64
 pub ferricml::datasets::DatasetError::LatticeModulusTooSmall
 pub ferricml::datasets::DatasetError::LatticeModulusTooSmall::modulus: u64
+pub ferricml::datasets::DatasetError::NonFiniteParameter
+pub ferricml::datasets::DatasetError::NonFiniteParameter::parameter: ferricml::datasets::Parameter
+pub ferricml::datasets::DatasetError::ParameterOutOfRange
+pub ferricml::datasets::DatasetError::ParameterOutOfRange::parameter: ferricml::datasets::Parameter
+pub ferricml::datasets::DatasetError::RankExceedsDesign
+pub ferricml::datasets::DatasetError::RankExceedsDesign::columns: usize
+pub ferricml::datasets::DatasetError::RankExceedsDesign::rank: usize
+pub ferricml::datasets::DatasetError::WeightPatternNeedsLabels
 pub ferricml::datasets::DatasetError::ZeroColumns
+pub ferricml::datasets::DatasetError::ZeroInformativeColumns
+pub ferricml::datasets::DatasetError::ZeroRank
 pub ferricml::datasets::DatasetError::ZeroRows
 pub ferricml::datasets::DatasetError::ZeroXorshiftState
 impl core::clone::Clone for ferricml::datasets::DatasetError
@@ -1074,6 +1111,71 @@ pub fn ferricml::datasets::DatasetError::fmt(&self, &mut core::fmt::Formatter<'_
 impl core::fmt::Display for ferricml::datasets::DatasetError
 pub fn ferricml::datasets::DatasetError::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
 impl core::marker::StructuralPartialEq for ferricml::datasets::DatasetError
+#[non_exhaustive] pub enum ferricml::datasets::GlmLink
+pub ferricml::datasets::GlmLink::LogCount
+pub ferricml::datasets::GlmLink::LogPositive
+impl core::clone::Clone for ferricml::datasets::GlmLink
+pub fn ferricml::datasets::GlmLink::clone(&self) -> ferricml::datasets::GlmLink
+impl core::cmp::Eq for ferricml::datasets::GlmLink
+impl core::cmp::PartialEq for ferricml::datasets::GlmLink
+pub fn ferricml::datasets::GlmLink::eq(&self, &ferricml::datasets::GlmLink) -> bool
+impl core::fmt::Debug for ferricml::datasets::GlmLink
+pub fn ferricml::datasets::GlmLink::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for ferricml::datasets::GlmLink
+impl core::marker::StructuralPartialEq for ferricml::datasets::GlmLink
+#[non_exhaustive] pub enum ferricml::datasets::NonlinearKind
+pub ferricml::datasets::NonlinearKind::Friedman
+pub ferricml::datasets::NonlinearKind::Interaction
+pub ferricml::datasets::NonlinearKind::Piecewise
+pub ferricml::datasets::NonlinearKind::Sinusoid
+impl core::clone::Clone for ferricml::datasets::NonlinearKind
+pub fn ferricml::datasets::NonlinearKind::clone(&self) -> ferricml::datasets::NonlinearKind
+impl core::cmp::Eq for ferricml::datasets::NonlinearKind
+impl core::cmp::PartialEq for ferricml::datasets::NonlinearKind
+pub fn ferricml::datasets::NonlinearKind::eq(&self, &ferricml::datasets::NonlinearKind) -> bool
+impl core::fmt::Debug for ferricml::datasets::NonlinearKind
+pub fn ferricml::datasets::NonlinearKind::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for ferricml::datasets::NonlinearKind
+impl core::marker::StructuralPartialEq for ferricml::datasets::NonlinearKind
+#[non_exhaustive] pub enum ferricml::datasets::Parameter
+pub ferricml::datasets::Parameter::CoefficientScale
+pub ferricml::datasets::Parameter::ConditionNumber
+pub ferricml::datasets::Parameter::Dispersion
+pub ferricml::datasets::Parameter::DuplicateRows
+pub ferricml::datasets::Parameter::FeatureScaleSpread
+pub ferricml::datasets::Parameter::HeavyTail
+pub ferricml::datasets::Parameter::Heteroscedastic
+pub ferricml::datasets::Parameter::Intercept
+pub ferricml::datasets::Parameter::LabelNoise
+pub ferricml::datasets::Parameter::NoiseScale
+pub ferricml::datasets::Parameter::OutlierFraction
+pub ferricml::datasets::Parameter::Prevalence
+pub ferricml::datasets::Parameter::Separation
+pub ferricml::datasets::Parameter::WeightFirst
+pub ferricml::datasets::Parameter::WeightHigh
+pub ferricml::datasets::Parameter::WeightLow
+pub ferricml::datasets::Parameter::WeightSecond
+impl core::clone::Clone for ferricml::datasets::Parameter
+pub fn ferricml::datasets::Parameter::clone(&self) -> ferricml::datasets::Parameter
+impl core::cmp::Eq for ferricml::datasets::Parameter
+impl core::cmp::PartialEq for ferricml::datasets::Parameter
+pub fn ferricml::datasets::Parameter::eq(&self, &ferricml::datasets::Parameter) -> bool
+impl core::fmt::Debug for ferricml::datasets::Parameter
+pub fn ferricml::datasets::Parameter::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for ferricml::datasets::Parameter
+impl core::marker::StructuralPartialEq for ferricml::datasets::Parameter
+#[non_exhaustive] pub enum ferricml::datasets::Portability
+pub ferricml::datasets::Portability::BitExact
+pub ferricml::datasets::Portability::PerRunner
+impl core::clone::Clone for ferricml::datasets::Portability
+pub fn ferricml::datasets::Portability::clone(&self) -> ferricml::datasets::Portability
+impl core::cmp::Eq for ferricml::datasets::Portability
+impl core::cmp::PartialEq for ferricml::datasets::Portability
+pub fn ferricml::datasets::Portability::eq(&self, &ferricml::datasets::Portability) -> bool
+impl core::fmt::Debug for ferricml::datasets::Portability
+pub fn ferricml::datasets::Portability::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for ferricml::datasets::Portability
+impl core::marker::StructuralPartialEq for ferricml::datasets::Portability
 #[non_exhaustive] pub enum ferricml::datasets::ReferenceLane
 pub ferricml::datasets::ReferenceLane::ImbalancedBinary
 pub ferricml::datasets::ReferenceLane::NoisyBinary
@@ -1118,9 +1220,71 @@ pub fn ferricml::datasets::Target::eq(&self, &ferricml::datasets::Target) -> boo
 impl core::fmt::Debug for ferricml::datasets::Target
 pub fn ferricml::datasets::Target::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
 impl core::marker::StructuralPartialEq for ferricml::datasets::Target
+#[non_exhaustive] pub enum ferricml::datasets::Task
+pub ferricml::datasets::Task::GlmRegression
+pub ferricml::datasets::Task::GlmRegression::coefficient_scale: f32
+pub ferricml::datasets::Task::GlmRegression::dispersion: f32
+pub ferricml::datasets::Task::GlmRegression::informative: usize
+pub ferricml::datasets::Task::GlmRegression::intercept: f32
+pub ferricml::datasets::Task::GlmRegression::link: ferricml::datasets::GlmLink
+pub ferricml::datasets::Task::IllConditioned
+pub ferricml::datasets::Task::IllConditioned::coefficient_scale: f32
+pub ferricml::datasets::Task::IllConditioned::condition_number: f32
+pub ferricml::datasets::Task::IllConditioned::noise_scale: f32
+pub ferricml::datasets::Task::IllConditioned::rank: usize
+pub ferricml::datasets::Task::LinearBinary
+pub ferricml::datasets::Task::LinearBinary::informative: usize
+pub ferricml::datasets::Task::LinearBinary::prevalence: f32
+pub ferricml::datasets::Task::LinearBinary::separation: f32
+pub ferricml::datasets::Task::LinearRegression
+pub ferricml::datasets::Task::LinearRegression::coefficient_scale: f32
+pub ferricml::datasets::Task::LinearRegression::informative: usize
+pub ferricml::datasets::Task::LinearRegression::intercept: f32
+pub ferricml::datasets::Task::LinearRegression::noise_scale: f32
+pub ferricml::datasets::Task::NonlinearBinary
+pub ferricml::datasets::Task::NonlinearBinary::kind: ferricml::datasets::BinaryKind
+pub ferricml::datasets::Task::NonlinearBinary::prevalence: f32
+pub ferricml::datasets::Task::NonlinearBinary::separation: f32
+pub ferricml::datasets::Task::NonlinearRegression
+pub ferricml::datasets::Task::NonlinearRegression::kind: ferricml::datasets::NonlinearKind
+pub ferricml::datasets::Task::NonlinearRegression::noise_scale: f32
+impl ferricml::datasets::Task
+pub const fn ferricml::datasets::Task::portability(&self) -> ferricml::datasets::Portability
+impl core::clone::Clone for ferricml::datasets::Task
+pub fn ferricml::datasets::Task::clone(&self) -> ferricml::datasets::Task
+impl core::cmp::Eq for ferricml::datasets::Task
+impl core::cmp::PartialEq for ferricml::datasets::Task
+pub fn ferricml::datasets::Task::eq(&self, &ferricml::datasets::Task) -> bool
+impl core::fmt::Debug for ferricml::datasets::Task
+pub fn ferricml::datasets::Task::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for ferricml::datasets::Task
+impl core::marker::StructuralPartialEq for ferricml::datasets::Task
 #[non_exhaustive] pub enum ferricml::datasets::Truth
+pub ferricml::datasets::Truth::Bayes
+pub ferricml::datasets::Truth::Bayes::probabilities: alloc::vec::Vec<f32>
+pub ferricml::datasets::Truth::ConditionalMean
+pub ferricml::datasets::Truth::ConditionalMean::values: alloc::vec::Vec<f32>
+pub ferricml::datasets::Truth::ConditionedDesign
+pub ferricml::datasets::Truth::ConditionedDesign::coefficients: alloc::vec::Vec<f32>
+pub ferricml::datasets::Truth::ConditionedDesign::conditional_mean: alloc::vec::Vec<f32>
+pub ferricml::datasets::Truth::ConditionedDesign::intercept: f32
+pub ferricml::datasets::Truth::ConditionedDesign::rank: usize
 pub ferricml::datasets::Truth::DesignOnly
+pub ferricml::datasets::Truth::LinearBayes
+pub ferricml::datasets::Truth::LinearBayes::coefficients: alloc::vec::Vec<f32>
+pub ferricml::datasets::Truth::LinearBayes::intercept: f32
+pub ferricml::datasets::Truth::LinearBayes::probabilities: alloc::vec::Vec<f32>
+pub ferricml::datasets::Truth::LinearPredictor
+pub ferricml::datasets::Truth::LinearPredictor::coefficients: alloc::vec::Vec<f32>
+pub ferricml::datasets::Truth::LinearPredictor::conditional_mean: alloc::vec::Vec<f32>
+pub ferricml::datasets::Truth::LinearPredictor::intercept: f32
 pub ferricml::datasets::Truth::Unrecorded
+impl ferricml::datasets::Truth
+pub fn ferricml::datasets::Truth::coefficients(&self) -> core::option::Option<&[f32]>
+pub fn ferricml::datasets::Truth::conditional_mean(&self) -> core::option::Option<&[f32]>
+pub fn ferricml::datasets::Truth::intercept(&self) -> core::option::Option<f32>
+pub fn ferricml::datasets::Truth::probabilities(&self) -> core::option::Option<&[f32]>
+pub fn ferricml::datasets::Truth::rank(&self) -> core::option::Option<usize>
 impl core::clone::Clone for ferricml::datasets::Truth
 pub fn ferricml::datasets::Truth::clone(&self) -> ferricml::datasets::Truth
 impl core::cmp::PartialEq for ferricml::datasets::Truth
@@ -1128,6 +1292,24 @@ pub fn ferricml::datasets::Truth::eq(&self, &ferricml::datasets::Truth) -> bool
 impl core::fmt::Debug for ferricml::datasets::Truth
 pub fn ferricml::datasets::Truth::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
 impl core::marker::StructuralPartialEq for ferricml::datasets::Truth
+#[non_exhaustive] pub enum ferricml::datasets::WeightPattern
+pub ferricml::datasets::WeightPattern::Alternating
+pub ferricml::datasets::WeightPattern::Alternating::first: f32
+pub ferricml::datasets::WeightPattern::Alternating::second: f32
+pub ferricml::datasets::WeightPattern::ClassBalanced
+pub ferricml::datasets::WeightPattern::Ramp
+pub ferricml::datasets::WeightPattern::Ramp::high: f32
+pub ferricml::datasets::WeightPattern::Ramp::low: f32
+pub ferricml::datasets::WeightPattern::Uniform
+impl core::clone::Clone for ferricml::datasets::WeightPattern
+pub fn ferricml::datasets::WeightPattern::clone(&self) -> ferricml::datasets::WeightPattern
+impl core::cmp::Eq for ferricml::datasets::WeightPattern
+impl core::cmp::PartialEq for ferricml::datasets::WeightPattern
+pub fn ferricml::datasets::WeightPattern::eq(&self, &ferricml::datasets::WeightPattern) -> bool
+impl core::fmt::Debug for ferricml::datasets::WeightPattern
+pub fn ferricml::datasets::WeightPattern::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for ferricml::datasets::WeightPattern
+impl core::marker::StructuralPartialEq for ferricml::datasets::WeightPattern
 pub struct ferricml::datasets::BenchmarkFixture
 impl ferricml::datasets::BenchmarkFixture
 pub fn ferricml::datasets::BenchmarkFixture::generate(&self) -> ferricml::datasets::Dataset
@@ -1143,6 +1325,36 @@ impl core::fmt::Debug for ferricml::datasets::BenchmarkFixture
 pub fn ferricml::datasets::BenchmarkFixture::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
 impl core::marker::Copy for ferricml::datasets::BenchmarkFixture
 impl core::marker::StructuralPartialEq for ferricml::datasets::BenchmarkFixture
+pub struct ferricml::datasets::Contamination
+impl ferricml::datasets::Contamination
+pub const fn ferricml::datasets::Contamination::collinear_pairs(&self) -> usize
+pub const fn ferricml::datasets::Contamination::constant_columns(&self) -> usize
+pub const fn ferricml::datasets::Contamination::duplicate_rows(&self) -> f32
+pub const fn ferricml::datasets::Contamination::feature_scale_spread(&self) -> f32
+pub const fn ferricml::datasets::Contamination::heavy_tail(&self) -> f32
+pub const fn ferricml::datasets::Contamination::heteroscedastic(&self) -> f32
+pub const fn ferricml::datasets::Contamination::label_noise(&self) -> f32
+pub const fn ferricml::datasets::Contamination::none() -> Self
+pub const fn ferricml::datasets::Contamination::outlier_fraction(&self) -> f32
+pub const fn ferricml::datasets::Contamination::with_collinear_pairs(self, usize) -> Self
+pub const fn ferricml::datasets::Contamination::with_constant_columns(self, usize) -> Self
+pub const fn ferricml::datasets::Contamination::with_duplicate_rows(self, f32) -> Self
+pub const fn ferricml::datasets::Contamination::with_feature_scale_spread(self, f32) -> Self
+pub const fn ferricml::datasets::Contamination::with_heavy_tail(self, f32) -> Self
+pub const fn ferricml::datasets::Contamination::with_heteroscedastic(self, f32) -> Self
+pub const fn ferricml::datasets::Contamination::with_label_noise(self, f32) -> Self
+pub const fn ferricml::datasets::Contamination::with_outlier_fraction(self, f32) -> Self
+impl core::clone::Clone for ferricml::datasets::Contamination
+pub fn ferricml::datasets::Contamination::clone(&self) -> ferricml::datasets::Contamination
+impl core::cmp::Eq for ferricml::datasets::Contamination
+impl core::cmp::PartialEq for ferricml::datasets::Contamination
+pub fn ferricml::datasets::Contamination::eq(&self, &ferricml::datasets::Contamination) -> bool
+impl core::default::Default for ferricml::datasets::Contamination
+pub fn ferricml::datasets::Contamination::default() -> ferricml::datasets::Contamination
+impl core::fmt::Debug for ferricml::datasets::Contamination
+pub fn ferricml::datasets::Contamination::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for ferricml::datasets::Contamination
+impl core::marker::StructuralPartialEq for ferricml::datasets::Contamination
 pub struct ferricml::datasets::Dataset
 impl ferricml::datasets::Dataset
 pub const fn ferricml::datasets::Dataset::features(&self) -> &ferricml::data::DenseMatrix
@@ -1162,14 +1374,23 @@ impl core::marker::StructuralPartialEq for ferricml::datasets::Dataset
 pub struct ferricml::datasets::Recipe
 impl ferricml::datasets::Recipe
 pub const fn ferricml::datasets::Recipe::columns(&self) -> usize
+pub const fn ferricml::datasets::Recipe::contamination(&self) -> ferricml::datasets::Contamination
 pub fn ferricml::datasets::Recipe::design(&self) -> ferricml::data::DenseMatrix
 pub fn ferricml::datasets::Recipe::design_into(&self, &mut alloc::vec::Vec<f32>)
 pub fn ferricml::datasets::Recipe::generate(&self) -> ferricml::datasets::Dataset
 pub fn ferricml::datasets::Recipe::new(usize, usize, ferricml::datasets::Source) -> core::result::Result<Self, ferricml::datasets::DatasetError>
+pub fn ferricml::datasets::Recipe::portability(&self) -> ferricml::datasets::Portability
 pub const fn ferricml::datasets::Recipe::rows(&self) -> usize
 pub fn ferricml::datasets::Recipe::seeded(usize, usize, u64) -> core::result::Result<Self, ferricml::datasets::DatasetError>
 pub const fn ferricml::datasets::Recipe::source(&self) -> ferricml::datasets::Source
 pub fn ferricml::datasets::Recipe::spec_digest(&self) -> [u8; 32]
+pub fn ferricml::datasets::Recipe::target_values(&self) -> core::option::Option<alloc::vec::Vec<f32>>
+pub fn ferricml::datasets::Recipe::target_values_into(&self, &mut alloc::vec::Vec<f32>)
+pub const fn ferricml::datasets::Recipe::task(&self) -> core::option::Option<ferricml::datasets::Task>
+pub const fn ferricml::datasets::Recipe::weight_pattern(&self) -> core::option::Option<ferricml::datasets::WeightPattern>
+pub fn ferricml::datasets::Recipe::with_contamination(self, ferricml::datasets::Contamination) -> core::result::Result<Self, ferricml::datasets::DatasetError>
+pub fn ferricml::datasets::Recipe::with_task(self, ferricml::datasets::Task) -> core::result::Result<Self, ferricml::datasets::DatasetError>
+pub fn ferricml::datasets::Recipe::with_weights(self, ferricml::datasets::WeightPattern) -> core::result::Result<Self, ferricml::datasets::DatasetError>
 impl core::clone::Clone for ferricml::datasets::Recipe
 pub fn ferricml::datasets::Recipe::clone(&self) -> ferricml::datasets::Recipe
 impl core::cmp::Eq for ferricml::datasets::Recipe

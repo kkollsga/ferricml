@@ -53,6 +53,164 @@ pub enum Truth {
     /// all, and it is what a consumer checks before trusting an accuracy number
     /// to mean distance from correct rather than distance from another library.
     Unrecorded,
+    /// The target's conditional mean is a known function of a known linear
+    /// predictor `Xβ + b`.
+    ///
+    /// Reported by the linear and generalized linear regression families. The
+    /// coefficients are the answer a correctly specified fit should recover, and
+    /// [`Truth::LinearPredictor::conditional_mean`] is `E[y | x]` — the target
+    /// with its noise removed, which is what a mean-squared error should be
+    /// measured against when the question is how much of the *recoverable*
+    /// signal a model found.
+    LinearPredictor {
+        /// The true coefficient of each column, exactly zero on the
+        /// uninformative ones.
+        coefficients: Vec<f32>,
+        /// The true intercept of the linear predictor.
+        intercept: f32,
+        /// `E[y | x]` at each row, after the family's link.
+        conditional_mean: Vec<f32>,
+    },
+    /// The target's conditional mean is known, and no linear predictor produces
+    /// it.
+    ///
+    /// Reported by the nonlinear regression family. The absence of coefficients
+    /// is the statement: a consumer must not read "no coefficients recorded" as
+    /// "the coefficients are zero", and the two are different variants here for
+    /// exactly that reason.
+    ConditionalMean {
+        /// `E[y | x]` at each row.
+        values: Vec<f32>,
+    },
+    /// Labels were drawn from a Bayes probability that is a logistic function of
+    /// a known linear score.
+    ///
+    /// This is what makes a probabilistic classifier measurable against the
+    /// right answer rather than against another implementation: the recorded
+    /// probabilities are `P(y = 1 | x)` for the labels as generated, including
+    /// any label noise the contamination applied, so a perfectly calibrated
+    /// model matches them exactly.
+    LinearBayes {
+        /// The true coefficient of each column of the score.
+        coefficients: Vec<f32>,
+        /// The intercept solved for, so the mean probability is the requested
+        /// prevalence.
+        intercept: f32,
+        /// `P(y = 1 | x)` at each row.
+        probabilities: Vec<f32>,
+    },
+    /// Labels were drawn from a known Bayes probability that no linear score
+    /// produces.
+    ///
+    /// Reported by the nonlinear binary family. As with
+    /// [`Truth::ConditionalMean`], the missing coefficients are a statement
+    /// rather than an omission.
+    Bayes {
+        /// `P(y = 1 | x)` at each row.
+        probabilities: Vec<f32>,
+    },
+    /// A design built to a requested condition number and rank, with a known
+    /// linear predictor behind its target.
+    ///
+    /// The rank is exact rather than numerical: the columns past it are exact
+    /// copies of the leading ones, so a solver's reported rank can be compared
+    /// with `assert_eq!`.
+    ///
+    /// **On a rank-deficient design the recorded coefficients are not the answer
+    /// a solver should return.** The least-squares problem then has an affine
+    /// set of minimizers, all of which fit the data equally well, and FerricML
+    /// returns the minimum-norm point of that set. The drawn coefficients are
+    /// one other point in it. Recovering them is only meaningful when
+    /// [`Truth::ConditionedDesign::rank`] equals the design's column count.
+    ConditionedDesign {
+        /// The coefficients the target was drawn from.
+        coefficients: Vec<f32>,
+        /// The intercept the target was drawn with.
+        intercept: f32,
+        /// `E[y | x]` at each row.
+        conditional_mean: Vec<f32>,
+        /// The design's exact algebraic rank.
+        rank: usize,
+    },
+}
+
+impl Truth {
+    /// The true coefficients, when the family knows them.
+    ///
+    /// `None` covers three different situations on purpose — no task, an
+    /// absorbed lane that recorded nothing, and a family whose conditional mean
+    /// no linear predictor produces — because a caller asking this question
+    /// wants one answer for all three: there is no coefficient vector to compare
+    /// against. A caller that needs to tell them apart matches the variant.
+    ///
+    /// ```
+    /// use ferricml::datasets::{Recipe, Task};
+    ///
+    /// let recipe = Recipe::seeded(64, 4, 7)?.with_task(Task::LinearRegression {
+    ///     informative: 2,
+    ///     coefficient_scale: 1.0,
+    ///     intercept: 0.5,
+    ///     noise_scale: 0.0,
+    /// })?;
+    /// let dataset = recipe.generate();
+    /// let coefficients = dataset.truth().coefficients().expect("a linear family");
+    ///
+    /// // The uninformative columns are exactly zero, not merely small: a model
+    /// // that declines to use them is exactly right, and that is checkable.
+    /// assert_eq!(coefficients[2], 0.0);
+    /// assert_eq!(coefficients[3], 0.0);
+    /// # Ok::<(), ferricml::datasets::DatasetError>(())
+    /// ```
+    pub fn coefficients(&self) -> Option<&[f32]> {
+        match self {
+            Self::LinearPredictor { coefficients, .. }
+            | Self::LinearBayes { coefficients, .. }
+            | Self::ConditionedDesign { coefficients, .. } => Some(coefficients),
+            _ => None,
+        }
+    }
+
+    /// The true intercept, when the family knows one.
+    pub fn intercept(&self) -> Option<f32> {
+        match *self {
+            Self::LinearPredictor { intercept, .. }
+            | Self::LinearBayes { intercept, .. }
+            | Self::ConditionedDesign { intercept, .. } => Some(intercept),
+            _ => None,
+        }
+    }
+
+    /// `E[y | x]` at each row, when the family draws a continuous target.
+    pub fn conditional_mean(&self) -> Option<&[f32]> {
+        match self {
+            Self::LinearPredictor {
+                conditional_mean, ..
+            }
+            | Self::ConditionedDesign {
+                conditional_mean, ..
+            } => Some(conditional_mean),
+            Self::ConditionalMean { values } => Some(values),
+            _ => None,
+        }
+    }
+
+    /// `P(y = 1 | x)` at each row, when the family draws labels.
+    pub fn probabilities(&self) -> Option<&[f32]> {
+        match self {
+            Self::LinearBayes { probabilities, .. } | Self::Bayes { probabilities } => {
+                Some(probabilities)
+            }
+            _ => None,
+        }
+    }
+
+    /// The design's exact algebraic rank, when the family fixed it.
+    pub fn rank(&self) -> Option<usize> {
+        match *self {
+            Self::ConditionedDesign { rank, .. } => Some(rank),
+            _ => None,
+        }
+    }
 }
 
 /// A generated dataset: the design matrix, whatever task was drawn over it, and
