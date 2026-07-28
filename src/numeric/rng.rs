@@ -121,6 +121,107 @@ pub(crate) fn derive_repetition_seed(global_seed: u64, repetition: u64) -> u64 {
     mix64(global_seed ^ mix64(repetition ^ 0x9e37_79b9_7f4a_7c15))
 }
 
+/// Derives a synthetic dataset's stream state from a caller's seed.
+///
+/// `src/datasets/` generates design matrices that are then handed to estimators
+/// which draw from this same generator. If a recipe seeded with `s` walked the
+/// same sequence as a forest seeded with `s`, the data would be correlated with
+/// the model's own randomness — the exposure `tests/support/rng.rs` names as the
+/// reason a separate test generator exists at all. Mixing here makes the two
+/// disjoint by construction instead of by convention.
+///
+/// It lives beside [`derive_tree_seed`] and [`derive_repetition_seed`] for the
+/// reason rule 6 gives and those two already follow: [`mix64`] stays private to
+/// this file, so a module that needs a derived seed calls a named entry point
+/// here rather than carrying its own copy of the mixer. `rng-single-source`
+/// enforces exactly that — the SplitMix64 markers appearing under
+/// `src/datasets/` would fail the gate.
+///
+/// The constant is the first eight bytes of SHA-512's initial state, chosen for
+/// having no relationship to anything else in this file rather than for any
+/// property of its own.
+///
+/// **This is for new recipes only.** The absorbed reference and bench presets
+/// pin *raw* stream states, because their frozen outputs were recorded against
+/// `OwnedRng::new(seed)` directly; routing those through a derivation would move
+/// every fixture they protect. `datasets::Source::Sampled` therefore carries a
+/// raw state, and only the convenience constructor for new recipes passes a
+/// caller's seed through here.
+///
+/// # Disjointness is exact, not probabilistic
+///
+/// [`mix64`] is a bijection, so `derive_tree_seed(s, i)` and this function
+/// collide exactly when `i * 0xd1b5_4a32_d192_ed03 == 0x6a09_e667_f3bc_c908`
+/// modulo `2^64`. That multiplier is odd and therefore invertible, so there is
+/// **exactly one** such `i`, it is the same for every seed, and it is
+/// `10_380_603_426_675_257_432`. The same argument over
+/// [`derive_repetition_seed`] gives exactly one repetition index,
+/// `10_759_190_110_990_431_431`. Both are past `10^19`; a forest fitting that
+/// many trees, or a splitter running that many repetitions, would not finish.
+/// The test below asserts both collisions rather than describing them, which is
+/// also what proves the count is one and not zero.
+#[cfg(any(feature = "datasets", test))]
+pub(crate) fn derive_dataset_stream(seed: u64) -> u64 {
+    mix64(seed ^ 0x6a09_e667_f3bc_c908)
+}
+
+/// A 32-bit xorshift generator, the crate's second and last generator core.
+///
+/// This exists for one reason: three benchmark fixtures were written against
+/// xorshift32 streams before `src/datasets/` did, and their outputs are the
+/// inputs to `bench-history`, whose per-release results are immutable. Absorbing
+/// those fixtures into the dataset generator has to reproduce their bytes
+/// exactly, and no SplitMix64 construction can. So the stream moves here rather
+/// than the fixtures moving.
+///
+/// Rule 6 in `src/numeric/mod.rs` names it as the only permitted core besides
+/// [`OwnedRng`], and it is deliberately not a general-purpose alternative: a new
+/// consumer wanting reproducible randomness uses [`OwnedRng`]. This one is a
+/// compatibility surface for frozen bench inputs, and its stream is pinned by a
+/// test below for the same reason SplitMix64's is.
+///
+/// What lives here is the *core* and nothing else. The map from a draw onto a
+/// design-matrix value is `src/datasets/`'s, beside the fixtures it is frozen
+/// against; [`OwnedRng::unit_f64`] is on the generator instead because its draw
+/// count is part of every fitted estimator's determinism contract, which no
+/// dataset value map is.
+#[cfg(any(feature = "datasets", test))]
+pub(crate) struct Xorshift32 {
+    state: u32,
+}
+
+#[cfg(any(feature = "datasets", test))]
+impl Xorshift32 {
+    /// Starts a stream from `state` exactly.
+    ///
+    /// # Panics
+    ///
+    /// If `state` is zero. Zero is xorshift's fixed point — it maps to itself
+    /// forever — so a zero-seeded stream is a constant, not a sequence. Every
+    /// caller inside this crate passes a compile-time constant, so this is a
+    /// defect rather than an input to reject, which is the same reasoning
+    /// [`OwnedRng::index`] applies to an empty bound. A *caller-supplied* state
+    /// arrives through `datasets::Recipe`, which refuses zero at its
+    /// constructor with a typed error before reaching this.
+    pub(crate) const fn from_state(state: u32) -> Self {
+        assert!(state != 0, "a xorshift32 stream cannot start at zero");
+        Self { state }
+    }
+
+    /// The next raw draw, post-mutation.
+    ///
+    /// The shift triple and the fact that the *mutated* state is returned are
+    /// both part of the frozen contract: the bench fixtures compute their value
+    /// from the state after all three shifts, so returning the pre-mutation
+    /// state would shift every fixture by one draw.
+    pub(crate) fn next_u32(&mut self) -> u32 {
+        self.state ^= self.state << 13;
+        self.state ^= self.state >> 17;
+        self.state ^= self.state << 5;
+        self.state
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -436,5 +537,164 @@ mod tests {
     #[should_panic(expected = "a bounded draw needs at least one candidate")]
     fn a_zero_bound_is_refused_by_name() {
         OwnedRng::new(0).index(0);
+    }
+
+    /// The dataset derivation is frozen for the same reason the tree and
+    /// repetition derivations are.
+    ///
+    /// A recipe built through `datasets::Recipe::seeded` starts its stream at
+    /// one of these numbers, so changing the constant or the mixing here would
+    /// move every design matrix a caller generates from a seed — silently, and
+    /// with no aggregate quality lane able to see it.
+    #[test]
+    fn derived_dataset_streams_are_frozen() {
+        let expected: [(u64, u64); 5] = [
+            (0, 5272463233947570727),
+            (1, 3847398142028685078),
+            (42, 1767972203709790677),
+            (0xdead_beef, 11053417610396211674),
+            (u64::MAX, 18280701212104791470),
+        ];
+        for (seed, state) in expected {
+            assert_eq!(
+                derive_dataset_stream(seed),
+                state,
+                "dataset stream changed for seed {seed}"
+            );
+        }
+    }
+
+    /// A dataset stream is disjoint from every estimator stream the same seed
+    /// reaches, asserted rather than described.
+    ///
+    /// This is the whole reason [`derive_dataset_stream`] exists: a design
+    /// matrix drawn from seed `s` must not walk the sequence a forest seeded
+    /// with `s` walks, or the data is correlated with the model's own
+    /// randomness. `tests/support/rng.rs` names that exposure as the reason a
+    /// separate test generator exists at all, and a dataset generator inside the
+    /// crate has it in the same shape.
+    ///
+    /// The collision indices at the end are not decoration. [`mix64`] is a
+    /// bijection, so *some* tree index and *some* repetition index reach the
+    /// dataset state for any seed; the question is only which. Pinning them
+    /// proves the count is exactly one in each family — a "no collision
+    /// anywhere" claim would be false — and shows both are past `10^19`, where
+    /// no forest or splitter can reach.
+    #[test]
+    fn a_dataset_stream_is_disjoint_from_the_estimator_streams_of_the_same_seed() {
+        for seed in [0_u64, 1, 7, 42, 0xdead_beef, u64::MAX] {
+            let dataset = derive_dataset_stream(seed);
+            assert_ne!(
+                dataset, seed,
+                "seed {seed} derives to itself, so `Sampled` would reuse the raw state"
+            );
+            assert_ne!(
+                dataset,
+                derive_tree_seed(seed, 0),
+                "seed {seed} collides with its own forest's first tree"
+            );
+            for index in 0..4_096_u64 {
+                assert_ne!(
+                    dataset,
+                    derive_tree_seed(seed, index),
+                    "seed {seed} collides with tree {index}"
+                );
+                assert_ne!(
+                    dataset,
+                    derive_repetition_seed(seed, index),
+                    "seed {seed} collides with repetition {index}"
+                );
+            }
+
+            // The one index in each family that does collide, and it is the
+            // same index for every seed because the mixer is applied last.
+            assert_eq!(derive_tree_seed(seed, 10_380_603_426_675_257_432), dataset);
+            assert_eq!(
+                derive_repetition_seed(seed, 10_759_190_110_990_431_431),
+                dataset
+            );
+        }
+    }
+
+    /// The xorshift32 stream is frozen at the two states the bench fixtures
+    /// use, captured before those fixtures were ported.
+    ///
+    /// `benches/models.rs` starts at `0x9e37_79b9` and `benches/boosting.rs` at
+    /// `0x243f_6a88`. `bench-history` compares against immutable per-release
+    /// results, so a changed draw here invalidates every historical baseline
+    /// rather than reporting a regression — which makes these literals a
+    /// stronger contract than an ordinary frozen stream, not a weaker one.
+    #[test]
+    fn the_xorshift32_stream_is_frozen_at_the_states_the_bench_fixtures_use() {
+        let expected: [(u32, [u32; 8]); 3] = [
+            (
+                1,
+                [
+                    270369, 67634689, 2647435461, 307599695, 2398689233, 745495504, 632435482,
+                    435756210,
+                ],
+            ),
+            (
+                0x9e37_79b9,
+                [
+                    1359758873, 3761132862, 2075758394, 25405621, 3862129951, 4186559031,
+                    3122997712, 4244368831,
+                ],
+            ),
+            (
+                0x243f_6a88,
+                [
+                    3836725727, 2937111989, 1130492582, 3683945404, 377943917, 3305986136,
+                    2932573243, 400419005,
+                ],
+            ),
+        ];
+        for (state, stream) in expected {
+            let mut rng = Xorshift32::from_state(state);
+            let actual: Vec<u32> = (0..stream.len()).map(|_| rng.next_u32()).collect();
+            assert_eq!(actual, stream, "stream changed for state {state:#x}");
+        }
+
+        // The *mutated* state is what comes back. Written out here as the three
+        // shifts rather than as another literal, because returning the
+        // pre-mutation state is the one plausible transcription error and it
+        // would shift every bench fixture by exactly one draw.
+        let mut state = 0x9e37_79b9_u32;
+        state ^= state << 13;
+        state ^= state >> 17;
+        state ^= state << 5;
+        assert_eq!(Xorshift32::from_state(0x9e37_79b9).next_u32(), state);
+        assert_ne!(state, 0x9e37_79b9);
+    }
+
+    /// Zero is unreachable from a non-zero state, which is what makes
+    /// [`Xorshift32::from_state`]'s assertion sufficient rather than a first
+    /// line of defence.
+    ///
+    /// Each of the three steps is an invertible map on `u32` — `x ^ (x << k)`
+    /// and `x ^ (x >> k)` both are, for any `k` — so the whole step is a
+    /// permutation and only zero maps to zero. The sweep is the falsifiable
+    /// half: a transposed shift width would still permute, but the run below
+    /// would find the orbit shorter or the zero reachable.
+    #[test]
+    fn a_non_zero_xorshift32_state_never_reaches_zero_or_returns_early() {
+        for state in [1_u32, 0x9e37_79b9, 0x243f_6a88, u32::MAX] {
+            let mut rng = Xorshift32::from_state(state);
+            for step in 0..200_000 {
+                let draw = rng.next_u32();
+                assert_ne!(draw, 0, "state {state:#x} reached zero at step {step}");
+                assert_ne!(
+                    draw, state,
+                    "state {state:#x} returned to its start at step {step}, so the \
+                     orbit is far shorter than the 2^32 - 1 the shift triple gives"
+                );
+            }
+        }
+    }
+
+    #[test]
+    #[should_panic(expected = "a xorshift32 stream cannot start at zero")]
+    fn a_zero_xorshift32_state_is_refused_by_name() {
+        let _ = Xorshift32::from_state(0);
     }
 }

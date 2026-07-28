@@ -96,6 +96,16 @@ codegen-units = 1
 [features]
 default = []
 
+# Synthetic dataset generation. Off by default because `default = []` is a
+# product boundary: a consumer fitting models pays nothing for a generator it
+# does not call, and the generated-data vocabulary is not part of the estimator
+# surface docs.rs renders.
+#
+# It carries no dependency of its own — `sha2` is already in the graph for
+# artifact checksums, and the streams come from `src/numeric/rng.rs` — so this
+# is a visibility switch rather than a build-graph one.
+datasets = []
+
 [dependencies]
 # The crate's one dense linear-algebra backend, and not a preference: it
 # replaced `nalgebra 0.34.2`, whose `svd(true, true)` returns a decomposition
@@ -117,6 +127,20 @@ sha2 = "0.10"
 
 [dev-dependencies]
 criterion = { version = "0.7", default-features = false }
+# The crate depends on itself, with `datasets` on, so that every integration
+# test, bench, and doctest sees the feature-gated generator under a plain
+# `cargo test` / `cargo bench`. Cargo unifies features across the graph, so this
+# one line is what makes `bench-self`, `reference-check` and `cargo test
+# --locked` work unmodified — the alternative, `required-features` on each
+# target, silently *skips* a target instead of building it, which is the failure
+# mode a gate cannot see.
+#
+# **No `version` key, deliberately.** Cargo strips a path-only dev-dependency
+# from the manifest it publishes, so nothing circular ships and
+# `package-check`'s external consumer still builds the extract with default
+# features — which is also what keeps the feature-off configuration proven while
+# `cargo test` builds the lib with `datasets` on.
+ferricml = { path = ".", features = ["datasets"] }
 tempfile = "3"
 
 [[bench]]

@@ -120,6 +120,27 @@
 //! 6. **One seeded generator serves the crate.** Reproducible randomness comes
 //!    from [`OwnedRng`]; a module must not define its own generator, because a
 //!    seed has to mean the same thing in every estimator and in inspection.
+//!
+//!    **[`Xorshift32`] is the one other permitted core, and it is a
+//!    compatibility surface rather than a choice.** Three benchmark fixtures
+//!    were written against 32-bit xorshift streams before `src/datasets/`
+//!    existed, and `bench-history` compares against immutable per-release
+//!    results — so absorbing those fixtures into the dataset generator has to
+//!    reproduce their draws exactly, and no SplitMix64 construction does. It
+//!    lives in `rng.rs` beside [`OwnedRng`], under the same frozen-stream tests
+//!    and the same `rng-single-source` rule, precisely so the amendment does not
+//!    become a second home for generator definitions: a module still must not
+//!    define its own, and a new consumer wanting reproducible randomness still
+//!    uses [`OwnedRng`]. `src/datasets/` consumes both through named
+//!    `pub(crate)` entry points and defines neither.
+//!
+//!    Seed *derivations* fall under the same rule, for the same reason —
+//!    `derive_tree_seed`, `derive_repetition_seed`, and `derive_dataset_stream`
+//!    all live in `rng.rs` because the mixer they share stays private to that
+//!    file. The dataset derivation additionally has to be disjoint from the
+//!    estimator ones: a design matrix drawn from a seed must not walk the
+//!    sequence a model fitted with that seed walks, or the data is correlated
+//!    with the model's own randomness.
 
 mod quantile;
 mod rng;
@@ -138,6 +159,23 @@ pub(crate) use quantile::{
     WeightedQuantileRule, sort_weighted_for_quantiles, weighted_quantile_sorted,
 };
 pub(crate) use rng::{OwnedRng, derive_repetition_seed, derive_tree_seed};
+/// The two entry points rule 6's amendment covers, re-exported for
+/// `src/datasets/` and for nothing else.
+///
+/// Gated on the feature rather than always present because the crate's own
+/// estimators have no use for either: with `datasets` off they would be dead
+/// code, and an `expect(dead_code)` would then have to be carried at three
+/// definition sites in `rng.rs`.
+///
+/// The frozen-stream tests are deliberately *not* held hostage to that. `rng.rs`
+/// admits both definitions under `cfg(test)` as well, so its own tests compile
+/// and run whether the feature is on or off — measured by removing the
+/// self dev-dependency that switches it on for test builds and running them
+/// anyway. A gate that only proved the streams had not moved when a manifest
+/// line in another file said so would be one manifest edit away from proving
+/// nothing.
+#[cfg(feature = "datasets")]
+pub(crate) use rng::{Xorshift32, derive_dataset_stream};
 
 /// Logistic sigmoid over `f64`.
 ///

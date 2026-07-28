@@ -4,13 +4,20 @@
   "nightly": "nightly-2026-07-01",
   "cargo_public_api_version": "0.52.0",
   "feature_classifications": {
-    "default": "profile-root"
+    "default": "profile-root",
+    "datasets": "public-api"
   },
   "profiles": [
     {
       "name": "default",
       "features": [],
       "baseline": "tests/api-baselines/rust/ferricml-default.txt"
+    },
+    {
+      "name": "all-features",
+      "features": [],
+      "all_features": true,
+      "baseline": "tests/api-baselines/rust/ferricml-all-features.txt"
     }
   ]
 }

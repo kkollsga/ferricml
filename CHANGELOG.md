@@ -5,6 +5,60 @@ All notable changes to FerricML are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and releases use [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- **A synthetic dataset generator, behind the new non-default `datasets`
+  feature.** `ferricml::datasets` turns a validated `Recipe` into a `Dataset`:
+  a design matrix, whatever task was drawn over it, and — the part no generator
+  in this repository had — the `Truth` behind that task. Nothing is enabled by
+  default and nothing new enters the dependency graph; the streams come from the
+  crate's existing generator kernels and the spec digest from the `sha2` already
+  present for artifact checksums.
+
+  This first piece is the kernel: the three deterministic sources
+  (`Source::Sampled`, `Source::Lattice`, `Source::Xorshift32`), the `Recipe`
+  that validates a shape and a source *before* allocating anything, the
+  `Dataset`/`Truth` containers, and `Recipe::spec_digest`. Task families arrive
+  next; a recipe with none produces a design matrix and says
+  `Truth::DesignOnly` rather than implying a correct answer it does not have.
+
+  **A recipe is the whole identity of its data.** Every source is
+  transcendental-free — integer arithmetic and exact or correctly-rounded
+  conversions — so the same recipe gives the same bytes on a rerun, in another
+  process, and on another machine. The cross-process half of that is a test
+  rather than a claim: `tests/dataset_generator.rs` re-executes the test binary
+  and compares `f32::to_bits` of every generated value, which is the only way to
+  catch a generator that took anything from process state.
+
+  **A dataset seed is disjoint from an estimator seed, by construction.** A
+  design matrix drawn from seed `s` must not walk the sequence a forest fitted
+  with seed `s` walks, or the data is correlated with the model's own
+  randomness. `Recipe::seeded` mixes the caller's number through a derivation
+  that lives beside the generator it derives from, and the disjointness is
+  asserted against pinned probes: the derivation's mixer is a bijection, so
+  *exactly one* tree index and *exactly one* repetition index reach the dataset
+  state, and both are past `10^19`.
+
+  **Validation is at the constructor, before allocation.** `Recipe::new` and
+  `Recipe::seeded` refuse an empty or unrepresentable shape, a zero xorshift
+  state — zero is that generator's fixed point, so the design would be one
+  repeated value — and a lattice modulus outside `2..=2^24`, above which
+  distinct residues collapse onto the same `f32`. A `Recipe` that exists
+  describes data that can be produced, which is why `generate` and `design`
+  return a value rather than a `Result`.
+
+### Changed
+
+- **The exact public-API snapshot now covers feature-gated surface.**
+  `scripts/rust_api_profiles.py` captured one profile, the default one, and
+  rejected a second by construction — so a public item behind a Cargo feature
+  sat outside the snapshot contract entirely. It now captures an `all-features`
+  profile alongside the default one, with its own frozen baseline, and its
+  self-test fails if that baseline ever stops recording rows the default one
+  does not.
+
 ## [0.2.1] - 2026-07-27
 
 ### Fixed

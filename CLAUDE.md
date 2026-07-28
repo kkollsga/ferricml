@@ -1,10 +1,12 @@
 # CLAUDE.md — FerricML working rules
 
-FerricML is one pure-Rust crate for lean classical machine learning. Dataset
-acquisition and application-specific evaluation stay in downstream projects.
-This file is the tracked standing policy. The gitignored working-folder and
-inbox maps live in `dev-docs/README.md` and `inbox/README.md`;
-`dev-docs/learn-from-us.md` is the outward-facing adaptation guide.
+FerricML is one pure-Rust crate for lean classical machine learning.
+Real-dataset acquisition and application-specific evaluation stay in downstream
+projects; synthetic dataset generation is owned by `src/datasets/` behind the
+non-default `datasets` feature. This file is the tracked standing policy. The
+gitignored working-folder and inbox maps live in `dev-docs/README.md` and
+`inbox/README.md`; `dev-docs/learn-from-us.md` is the outward-facing adaptation
+guide.
 
 ## Working style
 
@@ -25,6 +27,8 @@ inbox maps live in `dev-docs/README.md` and `inbox/README.md`;
 ## Architecture and feature boundaries
 
 - `src/data/` owns validated dense inputs and target types.
+- `src/datasets/` owns synthetic dataset recipes, deterministic sources, and
+  ground truth, feature-gated off the default surface.
 - `src/api/` owns estimator vocabulary, typed errors, model swapping, and
   allocation-free batch contracts.
 - `src/ensemble/` owns public ensemble facades and their private estimator

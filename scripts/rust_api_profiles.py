@@ -20,6 +20,26 @@ MANIFEST_PATH = ROOT / "tests" / "api-baselines" / "rust-api-profiles.json"
 STAMP_PATH = ROOT / "target" / "rust-api-profiles.stamp"
 VALID_CLASSIFICATIONS = {"profile-root", "public-api", "implementation-only"}
 
+# The profiles the manifest must declare, exactly.
+#
+# `default` is the published surface: what a consumer who writes `ferricml =
+# "0.2"` gets, and what docs.rs renders. It was the only profile until
+# 2026-07-28, and while every feature was `profile-root` that was complete.
+#
+# `all-features` exists because it stopped being complete. A feature classified
+# `public-api` carries public items the default capture cannot see, so without a
+# second profile that surface would sit outside the exact-snapshot contract
+# entirely — added to, renamed in, and removed from with nothing to compare
+# against. CLAUDE.md's snapshot contract for public Rust API changes admits no
+# exemption for feature-gated surface, and a feature-gated item is still an item
+# a consumer depends on.
+#
+# Two and not more: a profile per feature combination is exponential and would
+# be mostly duplicate captures. `all-features` is the union, so a feature-gated
+# item is in exactly one baseline that is not the default one, and the pair
+# together says both what ships by default and what exists at all.
+REQUIRED_PROFILES = ("default", "all-features")
+
 # Noise `cargo public-api` may omit. Blanket impls (`impl<T> Any for T`) and
 # auto-trait impls (`impl Send for …`) say nothing a reviewer can act on.
 #
@@ -85,13 +105,28 @@ def validate_manifest(manifest: dict[str, Any]) -> None:
         raise ValueError("default must be classified as profile-root")
 
     profiles = manifest.get("profiles")
-    if not isinstance(profiles, list) or len(profiles) != 1:
-        raise ValueError("profiles must contain exactly the default profile")
+    if not isinstance(profiles, list) or len(profiles) != len(REQUIRED_PROFILES):
+        raise ValueError(f"profiles must contain exactly {list(REQUIRED_PROFILES)}")
     by_name = {profile.get("name"): profile for profile in profiles}
-    if set(by_name) != {"default"}:
-        raise ValueError("profile must be named default")
+    if set(by_name) != set(REQUIRED_PROFILES):
+        raise ValueError(f"profiles must be named {list(REQUIRED_PROFILES)}, found {sorted(by_name)}")
     if by_name["default"].get("features") != [] or by_name["default"].get("all_features", False):
         raise ValueError("default profile must disable every optional feature")
+    if by_name["all-features"].get("features") != [] or not by_name["all-features"].get(
+        "all_features", False
+    ):
+        raise ValueError(
+            "all-features profile must set all_features rather than naming features, so a new "
+            "feature joins it without an edit here"
+        )
+    # A feature whose public items no profile captures is the gap the second
+    # profile exists to close, and it is worth stating rather than inferring
+    # from the profile list: `all_features` is what makes the statement true,
+    # and a future profile set that dropped it would otherwise fail nothing.
+    if any(value == "public-api" for value in classifications.values()) and not any(
+        profile.get("all_features") for profile in profiles
+    ):
+        raise ValueError("a public-api feature needs a profile that captures it")
 
     baselines: set[str] = set()
     for profile in profiles:
@@ -134,6 +169,10 @@ def public_api_command(manifest: dict[str, Any], profile: dict[str, Any]) -> lis
     for omitted in OMITTED_NOISE:
         command += ["--omit", omitted]
     if profile.get("all_features"):
+        # Cargo resolves `--all-features` over the `--no-default-features`
+        # above, which is why that flag can stay unconditional: every profile
+        # then differs by exactly one argument, and the two captures cannot
+        # drift apart in the omissions they share.
         command.append("--all-features")
     return command
 
@@ -283,15 +322,16 @@ def self_test(manifest: dict[str, Any]) -> int:
     tool, and run in the ordinary gate, so a capture command that silently went
     blind again fails here rather than years later.
     """
-    command = public_api_command(manifest, manifest["profiles"][0])
-    omitted = {value for flag, value in zip(command, command[1:]) if flag == "--omit"}
-    assert "auto-derived-impls" not in omitted, (
-        "the capture omits auto-derived impls, so removing a derive from a public "
-        "type would compare clean"
-    )
-    assert not any(
-        argument.startswith("-s") and set(argument[1:]) == {"s"} for argument in command
-    ), "`-sss` omits auto-derived impls; spell the omissions out instead"
+    for profile in manifest["profiles"]:
+        command = public_api_command(manifest, profile)
+        omitted = {value for flag, value in zip(command, command[1:]) if flag == "--omit"}
+        assert "auto-derived-impls" not in omitted, (
+            f"the {profile['name']} capture omits auto-derived impls, so removing a derive "
+            "from a public type would compare clean"
+        )
+        assert not any(
+            argument.startswith("-s") and set(argument[1:]) == {"s"} for argument in command
+        ), "`-sss` omits auto-derived impls; spell the omissions out instead"
 
     parsed = impl_traits(
         "impl core::clone::Clone for ferricml::linear_model::Ridge\n"
@@ -335,9 +375,36 @@ def self_test(manifest: dict[str, Any]) -> int:
                 "API diff, so dropping a derive from a public type is invisible"
             )
 
+    frozen = dict(
+        zip(
+            [profile["name"] for profile in manifest["profiles"]],
+            [text for _, text in frozen_profiles(manifest)],
+        )
+    )
+    default_lines = set(frozen["default"].splitlines())
+    widened_lines = set(frozen["all-features"].splitlines())
+    # The second profile has to be capturing something, or the exact-snapshot
+    # contract over feature-gated surface is a file that exists rather than a
+    # check that looks. Both directions: the wider capture must contain the
+    # narrower one — a profile pair whose baselines simply disagree would mean
+    # one of them was captured with the wrong flags — and it must contain rows
+    # the narrower one does not, or no feature is contributing public items and
+    # the whole mechanism is idle.
+    missing = default_lines - widened_lines
+    assert not missing, (
+        f"the all-features baseline is missing {len(missing)} rows the default one has, "
+        f"starting with {sorted(missing)[0]!r}; a wider feature set cannot remove public items"
+    )
+    added = widened_lines - default_lines
+    assert added, (
+        "the all-features baseline records nothing the default one does not, so no "
+        "feature-gated public surface is under the exact-snapshot contract"
+    )
+
     print(
         "Rust API profile self-test: derived impls are captured, and removing one "
-        f"fails the exact comparison ({len(REQUIRED_DERIVED_TRAITS)} traits proven)"
+        f"fails the exact comparison ({len(REQUIRED_DERIVED_TRAITS)} traits proven); "
+        f"the all-features profile adds {len(added)} rows the default one omits"
     )
     return 0
 
@@ -361,7 +428,9 @@ def main() -> int:
             print(manifest[args.key])
             return 0
         if args.command == "validate":
-            print("Rust API profiles valid: default; 1 classified feature")
+            names = ", ".join(profile["name"] for profile in manifest["profiles"])
+            classified = len(manifest["feature_classifications"])
+            print(f"Rust API profiles valid: {names}; {classified} classified features")
             return 0
         if args.command == "self-test":
             return self_test(manifest)

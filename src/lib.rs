@@ -13,6 +13,10 @@ pub mod api;
 pub mod artifact;
 pub mod calibration;
 pub mod data;
+// Synthetic dataset generation. Off by default because `default = []` is a
+// product boundary: enable it with `features = ["datasets"]`.
+#[cfg(feature = "datasets")]
+pub mod datasets;
 pub mod dummy;
 pub mod ensemble;
 pub mod inspection;
