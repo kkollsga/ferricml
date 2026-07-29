@@ -374,8 +374,17 @@ pub enum BinaryKind {
     /// The exclusive-or boundary: the sign of the first two columns' product.
     /// A linear classifier's best achievable accuracy is the majority rate.
     Xor,
-    /// Two interleaved crescents: the second column against a sine of the first.
-    Moons,
+    /// A sine boundary: the second column against a full-period sine of the
+    /// first.
+    ///
+    /// The boundary is `x₂ = sin(2π x₁)`, one whole period across the design's
+    /// `[-1, 1)` support, at the full amplitude of that support. Both properties
+    /// are load-bearing. A sine of *fractional* period is nearly its own tangent
+    /// line, and a boundary of amplitude much below one leaves a rule on `x₂`
+    /// alone almost nothing to get wrong; the family's own shortfall instrument
+    /// measured an earlier `x₂ = 0.6 sin(2 x₁)` boundary as linearly solvable to
+    /// within half a point of its Bayes ceiling.
+    Sinusoid,
     /// A circular boundary: inside or outside a disc centred at the origin.
     Circles,
     /// A four-cell checkerboard over the first two columns, so the boundary
@@ -397,7 +406,7 @@ impl BinaryKind {
     pub(super) const fn boundary_portability(self) -> Portability {
         match self {
             Self::Xor | Self::Circles | Self::Checkerboard => Portability::BitExact,
-            Self::Moons => Portability::PerRunner,
+            Self::Sinusoid => Portability::PerRunner,
         }
     }
 
@@ -406,7 +415,14 @@ impl BinaryKind {
         let (first, second) = (f64::from(row[0]), f64::from(row[1]));
         match self {
             Self::Xor => 4.0 * first * second,
-            Self::Moons => second - 0.6 * (2.0 * first).sin(),
+            // The leading `2.0` is the same device as `Xor`'s `4.0` below: the
+            // boundary's own expression carries the scale that makes its scores
+            // comparable with the other three, so `separation` stays a dial the
+            // caller turns rather than a correction the caller has to apply.
+            // Without it the best linear rule falls only `0.15` short of Bayes
+            // at the suite's `separation`, straddling the threshold the family
+            // test holds curved boundaries to.
+            Self::Sinusoid => 2.0 * (second - (2.0 * std::f64::consts::PI * first).sin()),
             Self::Circles => 0.5 - (first * first + second * second),
             Self::Checkerboard => {
                 // `floor` is exact on every target — it is an IEEE-754
@@ -469,17 +485,27 @@ pub enum GlmLink {
 /// what a sweep over one of them is entitled to conclude.
 ///
 /// `separation`, `prevalence`, `noise_scale`, `drift`, `spread`,
-/// `coefficient_scale`, `intercept`, `condition_number`, `dispersion` and
-/// `balance` are **dials**. Two recipes differing only in a dial draw from the
-/// same streams: the same design, the same coefficients or centres, the same
-/// noise and label draws. A ladder over one of them is a ladder over one
-/// problem, so the difference between two rungs is the knob.
+/// `coefficient_scale`, `intercept`, `condition_number`, `dispersion`,
+/// `balance`, `informative` and `rank` are **dials**. Two recipes differing only
+/// in a dial draw from the same streams: the same design, the same coefficients
+/// or centres, the same noise and label draws. A ladder over one of them is a
+/// ladder over one problem, so the difference between two rungs is the knob.
 ///
-/// `informative`, `classes`, `blobs`, `queries`, `docs_per_query`, `grades`,
-/// `geometry`, `kind`, `link` and `rank` are **structural**. They change what
-/// the problem is — which columns matter, how many classes exist, which
-/// expression is evaluated — and two recipes differing in one of them are two
-/// different draws, deliberately.
+/// `classes`, `blobs`, `queries`, `docs_per_query`, `grades`, `geometry`, `kind`
+/// and `link` are **structural**. They change what the problem is — how many
+/// classes exist, which expression is evaluated — and two recipes differing in
+/// one of them are two different draws, deliberately.
+///
+/// `informative` and `rank` are the two counts on the dial side, and they earn
+/// it in different ways. Widening `informative` **nests**: the coefficient
+/// draw consumes one value per column whether that column is informative or
+/// not, so at `informative = 4` the first two coefficients are bit-identical to
+/// the ones at `informative = 2` and two more become non-zero. A ladder over it
+/// really is one problem gaining informative columns, rather than two unrelated
+/// coefficient vectors. `rank` never reaches a draw at all — the columns past it
+/// are exact copies of the leading ones, a closed-form transform of a design the
+/// source already produced, which is the same argument that makes
+/// `condition_number` a dial.
 ///
 /// Both move [`Recipe::spec_digest`](super::Recipe::spec_digest), because the
 /// data moves either way. `Recipe::stream_digest`'s documentation records why
@@ -487,6 +513,33 @@ pub enum GlmLink {
 ///
 /// It is `#[non_exhaustive]` because a new family must not be a breaking change
 /// for a caller that only ever matches the ones it asked for.
+///
+/// # The variant fields are deliberately literal-constructible
+///
+/// The variants below carry no `#[non_exhaustive]` of their own, unlike
+/// [`Truth`]'s, and that asymmetry is a recorded decision rather than an
+/// oversight. `Truth` is an output: nothing constructs one, so protecting it
+/// costs a `..` in a pattern that was optional anyway. A `Task` is a *request*,
+/// and the property this API leans on is that the request is complete: the
+/// compiler refuses a recipe that fails to state a knob, so `separation` and
+/// `prevalence` cannot be transposed, and a family's four positional `usize`
+/// fields cannot be permuted, in a way that still compiles. Constructors would
+/// keep completeness and lose the names; builders would keep the names and lose
+/// completeness, because no dial here has a neutral default — a `separation` of
+/// zero is a coin, not an absence.
+///
+/// The cost of that choice is stated rather than hidden: **adding a knob to an
+/// existing family is a breaking change**, taken deliberately as a minor
+/// version, and `make semver-check` fails it offered as anything less. The
+/// architecture keeps that rare by channelling growth elsewhere. A new shape is
+/// a new variant, kind or link; a cross-cutting knob is a
+/// [`Contamination`] setting, on an already-opaque
+/// builder; and any future knob has to default to reproducing today's bytes
+/// regardless, because [`Recipe::spec_digest`](super::Recipe::spec_digest) is an
+/// identity. The two family-design questions open when this was written both
+/// resolved without a field: the sine boundary was redesigned as an expression,
+/// and `informative` and `rank` were reclassified as dials — a digest-routing
+/// change, not a new parameter.
 #[derive(Clone, Copy, Debug, PartialEq)]
 #[non_exhaustive]
 pub enum Task {
@@ -1311,12 +1364,12 @@ pub(super) fn draw_coefficients(
         .map(|column| {
             // Every column consumes a draw, informative or not, so the
             // coefficient of column `j` is a function of `j` and the stream
-            // alone. Note what that does *not* buy: `informative` is a
-            // structural field, so two recipes differing in it do not share a
-            // stream and the nesting this positional encoding would give them is
-            // not observable today. It is written this way so that a decision to
-            // reclassify `informative` as a dial would be a one-line change with
-            // the nesting already in place, rather than a second redesign.
+            // alone — and since `informative` is a dial, two recipes differing
+            // in it *do* share a stream, so that positional encoding is
+            // observable: widening the prefix leaves the coefficients of the
+            // columns that already mattered bit-identical and turns on new ones.
+            // A caller sweeping `informative` is adding informative columns to
+            // one problem rather than drawing an unrelated one at each rung.
             let draw = signed_draw(&mut rng);
             if column < informative {
                 scale * draw

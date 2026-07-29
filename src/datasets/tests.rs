@@ -326,39 +326,48 @@ fn regenerating_a_recipe_reproduces_its_bytes() {
 /// concatenation would let bleed into each other.
 #[test]
 fn the_spec_digest_distinguishes_recipes_that_differ_anywhere() {
-    let recipes = [
-        Recipe::new(16, 4, Source::Sampled { state: 11 }).unwrap(),
-        Recipe::new(4, 16, Source::Sampled { state: 11 }).unwrap(),
-        Recipe::new(16, 4, Source::Sampled { state: 12 }).unwrap(),
-        // Same numeric state, different source: the discriminant is what has to
-        // separate these, since the field bytes are identical.
-        Recipe::new(16, 4, Source::Xorshift32 { state: 11 }).unwrap(),
-        Recipe::new(
-            16,
-            4,
-            Source::Lattice {
-                row_stride: 131,
-                column_stride: 17,
-                modulus: 1009,
-            },
-        )
-        .unwrap(),
-        // Strides swapped. A digest that summed its fields would miss this.
-        Recipe::new(
-            16,
-            4,
-            Source::Lattice {
-                row_stride: 17,
-                column_stride: 131,
-                modulus: 1009,
-            },
-        )
-        .unwrap(),
-    ];
-    for (index, left) in recipes.iter().enumerate() {
+    let build = || {
+        [
+            Recipe::new(16, 4, Source::Sampled { state: 11 }).unwrap(),
+            Recipe::new(4, 16, Source::Sampled { state: 11 }).unwrap(),
+            Recipe::new(16, 4, Source::Sampled { state: 12 }).unwrap(),
+            // Same numeric state, different source: the discriminant is what has
+            // to separate these, since the field bytes are identical.
+            Recipe::new(16, 4, Source::Xorshift32 { state: 11 }).unwrap(),
+            Recipe::new(
+                16,
+                4,
+                Source::Lattice {
+                    row_stride: 131,
+                    column_stride: 17,
+                    modulus: 1009,
+                },
+            )
+            .unwrap(),
+            // Strides swapped. A digest that summed its fields would miss this.
+            Recipe::new(
+                16,
+                4,
+                Source::Lattice {
+                    row_stride: 17,
+                    column_stride: 131,
+                    modulus: 1009,
+                },
+            )
+            .unwrap(),
+        ]
+    };
+    let recipes = build();
+    // Built a second time from the same requests, through the same constructor
+    // but sharing nothing with the first: calling `spec_digest` twice on one
+    // value could only catch a digest that was not a pure function, whereas this
+    // catches a digest that is a function of anything the recipe does not carry
+    // — an address, a construction order, a process-local counter.
+    let twins = build();
+    for (index, (left, twin)) in recipes.iter().zip(twins.iter()).enumerate() {
         assert_eq!(
             left.spec_digest(),
-            left.spec_digest(),
+            twin.spec_digest(),
             "the digest is not a function of the recipe alone"
         );
         for right in &recipes[index + 1..] {
@@ -1184,6 +1193,87 @@ fn the_absorbed_benchmark_fixtures_reproduce_their_recorded_bytes() {
     }
 }
 
+/// The shape roster the benches are held to and the digest table are the same
+/// set, and a shape off it cannot be measured.
+///
+/// The hole this closes: before it, `ABSORBED_BENCHMARK_DIGESTS` pinned the ten
+/// shapes the benches happened to call *on the day it was written*, and nothing
+/// connected the two. A bench added tomorrow at `4096x64` would generate a
+/// perfectly valid fixture, measure it, and enter it into `bench-history` as the
+/// baseline every later release is compared against — with no pinned digest, so
+/// nothing in the repository could ever detect that fixture changing underneath
+/// those results. A timing lane cannot notice: a differently distributed design
+/// of the same shape runs at very nearly the same speed.
+///
+/// Three assertions close it, and each is needed:
+///
+/// 1. Every roster entry is pinned. Otherwise `recorded` would admit a shape no
+///    digest watches.
+/// 2. Every pinned shape is on the roster. Otherwise a digest could be deleted
+///    while the bench drawing it kept running.
+/// 3. `recorded` actually refuses a shape off the roster — demonstrated on a
+///    planted one rather than assumed from the code, in the pattern
+///    `scripts/check_source_layout.py` uses for its own rules. The planted shape
+///    is a real, generatable dataset: what makes it inadmissible is that nothing
+///    pins it, which is precisely the failure mode being guarded.
+///
+/// The remaining half of the guard is not expressible here, because
+/// `benches/` is a separate crate target that this module cannot see: the rule
+/// `absorbed-benchmark-shapes-are-pinned` in `scripts/check_source_layout.py`
+/// forbids `BenchmarkFixture::new` in `benches/`, so a benchmark cannot reach
+/// the unrestricted constructor and route around the roster.
+#[test]
+fn a_benchmark_cannot_measure_a_fixture_shape_no_digest_pins() {
+    let roster = super::benchmarks::recorded_shapes();
+    let pinned: Vec<(BenchmarkLane, usize, usize)> = ABSORBED_BENCHMARK_DIGESTS
+        .iter()
+        .map(|&(lane, rows, columns, _, _)| (lane, rows, columns))
+        .collect();
+
+    for entry in roster {
+        assert!(
+            pinned.contains(&entry),
+            "{entry:?} is on the roster the benches draw from and no digest pins it"
+        );
+    }
+    for entry in &pinned {
+        assert!(
+            roster.contains(entry),
+            "{entry:?} is pinned and the benches are not allowed to draw it"
+        );
+    }
+    assert_eq!(roster.len(), pinned.len(), "the roster carries a duplicate");
+
+    // The planted shape: one column wider than a lane the suite really measures,
+    // so it generates cleanly and is refused only for being unwatched.
+    let (lane, rows, columns) = (BenchmarkLane::ForestBinary, 512, 17);
+    assert!(
+        BenchmarkFixture::new(lane, rows, columns).is_ok(),
+        "the planted shape must be a real dataset, or the guard proves nothing"
+    );
+    assert_eq!(
+        BenchmarkFixture::recorded(lane, rows, columns),
+        Err(DatasetError::UnpinnedBenchmarkShape {
+            lane,
+            rows,
+            columns
+        })
+    );
+    // And the roster's own shapes pass, so the guard is not simply closed.
+    for (lane, rows, columns) in roster {
+        assert!(
+            BenchmarkFixture::recorded(lane, rows, columns).is_ok(),
+            "{lane:?} {rows}x{columns} is pinned and was refused"
+        );
+    }
+    // A shape the lane's *own* validation rejects still fails as that, so the
+    // roster check does not mask a shape error.
+    assert_eq!(
+        BenchmarkFixture::recorded(BenchmarkLane::ForestBinary, 0, 64),
+        Err(DatasetError::ZeroRows)
+    );
+}
+
 /// The head of every absorbed benchmark fixture, spelled out.
 ///
 /// The digests above pin the whole vectors; these say *what* each lane is
@@ -1597,6 +1687,113 @@ fn every_task_dial_holds_the_stream_and_every_structural_field_moves_it() {
     }
 }
 
+/// Widening `informative` turns further columns on and disturbs none of the
+/// ones already on.
+///
+/// This is the property that decides `informative`'s classification, and holding
+/// the stream is necessary for it but not sufficient: a coefficient draw that
+/// consumed a value only for the *informative* columns would share a stream and
+/// still reshuffle every coefficient when the prefix widened. So the nesting is
+/// asserted directly rather than inferred from the digest the sweep above
+/// compares.
+///
+/// Both families that draw a coefficient prefix are covered, because they draw
+/// it in different code: [`Task::LinearRegression`] through `draw_coefficients`,
+/// [`Task::TimeOrdered`] through `drifting_predictor`, which draws two vectors
+/// in two passes and has to nest at *both* ends. `rank` is here for the
+/// complementary claim: it never reaches the coefficient draw at all, so its
+/// coefficients are identical rather than merely nested, and what moves is the
+/// design.
+#[test]
+fn widening_the_informative_prefix_leaves_the_columns_that_already_mattered() {
+    const ROWS: usize = 256;
+    const COLUMNS: usize = 6;
+
+    let linear = |informative| {
+        Recipe::seeded(ROWS, COLUMNS, 41)
+            .unwrap()
+            .with_task(Task::LinearRegression {
+                informative,
+                coefficient_scale: 1.0,
+                intercept: 0.25,
+                noise_scale: 0.1,
+            })
+            .unwrap()
+            .generate()
+    };
+    let (narrow, wide) = (linear(2), linear(4));
+    let (narrow_beta, wide_beta) = (
+        narrow.truth().coefficients().unwrap(),
+        wide.truth().coefficients().unwrap(),
+    );
+    assert_eq!(
+        narrow_beta[..2],
+        wide_beta[..2],
+        "widening the prefix redrew the coefficients it already had"
+    );
+    assert_eq!(narrow_beta[2..], [0.0; COLUMNS - 2]);
+    assert!(
+        wide_beta[2..4].iter().all(|&value| value != 0.0),
+        "widening the prefix left the new columns switched off"
+    );
+    assert_eq!(wide_beta[4..], [0.0; COLUMNS - 4]);
+    // The dial's other half: one problem, so the design under it does not move
+    // and only the target does.
+    assert_eq!(narrow.features().as_slice(), wide.features().as_slice());
+    assert_ne!(narrow.target(), wide.target());
+
+    let timed = |informative| {
+        Recipe::seeded(ROWS, COLUMNS, 41)
+            .unwrap()
+            .with_task(Task::TimeOrdered {
+                informative,
+                coefficient_scale: 1.0,
+                drift: 0.5,
+                intercept: 0.25,
+                noise_scale: 0.1,
+            })
+            .unwrap()
+            .generate()
+    };
+    let (narrow, wide) = (timed(2), timed(4));
+    assert_eq!(
+        narrow.truth().start_coefficients().unwrap()[..2],
+        wide.truth().start_coefficients().unwrap()[..2],
+        "the drifting predictor redrew the start it already had"
+    );
+    assert_eq!(
+        narrow.truth().end_coefficients().unwrap()[..2],
+        wide.truth().end_coefficients().unwrap()[..2],
+        "the drifting predictor redrew the end it already had"
+    );
+
+    let conditioned = |rank| {
+        Recipe::seeded(ROWS, COLUMNS, 41)
+            .unwrap()
+            .with_task(Task::IllConditioned {
+                condition_number: 10.0,
+                rank,
+                coefficient_scale: 1.0,
+                noise_scale: 0.1,
+            })
+            .unwrap()
+            .generate()
+    };
+    let (deficient, full) = (conditioned(4), conditioned(COLUMNS));
+    assert_eq!(
+        deficient.truth().coefficients().unwrap(),
+        full.truth().coefficients().unwrap(),
+        "rank reached the coefficient draw, which is not what it does"
+    );
+    assert_ne!(
+        deficient.features().as_slice(),
+        full.features().as_slice(),
+        "rank left the design it duplicates columns of unmoved"
+    );
+    assert_eq!(deficient.truth().rank(), Some(4));
+    assert_eq!(full.truth().rank(), Some(COLUMNS));
+}
+
 /// One move of every field of every family.
 ///
 /// The shapes are wide enough that a dial which moved only a handful of drawn
@@ -1667,7 +1864,7 @@ fn task_partition_sweeps() -> Vec<FamilySweep> {
                     "informative",
                     linear(2, 1.0, 0.25, 0.1),
                     linear(3, 1.0, 0.25, 0.1),
-                    Role::Structural,
+                    Role::Dial,
                 ),
                 FieldMove::one(
                     "coefficient_scale",
@@ -1738,7 +1935,7 @@ fn task_partition_sweeps() -> Vec<FamilySweep> {
                     "informative",
                     glm(GlmLink::LogPositive, 2, 0.5, 0.0, 0.3),
                     glm(GlmLink::LogPositive, 3, 0.5, 0.0, 0.3),
-                    Role::Structural,
+                    Role::Dial,
                 ),
                 FieldMove::one(
                     "coefficient_scale",
@@ -1775,7 +1972,7 @@ fn task_partition_sweeps() -> Vec<FamilySweep> {
                     "rank",
                     conditioned(10.0, 4, 1.0, 0.1),
                     conditioned(10.0, 5, 1.0, 0.1),
-                    Role::Structural,
+                    Role::DesignDial,
                 ),
                 FieldMove::one(
                     "coefficient_scale",
@@ -1800,7 +1997,7 @@ fn task_partition_sweeps() -> Vec<FamilySweep> {
                     "informative",
                     binary(2, 1.0, 0.3),
                     binary(3, 1.0, 0.3),
-                    Role::Structural,
+                    Role::Dial,
                 ),
                 FieldMove::one(
                     "separation",
@@ -1920,7 +2117,7 @@ fn task_partition_sweeps() -> Vec<FamilySweep> {
                     "informative",
                     timed(2, 1.0, 0.5, 0.25, 0.1),
                     timed(3, 1.0, 0.5, 0.25, 0.1),
-                    Role::Structural,
+                    Role::Dial,
                 ),
                 FieldMove::one(
                     "coefficient_scale",
@@ -1970,7 +2167,7 @@ fn task_partition_sweeps() -> Vec<FamilySweep> {
                     "informative",
                     ranked(60, 4, 3, 2, 1.0),
                     ranked(60, 4, 3, 3, 1.0),
-                    Role::Structural,
+                    Role::Dial,
                 ),
                 FieldMove::one(
                     "coefficient_scale",

@@ -15,18 +15,22 @@ use sha2::{Digest, Sha256};
 /// with it, and it carries a version so a later phase can extend the encoding
 /// without silently reusing a digest that meant something else.
 ///
-/// **Version four, because a recipe's output moved under an unchanged
-/// encoding.** The rule the tag was introduced for is that one identifier must
-/// never mean two things, and the earlier bumps served it by moving whenever the
-/// *encoding* moved. This one serves the same rule from the other side: the byte
-/// layout below is character-for-character what `v3` hashed, and yet every
-/// recipe carrying a task family now generates different data, because the task
-/// dials left [`Recipe::stream_digest`]. A `v3` digest and a `v4` digest of one
+/// **Version five, for the same reason version four was cut: a recipe's output
+/// moved under an unchanged encoding.** The rule the tag was introduced for is
+/// that one identifier must never mean two things, and the earliest bumps served
+/// it by moving whenever the *encoding* moved. `v4` served it from the other
+/// side, when the task dials left [`Recipe::stream_digest`]; `v5` serves it
+/// again, twice over. [`BinaryKind::Sinusoid`]
+/// evaluates a different expression than the boundary it replaced, and
+/// `informative` and `rank` became dials, so every recipe carrying any of the
+/// three draws different data under a byte layout that did not move — the two
+/// counts are hashed here at exactly the width they were hashed at before. A
+/// `v4` digest and a `v5` digest of one
 /// recipe name two different datasets, so they must not be one number. Nothing
 /// outside this crate has recorded any of them — the feature is unreleased — so
 /// the bump costs a cache invalidation nobody can observe, and a stale
 /// materialized container now refuses to load rather than being served as a hit.
-const SPEC_DOMAIN: &[u8] = b"ferricml.dataset.spec.v4";
+const SPEC_DOMAIN: &[u8] = b"ferricml.dataset.spec.v5";
 
 /// The domain tag the task families' auxiliary stream seeds are derived under.
 ///
@@ -36,10 +40,23 @@ const SPEC_DOMAIN: &[u8] = b"ferricml.dataset.spec.v4";
 /// have to rule out.
 ///
 /// **Version two, because this encoding really did change**: the task's dials
-/// are no longer hashed here. Nothing outside this file reads a stream digest,
-/// so the bump invalidates nothing; it exists so the two version numbers cannot
-/// be read as a claim that the stream encoding stood still while the spec
-/// encoding moved. It is the other way around.
+/// are no longer hashed here, and `informative` and `rank` left with them when
+/// they were reclassified. Nothing outside this file reads a stream digest, so
+/// the bump invalidates nothing; it exists so the two version numbers cannot be
+/// read as a claim that the stream encoding stood still while the spec encoding
+/// moved. It is the other way around.
+///
+/// **It stayed at two through the `informative`/`rank` reclassification, and
+/// that is the deliberate answer rather than an oversight.** The tag guards one
+/// hazard — that a recorded identifier comes to mean two things — and a stream
+/// digest is not a recorded identifier: it is derived here, consumed here, and
+/// never written to a manifest, a cache key or a test literal. The recipes whose
+/// streams the reclassification moved already take new digest *values*, because
+/// the bytes hashed below genuinely changed for them. Bumping the tag as well
+/// would have reseeded every *other* family too — clusters, multiclass,
+/// nonlinear shapes, contamination — moving pins that nothing about this change
+/// touches, for no identifier anyone can collide. [`SPEC_DOMAIN`] is the tag
+/// that does guard a recorded identifier, and it moved.
 const STREAM_DOMAIN: &[u8] = b"ferricml.dataset.stream.v2";
 
 /// Where a design matrix's numbers come from.
@@ -569,24 +586,34 @@ impl Recipe {
     ///
     /// # Which fields are which, and why the compiler decides
     ///
-    /// A field is **structural** when it changes *what is drawn*: the support of
-    /// the true coefficient vector, the number of classes or clusters or
-    /// queries, the shape of a boundary, the algebraic rank. A redraw is the
-    /// honest answer there — the two recipes describe two different problems,
-    /// and holding one stream across them would only make the difference harder
-    /// to read.
+    /// A field is **structural** when it changes *what is drawn*: the number of
+    /// classes or clusters or queries, which expression a boundary or a link
+    /// evaluates. A redraw is the honest answer there — the two recipes describe
+    /// two different problems, and holding one stream across them would only
+    /// make the difference harder to read.
     ///
     /// A field is a **dial** when it modulates a *fixed* draw: how steeply, how
-    /// noisily, how imbalanced, how ill-conditioned. Two recipes differing in a
-    /// dial are one problem at two settings, and a sweep over one is
-    /// interpretable only while the problem underneath it holds still.
+    /// noisily, how imbalanced, how ill-conditioned, how much of the drawn
+    /// coefficient vector is switched on. Two recipes differing in a dial are one
+    /// problem at two settings, and a sweep over one is interpretable only while
+    /// the problem underneath it holds still.
     ///
-    /// Two dials do reach the design matrix — [`Task::IllConditioned`]'s
-    /// `condition_number` scales its columns and [`Task::Clustered`]'s `spread`
-    /// moves its rows toward their centres — and they are dials all the same,
-    /// because each applies a closed-form transform to a draw that is itself
-    /// unchanged. Their evidence is stated as that transform rather than as byte
-    /// identity.
+    /// Three dials do reach the design matrix — [`Task::IllConditioned`]'s
+    /// `condition_number` scales its columns and its `rank` replaces the columns
+    /// past it with copies of the leading ones, and [`Task::Clustered`]'s
+    /// `spread` moves its rows toward their centres — and they are dials all the
+    /// same, because each applies a closed-form transform to a draw that is
+    /// itself unchanged. Their evidence is stated as that transform rather than
+    /// as byte identity.
+    ///
+    /// **`informative` is a dial, and the reason is the nesting rather than the
+    /// name.** It looks structural — it decides the support of the true
+    /// coefficient vector — but `draw_coefficients` and `drifting_predictor`
+    /// both consume one draw per column whether the column is informative or
+    /// not, so under a held stream a widening prefix leaves every
+    /// already-informative coefficient bit-identical and turns further ones on.
+    /// Classifying it structural described a redraw the implementation does not
+    /// perform, and confounded exactly the ladder a caller would want it for.
     ///
     /// A partition maintained by hand rots, so this one is not maintained by
     /// hand. [`encode_task`] destructures every variant with no `..` rest
@@ -936,6 +963,34 @@ impl<'a> TaskFields<'a> {
         self.digest.update((value as u64).to_le_bytes());
     }
 
+    /// A count that selects *how much of* a fixed draw is used, rather than
+    /// changing the draw.
+    ///
+    /// The counterpart of [`TaskFields::structural_count`], and the distinction
+    /// is measurable rather than editorial. `informative` reaches
+    /// [`draw_coefficients`](super::task::draw_coefficients) and
+    /// [`drifting_predictor`](super::structural::drifting_predictor), both of
+    /// which consume one draw per column whether the column is informative or
+    /// not; holding the stream therefore makes a widening prefix *nest*, so the
+    /// coefficients of the columns that already mattered are bit-identical
+    /// across the move and only new ones appear. `rank` never reaches a draw at
+    /// all — it is realized by `duplicate_columns` over a design the source
+    /// already produced, which is the same closed-form-transform-of-a-fixed-draw
+    /// argument that makes `condition_number` a dial.
+    ///
+    /// Hashed at the same width `structural_count` uses, so moving a field
+    /// between the two roles leaves [`Recipe::spec_digest`]'s byte layout
+    /// exactly where it was.
+    fn dial_count(&mut self, value: usize) {
+        #[cfg(test)]
+        {
+            self.counts.dials += 1;
+        }
+        if self.dials {
+            self.digest.update((value as u64).to_le_bytes());
+        }
+    }
+
     /// A continuous knob applied to a draw that is already fixed.
     ///
     /// Hashed as its bits rather than as a formatting, because two distinct
@@ -1029,7 +1084,7 @@ fn encode_task(task: Option<Task>, fields: &mut TaskFields<'_>) {
             noise_scale,
         } => {
             fields.variant(1);
-            fields.structural_count(informative);
+            fields.dial_count(informative);
             fields.dial(coefficient_scale);
             fields.dial(intercept);
             fields.dial(noise_scale);
@@ -1051,7 +1106,7 @@ fn encode_task(task: Option<Task>, fields: &mut TaskFields<'_>) {
             // continuous value — so it is structural even though `dispersion`,
             // which shapes that response's scatter, is not.
             fields.structural_tag(link_tag(link));
-            fields.structural_count(informative);
+            fields.dial_count(informative);
             fields.dial(coefficient_scale);
             fields.dial(intercept);
             fields.dial(dispersion);
@@ -1068,7 +1123,7 @@ fn encode_task(task: Option<Task>, fields: &mut TaskFields<'_>) {
             fields.dial(condition_number);
             // The rank is not, because duplicating a column replaces drawn
             // values with copies rather than transforming them.
-            fields.structural_count(rank);
+            fields.dial_count(rank);
             fields.dial(coefficient_scale);
             fields.dial(noise_scale);
         }
@@ -1078,7 +1133,7 @@ fn encode_task(task: Option<Task>, fields: &mut TaskFields<'_>) {
             prevalence,
         } => {
             fields.variant(5);
-            fields.structural_count(informative);
+            fields.dial_count(informative);
             fields.dial(separation);
             fields.dial(prevalence);
         }
@@ -1124,7 +1179,7 @@ fn encode_task(task: Option<Task>, fields: &mut TaskFields<'_>) {
             noise_scale,
         } => {
             fields.variant(9);
-            fields.structural_count(informative);
+            fields.dial_count(informative);
             fields.dial(coefficient_scale);
             fields.dial(drift);
             fields.dial(intercept);
@@ -1141,7 +1196,7 @@ fn encode_task(task: Option<Task>, fields: &mut TaskFields<'_>) {
             fields.structural_count(queries);
             fields.structural_count(docs_per_query);
             fields.structural_count(grades);
-            fields.structural_count(informative);
+            fields.dial_count(informative);
             // The utilities scale linearly with it, so the within-query order,
             // the grades and the pairs are all unchanged and only the recorded
             // utilities move — the clearest dial in the enum.
@@ -1168,7 +1223,7 @@ const fn nonlinear_tag(kind: NonlinearKind) -> u8 {
 const fn binary_tag(kind: BinaryKind) -> u8 {
     match kind {
         BinaryKind::Xor => 1,
-        BinaryKind::Moons => 2,
+        BinaryKind::Sinusoid => 2,
         BinaryKind::Circles => 3,
         BinaryKind::Checkerboard => 4,
     }

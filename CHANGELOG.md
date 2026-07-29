@@ -97,6 +97,15 @@ and releases use [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   `(lane, shape)` pairs in all, against digests read out of the functions this
   commit deletes.
 
+  **And a bench cannot reach a shape those digests do not pin.**
+  `BenchmarkFixture::recorded` — the constructor the suites call — refuses a
+  `(lane, rows, columns)` off that roster with
+  `DatasetError::UnpinnedBenchmarkShape`, so a new bench arm cannot quietly
+  define a fixture nothing is watching and then have every later release
+  compared against it. `BenchmarkFixture::new` stays unrestricted for callers
+  exercising these lanes at shapes they choose rather than timing against a
+  history.
+
   Like the conformance presets, these are transcriptions rather than recipes:
   `f32` throughout, association order preserved, and a design narrower than a
   target expression's score columns still sums only the columns it has.
@@ -107,7 +116,13 @@ and releases use [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   generalized linear count or positive response with a known rate, an
   ill-conditioned design built to a requested condition number and rank, a
   logistic binary problem at a requested prevalence, and four nonlinear binary
-  boundaries. Every one of them records what it knows through `Truth` —
+  boundaries. **All four of those boundaries defeat a linear rule**, which is
+  measured rather than asserted: the family's own instrument scores the best
+  least-squares linear rule against each boundary's Bayes accuracy, and the
+  smallest gap is `0.188`. `BinaryKind::Sinusoid` is named for the curve it
+  draws — `x₂ = sin(2π x₁)`, one full period across the design's support — and
+  is the boundary that reading forced into its present shape. Every one of them
+  records what it knows through `Truth` —
   coefficients, an intercept, a per-row conditional mean, a per-row Bayes
   probability, an exact algebraic rank — which is what turns "where do two
   libraries disagree" into "which one is closer to right".
@@ -117,6 +132,25 @@ and releases use [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   family, and five variants so a family that knows less says so with a variant
   rather than with an empty vector. A nonlinear shape reports its conditional
   mean and *no* coefficients, because none produce it.
+
+  **`Truth`'s field-carrying variants are individually `#[non_exhaustive]`.**
+  It is the enum whose whole job is recording what a family knows, so a family
+  that learns to record more should be able to say so without breaking anyone;
+  read its fields through the accessors, or destructure with `..`. `Task` is
+  deliberately the other way round — its variants stay literal-constructible,
+  because a recipe is a complete, named, compiler-checked request, and losing
+  that would cost more than the field-add it would insure against. Adding a knob
+  to an existing family is therefore a deliberate breaking change; new shapes
+  arrive as new variants and kinds, and cross-cutting knobs arrive through
+  `Contamination`.
+
+  **A dial moves the difficulty; a structural field moves the problem.** Two
+  recipes differing only in a dial draw from the same streams, so a ladder over
+  one of them is a ladder over one problem rather than over a sequence of
+  unrelated draws. `informative` and `rank` are dials, which is a claim about the
+  implementation and is tested as one: widening `informative` leaves the
+  coefficients of the columns that already mattered bit-identical and switches
+  further ones on, and `rank` never reaches the coefficient draw at all.
 
   **Prevalence is a knob, not an outcome.** The binary families solve for the
   intercept by bisection so the mean Bayes probability equals the request

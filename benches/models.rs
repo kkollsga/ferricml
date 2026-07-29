@@ -73,7 +73,7 @@ const MULTICLASS_FOREST_TREES: usize = 16;
 /// untested in a benchmark file — see
 /// `the_absorbed_benchmark_fixtures_reproduce_their_recorded_bytes`.
 fn fixture(rows: usize, columns: usize) -> (DenseMatrix, RegressionTargets) {
-    let dataset = BenchmarkFixture::new(BenchmarkLane::ModelsRegression, rows, columns)
+    let dataset = BenchmarkFixture::recorded(BenchmarkLane::ModelsRegression, rows, columns)
         .unwrap()
         .generate();
     let targets = match dataset.target() {

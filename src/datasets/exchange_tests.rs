@@ -815,7 +815,7 @@ fn the_word_spelled_vocabularies_survive_the_text() {
     }
     for kind in [
         BinaryKind::Xor,
-        BinaryKind::Moons,
+        BinaryKind::Sinusoid,
         BinaryKind::Circles,
         BinaryKind::Checkerboard,
     ] {

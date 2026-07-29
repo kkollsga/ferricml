@@ -1070,7 +1070,7 @@ impl core::marker::StructuralPartialEq for ferricml::datasets::BenchmarkLane
 #[non_exhaustive] pub enum ferricml::datasets::BinaryKind
 pub ferricml::datasets::BinaryKind::Checkerboard
 pub ferricml::datasets::BinaryKind::Circles
-pub ferricml::datasets::BinaryKind::Moons
+pub ferricml::datasets::BinaryKind::Sinusoid
 pub ferricml::datasets::BinaryKind::Xor
 impl core::clone::Clone for ferricml::datasets::BinaryKind
 pub fn ferricml::datasets::BinaryKind::clone(&self) -> ferricml::datasets::BinaryKind
@@ -1169,6 +1169,10 @@ pub ferricml::datasets::DatasetError::TooFewGrades::grades: usize
 pub ferricml::datasets::DatasetError::TooManyClasses
 pub ferricml::datasets::DatasetError::TooManyClasses::classes: usize
 pub ferricml::datasets::DatasetError::TooManyClasses::limit: usize
+pub ferricml::datasets::DatasetError::UnpinnedBenchmarkShape
+pub ferricml::datasets::DatasetError::UnpinnedBenchmarkShape::columns: usize
+pub ferricml::datasets::DatasetError::UnpinnedBenchmarkShape::lane: ferricml::datasets::BenchmarkLane
+pub ferricml::datasets::DatasetError::UnpinnedBenchmarkShape::rows: usize
 pub ferricml::datasets::DatasetError::WeightPatternNeedsLabels
 pub ferricml::datasets::DatasetError::ZeroBlobs
 pub ferricml::datasets::DatasetError::ZeroColumns
@@ -1471,38 +1475,38 @@ pub fn ferricml::datasets::Task::fmt(&self, &mut core::fmt::Formatter<'_>) -> co
 impl core::marker::Copy for ferricml::datasets::Task
 impl core::marker::StructuralPartialEq for ferricml::datasets::Task
 #[non_exhaustive] pub enum ferricml::datasets::Truth
-pub ferricml::datasets::Truth::Bayes
+#[non_exhaustive] pub ferricml::datasets::Truth::Bayes
 pub ferricml::datasets::Truth::Bayes::probabilities: alloc::vec::Vec<f32>
-pub ferricml::datasets::Truth::ClusterAssignment
+#[non_exhaustive] pub ferricml::datasets::Truth::ClusterAssignment
 pub ferricml::datasets::Truth::ClusterAssignment::assignments: alloc::vec::Vec<usize>
 pub ferricml::datasets::Truth::ClusterAssignment::blobs: usize
 pub ferricml::datasets::Truth::ClusterAssignment::centres: alloc::vec::Vec<f32>
-pub ferricml::datasets::Truth::ConditionalMean
+#[non_exhaustive] pub ferricml::datasets::Truth::ConditionalMean
 pub ferricml::datasets::Truth::ConditionalMean::values: alloc::vec::Vec<f32>
-pub ferricml::datasets::Truth::ConditionedDesign
+#[non_exhaustive] pub ferricml::datasets::Truth::ConditionedDesign
 pub ferricml::datasets::Truth::ConditionedDesign::coefficients: alloc::vec::Vec<f32>
 pub ferricml::datasets::Truth::ConditionedDesign::conditional_mean: alloc::vec::Vec<f32>
 pub ferricml::datasets::Truth::ConditionedDesign::intercept: f32
 pub ferricml::datasets::Truth::ConditionedDesign::rank: usize
 pub ferricml::datasets::Truth::DesignOnly
-pub ferricml::datasets::Truth::DriftingPredictor
+#[non_exhaustive] pub ferricml::datasets::Truth::DriftingPredictor
 pub ferricml::datasets::Truth::DriftingPredictor::conditional_mean: alloc::vec::Vec<f32>
 pub ferricml::datasets::Truth::DriftingPredictor::end_coefficients: alloc::vec::Vec<f32>
 pub ferricml::datasets::Truth::DriftingPredictor::intercept: f32
 pub ferricml::datasets::Truth::DriftingPredictor::start_coefficients: alloc::vec::Vec<f32>
 pub ferricml::datasets::Truth::DriftingPredictor::times: alloc::vec::Vec<f32>
-pub ferricml::datasets::Truth::LinearBayes
+#[non_exhaustive] pub ferricml::datasets::Truth::LinearBayes
 pub ferricml::datasets::Truth::LinearBayes::coefficients: alloc::vec::Vec<f32>
 pub ferricml::datasets::Truth::LinearBayes::intercept: f32
 pub ferricml::datasets::Truth::LinearBayes::probabilities: alloc::vec::Vec<f32>
-pub ferricml::datasets::Truth::LinearPredictor
+#[non_exhaustive] pub ferricml::datasets::Truth::LinearPredictor
 pub ferricml::datasets::Truth::LinearPredictor::coefficients: alloc::vec::Vec<f32>
 pub ferricml::datasets::Truth::LinearPredictor::conditional_mean: alloc::vec::Vec<f32>
 pub ferricml::datasets::Truth::LinearPredictor::intercept: f32
-pub ferricml::datasets::Truth::MulticlassBayes
+#[non_exhaustive] pub ferricml::datasets::Truth::MulticlassBayes
 pub ferricml::datasets::Truth::MulticlassBayes::classes: usize
 pub ferricml::datasets::Truth::MulticlassBayes::probabilities: alloc::vec::Vec<f32>
-pub ferricml::datasets::Truth::RankingUtility
+#[non_exhaustive] pub ferricml::datasets::Truth::RankingUtility
 pub ferricml::datasets::Truth::RankingUtility::coefficients: alloc::vec::Vec<f32>
 pub ferricml::datasets::Truth::RankingUtility::grades: usize
 pub ferricml::datasets::Truth::RankingUtility::utilities: alloc::vec::Vec<f32>
@@ -1559,6 +1563,7 @@ pub fn ferricml::datasets::BenchmarkFixture::generate(&self) -> ferricml::datase
 pub const fn ferricml::datasets::BenchmarkFixture::lane(&self) -> ferricml::datasets::BenchmarkLane
 pub fn ferricml::datasets::BenchmarkFixture::new(ferricml::datasets::BenchmarkLane, usize, usize) -> core::result::Result<Self, ferricml::datasets::DatasetError>
 pub const fn ferricml::datasets::BenchmarkFixture::recipe(&self) -> ferricml::datasets::Recipe
+pub fn ferricml::datasets::BenchmarkFixture::recorded(ferricml::datasets::BenchmarkLane, usize, usize) -> core::result::Result<Self, ferricml::datasets::DatasetError>
 impl core::clone::Clone for ferricml::datasets::BenchmarkFixture
 pub fn ferricml::datasets::BenchmarkFixture::clone(&self) -> ferricml::datasets::BenchmarkFixture
 impl core::cmp::Eq for ferricml::datasets::BenchmarkFixture
