@@ -79,25 +79,9 @@ fn fit_dense_by(
     let preprocessed = preprocess(data, targets, sample_weights, fit_intercept);
     let rows = data.rows();
     let columns = data.columns();
-    let (coefficients, rank) = if reduce {
-        let (upper, projected) = reduce_by_qr(&preprocessed)?;
-        solve_min_norm(upper.as_ref(), &projected, rows, columns, tolerance)?
-    } else {
-        solve_min_norm(
-            preprocessed.matrix_ref(),
-            &preprocessed.targets,
-            rows,
-            columns,
-            tolerance,
-        )?
-    };
-    let intercept = preprocessed.target_mean
-        - preprocessed
-            .feature_means
-            .iter()
-            .zip(&coefficients)
-            .map(|(&mean, &coefficient)| mean * coefficient)
-            .sum::<f64>();
+    let (coefficients, rank) =
+        solve_minimum_norm_centered(&preprocessed, rows, columns, tolerance, reduce)?;
+    let intercept = recover_intercept(&preprocessed, &coefficients);
     if coefficients.iter().any(|value| !value.is_finite()) || !intercept.is_finite() {
         return Err(ModelError::LinearSolveFailed);
     }
@@ -106,6 +90,49 @@ fn fit_dense_by(
         intercept,
         rank,
     })
+}
+
+/// The minimum-norm route, on a design that has already been centered.
+///
+/// Split out of [`fit_dense_by`] so [`fit_ridge_dense`] can fall back to it
+/// without centering the design a second time: the fallback is taken exactly
+/// when the fast path has already paid for `preprocess`, and repeating it would
+/// make the refusal cost more than the answer it refuses.
+fn solve_minimum_norm_centered(
+    preprocessed: &PreprocessedDense,
+    rows: usize,
+    columns: usize,
+    tolerance: f32,
+    reduce: bool,
+) -> Result<(Vec<f64>, usize), ModelError> {
+    if reduce {
+        let (upper, projected) = reduce_by_qr(preprocessed)?;
+        solve_min_norm(upper.as_ref(), &projected, rows, columns, tolerance)
+    } else {
+        solve_min_norm(
+            preprocessed.matrix_ref(),
+            &preprocessed.targets,
+            rows,
+            columns,
+            tolerance,
+        )
+    }
+}
+
+/// Recovers the intercept the centering removed.
+///
+/// One definition for every dense linear fit, in the same accumulation order
+/// for all of them — the four estimators that share it also share frozen
+/// fixtures, so a second spelling of this expression is a second set of last
+/// bits.
+fn recover_intercept(preprocessed: &PreprocessedDense, coefficients: &[f64]) -> f64 {
+    preprocessed.target_mean
+        - preprocessed
+            .feature_means
+            .iter()
+            .zip(coefficients)
+            .map(|(&mean, &coefficient)| mean * coefficient)
+            .sum::<f64>()
 }
 
 /// Whether a design is tall enough that reducing it before the SVD pays.
@@ -303,6 +330,188 @@ fn solve_min_norm(
     Ok((coefficients, rank))
 }
 
+/// The largest certified `κ₂(XᵀX)` an unpenalized fit will answer through the
+/// normal equations.
+///
+/// A Gram solve loses about `κ₂(XᵀX) · eps` of relative accuracy, so this
+/// constant *is* the accuracy the fast path is allowed to cost: `1e8 · eps` is
+/// `2.2e-8`, and `Ridge` returns `f32` coefficients whose own resolution is
+/// `1.2e-7`. The bound is therefore under a fifth of the last bit the caller
+/// can see, and the corpus measures the realized figure five orders of
+/// magnitude better than the bound —
+/// `the_certified_gram_path_agrees_with_the_minimum_norm_path` records
+/// `2.0e-10` worst over the designs the certificate accepts.
+///
+/// It is a *certified* limit rather than an estimated one, and that word is the
+/// whole design: see [`gram_condition_certificate`].
+const CERTIFIED_GRAM_CONDITION: f64 = 1.0e8;
+
+/// The certificate limit at a given shape, tightened when the shape's own rank
+/// floor demands it.
+///
+/// The fast path may only run where the minimum-norm path would have reported
+/// **full** rank, because at full rank the minimum-norm solution is the unique
+/// least-squares solution and the two routes answer the same question. That
+/// implication is arranged here rather than argued at the call site: a
+/// certificate of `c` bounds `σ_min/σ_max` below by `1/√c`, and
+/// [`solve_min_norm`] calls a singular value vanished when it falls under
+/// `eps · max(rows, columns) · σ_max`, so requiring `1/√c` to clear that floor
+/// by a factor of sixteen makes full rank a consequence of the certificate at
+/// every shape rather than at the shapes anyone thought to test.
+///
+/// `CERTIFIED_GRAM_CONDITION` is the binding term for every design that fits in
+/// memory — the rank term only overtakes it past about `3e10` rows — but it is
+/// written out because "in practice the other one binds" is exactly the kind of
+/// claim that stops being true without anyone noticing.
+/// `the_certificate_limit_implies_full_rank_at_every_shape` pins it.
+fn certificate_limit(rows: usize, columns: usize) -> f64 {
+    let floor = 16.0 * f64::EPSILON * rows.max(columns) as f64;
+    CERTIFIED_GRAM_CONDITION.min(1.0 / (floor * floor))
+}
+
+/// Whether a centered design has enough rows for its Gram matrix to be
+/// positive definite at all.
+///
+/// `XᵀX` has the rank of `X`, so a design with fewer rows than columns makes it
+/// singular by counting, and centering costs one more row's worth: every column
+/// of a fitted-intercept design is orthogonal to the weight vector, so the rank
+/// cannot exceed `rows - 1`. The certificate would refuse such a design anyway
+/// — that is what the `1024x300` reference measurement of a wasted attempt
+/// showed — but the refusal is not free: at `256x300` the Gram and the failed
+/// factorization cost 1.3 ms on an 8.6 ms fit, a 16 percent regression on a
+/// shape the fast path can never help. Counting rows costs nothing and the
+/// conclusion is exact, so it is checked before the arithmetic rather than
+/// discovered by it.
+fn gram_can_be_definite(rows: usize, columns: usize, fit_intercept: bool) -> bool {
+    rows.saturating_sub(usize::from(fit_intercept)) >= columns
+}
+
+/// A rigorous upper bound on `κ₂(G)` for `G = LLᵀ`, from `G` and its Cholesky
+/// factor.
+///
+/// `G⁻¹ = L⁻ᵀL⁻¹` gives `‖G⁻¹‖₂ = ‖L⁻¹‖₂²`, Hölder bounds a two-norm by the
+/// one- and infinity-norms it sits between (`‖A‖₂² ≤ ‖A‖₁‖A‖∞`), and `G` is
+/// symmetric so `‖G‖₂ ≤ ‖G‖₁`. The product `‖G‖₁ · ‖L⁻¹‖₁ · ‖L⁻¹‖∞` is
+/// therefore an upper bound on `κ₂(G)`, which for `G = XᵀX` is `κ₂(X)²`.
+///
+/// **An upper bound is the only kind that certifies anything, and the cheap
+/// alternatives all bound from the wrong side.** A power iteration, Hager's
+/// one-norm estimator (what LAPACK's `pocon` ships), and the ratio of Cholesky
+/// pivots each *underestimate* `‖G⁻¹‖`: they can prove a design ill-conditioned
+/// and can never prove one well-conditioned, so a gate built on them accepts
+/// whatever they happen to miss. That is not a theoretical worry here. Cholesky
+/// on an exactly rank-deficient design **succeeds** far more often than it
+/// fails — measured succeeding on a `1024x300` design of rank 299, a `256x4` of
+/// rank 3 and a `64x3` of rank 2 — and returns a solution that is not the
+/// minimum-norm one, off by `0.24`, `0.96` and `6.5` relative. A
+/// factorization-failure gate — the usual library design for this route — would
+/// have shipped every one of those answers.
+///
+/// The bound is loose by the factor Hölder and the one-norm each give away, and
+/// that is measured rather than feared: over the corpus it exceeds `κ₂(X)²` by
+/// `1.0x` to `283x`, worst at `1024x512`, growing roughly with `√columns`. A
+/// loose bound costs only a fallback that was not strictly necessary.
+///
+/// Cost is one triangular inversion, `p³/6` against the Gram's `n·p²` — 4
+/// percent of the fast path at `4096x300`, 25 percent at `1024x512`, and it
+/// buys the difference between a gate and a guess.
+fn gram_condition_certificate(gram: MatRef<'_, f64>, lower: MatRef<'_, f64>) -> f64 {
+    let columns = gram.nrows();
+    let mut inverse = Mat::<f64>::zeros(columns, columns);
+    faer::linalg::triangular_inverse::invert_lower_triangular(inverse.as_mut(), lower, Par::Seq);
+
+    // `invert_lower_triangular` writes only the lower triangle, and only the
+    // lower triangle is read back: the strict upper half of `L⁻¹` is zero.
+    let mut inverse_one = 0.0_f64;
+    let mut inverse_infinity = 0.0_f64;
+    let mut gram_one = 0.0_f64;
+    for index in 0..columns {
+        inverse_one = inverse_one.max(sum_in_order(
+            (index..columns).map(|row| inverse[(row, index)].abs()),
+        ));
+        inverse_infinity = inverse_infinity.max(sum_in_order(
+            (0..=index).map(|column| inverse[(index, column)].abs()),
+        ));
+        gram_one = gram_one.max(sum_in_order(
+            (0..columns).map(|row| gram[(row, index)].abs()),
+        ));
+    }
+    gram_one * inverse_one * inverse_infinity
+}
+
+/// Solves `(XᵀX + alpha·I) b = Xᵀy` through the Gram matrix and a Cholesky
+/// factorization, or refuses.
+///
+/// `certified` is `None` for a penalized fit, which needs no certificate — the
+/// penalty is what bounds the condition number, and `κ₂(XᵀX + αI)` is at most
+/// `(σ_max² + α)/α` however the design is shaped. It is `Some(limit)` for
+/// `alpha = 0`, where nothing bounds it and the caller has a slower route that
+/// does.
+fn solve_normal_equations(
+    preprocessed: &PreprocessedDense,
+    alpha: f64,
+    certified: Option<f64>,
+) -> Option<Vec<f64>> {
+    let design = preprocessed.matrix_ref();
+    let mut gram: Mat<f64> = design.transpose() * design;
+    for index in 0..gram.nrows() {
+        gram[(index, index)] += alpha;
+    }
+    let factor = gram.llt(Side::Lower).ok()?;
+    if let Some(limit) = certified {
+        // `NaN` is named rather than left to a comparison: a design carrying an
+        // overflow reaches a `NaN` certificate, and an unordered comparison
+        // would then read as "not above the limit" and take the fast route.
+        let certificate = gram_condition_certificate(gram.as_ref(), factor.L());
+        if certificate.is_nan() || certificate > limit {
+            return None;
+        }
+    }
+    let right: Mat<f64> = design.transpose() * preprocessed.targets_ref();
+    let solution = factor.solve(&right);
+    Some(
+        (0..solution.nrows())
+            .map(|index| solution[(index, 0)])
+            .collect::<Vec<_>>(),
+    )
+}
+
+/// Fits a dense ridge model, penalized or not.
+///
+/// `alpha = 0` is not a penalized fit at all — it is ordinary least squares,
+/// and it carries the minimum-norm contract
+/// (`alpha_zero_matches_minimum_norm_linear_regression`), which is why it used
+/// to route unconditionally into the SVD. That cost 2.4x to 6.7x more than
+/// `alpha = 1` on identical, **full-rank** data, where the contract binds on
+/// nothing: 58.4 ms against 8.7 ms at `1024x512`, 14.9 ms against 3.0 ms at
+/// `1024x300` (the 2026-07-28 comparison sweep §D3, recorded in the local
+/// `dev-docs` design set, and the same recommendation one sweep earlier at a 9x
+/// penalty).
+///
+/// So `alpha = 0` now takes the same Gram-and-Cholesky route as a penalized fit
+/// **when, and only when, that route can be certified to answer the same
+/// question**. The certificate is [`gram_condition_certificate`] against
+/// [`certificate_limit`], and it is doing two jobs at once:
+///
+/// - **Rank.** A certificate under the limit bounds `σ_min/σ_max` above the
+///   rank floor [`solve_min_norm`] uses, so the design is full rank, so the
+///   minimum-norm solution *is* the unique least-squares solution and the two
+///   routes agree by definition rather than by luck.
+/// - **Accuracy.** Forming `XᵀX` squares the condition number, so
+///   "full rank but ill-conditioned" is precisely the case a rank-only gate
+///   would ruin — it would hand a design conditioned at `1e7` to a solve that
+///   loses fourteen digits on it. The certificate bounds `κ₂(X)²` directly, so
+///   an ill-conditioned design fails it whether or not it is full rank, and
+///   lands on the accurate route.
+///
+/// What changes path, measured rather than predicted: a design with more rows
+/// than columns, full rank, and `κ₂(X)` roughly under `1e3`. What does not:
+/// anything underdetermined ([`gram_can_be_definite`] turns it away by counting
+/// rows, before any arithmetic), anything rank-deficient, anything at the rank
+/// cutoff, and anything ill-conditioned. Both frozen `alpha = 0` surfaces are in
+/// the second group — the rank-deficient `3x2` reference design factors not at
+/// all, and the two-row cross-validation folds of the frozen `4x2` design lose a
+/// degree of freedom to centering — so no pinned value moves.
 pub(super) fn fit_ridge_dense(
     data: &MatrixView<'_>,
     targets: &[f32],
@@ -310,35 +519,37 @@ pub(super) fn fit_ridge_dense(
     fit_intercept: bool,
     alpha: f32,
 ) -> Result<DenseLinearFit, ModelError> {
-    if alpha == 0.0 {
-        let fit = fit_dense(data, targets, sample_weights, fit_intercept, 0.0)?;
-        return Ok(DenseLinearFit {
-            coefficients: fit.coefficients,
-            intercept: fit.intercept,
-        });
-    }
+    debug_assert_eq!(data.rows(), targets.len());
+    debug_assert!(sample_weights.is_none_or(|weights| weights.len() == data.rows()));
+
     pin_sequential();
+    let rows = data.rows();
+    let columns = data.columns();
     let preprocessed = preprocess(data, targets, sample_weights, fit_intercept);
-    let design = preprocessed.matrix_ref();
-    let mut gram: Mat<f64> = design.transpose() * design;
-    for index in 0..gram.nrows() {
-        gram[(index, index)] += f64::from(alpha);
-    }
-    let right: Mat<f64> = design.transpose() * preprocessed.targets_ref();
-    let solution = gram
-        .llt(Side::Lower)
-        .map_err(|_| ModelError::LinearSolveFailed)?
-        .solve(&right);
-    let coefficients = (0..solution.nrows())
-        .map(|index| solution[(index, 0)])
-        .collect::<Vec<_>>();
-    let intercept = preprocessed.target_mean
-        - preprocessed
-            .feature_means
-            .iter()
-            .zip(&coefficients)
-            .map(|(&mean, &coefficient)| mean * coefficient)
-            .sum::<f64>();
+    let coefficients = if alpha == 0.0 {
+        match gram_can_be_definite(rows, columns, fit_intercept)
+            .then(|| {
+                solve_normal_equations(&preprocessed, 0.0, Some(certificate_limit(rows, columns)))
+            })
+            .flatten()
+        {
+            Some(coefficients) => coefficients,
+            None => {
+                solve_minimum_norm_centered(
+                    &preprocessed,
+                    rows,
+                    columns,
+                    0.0,
+                    reduce_before_decomposing(rows, columns),
+                )?
+                .0
+            }
+        }
+    } else {
+        solve_normal_equations(&preprocessed, f64::from(alpha), None)
+            .ok_or(ModelError::LinearSolveFailed)?
+    };
+    let intercept = recover_intercept(&preprocessed, &coefficients);
     if coefficients.iter().any(|value| !value.is_finite()) || !intercept.is_finite() {
         return Err(ModelError::LinearSolveFailed);
     }
@@ -1007,5 +1218,396 @@ mod tests {
                 singular[0]
             );
         }
+    }
+
+    /// A random `rows`-by-`columns` matrix with orthonormal columns.
+    fn orthonormal(rows: usize, columns: usize, rng: &mut OwnedRng) -> Mat<f64> {
+        Mat::from_fn(rows, columns, |_, _| rng.unit_f64() * 2.0 - 1.0)
+            .qr()
+            .compute_thin_Q()
+    }
+
+    /// A design with a prescribed condition number and **no diagonal
+    /// structure**: `U diag(s) Vᵀ` for random orthonormal `U` and `V`.
+    ///
+    /// This exists because the corpus the crate already had cannot test what
+    /// this gate is for. [`Conditioning::Ill`] — and the generator's
+    /// `Task::IllConditioned` — reach a condition number by scaling columns
+    /// geometrically, and a *column-scaled* design is the one case where the
+    /// normal equations do not misbehave: `Cholesky(D G D) = D · Cholesky(G)`,
+    /// so the scaling divides straight back out. Measured, a `1024x300` design
+    /// column-scaled to `κ = 1e12` still gives a Gram solve that agrees with the
+    /// SVD to `2.2e-15`, while a *rotated* design at `κ = 1e6` — six orders less
+    /// conditioned — disagrees by `1.6e-5`. A corpus built only from column
+    /// scaling would have licensed a gate that ruins the rotated case.
+    ///
+    /// The design is stored as `f32`, which caps what is reachable: rounding
+    /// perturbs it by about `1e-7` relative, so a requested `κ` past `1e7` is
+    /// not the `κ` that arrives. The sweep stops there, and the test reads the
+    /// realized condition number rather than the requested one.
+    fn rotated_design(rows: usize, columns: usize, condition: f64, rng: &mut OwnedRng) -> Vec<f32> {
+        let left = orthonormal(rows, columns, rng);
+        let right = orthonormal(columns, columns, rng);
+        let scaled = Mat::from_fn(rows, columns, |row, column| {
+            left[(row, column)] * condition.powf(-(column as f64) / (columns - 1).max(1) as f64)
+        });
+        let product = scaled * right.transpose();
+        (0..rows * columns)
+            .map(|index| product[(index / columns, index % columns)] as f32)
+            .collect()
+    }
+
+    /// Whether the `alpha = 0` gate accepts a design, without fitting it twice.
+    fn gram_path_accepts(
+        data: &MatrixView<'_>,
+        targets: &[f32],
+        weights: Option<&SampleWeights>,
+        fit_intercept: bool,
+    ) -> bool {
+        if !gram_can_be_definite(data.rows(), data.columns(), fit_intercept) {
+            return false;
+        }
+        let preprocessed = preprocess(data, targets, weights, fit_intercept);
+        solve_normal_equations(
+            &preprocessed,
+            0.0,
+            Some(certificate_limit(data.rows(), data.columns())),
+        )
+        .is_some()
+    }
+
+    /// The certificate limit implies full rank at **every** shape, not at the
+    /// shapes that happened to be measured.
+    ///
+    /// This is the coupling the fast path rests on, written in two places: the
+    /// gate compares a bound on `κ₂(X)²` against [`certificate_limit`], and
+    /// [`solve_min_norm`] decides rank by comparing `σ` against
+    /// `eps · max(rows, columns) · σ_max`. If a certificate under the limit ever
+    /// stopped implying full rank, the fast path would start answering
+    /// rank-deficient designs with a non-minimum-norm solution and nothing
+    /// structural would fail. So the implication is checked over a shape sweep
+    /// that reaches far past any design that fits in memory, rather than
+    /// re-derived whenever the constant is read.
+    #[test]
+    fn the_certificate_limit_implies_full_rank_at_every_shape() {
+        let mut shapes = 0_usize;
+        for &rows in &[
+            1_usize,
+            2,
+            3,
+            17,
+            256,
+            1024,
+            4096,
+            1_000_000,
+            1_000_000_000,
+            100_000_000_000,
+        ] {
+            for &columns in &[1_usize, 2, 8, 48, 300, 512, 4096] {
+                let limit = certificate_limit(rows, columns);
+                // A certificate of `limit` bounds `σ_min/σ_max` below by this.
+                let smallest_ratio = 1.0 / limit.sqrt();
+                // What `solve_min_norm` rounds away, in units of `σ_max`.
+                let floor = f64::EPSILON * rows.max(columns) as f64;
+                assert!(
+                    smallest_ratio > 4.0 * floor,
+                    "at {rows}x{columns} a certificate at the limit {limit:e} admits \
+                     σ_min/σ_max as low as {smallest_ratio:e}, against a rank floor of \
+                     {floor:e} — the gate can accept a design the minimum-norm path \
+                     calls rank-deficient"
+                );
+                shapes += 1;
+            }
+        }
+        assert!(shapes >= 70, "only {shapes} shapes were checked");
+    }
+
+    /// The row-count guard only ever skips work the certificate would have
+    /// refused anyway.
+    ///
+    /// [`gram_can_be_definite`] exists to make an underdetermined design cheap
+    /// to turn away, not to turn away anything the certificate would have taken
+    /// — it is a cost guard sitting in front of a correctness guard, and the two
+    /// must not disagree. If it ever started refusing a design the certificate
+    /// would have accepted, `alpha = 0` would silently keep taking the slow
+    /// route on shapes it no longer needed to, and no test that only checks
+    /// answers would notice.
+    ///
+    /// So the arithmetic is run on exactly the shapes the guard rejects, and the
+    /// certificate has to reject them too. Random data is the sharpest case
+    /// available here: a random short design is as close to full rank as a short
+    /// design gets, so if the certificate refuses *these*, it refuses every
+    /// design of the shape.
+    #[test]
+    fn the_row_count_guard_never_skips_a_design_the_certificate_would_accept() {
+        let mut rng = OwnedRng::new(0x0C0F_FEE0);
+        let mut skipped = 0_usize;
+        for columns in 1..12_usize {
+            for rows in 1..14_usize {
+                for &fit_intercept in &[false, true] {
+                    if gram_can_be_definite(rows, columns, fit_intercept) {
+                        continue;
+                    }
+                    skipped += 1;
+                    let values = (0..rows * columns)
+                        .map(|_| (rng.unit_f64() * 2.0 - 1.0) as f32)
+                        .collect::<Vec<f32>>();
+                    let targets = (0..rows)
+                        .map(|_| (rng.unit_f64() * 2.0 - 1.0) as f32)
+                        .collect::<Vec<f32>>();
+                    let data = DenseMatrix::new(values, rows, columns).unwrap();
+                    let preprocessed = preprocess(&data.as_view(), &targets, None, fit_intercept);
+                    assert!(
+                        solve_normal_equations(
+                            &preprocessed,
+                            0.0,
+                            Some(certificate_limit(rows, columns))
+                        )
+                        .is_none(),
+                        "the row-count guard skipped a {rows}x{columns} design \
+                         (intercept {fit_intercept}) the certificate would have \
+                         accepted"
+                    );
+                }
+            }
+        }
+        assert!(
+            skipped > 100,
+            "only {skipped} shapes reach the guard, so this implication is close \
+             to vacuous"
+        );
+    }
+
+    /// The certified Gram route and the minimum-norm route answer the same
+    /// question, and a refused design is answered by exactly the old code.
+    ///
+    /// Two assertions per design, and they carry different weight:
+    ///
+    /// - **Refused ⇒ byte-identical.** A design the certificate turns away is
+    ///   fitted by `solve_minimum_norm_centered` on the same centered buffer the
+    ///   old code built, so its coefficients must match `fit_dense`'s *bit for
+    ///   bit*. That is what makes "no frozen value moves for a refused design" a
+    ///   checked statement rather than a hopeful one.
+    /// - **Accepted ⇒ full rank, and agreement inside the envelope.** The
+    ///   minimum-norm contract only has content where rank is deficient, so an
+    ///   accepted design must be full rank — checked against the rank the
+    ///   minimum-norm path itself reports, not against the certificate's own
+    ///   arithmetic — and the two answers must then agree to far better than the
+    ///   `f32` the caller receives.
+    ///
+    /// The corpus is the three families the gate has to separate: well
+    /// conditioned, ill conditioned both ways round (see [`rotated_design`] for
+    /// why both), exactly rank-deficient, and sitting on the rank cutoff, each
+    /// with and without an intercept and with and without weights.
+    #[test]
+    fn the_certified_gram_path_agrees_with_the_minimum_norm_path() {
+        let mut rng = OwnedRng::new(0x0A11_0000_1CE5);
+        let mut designs: Vec<(String, usize, usize, Vec<f32>)> = Vec::new();
+
+        for &(rows, columns) in &[(500_usize, 8_usize), (300, 20), (64, 3), (24, 40)] {
+            let values = (0..rows * columns)
+                .map(|_| (rng.unit_f64() * 2.0 - 1.0) as f32)
+                .collect::<Vec<f32>>();
+            designs.push((format!("well {rows}x{columns}"), rows, columns, values));
+        }
+        for &condition in &[1e1_f64, 1e3, 1e5, 1e7] {
+            for &(rows, columns) in &[(256_usize, 16_usize), (512, 8)] {
+                let values = rotated_design(rows, columns, condition, &mut rng);
+                designs.push((
+                    format!("rotated {condition:e} {rows}x{columns}"),
+                    rows,
+                    columns,
+                    values,
+                ));
+            }
+        }
+        for &conditioning in &[Conditioning::Ill, Conditioning::Deficient] {
+            for &(rows, columns) in &[(400_usize, 6_usize), (300, 5), (41, 40)] {
+                let (values, _) = corpus_design(rows, columns, conditioning, rng.next_u64());
+                designs.push((
+                    format!("{conditioning:?} {rows}x{columns}"),
+                    rows,
+                    columns,
+                    values,
+                ));
+            }
+        }
+        for &ulps in &[0_u32, 1, 64, 4096, 1 << 20] {
+            let (rows, columns) = (256_usize, 4_usize);
+            let mut values = (0..rows * columns)
+                .map(|_| (rng.unit_f64() * 2.0 - 1.0) as f32)
+                .collect::<Vec<f32>>();
+            for row in 0..rows {
+                let source = values[row * columns].to_bits().wrapping_add(ulps);
+                values[row * columns + columns - 1] = f32::from_bits(source);
+            }
+            designs.push((format!("cutoff {ulps} ulp"), rows, columns, values));
+        }
+
+        let mut accepted = 0_usize;
+        let mut refused = 0_usize;
+        let mut worst_accepted = 0.0_f64;
+        for (label, rows, columns, values) in designs {
+            let data = DenseMatrix::new(values.clone(), rows, columns).unwrap();
+            let targets = (0..rows)
+                .map(|_| (rng.unit_f64() * 2.0 - 1.0) as f32)
+                .collect::<Vec<f32>>();
+            let weight_values = (0..rows)
+                .map(|row| 0.25 + (row % 7) as f32 * 0.5)
+                .collect::<Vec<f32>>();
+            for &fit_intercept in &[false, true] {
+                for &weighted in &[false, true] {
+                    let weights =
+                        weighted.then(|| SampleWeights::new(weight_values.clone()).unwrap());
+                    let reference = fit_dense(
+                        &data.as_view(),
+                        &targets,
+                        weights.as_ref(),
+                        fit_intercept,
+                        0.0,
+                    )
+                    .unwrap();
+                    let ridge = fit_ridge_dense(
+                        &data.as_view(),
+                        &targets,
+                        weights.as_ref(),
+                        fit_intercept,
+                        0.0,
+                    )
+                    .unwrap();
+                    let takes_gram = gram_path_accepts(
+                        &data.as_view(),
+                        &targets,
+                        weights.as_ref(),
+                        fit_intercept,
+                    );
+
+                    if takes_gram {
+                        accepted += 1;
+                        assert_eq!(
+                            reference.rank, columns,
+                            "the gate accepted {label} (intercept {fit_intercept}, \
+                             weighted {weighted}), whose minimum-norm rank is \
+                             {} of {columns} — the certificate no longer implies \
+                             full rank",
+                            reference.rank
+                        );
+                        let scale = reference
+                            .coefficients
+                            .iter()
+                            .fold(reference.intercept.abs(), |m, &v| m.max(v.abs()))
+                            .max(f64::MIN_POSITIVE);
+                        let mut deviation = (reference.intercept - ridge.intercept).abs() / scale;
+                        for (&left, &right) in
+                            reference.coefficients.iter().zip(&ridge.coefficients)
+                        {
+                            deviation = deviation.max((left - right).abs() / scale);
+                        }
+                        worst_accepted = worst_accepted.max(deviation);
+                    } else {
+                        refused += 1;
+                        assert_eq!(
+                            reference.coefficients, ridge.coefficients,
+                            "a refused design ({label}, intercept {fit_intercept}, \
+                             weighted {weighted}) was not answered by the code that \
+                             answered it before the gate existed"
+                        );
+                        assert_eq!(reference.intercept, ridge.intercept);
+                    }
+                }
+            }
+        }
+
+        assert!(
+            accepted >= 30 && refused >= 50,
+            "the corpus does not separate the two routes: {accepted} accepted, \
+             {refused} refused"
+        );
+        assert!(
+            worst_accepted < 1.0e-9,
+            "an accepted design's Gram answer is {worst_accepted:e} relative from the \
+             minimum-norm answer, past the envelope the certificate limit buys \
+             (the corpus measures 2.0e-10, and the limit's own rigorous bound is \
+             2.2e-8)"
+        );
+    }
+
+    /// The factorization succeeding is **not** evidence a design is full rank,
+    /// and the certificate is what supplies the missing evidence.
+    ///
+    /// This is the measurement that chose the gate. The obvious design — attempt
+    /// Cholesky and fall back to the SVD when it fails, which is what the
+    /// comparable libraries do — is unsafe here, and not marginally: on
+    /// exactly rank-deficient designs the factorization *usually succeeds*, and
+    /// the solution it then returns is not the minimum-norm one. A duplicated
+    /// column makes the Gram exactly singular in exact arithmetic, but rounding
+    /// leaves the last pivot a tiny positive number about as often as a negative
+    /// one, and a tiny positive pivot is a successful factorization.
+    ///
+    /// So the sweep asserts three things: the factorization does accept these
+    /// designs (or the test proves nothing), the answer it gives really is wrong
+    /// (or refusing it would be pedantry), and the certificate refuses every
+    /// single one.
+    #[test]
+    fn the_certificate_refuses_rank_deficient_designs_the_factorization_accepts() {
+        let mut rng = OwnedRng::new(0x5EED_0F1A);
+        let mut factorized = 0_usize;
+        let mut draws = 0_usize;
+        let mut worst_uncertified = 0.0_f64;
+        for &(rows, columns) in &[(64_usize, 3_usize), (256, 4), (300, 6), (128, 12)] {
+            for _ in 0..12 {
+                let mut values = vec![0.0_f32; rows * columns];
+                for row in 0..rows {
+                    for column in 0..columns - 1 {
+                        values[row * columns + column] = (rng.unit_f64() * 2.0 - 1.0) as f32;
+                    }
+                    values[row * columns + columns - 1] = values[row * columns];
+                }
+                let targets = (0..rows)
+                    .map(|_| (rng.unit_f64() * 2.0 - 1.0) as f32)
+                    .collect::<Vec<f32>>();
+                let data = DenseMatrix::new(values, rows, columns).unwrap();
+                let preprocessed = preprocess(&data.as_view(), &targets, None, false);
+                draws += 1;
+
+                assert!(
+                    solve_normal_equations(
+                        &preprocessed,
+                        0.0,
+                        Some(certificate_limit(rows, columns))
+                    )
+                    .is_none(),
+                    "the certificate accepted a {rows}x{columns} design of rank \
+                     {} — the minimum-norm contract is no longer held",
+                    columns - 1
+                );
+
+                if let Some(uncertified) = solve_normal_equations(&preprocessed, 0.0, None) {
+                    factorized += 1;
+                    let reference = fit_dense(&data.as_view(), &targets, None, false, 0.0).unwrap();
+                    assert_eq!(reference.rank, columns - 1);
+                    let scale = reference
+                        .coefficients
+                        .iter()
+                        .fold(0.0_f64, |m, &v| m.max(v.abs()))
+                        .max(f64::MIN_POSITIVE);
+                    for (&left, &right) in reference.coefficients.iter().zip(&uncertified) {
+                        worst_uncertified = worst_uncertified.max((left - right).abs() / scale);
+                    }
+                }
+            }
+        }
+        assert!(
+            factorized * 4 >= draws,
+            "the factorization refused all but {factorized} of {draws} rank-deficient \
+             designs, so this sweep no longer shows what a failure-only gate would \
+             have accepted"
+        );
+        assert!(
+            worst_uncertified > 1.0e-3,
+            "the uncertified Gram answer is within {worst_uncertified:e} of the \
+             minimum-norm answer on every rank-deficient draw, so refusing it would \
+             not be protecting anything"
+        );
     }
 }

@@ -376,6 +376,30 @@ and releases use [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Changed
 
+- **`Ridge` with `alpha = 0` now solves a certified well-conditioned design
+  through the same Gram factorization a penalized fit uses.** It used to route
+  every unpenalized fit into the minimum-norm SVD, which is the accurate answer
+  and — on a full-rank design, where the minimum-norm contract binds on nothing
+  — cost 2.4x to 6.7x more than `alpha = 1` on identical data (58.4 ms against
+  8.7 ms at `1024x512`). The fast route is taken only behind a *certificate*: a
+  rigorous upper bound on `κ₂(XᵀX)` computed from the Cholesky factor, which has
+  to clear a limit that implies full rank at every shape. Anything
+  underdetermined, rank-deficient, sitting on the rank cutoff, or
+  ill-conditioned still takes the SVD, bit for bit as before — including both
+  frozen `alpha = 0` surfaces, so no reference value moves.
+
+  **A factorization-failure gate would not have been safe, and that is measured
+  rather than assumed.** Cholesky on an exactly rank-deficient design succeeds
+  far more often than it fails, and the answer it then returns is not the
+  minimum-norm one — off by `0.24`, `0.96` and `6.5` relative on the sweep's
+  `256x4`, `1024x300` and `64x3` designs. The certificate refuses every one of
+  them.
+
+  The one user-visible effect on an accepted design is the last bits: a Gram
+  solve gives away about `κ₂(XᵀX) · eps`, which the limit caps at `2.2e-8`
+  relative against an `f32` coefficient's own `1.2e-7` resolution, and which the
+  equivalence corpus measures at `2.0e-10`. `alpha > 0` is untouched.
+
 - **The exchange container format is version `2`.** The `payload` block is
   required rather than optional: a version-1 container has no way to say what
   its arrays are, so a reader meeting one would have to assume they are its
