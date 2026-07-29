@@ -1610,4 +1610,79 @@ mod tests {
              not be protecting anything"
         );
     }
+    /// The generator's ill-conditioned family lands where the gate says it
+    /// should, on the family built to exercise this path.
+    ///
+    /// `Task::IllConditioned` carries both knobs the gate cares about — a
+    /// requested condition number and a requested exact rank — so it can state
+    /// the two halves of the contract on data a consumer can actually generate.
+    /// Its conditioning is column-scaled (see [`rotated_design`]), which is the
+    /// benign direction for a Gram solve, so the condition knob alone would be a
+    /// weak test; the rank knob is the sharp one, and every rank-deficient
+    /// recipe here must be refused.
+    #[cfg(feature = "datasets")]
+    #[test]
+    fn the_generators_ill_conditioned_family_is_gated_by_its_recorded_rank() {
+        use crate::datasets::{Recipe, Target, Task};
+
+        for &(rows, columns) in &[(256_usize, 8_usize), (512, 16)] {
+            for &condition in &[1.0_f32, 1e2, 1e6] {
+                for deficiency in 0..3_usize {
+                    let recipe = Recipe::seeded(rows, columns, 11)
+                        .unwrap()
+                        .with_task(Task::IllConditioned {
+                            condition_number: condition,
+                            rank: columns - deficiency,
+                            coefficient_scale: 1.0,
+                            noise_scale: 0.01,
+                        })
+                        .unwrap();
+                    let dataset = recipe.generate();
+                    let design = dataset.features();
+                    let Some(Target::Regression(targets)) = dataset.target() else {
+                        panic!("the ill-conditioned family draws a regression target");
+                    };
+                    let view = design.as_view();
+                    let reference = fit_dense(&view, targets.as_slice(), None, true, 0.0).unwrap();
+                    let ridge =
+                        fit_ridge_dense(&view, targets.as_slice(), None, true, 0.0).unwrap();
+                    let accepted = gram_path_accepts(&view, targets.as_slice(), None, true);
+
+                    if deficiency > 0 {
+                        assert!(
+                            !accepted,
+                            "the gate accepted a {rows}x{columns} `IllConditioned` \
+                             design whose recorded rank is {}",
+                            columns - deficiency
+                        );
+                        assert_eq!(
+                            reference.coefficients, ridge.coefficients,
+                            "a refused generated design changed answer"
+                        );
+                    } else {
+                        assert_eq!(
+                            reference.rank, columns,
+                            "a full-rank recipe at condition {condition:e} did not \
+                             produce a full-rank design"
+                        );
+                        let scale = reference
+                            .coefficients
+                            .iter()
+                            .fold(0.0_f64, |m, &v| m.max(v.abs()))
+                            .max(f64::MIN_POSITIVE);
+                        for (&left, &right) in
+                            reference.coefficients.iter().zip(&ridge.coefficients)
+                        {
+                            assert!(
+                                (left - right).abs() / scale < 1.0e-9,
+                                "the two routes disagree by {:e} relative on a \
+                                 {rows}x{columns} design at condition {condition:e}",
+                                (left - right).abs() / scale
+                            );
+                        }
+                    }
+                }
+            }
+        }
+    }
 }
