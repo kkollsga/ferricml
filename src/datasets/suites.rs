@@ -367,18 +367,29 @@ impl AccuracySuite {
 /// That claim is true at the wide end and **false at the narrow one**, which is
 /// the answer the second dimension exists to produce. Measured on the registered
 /// runner over all ninety points, each family against the cheapest fit in the
-/// crate that accepts its target, generation runs between `0.002` and `1.275`
-/// times the fit. At 128 columns it is `0.2`–`3.2%` of the fit. At 8 columns it
-/// is `21`–`79%` for seven families, and for [`Task::NonlinearBinary`] it is
-/// *more* than the fit — `1.27` times a `LogisticRegression::fit` at `256 x 8`.
+/// crate that accepts its target, generation runs between `0.007` and `1.57`
+/// times the fit. At 128 columns it is `0.7`–`34%` of the fit. At 8 columns the
+/// six families that draw no class run `0.9`–`33%`, and the three that do are
+/// the whole of the rest of the range: [`Task::NonlinearBinary`] is still *more*
+/// than the fit at `1024 x 8` and `4096 x 8`, where the L-BFGS logistic it feeds
+/// is itself unusually cheap.
 ///
 /// The mechanism is a per-row cost that does not shrink with the width. The
 /// classification families solve for their requested prevalence or balance
 /// rather than reporting whichever one falls out, and that solve evaluates a
-/// logistic over every row per iteration: about `160 ns` per row at any width,
-/// against `12 ns` per row for [`Task::LinearRegression`]. It buys the property
-/// that makes prevalence a knob at all, so it is a trade and not a defect — but
-/// the unconditional sentence above was wrong, and the condition is the width.
+/// logistic over every row per iteration. It buys the property that makes
+/// prevalence a knob at all, so it is a trade and not a defect — but the
+/// unconditional sentence above was wrong, and the condition is the width.
+///
+/// The two solves no longer cost the same. The binary families' scalar solve
+/// locates its crossing before it bisects and skips the halvings that crossing
+/// decides, so it reads about `65`–`85 ns` per row at any width, down from
+/// `146`–`161 ns` when this was first measured. The multiclass balance is a
+/// fixed-point iteration over a multiplier per class rather than a root, it
+/// reaches no exact fixed point before its last pass, and there is no
+/// corresponding shortcut that returns the same bytes: it still reads about
+/// `212 ns` per row. Against `10`–`12 ns` per row for
+/// [`Task::LinearRegression`], both remain the narrow end's whole story.
 ///
 /// Nothing downstream is distorted by this: a benchmark generates once and fits
 /// many times, so a generation cost comparable to a single fit does not enter a

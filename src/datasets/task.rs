@@ -1533,20 +1533,184 @@ fn poisson(rate: f64, rng: &mut OwnedRng) -> f64 {
 /// that cannot reach — every score identical and the request on the wrong side
 /// of it — leaves the offset at the bracket's edge rather than looping, which is
 /// a saturation the realized prevalence then shows.
-fn offset_for_prevalence(scores: &[f64], prevalence: f64) -> f64 {
+///
+/// What the halvings cost is a logistic over every row, per halving, and that
+/// is the generator's dominant per-row cost at a narrow width. Most of those
+/// passes are spent proving something already known: once the crossing has been
+/// located, every midpoint that lands far from it has a decided comparison.
+/// [`bracket_the_crossing`] locates it with a guarded Newton iteration and
+/// returns two offsets whose comparison is *proved* rather than assumed, and the
+/// halvings below run unchanged except that a midpoint outside that pair takes
+/// its branch without a pass. The sequence of branches — and therefore the
+/// returned bits — is the one the unconditional loop produces; only the number
+/// of evaluated passes changes. `offset_for_prevalence_is_the_unconditional_bisection`
+/// asserts that against a reference bisection rather than describing it.
+pub(super) fn offset_for_prevalence(scores: &[f64], prevalence: f64) -> f64 {
+    let (proved_below, proved_above) = bracket_the_crossing(scores, prevalence);
     let mut low = -50.0_f64;
     let mut high = 50.0_f64;
     for _ in 0..64 {
         let middle = 0.5 * (low + high);
-        let mean = sum_in_order(scores.iter().map(|&score| sigmoid_f64(score + middle)))
-            / scores.len() as f64;
-        if mean < prevalence {
+        // The interval has reached the resolution of `f64` at this magnitude:
+        // the midpoint is one of its own endpoints, so this update leaves the
+        // interval where every later one would leave it. Applying it and
+        // stopping is the same answer as running the remaining halvings.
+        let settled = middle == low || middle == high;
+        let below = if middle <= proved_below {
+            true
+        } else if middle >= proved_above {
+            false
+        } else {
+            mean_probability(scores, middle) < prevalence
+        };
+        if below {
             low = middle;
         } else {
             high = middle;
         }
+        if settled {
+            break;
+        }
     }
     0.5 * (low + high)
+}
+
+/// The mean Bayes probability at one offset — the quantity the bisection
+/// compares, evaluated exactly as the unconditional loop evaluates it.
+fn mean_probability(scores: &[f64], offset: f64) -> f64 {
+    sum_in_order(scores.iter().map(|&score| sigmoid_f64(score + offset))) / scores.len() as f64
+}
+
+/// The mean and its derivative in one pass.
+///
+/// The derivative only steers the search for the crossing, so its bits are not
+/// part of any answer; the mean it returns beside it is [`mean_probability`]'s,
+/// term for term and in the same order.
+fn mean_and_slope(scores: &[f64], offset: f64) -> (f64, f64) {
+    let mut total = -0.0_f64;
+    let mut slope = 0.0_f64;
+    for &score in scores {
+        let probability = sigmoid_f64(score + offset);
+        total += probability;
+        slope += probability * (1.0 - probability);
+    }
+    let rows = scores.len() as f64;
+    (total / rows, slope / rows)
+}
+
+/// Two offsets straddling the crossing, at which the bisection's comparison is
+/// **proved** without evaluating it: at or below the first the mean is below the
+/// requested prevalence, at or above the second it is not.
+///
+/// The proof is the same monotonicity the bisection already rests on, made
+/// two-sided. Rounding `score + offset` is monotone in the offset and the
+/// logistic is monotone in its argument, so the exact mean of the exactly
+/// rounded arguments — call it `F` — is non-decreasing in the offset however
+/// coarsely the sum is formed. What the loop actually compares is a computed
+/// `M` that differs from `F` by at most `E`: sequential summation of `n` terms
+/// in `[0, 1]` contributes at most about `n · u · mean`, the logistic itself a
+/// few ulps per term, the final division one more, so `E ≤ (n + 4) · u` with
+/// `u = 2⁻⁵³`. Hence for any `m ≤ p`, `M(m) ≤ F(m) + E ≤ F(p) + E ≤ M(p) + 2E`,
+/// and `M(p) + 2E < prevalence` decides every one of them at once. The mirrored
+/// statement decides the other side. The band below is four times `2E`, which
+/// buys headroom for a platform logarithm worse than the one this was measured
+/// against without costing more than one halving.
+///
+/// A degenerate geometry — every score identical, a prevalence past what the
+/// bracket can reach, a slope that has saturated to zero — proves nothing and
+/// returns an empty pair, at which point every halving evaluates and the solve
+/// costs exactly what it cost before.
+fn bracket_the_crossing(scores: &[f64], prevalence: f64) -> (f64, f64) {
+    let rows = scores.len() as f64;
+    let band = 2.0 * (rows + 64.0) * f64::EPSILON;
+    let mut proved_below = f64::NEG_INFINITY;
+    let mut proved_above = f64::INFINITY;
+
+    // Guarded Newton: the step is taken only while it stays inside the interval
+    // the evaluated points have already bracketed, so a flat or saturated region
+    // falls back to a halving instead of leaving the bracket.
+    let mut guard_low = -50.0_f64;
+    let mut guard_high = 50.0_f64;
+    let mut point = 0.0_f64;
+    let mut slope_at_point = 0.0_f64;
+    for _ in 0..12 {
+        let (mean, slope) = mean_and_slope(scores, point);
+        if mean + band < prevalence {
+            proved_below = proved_below.max(point);
+        } else if mean >= prevalence + band {
+            proved_above = proved_above.min(point);
+        }
+        if mean < prevalence {
+            guard_low = point;
+        } else {
+            guard_high = point;
+        }
+        slope_at_point = slope;
+        if slope <= 0.0 {
+            break;
+        }
+        let step = (mean - prevalence) / slope;
+        // Settled is tested before the step is taken, not after. The guard
+        // below is a half-open interval whose upper end is this very iterate
+        // once the mean has reached the prevalence, so a step of zero would be
+        // rejected by it and replaced by the middle of the guard — throwing the
+        // located crossing away at the exact moment it was found, and leaving
+        // the pair below anchored nowhere near it.
+        if step.abs() <= 1e-14 * point.abs().max(1.0) {
+            break;
+        }
+        let next = point - step;
+        let next = if next > guard_low && next < guard_high {
+            next
+        } else {
+            0.5 * (guard_low + guard_high)
+        };
+        if next == point {
+            break;
+        }
+        point = next;
+    }
+
+    // Newton's own iterates prove something only where they happened to land, so
+    // the pair is tightened deliberately: step out by the distance the slope
+    // says clears the band, and widen until both sides clear it. Every halving
+    // between the returned offsets still evaluates, so a tighter pair is
+    // directly fewer passes — and two passes buy roughly a dozen of them.
+    if slope_at_point > 0.0 {
+        let mut offset = (4.0 * band / slope_at_point).max(8.0 * point.abs() * f64::EPSILON);
+        for _ in 0..8 {
+            let mut both = true;
+            let candidate = point - offset;
+            if proved_below < candidate {
+                if mean_probability(scores, candidate) + band < prevalence {
+                    proved_below = candidate;
+                } else {
+                    both = false;
+                }
+            }
+            let candidate = point + offset;
+            if proved_above > candidate {
+                if mean_probability(scores, candidate) >= prevalence + band {
+                    proved_above = candidate;
+                } else {
+                    both = false;
+                }
+            }
+            if both {
+                break;
+            }
+            offset *= 4.0;
+        }
+    }
+
+    // Two sides that cross would mean the bound above was violated. Nothing
+    // observed does that, and if a platform ever did, the empty pair is the
+    // answer that cannot be wrong.
+    if proved_below < proved_above {
+        (proved_below, proved_above)
+    } else {
+        (f64::NEG_INFINITY, f64::INFINITY)
+    }
 }
 
 /// Draws labels from the Bayes probabilities, then applies label noise.

@@ -511,6 +511,31 @@ and releases use [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   self-test fails if that baseline ever stops recording rows the default one
   does not.
 
+- **The binary families' prevalence solve is about twice as cheap, to the
+  bit.** `Task::LinearBinary` and `Task::NonlinearBinary` solve for the
+  prevalence a caller asks for rather than reporting whichever one falls out,
+  and that solve bisected a scalar root by evaluating a logistic over every row
+  on each of its 64 halvings — the generator's dominant per-row cost at a narrow
+  width, and at eight columns more than the `LogisticRegression::fit` the data
+  feeds. A guarded Newton iteration now locates the crossing first, and every
+  halving that lands far enough from it takes its branch from a proved bound
+  instead of a pass.
+
+  **Nothing generated moves.** The answer is the same 64-halving bisection's, bit
+  for bit: only the number of evaluated passes changes, so every design byte,
+  every drawn label, every recorded Bayes probability and every solved intercept
+  is what it was. That is asserted rather than assumed — the shipped solve is
+  swept against a reference bisection over row counts, score spreads,
+  prevalences at both ends of the interval, degenerate score vectors, and a
+  crossing placed on every node of the first six halvings.
+
+  Measured on the registered runner, generation at `256 x 8` falls from `37.4`
+  to `16.8 µs` for `LinearBinary` and from `39.9` to `19.0 µs` for
+  `NonlinearBinary`, taking both from above the fit they feed to about half of
+  it. `Task::Multiclass`'s class-balance solve is a fixed-point iteration rather
+  than a root, reaches no exact fixed point before its last pass, and is
+  unchanged; `PerformanceGrid`'s documentation records both outcomes.
+
 ### Fixed
 
 - **A `Task` difficulty dial no longer redraws the problem it was supposed to
