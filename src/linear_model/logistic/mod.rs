@@ -92,50 +92,47 @@ fn solver_from_code(code: u32) -> Result<LogisticSolver, ArtifactError> {
 ///
 /// # Choosing
 ///
-/// [`Newton`](Self::Newton) is the default and stays the default. It takes the
-/// exact second-order step, which converges in single-digit iterations, and it
-/// is what every fitted artifact FerricML has ever written was produced by.
-/// Its cost is one `parameters x parameters` factorization per iteration, so a
-/// joint multinomial fit — whose system is `classes * parameters` square —
-/// refuses rather than allocate one it cannot hold.
+/// [`Lbfgs`](Self::Lbfgs) is the default. It never forms a second-order system:
+/// its storage is linear in the parameter count, so it accepts sixty-four times
+/// as many multiclass parameters within the same storage budget, and it is the
+/// only path that answers when the exact one reports
+/// [`ModelError::MulticlassSystemTooLarge`]. It needs more iterations to reach
+/// the same answer and pays far less for each of them.
 ///
-/// The step is **damped**, and the full step is tried first. An exact Newton
-/// step minimizes a local quadratic model of the objective; where that model is
-/// trustworthy the full step is what gives the method its quadratic tail, and
-/// where it is not the full step overshoots and the next model is built
-/// somewhere worse. On a badly scaled near-separable design with a weak penalty
-/// that failure compounds, and iterates reaching `1e63` were measured before the
-/// step was globalized. So the full step is accepted whenever it decreases the
-/// penalized objective sufficiently, and halved until it does otherwise. A fit
-/// whose exact steps all descend keeps exactly the iterate sequence it always
-/// had; over 1,600 generated well-conditioned binary fits, all of which take
-/// more than one step, 1,573 are bit-identical to the undamped path and none
-/// changes its iteration count.
+/// [`Newton`](Self::Newton) takes the exact second-order step, which converges
+/// in single-digit iterations. Its cost is one `parameters x parameters`
+/// factorization per iteration *plus* accumulating that system over every row,
+/// so a joint multinomial fit — whose system is `classes * parameters` square —
+/// refuses rather than allocate one it cannot hold. Select it on a small
+/// problem, where the single-digit iteration count wins outright, and when
+/// `tol` is below the floor described below.
 ///
-/// [`Lbfgs`](Self::Lbfgs) never forms that system. Its storage is linear in the
-/// parameter count, so it accepts sixty-four times as many multiclass
-/// parameters within the same storage budget, and it is the path to select when
-/// the exact one reports [`ModelError::MulticlassSystemTooLarge`]. The bound is
-/// a property of the selected solver rather than of the model: a shape the
-/// exact path accepts still takes the exact path and produces the identical
-/// fit. It needs more iterations to reach the same answer, and it additionally
-/// reports [`ModelError::SolverDidNotConverge`] when the requested `tol` is
-/// below what the objective's own numerical resolution can certify, which is
-/// around `1e-9` for a log-loss of order one — its line search compares
-/// objective values and cannot bracket a decrease below that. The exact path
-/// has no such floor, because the quantity it certifies an exhausted budget
-/// with is not an objective difference.
+/// The exact step is **damped**, and the full step is tried first. An exact
+/// Newton step minimizes a local quadratic model of the objective; where that
+/// model is trustworthy the full step is what gives the method its quadratic
+/// tail, and where it is not the full step overshoots and the next model is
+/// built somewhere worse. On a badly scaled near-separable design with a weak
+/// penalty that failure compounds, and iterates reaching `1e63` were measured
+/// before the step was globalized. So the full step is accepted whenever it
+/// decreases the penalized objective sufficiently, and halved until it does
+/// otherwise. A fit whose exact steps all descend keeps exactly the iterate
+/// sequence it always had; over 1,600 generated well-conditioned binary fits,
+/// all of which take more than one step, 1,573 are bit-identical to the
+/// undamped path and none changes its iteration count.
 ///
-/// # Cost, which is the other reason to select it
+/// The bound on the multinomial system is a property of the selected solver
+/// rather than of the model: a shape the exact path accepts still takes the
+/// exact path and produces the identical fit.
 ///
-/// The default is the expensive one on a large or strongly penalized problem,
-/// and that is worth stating in numbers rather than as "slower". Newton's
-/// per-iteration cost is one `p x p` factorization *plus* accumulating a
-/// `p x p` system over every row, so it grows as `n * p^2` where the
-/// matrix-free path grows as `n * p`; a stronger penalty (a smaller `c`) also
-/// buys more iterations to pay that on. Fitting 50,000 rows by 50 columns,
-/// same data, same `tol`, same `max_iter`, both arms this crate (Apple M4,
-/// release, median of five after one warmup):
+/// # Why the default moved, and what it means for `tol`
+///
+/// Newton was the default, and this section used to argue it should stay. That
+/// argument is kept below rather than deleted, because the measurements that
+/// overturned it are the same *kind* of measurement, taken on a wider grid.
+///
+/// The original case rested on 50,000 rows by 50 columns, same data, same
+/// `tol`, same `max_iter`, both arms this crate (Apple M4, release, median of
+/// five after one warmup):
 ///
 /// | `c` | `tol` | `Newton` | `Lbfgs` |
 /// |---|---|---|---|
@@ -146,20 +143,64 @@ fn solver_from_code(code: u32) -> Result<LogisticSolver, ArtifactError> {
 ///
 /// Three to fifteen times, widening as the penalty strengthens and the
 /// tolerance tightens, for coefficients that agree to six decimals at `1e-8`.
-/// The advantage is a property of the shape rather than a constant: at
-/// 5,000 x 20 the same comparison is 2.8 ms against 1.8 ms, and on a small
-/// problem the exact step's single-digit iteration count wins outright. So
-/// this is a reason to *select* [`Lbfgs`](Self::Lbfgs) at scale, not a reason
-/// to move the default — a `tol` below the L-BFGS floor still leaves the exact
-/// path as the only one that answers, and every artifact FerricML writes still
-/// has `Newton` provenance.
+/// That was read as a reason to *select* the matrix-free path at scale rather
+/// than to move the default: the advantage looked like a property of one large
+/// shape, and at 5,000 x 20 the same comparison is 2.8 ms against 1.8 ms.
+///
+/// **That table understated it, and it understated it worst where the exact
+/// step is most expensive.** Measured across four shapes, three seeds and two
+/// task families, twice, on identically generated bytes:
+///
+/// | Family | Shape | `Newton` | `Lbfgs` | Ratio |
+/// |---|---|---|---|---|
+/// | multiclass | 1024 x 128 | 182.1 ms | 3.60 ms | **50.6x** |
+/// | multiclass | 4096 x 128 | 344.7 ms | 7.32 ms | **47.1x** |
+/// | multiclass | 4096 x 32 | 28.0 ms | 2.21 ms | 12.7x |
+/// | multiclass | 1024 x 32 | 5.30 ms | 0.64 ms | 8.2x |
+/// | binary | 4096 x 128 | 27.1 ms | 3.62 ms | 7.5x |
+/// | binary | 1024 x 32 | 0.73 ms | 0.30 ms | 2.4x |
+///
+/// The full range over 24 measurements is **2.4x to 50.6x, always in the
+/// matrix-free path's favour**, and the distance from the recorded truth is
+/// identical to five decimal places in **23 of the 24** — in the remaining one
+/// it differs in the fifth decimal. Both FerricML solvers and the external
+/// reference land on the same truth-distance to five decimals at every point on
+/// the grid: the solver choice is not visible in the answer.
+///
+/// Two things the older argument assumed are also measured false.
+/// `max_iter` is **not** the binding constraint — raising it from 200 to 1000
+/// changed the exact fit's time by under 1%, so it converges well inside the
+/// budget and the cost is per-iteration. And the advantage is not a property of
+/// one large shape: the mechanism is the exact step's factorization scaling with
+/// the class count, which is why multiclass is so much worse than binary. At
+/// `4096 x 128`, binary is 25.2 ms and four-class is 344.7 ms — a 13.7x jump for
+/// a system four times wider, which is what a cubic factorization does.
+///
+/// ## `tol` therefore means something different by default
+///
+/// The two solvers have genuinely different convergence tests, and moving the
+/// default moves which one a caller gets without asking. Under
+/// [`Newton`](Self::Newton), [`with_tol`](LogisticRegressionParams::with_tol) is
+/// the largest absolute coefficient update; under [`Lbfgs`](Self::Lbfgs) it is
+/// the infinity norm of the gradient of the mean penalized objective. **The
+/// default value of `tol` did not change; the quantity it bounds did.**
+///
+/// The practical consequence is a floor. [`Lbfgs`](Self::Lbfgs) reports
+/// [`ModelError::SolverDidNotConverge`] when the requested `tol` is below what
+/// the objective's own numerical resolution can certify — around `1e-9` for a
+/// log-loss of order one, because its line search compares objective values and
+/// cannot bracket a decrease below that. The exact path has no such floor,
+/// because the quantity it certifies an exhausted budget with is not an
+/// objective difference. A caller who needs a tolerance under that floor should
+/// select [`Newton`](Self::Newton) explicitly.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
 #[non_exhaustive]
 pub enum LogisticSolver {
-    /// Exact Newton steps over the full second-order system. The default.
-    #[default]
+    /// Exact Newton steps over the full second-order system.
     Newton,
-    /// Matrix-free limited-memory BFGS with a strong-Wolfe line search.
+    /// Matrix-free limited-memory BFGS with a strong-Wolfe line search. The
+    /// default.
+    #[default]
     Lbfgs,
 }
 
@@ -180,7 +221,7 @@ impl Default for LogisticRegressionParams {
             fit_intercept: true,
             max_iter: 100,
             tol: 1.0e-4,
-            solver: LogisticSolver::Newton,
+            solver: LogisticSolver::Lbfgs,
         }
     }
 }
@@ -1821,9 +1862,13 @@ mod tests {
         for (weighted, fit_intercept, expected_coefficients, expected_intercept, expected_iter) in
             cases
         {
+            // The frozen words are the exact path's iterate sequence — the
+            // iteration counts below are single-digit, which is what pins them
+            // to that solver rather than to the default.
             let params = LogisticRegressionParams::default()
                 .with_fit_intercept(fit_intercept)
-                .with_max_iter(25);
+                .with_max_iter(25)
+                .with_solver(LogisticSolver::Newton);
             let model = if weighted {
                 LogisticRegression::fit_weighted(&data.as_view(), &targets, &weights, params)
                     .unwrap()
@@ -2527,7 +2572,15 @@ mod tests {
                                 cases.push((
                                     data.clone(),
                                     targets.clone(),
-                                    LogisticRegressionParams::default().with_c(c),
+                                    // The exact step is what this region is
+                                    // about: the damping, the refusals it
+                                    // removed, and the certificate that accepts
+                                    // an exhausted budget are all properties of
+                                    // that path, not of whichever solver
+                                    // happens to be the default.
+                                    LogisticRegressionParams::default()
+                                        .with_c(c)
+                                        .with_solver(LogisticSolver::Newton),
                                 ));
                             }
                         }

@@ -562,14 +562,19 @@ mod tests {
         );
     }
 
+    /// The default is the matrix-free solver, in both places it is spelled.
+    ///
+    /// The parameter struct's `Default` and the enum's own `Default` are two
+    /// independent declarations of one fact, and a caller can reach either. They were both `Newton` until the cross-library sweep measured
+    /// 2.4x to 50.6x against it for a truth-distance identical to five
+    /// decimals; see the evidence recorded on `LogisticSolver` itself.
     #[test]
-    fn the_default_solver_is_newton() {
-        // The one property this whole sprint is written against.
+    fn the_default_solver_is_the_matrix_free_one() {
         assert_eq!(
             LogisticRegressionParams::default().solver(),
-            LogisticSolver::Newton
+            LogisticSolver::Lbfgs
         );
-        assert_eq!(LogisticSolver::default(), LogisticSolver::Newton);
+        assert_eq!(LogisticSolver::default(), LogisticSolver::Lbfgs);
     }
 
     #[test]

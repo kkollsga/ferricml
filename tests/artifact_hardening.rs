@@ -1286,10 +1286,17 @@ fn seed_corpus() -> Vec<(&'static str, Vec<u8>)> {
     let regression = RegressionTargets::new(vec![0.0, 1.0, 4.0, 9.0]).unwrap();
     let binary = BinaryTargets::new(vec![0, 0, 1, 1]).unwrap();
 
+    // The two logistic seeds name their *solver* rather than taking the
+    // default, because what they are seeds for is a payload schema: versions 1
+    // and 2 carry no solver word and only a Newton fit writes them. A seed that
+    // followed the default would silently move both schemas' coverage onto one
+    // of them the day the default moved — which it has. The compositions below
+    // do follow the default, which is what keeps a decoder that cannot read
+    // what the default writes from passing.
     let logistic = LogisticRegression::fit(
         &data.as_view(),
         &binary,
-        LogisticRegressionParams::default(),
+        LogisticRegressionParams::default().with_solver(LogisticSolver::Newton),
     )
     .unwrap();
     // Deliberately non-contiguous labels: the multiclass payload stores its
@@ -1297,13 +1304,12 @@ fn seed_corpus() -> Vec<(&'static str, Vec<u8>)> {
     let multiclass_logistic = LogisticRegression::fit_multiclass(
         &data.as_view(),
         &ClassTargets::new(vec![3, 7, 10, 7]).unwrap(),
-        LogisticRegressionParams::default(),
+        LogisticRegressionParams::default().with_solver(LogisticSolver::Newton),
     )
     .unwrap();
-    // The same two fits under the other solver. Payload versions 3 and 4 are
-    // the versions that carry a solver word, so they are a *different* payload
-    // shape under the same estimator kind — the shape no seed reached before
-    // the solver became something an artifact records.
+    // The same two fits under the other solver, which is the default. Payload
+    // versions 3 and 4 are the versions that carry a solver word, so they are a
+    // *different* payload shape under the same estimator kind.
     let lbfgs_logistic = LogisticRegression::fit(
         &data.as_view(),
         &binary,
