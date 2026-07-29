@@ -54,9 +54,9 @@ make gate
 ```
 
 The heavier named entry points are `gate-full`, `api-check`, `api-refresh`,
-`reference-check`, `package-check`, `semver-check`, `mutants`, `bench-self`,
-`bench-history`, `bench-diagnostic`, `docs-env`, `docs-build`, and
-`docs-serve`. Do not invent substitutes for these contracts.
+`reference-check`, `exchange-check`, `package-check`, `semver-check`,
+`mutants`, `bench-self`, `bench-history`, `bench-diagnostic`, `docs-env`,
+`docs-build`, and `docs-serve`. Do not invent substitutes for these contracts.
 
 Run heavier checks only when their surface is touched:
 
@@ -68,6 +68,8 @@ Run heavier checks only when their surface is touched:
   consumer using only extracted contents.
 - Reference-semantic changes: regenerate and review the frozen fixtures through
   the local `dev-docs` reference workspace, then run `reference-check`.
+- Exchange-surface changes — the generator, the container format, or its Python
+  reader: `exchange-check`; it is also release evidence.
 - Performance-sensitive changes: follow the performance protocol below.
 
 CI remains authoritative for its parallel matrix. Competitor crates and timing
