@@ -412,9 +412,11 @@ fn gram_can_be_definite(rows: usize, columns: usize, fit_intercept: bool) -> boo
 /// `1.0x` to `283x`, worst at `1024x512`, growing roughly with `√columns`. A
 /// loose bound costs only a fallback that was not strictly necessary.
 ///
-/// Cost is one triangular inversion, `p³/6` against the Gram's `n·p²` — 4
-/// percent of the fast path at `4096x300`, 25 percent at `1024x512`, and it
-/// buys the difference between a gate and a guess.
+/// Cost is one triangular inversion, `p³/6` against the Gram's `n·p²`, and it
+/// is measured rather than counted. The certified `alpha = 0` fit against the
+/// penalized fit of the same design — which does everything here except the
+/// certificate — runs 3 percent longer at `4096x300`, 9 percent at `1024x300`
+/// and 13 percent at `1024x512`. That is what a gate costs over a guess.
 fn gram_condition_certificate(gram: MatRef<'_, f64>, lower: MatRef<'_, f64>) -> f64 {
     let columns = gram.nrows();
     let mut inverse = Mat::<f64>::zeros(columns, columns);
@@ -503,6 +505,18 @@ fn solve_normal_equations(
 ///   loses fourteen digits on it. The certificate bounds `κ₂(X)²` directly, so
 ///   an ill-conditioned design fails it whether or not it is full rank, and
 ///   lands on the accurate route.
+///
+/// **Measured before against after, same runner, same bytes, two timed runs of
+/// every lane on each build.** The `alpha = 0` fit against `alpha = 1` on
+/// identical data goes `4.37x` to `1.09x` at `1024x300`, `5.55x` to `1.13x` at
+/// `1024x512`, and `2.22x` to `1.03x` at `4096x300` — a 3.8x, 4.6x and 2.0x
+/// speedup. `256x300` is underdetermined and is unchanged. `LinearRegression`,
+/// which runs the same minimum-norm decomposition and is untouched by this
+/// change, moved by at most 2.6 percent between the two builds, and that is what
+/// bounds the machine's contribution to those ratios; run-to-run spread on the
+/// changed lane was 0.2 to 0.7 percent. The machine was not quiesced to the
+/// project's idle floor, so the ratios are the claim and the milliseconds are
+/// not a baseline.
 ///
 /// What changes path, measured rather than predicted: a design with more rows
 /// than columns, full rank, and `κ₂(X)` roughly under `1e3`. What does not:
