@@ -55,7 +55,7 @@ use ferricml::ensemble::{
 };
 use ferricml::linear_model::{
     ElasticNet, ElasticNetParams, Lasso, LassoParams, LinearRegression, LinearRegressionParams,
-    LogisticRegression, LogisticRegressionParams, Ridge, RidgeParams,
+    LogisticRegression, LogisticRegressionParams, LogisticSolver, Ridge, RidgeParams,
 };
 use ferricml::pipeline::{Pipeline, StagedPipeline, TransformerStack};
 use ferricml::preprocessing::{
@@ -1300,6 +1300,22 @@ fn seed_corpus() -> Vec<(&'static str, Vec<u8>)> {
         LogisticRegressionParams::default(),
     )
     .unwrap();
+    // The same two fits under the other solver. Payload versions 3 and 4 are
+    // the versions that carry a solver word, so they are a *different* payload
+    // shape under the same estimator kind — the shape no seed reached before
+    // the solver became something an artifact records.
+    let lbfgs_logistic = LogisticRegression::fit(
+        &data.as_view(),
+        &binary,
+        LogisticRegressionParams::default().with_solver(LogisticSolver::Lbfgs),
+    )
+    .unwrap();
+    let lbfgs_multiclass_logistic = LogisticRegression::fit_multiclass(
+        &data.as_view(),
+        &ClassTargets::new(vec![3, 7, 10, 7]).unwrap(),
+        LogisticRegressionParams::default().with_solver(LogisticSolver::Lbfgs),
+    )
+    .unwrap();
     let linear = LinearRegression::fit(
         &data.as_view(),
         &regression,
@@ -1550,6 +1566,14 @@ fn seed_corpus() -> Vec<(&'static str, Vec<u8>)> {
         (
             "multiclass-logistic",
             multiclass_logistic.to_artifact(INPUT_SCHEMA).unwrap(),
+        ),
+        (
+            "lbfgs-logistic",
+            lbfgs_logistic.to_artifact(INPUT_SCHEMA).unwrap(),
+        ),
+        (
+            "lbfgs-multiclass-logistic",
+            lbfgs_multiclass_logistic.to_artifact(INPUT_SCHEMA).unwrap(),
         ),
         ("linear", linear.to_artifact(INPUT_SCHEMA).unwrap()),
         ("ridge", ridge.to_artifact(INPUT_SCHEMA).unwrap()),
@@ -3254,6 +3278,8 @@ fn corpus() -> Vec<Case> {
     };
     let logistic = seed("logistic");
     let multiclass = seed("multiclass-logistic");
+    let lbfgs_logistic = seed("lbfgs-logistic");
+    let lbfgs_multiclass = seed("lbfgs-multiclass-logistic");
     let scaler = seed("standard-scaler");
     let forest = seed("forest");
     let staged = seed("staged-two");
@@ -3282,6 +3308,16 @@ fn corpus() -> Vec<Case> {
     let (multiclass_payload, _) = payload_span(&multiclass).expect("multiclass payload");
     let multiclass_state = multiclass_payload + COMPONENT_HEADER_BYTES;
     let multiclass_features = u32_at(&multiclass, multiclass_state);
+    // Versions 3 and 4 append one word to those same fixed blocks: the eight
+    // binary words then the solver, and the eight multiclass words then the
+    // solver. So the solver word is at offset 32 in both.
+    let (lbfgs_logistic_payload, _) = payload_span(&lbfgs_logistic).expect("lbfgs payload");
+    let lbfgs_logistic_solver = lbfgs_logistic_payload + COMPONENT_HEADER_BYTES + 32;
+    let (lbfgs_multiclass_payload, _) =
+        payload_span(&lbfgs_multiclass).expect("lbfgs multiclass payload");
+    let lbfgs_multiclass_state = lbfgs_multiclass_payload + COMPONENT_HEADER_BYTES;
+    let lbfgs_multiclass_solver = lbfgs_multiclass_state + 32;
+    let lbfgs_multiclass_features = u32_at(&lbfgs_multiclass, lbfgs_multiclass_state);
 
     // Forest classifier metadata sits one component header past the payload;
     // its class list starts at word 17. The multiclass flavour's first leaf
@@ -4270,6 +4306,105 @@ fn corpus() -> Vec<Case> {
             expected: ArtifactError::InvalidPayload,
             bytes: overwrite(&multiclass, multiclass_state + 28, &5_u32.to_le_bytes()),
         },
+        // Payload versions 3 and 4 are the same two payloads plus one word
+        // naming the solver, and the word is read *before* any element is: a
+        // schema whose whole reason to exist is that field must not size a
+        // reservation from a payload it has not yet agreed to read.
+        Case {
+            name: "lbfgs-logistic-inflated-coefficients",
+            provenance: "1e6 declared coefficients behind a valid solver word, none encoded",
+            decoder: "logistic",
+            expected: ArtifactError::Truncated,
+            bytes: envelope(
+                1,
+                3,
+                &MODEL_ROLES,
+                &component(
+                    1,
+                    3,
+                    &words(&[inflated, 1, 0x3f80_0000, 100, 0x3727_c5ac, 1, 0, inflated, 2]),
+                ),
+            ),
+        },
+        Case {
+            name: "lbfgs-multiclass-logistic-inflated-width",
+            provenance: "the same inflation on the joint schema that carries a solver",
+            decoder: "logistic",
+            expected: ArtifactError::Truncated,
+            bytes: {
+                let classes = u32_at(&lbfgs_multiclass, lbfgs_multiclass_state + 24);
+                let bytes = overwrite(
+                    &lbfgs_multiclass,
+                    lbfgs_multiclass_state,
+                    &inflated.to_le_bytes(),
+                );
+                overwrite(
+                    &bytes,
+                    lbfgs_multiclass_state + 28,
+                    &(inflated * classes).to_le_bytes(),
+                )
+            },
+        },
+        // One model, one encoding. Version 1 already names a Newton binary fit
+        // and version 2 a Newton joint fit, so the Newton code inside the
+        // versions that exist to name something else is a second encoding of a
+        // model that already has one — refused, exactly as a default output
+        // range is at the `MinMaxScaler` version that exists to carry a
+        // non-default one.
+        Case {
+            name: "logistic-newton-at-the-solver-payload-version",
+            provenance: "the Newton code written at the version that exists to carry the other solver",
+            decoder: "logistic",
+            expected: ArtifactError::InvalidPayload,
+            bytes: overwrite(&lbfgs_logistic, lbfgs_logistic_solver, &1_u32.to_le_bytes()),
+        },
+        Case {
+            name: "multiclass-logistic-newton-at-the-solver-payload-version",
+            provenance: "the same word on the joint schema",
+            decoder: "logistic",
+            expected: ArtifactError::InvalidPayload,
+            bytes: overwrite(
+                &lbfgs_multiclass,
+                lbfgs_multiclass_solver,
+                &1_u32.to_le_bytes(),
+            ),
+        },
+        Case {
+            name: "logistic-unknown-solver-code",
+            provenance: "a solver word naming no solver that exists, including the zero a hole reads as",
+            decoder: "logistic",
+            expected: ArtifactError::InvalidPayload,
+            bytes: overwrite(&lbfgs_logistic, lbfgs_logistic_solver, &0_u32.to_le_bytes()),
+        },
+        Case {
+            name: "multiclass-logistic-unknown-solver-code",
+            provenance: "the same hole on the joint schema",
+            decoder: "logistic",
+            expected: ArtifactError::InvalidPayload,
+            bytes: overwrite(
+                &lbfgs_multiclass,
+                lbfgs_multiclass_solver,
+                &0_u32.to_le_bytes(),
+            ),
+        },
+        Case {
+            name: "lbfgs-logistic-relabelled-as-newton-version",
+            provenance: "a solver-carrying binary payload whose envelope claims the version without the word",
+            decoder: "logistic",
+            expected: ArtifactError::UnsupportedPayloadVersion { found: 3 },
+            bytes: overwrite(&lbfgs_logistic, 12, &1_u16.to_le_bytes()),
+        },
+        Case {
+            name: "lbfgs-multiclass-logistic-coefficient-count-mismatch",
+            provenance: "a coefficient count that is not classes times features, past a valid solver word",
+            decoder: "logistic",
+            expected: ArtifactError::InvalidPayload,
+            bytes: overwrite(
+                &lbfgs_multiclass,
+                lbfgs_multiclass_state + 28,
+                &(lbfgs_multiclass_features + 1).to_le_bytes(),
+            ),
+        },
         // Kind 11 carries two leaf representations under one payload version,
         // so the flavour tag, the class list, and the per-tree probability
         // block each owe the same guarantees the rest of the envelope does.
@@ -4705,6 +4840,25 @@ fn corpus() -> Vec<Case> {
             expected: ArtifactError::InvalidPayload,
             bytes: elastic_net,
         },
+        // The positive half of the six solver cases above. Only these say that
+        // the *accepted* value of the solver word is the one the writer really
+        // writes, and — through the canonicity oracle every control passes —
+        // that a version-3 or version-4 artifact re-encodes to itself rather
+        // than collapsing back onto the schema that names Newton.
+        Case {
+            name: "control-fitted-lbfgs-logistic",
+            provenance: "an unmodified binary fit under the other solver, which must still decode",
+            decoder: "logistic",
+            expected: ArtifactError::InvalidPayload,
+            bytes: lbfgs_logistic,
+        },
+        Case {
+            name: "control-fitted-lbfgs-multiclass-logistic",
+            provenance: "an unmodified joint fit under the other solver, which must still decode",
+            decoder: "logistic",
+            expected: ArtifactError::InvalidPayload,
+            bytes: lbfgs_multiclass,
+        },
         Case {
             name: "control-fitted-polynomial-features",
             provenance: "an unmodified fitted width-changing expansion, which must decode",
@@ -4754,6 +4908,8 @@ const CONTROL_CASES: &[&str] = &[
     "control-fitted-lasso",
     "control-fitted-elastic-net",
     "control-fitted-polynomial-features",
+    "control-fitted-lbfgs-logistic",
+    "control-fitted-lbfgs-multiclass-logistic",
 ];
 
 // ---------------------------------------------------------------------------
@@ -4815,7 +4971,7 @@ const CONTROL_CASES: &[&str] = &[
 
 /// Below this many pinned fixtures the oracle is not doing its job: the table
 /// was gutted, or the family it covers was renamed out from under it.
-const MIN_ATTRIBUTED_FIXTURES: usize = 17;
+const MIN_ATTRIBUTED_FIXTURES: usize = 21;
 
 /// Each pinned fixture, and the bytes with **only** the named fault undone.
 ///
@@ -4825,7 +4981,35 @@ const MIN_ATTRIBUTED_FIXTURES: usize = 17;
 /// that field rather than about the artifact in general.
 fn attributed_repairs() -> Vec<(&'static str, Vec<u8>)> {
     let forest = forest_with(&canonical_tree(), 3, 2);
+    let fitted = seed_corpus();
+    let seed = |name: &str| -> Vec<u8> {
+        fitted
+            .iter()
+            .find(|(seed_name, _)| *seed_name == name)
+            .unwrap_or_else(|| panic!("no fitted seed named {name}"))
+            .1
+            .clone()
+    };
     vec![
+        // The four solver-word fixtures. Each is one word of a fitted artifact
+        // rewritten, so the repair is the fitted artifact itself: the two byte
+        // strings differ in the solver word and nothing else, which is what
+        // makes an accepted repair evidence that the *solver* clause rejected
+        // the fixture rather than some field it shares with every other
+        // logistic payload.
+        (
+            "logistic-newton-at-the-solver-payload-version",
+            seed("lbfgs-logistic"),
+        ),
+        (
+            "multiclass-logistic-newton-at-the-solver-payload-version",
+            seed("lbfgs-multiclass-logistic"),
+        ),
+        ("logistic-unknown-solver-code", seed("lbfgs-logistic")),
+        (
+            "multiclass-logistic-unknown-solver-code",
+            seed("lbfgs-multiclass-logistic"),
+        ),
         // The metadata-versus-records pair: the fixtures declare a leaf count
         // and a depth the records do not produce, and the repair declares the
         // ones they do.

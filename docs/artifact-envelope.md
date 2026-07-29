@@ -33,7 +33,18 @@ second payload schema under the same estimator kind rather than a widening of
 the first. Payload version `1` stores one coefficient row and one intercept;
 payload version `2` stores the observed class list, one intercept per class, and
 one coefficient row per class, and requires at least two classes. Every binary
-artifact therefore keeps its exact bytes and its exact reader. Decoding reads
+artifact therefore keeps its exact bytes and its exact reader.
+
+Neither of those two versions records which solver produced the fit, and the
+writer that produced them refused every solver but `Newton` — so version `1`
+names a Newton binary fit and version `2` a Newton joint fit, by construction
+rather than by assumption. Payload versions `3` and `4` are those same two
+payloads with one extra word naming the solver, appended after the fixed block
+and read before any element is. They are written exactly when that word would
+say something versions `1` and `2` cannot, and the `Newton` code is rejected
+inside them: one model has one encoding, so the solver that the older versions
+already name is not a value the newer ones accept. `MinMaxScaler` uses the same
+shape for its output range. Decoding reads
 the recorded payload version from the header to select which reader runs — a
 two-byte selection made before anything is hashed, so a hostile buffer is never
 hashed twice — and the selected reader then re-validates that same field along

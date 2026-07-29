@@ -376,6 +376,34 @@ and releases use [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Changed
 
+- **A logistic fit under `LogisticSolver::Lbfgs` now persists.** It used to
+  report `ArtifactError::UnsupportedModelState`: both payload schemas predate
+  `LogisticSolver` and store no solver field, so writing one would have produced
+  bytes that decode as a model claiming `Newton` provenance it does not have.
+  The fix is two new payload versions rather than a widening of the existing
+  ones — `3` for the binary payload and `4` for the joint multinomial one, each
+  the same payload with one extra word naming the solver, appended after the
+  fixed block and read before any element is.
+
+  **Every artifact ever written keeps its exact bytes and its exact reader.**
+  Versions `1` and `2` carry no solver word, and the writer that produced them
+  refused everything but `Newton`, so they name a Newton fit by construction
+  rather than by assumption; they decode exactly as before. A `Newton` fit still
+  writes them today, which is what keeps one model to one encoding — and for the
+  same reason the `Newton` code is *rejected* inside versions `3` and `4`, the
+  way a default output range is rejected at the `MinMaxScaler` version that
+  exists to carry a non-default one. The estimator kind is untouched: this is
+  payload versioning, not a new artifact kind.
+
+  The adversarial corpus gained ten frozen byte strings for the new schemas — an
+  inflated element count behind a valid solver word on each, the `Newton` code
+  and a zero hole in each solver field, a crossed payload version, a coefficient
+  count that is not classes times features, and the two fitted controls that
+  say the accepted encoding is the one the writer really writes and re-encodes
+  to itself. Four of them are pinned by the attribution oracle, so an accepted
+  repair proves the solver clause did the rejecting rather than some field the
+  payload shares with every other logistic artifact.
+
 - **`Ridge` with `alpha = 0` now solves a certified well-conditioned design
   through the same Gram factorization a penalized fit uses.** It used to route
   every unpenalized fit into the minimum-norm SVD, which is the accurate answer

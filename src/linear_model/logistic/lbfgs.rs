@@ -260,10 +260,13 @@ pub(super) fn fit_multinomial(
 
 #[cfg(test)]
 mod tests {
-    use super::super::{LogisticRegression, LogisticRegressionParams, LogisticSolver};
+    use super::super::{
+        LBFGS_SOLVER_CODE, LogisticRegression, LogisticRegressionParams, LogisticSolver,
+        NEWTON_SOLVER_CODE, solver_from_code,
+    };
     use super::{BinaryProblem, DesignView, MultinomialProblem, scaled_penalties};
     use crate::api::ModelError;
-    use crate::artifact::{ArtifactError, ModelArtifact};
+    use crate::artifact::{ArtifactError, ModelArtifact, artifact_payload_version};
     use crate::data::{BinaryTargets, ClassTargets, DenseMatrix, SampleWeights};
     use crate::numeric::OwnedRng;
     use crate::optimize::Problem;
@@ -724,32 +727,55 @@ mod tests {
         );
     }
 
+    /// A fit under either solver persists, and the two never decode as each
+    /// other.
+    ///
+    /// The equality is the whole claim: a payload that stored no solver would
+    /// decode the matrix-free fit as a model claiming Newton provenance, which
+    /// compares unequal to what was encoded. The version assertions pin *which*
+    /// schema each one takes, because "it round-trips" would also be satisfied
+    /// by a writer that put every fit on the newer schema — and that would give
+    /// the Newton fit a second encoding.
     #[test]
-    fn a_model_fitted_under_a_non_default_solver_has_no_artifact() {
-        // Neither payload schema records a solver, so writing one would produce
-        // bytes that decode as a model claiming Newton provenance.
+    fn a_fit_under_either_solver_round_trips_and_records_which_one_produced_it() {
         let (data, targets, _) = binary_problem();
-        let model = LogisticRegression::fit(
-            &data.as_view(),
-            &targets,
-            LogisticRegressionParams::default().with_solver(LogisticSolver::Lbfgs),
-        )
-        .expect("fit");
-        assert_eq!(
-            model.to_artifact([7; 32]),
-            Err(ArtifactError::UnsupportedModelState)
+        let mut encodings = Vec::new();
+        for (solver, expected_version) in
+            [(LogisticSolver::Newton, 1_u16), (LogisticSolver::Lbfgs, 3)]
+        {
+            let model = LogisticRegression::fit(
+                &data.as_view(),
+                &targets,
+                LogisticRegressionParams::default().with_solver(solver),
+            )
+            .expect("fit");
+            let bytes = model.to_artifact([7; 32]).expect("persists");
+            assert_eq!(
+                artifact_payload_version(&bytes).expect("version"),
+                expected_version,
+                "{solver:?} took the wrong payload schema"
+            );
+            let decoded = LogisticRegression::from_artifact(&bytes, [7; 32]).expect("decode");
+            assert_eq!(decoded, model, "{solver:?} did not round-trip");
+            assert_eq!(decoded.get_params().solver(), solver);
+            encodings.push(bytes);
+        }
+        assert_ne!(
+            encodings[0], encodings[1],
+            "the two solvers produced the same bytes, so the solver is not recorded"
         );
-        let newton = LogisticRegression::fit(
-            &data.as_view(),
-            &targets,
-            LogisticRegressionParams::default(),
-        )
-        .expect("fit");
-        let bytes = newton.to_artifact([7; 32]).expect("newton persists");
+        // The Newton code is not a value the newer schema accepts — version 1
+        // already names that model, and two encodings of one model is what the
+        // canonicity oracle exists to refuse — and neither is a hole.
         assert_eq!(
-            LogisticRegression::from_artifact(&bytes, [7; 32]).expect("decode"),
-            newton
+            solver_from_code(NEWTON_SOLVER_CODE),
+            Err(ArtifactError::InvalidPayload)
         );
+        assert_eq!(
+            solver_from_code(LBFGS_SOLVER_CODE),
+            Ok(LogisticSolver::Lbfgs)
+        );
+        assert_eq!(solver_from_code(0), Err(ArtifactError::InvalidPayload));
     }
 
     #[test]

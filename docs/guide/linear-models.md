@@ -295,10 +295,11 @@ Two consequences to know before selecting it:
   largest absolute coefficient update; under `Lbfgs` it is the gradient norm of
   the mean penalized objective. They are documented apart rather than conflated,
   because pretending they were the same would make one of them wrong.
-- **A non-default solver has no artifact representation.** Neither logistic
-  payload schema records which solver ran, so rather than writing bytes that
-  would decode as a `Newton`-provenance model, a model fitted under `Lbfgs`
-  cannot be persisted at all. See [the artifact
+- **Both solvers persist, at different payload versions.** The two original
+  logistic schemas record no solver and therefore name a `Newton` fit; a fit
+  under `Lbfgs` is written at a new payload version carrying one extra word, so
+  a decoded model compares equal to the one encoded. Every artifact written
+  before that version existed keeps its exact bytes. See [the artifact
   envelope](../artifact-envelope.md).
 
 ## Weighted fitting
