@@ -3,6 +3,13 @@
 SHELL := /bin/bash
 PYTHON ?= python3
 
+# Interpreter for the cross-language exchange gate. NumPy is its only
+# requirement — the container reader needs nothing else — and the check says so
+# loudly rather than skipping when the interpreter it is handed does not have
+# it. Point this at the local reference workspace's virtualenv, or at any
+# interpreter with NumPy, when the default has none.
+EXCHANGE_PYTHON ?= $(PYTHON)
+
 # Documentation-site toolchain. DOCS_PYTHON matches the interpreter line pinned
 # in .readthedocs.yaml so the local build and the hosted build agree.
 DOCS_PYTHON ?= python3.12
@@ -14,7 +21,7 @@ DOCS_VENV ?= .venv-docs
 MUTANTS_SCOPE ?= --file 'src/numeric/**' --file 'src/linear_model/ridge/**'
 MUTANTS_JOBS ?= 4
 
-.PHONY: gate gate-full api-check api-refresh reference-check package-check semver-check mutants bench-self bench-history bench-diagnostic docs-env docs-build docs-serve
+.PHONY: gate gate-full api-check api-refresh reference-check exchange-check package-check semver-check mutants bench-self bench-history bench-diagnostic docs-env docs-build docs-serve
 
 ## Ordinary pre-push gate: formatting, default lint/tests, dependency isolation,
 ## documentation-versus-code agreement, allocating/`_into` accessor pairing,
@@ -89,6 +96,28 @@ api-refresh:
 ## Verify FerricML's frozen behavior, shape, validation, and quality contract.
 reference-check:
 	cargo test --locked --test reference_semantics
+
+## Verify that a materialized exchange container means the same thing in both
+## languages: the crate regenerates the reference suite, the Python reader loads
+## it back with its digests verified, and what it decodes is compared with the
+## stream literals `src/datasets/tests.rs` pins.
+##
+## Separately named for the same reason `reference-check` and `docs-build` are:
+## it needs a toolchain the Rust gates must not require. That is also what lets
+## it fail rather than skip. A cross-language check written as a test that
+## skipped itself when NumPy was absent would report green forever on every
+## machine that never had it, which is worse than not having the check — so a
+## missing interpreter, a missing NumPy and a missing cargo are each an error
+## here, with the override named in the message.
+##
+## The self-test runs first and needs neither cargo nor the crate: it plants a
+## violation of each rule in a synthetic catalogue, including a value changed
+## under a *recomputed* digest. That last plant is the one that matters —
+## verifying integrity proves the bytes arrived, not that the two languages
+## agree about what they say.
+exchange-check:
+	$(EXCHANGE_PYTHON) scripts/check_exchange_identity.py --self-test
+	$(EXCHANGE_PYTHON) scripts/check_exchange_identity.py
 
 ## Build the crates.io archive and run a public-API consumer against its extract.
 ##

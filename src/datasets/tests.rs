@@ -2213,3 +2213,139 @@ fn the_frozen_presets_and_benchmark_fixtures_carry_no_task() {
         );
     }
 }
+
+/// Every knob a caller can get wrong, as a roster the sweep below reads.
+///
+/// A list rather than a derived set, because [`Parameter`] is
+/// `#[non_exhaustive]` and offers no iterator;
+/// [`the_parameter_roster_is_every_variant`] is the closure that makes the list
+/// fail to compile when a knob is added rather than letting the new one escape
+/// the sweep silently.
+const EVERY_PARAMETER: [Parameter; 21] = [
+    Parameter::CoefficientScale,
+    Parameter::Intercept,
+    Parameter::NoiseScale,
+    Parameter::ConditionNumber,
+    Parameter::Dispersion,
+    Parameter::Separation,
+    Parameter::Prevalence,
+    Parameter::BalanceRatio,
+    Parameter::Spread,
+    Parameter::Drift,
+    Parameter::GroupSizeRatio,
+    Parameter::LabelNoise,
+    Parameter::OutlierFraction,
+    Parameter::HeavyTail,
+    Parameter::Heteroscedastic,
+    Parameter::DuplicateRows,
+    Parameter::FeatureScaleSpread,
+    Parameter::WeightLow,
+    Parameter::WeightHigh,
+    Parameter::WeightFirst,
+    Parameter::WeightSecond,
+];
+
+#[test]
+fn the_parameter_roster_is_every_variant() {
+    // Exhaustive inside the defining crate — `#[non_exhaustive]` binds only
+    // downstream — so a knob added to the enum stops compiling here.
+    for parameter in EVERY_PARAMETER {
+        match parameter {
+            Parameter::CoefficientScale
+            | Parameter::Intercept
+            | Parameter::NoiseScale
+            | Parameter::ConditionNumber
+            | Parameter::Dispersion
+            | Parameter::Separation
+            | Parameter::Prevalence
+            | Parameter::BalanceRatio
+            | Parameter::Spread
+            | Parameter::Drift
+            | Parameter::GroupSizeRatio
+            | Parameter::LabelNoise
+            | Parameter::OutlierFraction
+            | Parameter::HeavyTail
+            | Parameter::Heteroscedastic
+            | Parameter::DuplicateRows
+            | Parameter::FeatureScaleSpread
+            | Parameter::WeightLow
+            | Parameter::WeightHigh
+            | Parameter::WeightFirst
+            | Parameter::WeightSecond => {}
+        }
+    }
+    for (index, parameter) in EVERY_PARAMETER.iter().enumerate() {
+        assert!(
+            !EVERY_PARAMETER[index + 1..].contains(parameter),
+            "{parameter:?} is listed twice"
+        );
+    }
+}
+
+/// A range complaint names the knob a caller wrote and the range it wanted.
+///
+/// The second half is the part nothing else asserted. A message that named the
+/// knob and then said nothing useful — or said the same thing about every knob —
+/// is still non-empty, and is still distinct from its siblings because the
+/// *names* differ, so every check that existed passed while a caller was left
+/// with no idea what to write instead. The range clause is therefore read on
+/// its own.
+#[test]
+fn a_range_complaint_names_its_knob_and_the_range_it_wanted() {
+    let mut names: Vec<String> = Vec::new();
+    let mut ranges: Vec<String> = Vec::new();
+    for parameter in EVERY_PARAMETER {
+        let message = DatasetError::ParameterOutOfRange { parameter }.to_string();
+        let (name, range) = message.split_once(" must be ").unwrap_or_else(|| {
+            panic!("{parameter:?} does not read as `<knob> must be <range>`: {message}")
+        });
+        assert!(!name.is_empty(), "{parameter:?} names no knob");
+        assert!(!range.is_empty(), "{parameter:?} states no range");
+        assert!(
+            !names.contains(&name.to_owned()),
+            "two knobs both render as {name:?}"
+        );
+        names.push(name.to_owned());
+        ranges.push(range.to_owned());
+    }
+    ranges.sort();
+    ranges.dedup();
+    // A floor rather than an exact count, because knobs deliberately share a
+    // range — `coefficient_scale` and `separation` are both "a finite value
+    // above 0" — so what has to hold is that the ranges tell the knobs apart at
+    // all. A constant answer collapses this to one. Raise it when a range is
+    // added; lower it only alongside ranges being merged on purpose.
+    assert!(
+        ranges.len() >= 8,
+        "the admissible ranges collapsed to {} distinct clauses: {ranges:?}",
+        ranges.len()
+    );
+}
+
+/// The forest fixture's separating score is *strictly* greater than zero, so a
+/// row scoring exactly zero is a negative.
+///
+/// The recorded digests were claimed to settle this and do not: a mutation run
+/// on 2026-07-29 flipped `>` to `>=` and every pinned byte stayed identical,
+/// because no row at any recorded shape scores exactly zero. A digest settles a
+/// boundary only when a pinned row sits on it.
+///
+/// An all-zero row does, exactly and without rounding — the score is a weighted
+/// sum of zeros — so it separates the two comparisons where the lattice cannot.
+/// A second row scores positive, so the test fails if the labeller is stuck at
+/// either answer rather than reading the score.
+#[test]
+fn the_forest_boundary_counts_an_exactly_zero_score_as_negative() {
+    let mut values = vec![0.0_f32; 8];
+    values[4] = 1.0;
+    let design = crate::data::DenseMatrix::new(values, 2, 4).unwrap();
+
+    let labels = super::benchmarks::forest_labels_of(&design);
+
+    assert_eq!(
+        labels.as_slice(),
+        [0, 1],
+        "an exactly-zero score must be negative and a positive score positive; \
+         `>=` would report [1, 1]"
+    );
+}

@@ -1664,6 +1664,31 @@ fn the_spec_digest_separates_tasks_contaminations_and_weight_patterns() {
             separation: 1.0,
             prevalence: 0.5,
         },
+        // The balance is one field written in two pieces — a tag and a ratio,
+        // at the byte offsets the pre-partition encoding gave them — so the
+        // three below separate both halves: `Balanced` against `Imbalanced` is
+        // the tag, and the two ratios are the half a digest that hashed only
+        // the tag would let through. It did: nothing here reached the ratio
+        // until a mutation run found that deleting its write changed no digest
+        // any test compared.
+        Task::Multiclass {
+            classes: 3,
+            balance: ClassBalance::Balanced,
+            geometry: ClassGeometry::Blob,
+            separation: 1.0,
+        },
+        Task::Multiclass {
+            classes: 3,
+            balance: ClassBalance::Imbalanced { ratio: 2.0 },
+            geometry: ClassGeometry::Blob,
+            separation: 1.0,
+        },
+        Task::Multiclass {
+            classes: 3,
+            balance: ClassBalance::Imbalanced { ratio: 4.0 },
+            geometry: ClassGeometry::Blob,
+            separation: 1.0,
+        },
     ];
     let mut digests = vec![bare.spec_digest()];
     for task in tasks {
@@ -2189,4 +2214,296 @@ fn offset_for_prevalence_is_the_unconditional_bisection() {
     }
 
     assert_eq!(checked, 4 * 6 * 6 * 4 + 64 * 3 * 3);
+}
+
+/// The per-runner shapes emit their recorded first values, to a tolerance a
+/// libm cannot reach and an algebra change cannot miss.
+///
+/// [`the_bit_exact_families_emit_their_recorded_first_values`] pins the two
+/// nonlinear shapes whose arithmetic is exact and stops there, because the
+/// other two evaluate a transcendental and their last bits are a property of
+/// the platform's libm rather than of this crate. That reasoning is right about
+/// *equality* and was wrong about *nothing*: it left four boundary expressions
+/// and two shape expressions with no value assertion at all. A mutation run
+/// found sixty-two mutants of `NonlinearKind::conditional_mean` and
+/// `BinaryKind::score` that no test in the crate noticed — including turning
+/// every product in Friedman's function into a sum, and the `Circles` boundary
+/// inside-out — because the aggregate checks around them (Bayes accuracy,
+/// linear shortfall, monotonicity in the dials) hold for a great many wrong
+/// expressions.
+///
+/// **The tolerance is derived, not tuned.** A libm difference is a few units in
+/// the last place of the transcendental it comes out of: the recorded values
+/// below reach about `18`, where one `f32` ulp is `1.9e-6`, so a handful of ulp
+/// is under `1e-5` and `1e-4` is an order of magnitude above any platform
+/// disagreement this can meet. The probabilities live in `[0, 1]` and get
+/// `1e-5` for the same reason at that scale. An algebra change moves these
+/// values by very much more: the smallest displacement measured while writing
+/// this was `0.0124`, from turning the `Circles` boundary's squared radius into
+/// a difference of squares, which is a thousand times the tighter bound.
+/// Neither number was chosen by running the test.
+#[test]
+fn the_per_runner_shapes_emit_their_recorded_first_values() {
+    // Shapes: the conditional mean is the expression itself, before noise.
+    let shapes: [(NonlinearKind, [f32; 6]); 2] = [
+        (
+            NonlinearKind::Sinusoid,
+            [
+                -0.92911005,
+                -0.43910924,
+                1.0860491,
+                0.03820111,
+                0.8691721,
+                -0.78305507,
+            ],
+        ),
+        (
+            NonlinearKind::Friedman,
+            [
+                8.916898, 10.534734, 15.271303, 14.147702, 12.801436, 17.701077,
+            ],
+        ),
+    ];
+    for (kind, recorded) in shapes {
+        let recipe = Recipe::seeded(6, 5, 11)
+            .unwrap()
+            .with_task(Task::NonlinearRegression {
+                kind,
+                noise_scale: 0.1,
+            })
+            .unwrap();
+        assert_eq!(recipe.portability(), Portability::PerRunner, "{kind:?}");
+        let dataset = recipe.generate();
+        let observed = dataset.truth().conditional_mean().unwrap();
+        assert_eq!(observed.len(), recorded.len(), "{kind:?}");
+        for (index, (&left, right)) in observed.iter().zip(recorded).enumerate() {
+            assert!(
+                (f64::from(left) - f64::from(right)).abs() <= 1e-4,
+                "{kind:?} row {index}: {left} is not the recorded {right}"
+            );
+        }
+    }
+
+    // Boundaries: the Bayes probability is the boundary's score through the
+    // family's separation, prevalence offset and link, so pinning it pins the
+    // score. Every one of the four is checked, including the three whose own
+    // arithmetic is exact — their family is per-runner because the link is, and
+    // a value assertion has to live where the value is observable.
+    let boundaries: [(BinaryKind, [f32; 6]); 4] = [
+        (
+            BinaryKind::Xor,
+            [
+                0.30122608, 0.6514052, 0.45975292, 0.55300695, 0.3354207, 0.6991882,
+            ],
+        ),
+        (
+            BinaryKind::Sinusoid,
+            [
+                0.5740339, 0.77787745, 0.3152561, 0.9482524, 0.0712616, 0.31331855,
+            ],
+        ),
+        (
+            BinaryKind::Circles,
+            [
+                0.4444852, 0.5258074, 0.52925676, 0.5783658, 0.42438367, 0.49770117,
+            ],
+        ),
+        (
+            BinaryKind::Checkerboard,
+            [
+                0.7993681, 0.35031596, 0.35031596, 0.35031596, 0.7993681, 0.35031596,
+            ],
+        ),
+    ];
+    for (kind, recorded) in boundaries {
+        let dataset = Recipe::seeded(6, 5, 11)
+            .unwrap()
+            .with_task(Task::NonlinearBinary {
+                kind,
+                separation: 1.0,
+                prevalence: 0.5,
+            })
+            .unwrap()
+            .generate();
+        let observed = dataset.truth().probabilities().unwrap();
+        assert_eq!(observed.len(), recorded.len(), "{kind:?}");
+        for (index, (&left, right)) in observed.iter().zip(recorded).enumerate() {
+            assert!(
+                (f64::from(left) - f64::from(right)).abs() <= 1e-5,
+                "{kind:?} row {index}: {left} is not the recorded {right}"
+            );
+        }
+    }
+}
+
+/// Every contamination knob is refused at its own upper edge, by name.
+///
+/// The lower edge was covered — a negative fraction is refused, through the
+/// shared `at_least_zero` — and the upper edge was not covered at all. A
+/// mutation run replaced the whole of `unit_interval` and the whole of
+/// `half_open_unit` with `Ok(())`, deleting both bounds *and* the finiteness
+/// check for the four knobs that route through them, and every test in the
+/// crate still passed. These are public knobs whose documented ranges are what
+/// their error messages promise, and "invalid shapes fail before allocation or
+/// training work begins" is a claim about the values a caller actually writes.
+///
+/// The admissible value beside each refusal is what makes this a range rather
+/// than a prohibition: a bound that refused its own legal edge would fail here
+/// too.
+#[test]
+fn every_contamination_fraction_is_refused_above_its_range() {
+    let bare = Recipe::seeded(32, 6, 1).unwrap();
+    // A knob is refused for being out of range before it is asked whether the
+    // task can carry it, so the range half below runs against the bare recipe.
+    // The admissible half cannot: label noise needs labels and the two
+    // noise-shaping knobs need an additive noise term, and a refusal for
+    // *that* reason would look like the bound firing on a legal value. Each
+    // case therefore names the family its legal edge is legal over.
+    let labelled = bare
+        .with_task(Task::LinearBinary {
+            informative: 2,
+            separation: 1.0,
+            prevalence: 0.5,
+        })
+        .expect("a valid recipe");
+    let noisy = bare
+        .with_task(Task::LinearRegression {
+            informative: 2,
+            coefficient_scale: 1.0,
+            intercept: 0.0,
+            noise_scale: 0.1,
+        })
+        .expect("a valid recipe");
+    /// One knob: how to set it, the first value outside its range, the last
+    /// value inside it, the recipe that legal value is legal over, and the
+    /// name the refusal has to carry.
+    struct Case<'a> {
+        build: fn(f32) -> Contamination,
+        outside: f32,
+        inside: f32,
+        admissible_over: &'a Recipe,
+        parameter: Parameter,
+    }
+    let cases = [
+        // Label noise stops at one half, above which the labels invert.
+        Case {
+            build: |value| Contamination::none().with_label_noise(value),
+            outside: 0.5001,
+            inside: 0.5,
+            admissible_over: &labelled,
+            parameter: Parameter::LabelNoise,
+        },
+        // The heavy-tailed component is a fraction of the rows.
+        Case {
+            build: |value| Contamination::none().with_heavy_tail(value),
+            outside: 1.0001,
+            inside: 1.0,
+            admissible_over: &noisy,
+            parameter: Parameter::HeavyTail,
+        },
+        // Half-open: displacing *every* row leaves no clean row to be an
+        // outlier against, so `1` is already outside.
+        Case {
+            build: |value| Contamination::none().with_outlier_fraction(value),
+            outside: 1.0,
+            inside: 0.999,
+            admissible_over: &noisy,
+            parameter: Parameter::OutlierFraction,
+        },
+        Case {
+            build: |value| Contamination::none().with_duplicate_rows(value),
+            outside: 1.0,
+            inside: 0.999,
+            admissible_over: &bare,
+            parameter: Parameter::DuplicateRows,
+        },
+    ];
+    for case in cases {
+        let parameter = case.parameter;
+        assert_eq!(
+            bare.with_contamination((case.build)(case.outside)),
+            Err(DatasetError::ParameterOutOfRange { parameter }),
+            "{parameter:?} accepted {}",
+            case.outside
+        );
+        assert_eq!(
+            bare.with_contamination((case.build)(f32::NAN)),
+            Err(DatasetError::NonFiniteParameter { parameter }),
+            "{parameter:?} accepted a NaN"
+        );
+        assert!(
+            case.admissible_over
+                .with_contamination((case.build)(case.inside))
+                .is_ok(),
+            "{parameter:?} refused {}, which is inside its range",
+            case.inside
+        );
+    }
+}
+
+/// A weight pattern's two weights are refused only when they *sum* to nothing.
+///
+/// One end of a ramp may legitimately be zero — a ramp from `0` to `1` is the
+/// pattern that says the first rows do not count — so the rule is on the total
+/// rather than on either weight. Nothing asserted that: a mutation run replaced
+/// both totals with a *product*, which refuses exactly the patterns with one
+/// zero end and accepts the same everything else, and no test noticed. The two
+/// halves are checked together here because either one alone is satisfied by
+/// the wrong rule.
+#[test]
+fn a_weight_pattern_needs_a_positive_total_rather_than_two_positive_weights() {
+    let recipe = Recipe::seeded(32, 6, 1)
+        .and_then(|recipe| {
+            recipe.with_task(Task::LinearBinary {
+                informative: 2,
+                separation: 1.0,
+                prevalence: 0.5,
+            })
+        })
+        .expect("a valid recipe");
+    for (pattern, parameter) in [
+        (
+            WeightPattern::Ramp {
+                low: 0.0,
+                high: 0.0,
+            },
+            Parameter::WeightHigh,
+        ),
+        (
+            WeightPattern::Alternating {
+                first: 0.0,
+                second: 0.0,
+            },
+            Parameter::WeightSecond,
+        ),
+    ] {
+        assert_eq!(
+            recipe.with_weights(pattern),
+            Err(DatasetError::ParameterOutOfRange { parameter }),
+            "{pattern:?} weighted every row by nothing"
+        );
+    }
+    for pattern in [
+        WeightPattern::Ramp {
+            low: 0.0,
+            high: 1.0,
+        },
+        WeightPattern::Ramp {
+            low: 1.0,
+            high: 0.0,
+        },
+        WeightPattern::Alternating {
+            first: 0.0,
+            second: 1.0,
+        },
+        WeightPattern::Alternating {
+            first: 1.0,
+            second: 0.0,
+        },
+    ] {
+        assert!(
+            recipe.with_weights(pattern).is_ok(),
+            "{pattern:?} was refused, and one zero end is a legal pattern"
+        );
+    }
 }
