@@ -395,6 +395,14 @@ and releases use [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   exists to carry a non-default one. The estimator kind is untouched: this is
   payload versioning, not a new artifact kind.
 
+  The new schemas also accept a **zero** iteration count, which the older two
+  still refuse. `optimize::minimize` tests the gradient before each step, so a
+  starting point already inside `tol` costs one objective evaluation and no
+  iterations — a fit the exact path structurally cannot produce, because its
+  test is on an update and its loop always takes a step. The floor was correct
+  while Newton was the only solver that persisted and became a writer FerricML
+  could not read the moment the other one did.
+
   The adversarial corpus gained ten frozen byte strings for the new schemas — an
   inflated element count behind a valid solver word on each, the `Newton` code
   and a zero hole in each solver field, a crossed payload version, a coefficient

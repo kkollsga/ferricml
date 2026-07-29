@@ -1166,7 +1166,14 @@ impl LogisticRegression {
             || max_iter == 0
             || !tol.is_finite()
             || tol <= 0.0
-            || iterations == 0
+            // A zero iteration count is a model no *Newton* fit can produce —
+            // its convergence test is on an update, so the loop always takes
+            // one step — but it is exactly what the matrix-free path reports
+            // for a starting point that already satisfies the gradient
+            // tolerance, which `optimize::minimize` documents. So the floor
+            // rides on the schema: versions 1 and 2 name a Newton fit and keep
+            // it, versions 3 and 4 do not.
+            || (iterations == 0 && !records_solver)
             || iterations > max_iter
         {
             return Err(ArtifactError::InvalidPayload);
@@ -1254,7 +1261,14 @@ impl LogisticRegression {
             || max_iter == 0
             || !tol.is_finite()
             || tol <= 0.0
-            || iterations == 0
+            // A zero iteration count is a model no *Newton* fit can produce —
+            // its convergence test is on an update, so the loop always takes
+            // one step — but it is exactly what the matrix-free path reports
+            // for a starting point that already satisfies the gradient
+            // tolerance, which `optimize::minimize` documents. So the floor
+            // rides on the schema: versions 1 and 2 name a Newton fit and keep
+            // it, versions 3 and 4 do not.
+            || (iterations == 0 && !records_solver)
             || iterations > max_iter
             || !intercept.is_finite()
         {
@@ -2179,6 +2193,63 @@ mod tests {
         // rather than left inside the equality above: this is the whole reason
         // a payload written before `LogisticSolver` existed still decodes.
         assert_eq!(decoded.get_params().solver(), LogisticSolver::Newton);
+    }
+
+    /// A fit that needed no step at all still round-trips.
+    ///
+    /// `optimize::minimize` tests the gradient *before* each step, so a
+    /// starting point already inside `tol` costs one objective evaluation and
+    /// no iterations — and the design below, whose only column is constant, is
+    /// at its minimum before the first step. The decoders refused a zero
+    /// iteration count, which was right while the only persistable fit came
+    /// from the exact path (whose loop always takes a step) and became a
+    /// writer FerricML could not read the moment the matrix-free path started
+    /// persisting. Asserted through `to_artifact` rather than on hand-built
+    /// bytes, because the defect is precisely the two halves disagreeing.
+    #[test]
+    fn a_fit_that_took_no_step_round_trips_and_the_older_schemas_still_refuse_one() {
+        let data = DenseMatrix::new(vec![1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0], 4, 2).unwrap();
+        let schema = [4; 32];
+        let model = LogisticRegression::fit(
+            &data.as_view(),
+            &BinaryTargets::new(vec![0, 1, 0, 1]).unwrap(),
+            LogisticRegressionParams::default()
+                .with_solver(LogisticSolver::Lbfgs)
+                .with_fit_intercept(false),
+        )
+        .unwrap();
+        assert_eq!(model.n_iter(), 0, "this fixture no longer takes no step");
+        let bytes = model.to_artifact(schema).unwrap();
+        assert_eq!(artifact_payload_version(&bytes).unwrap(), 3);
+        assert_eq!(
+            LogisticRegression::from_artifact(&bytes, schema).unwrap(),
+            model
+        );
+
+        // The floor is still there where it belongs. A version-1 payload
+        // claiming zero iterations describes a fit the writer that produced
+        // that version could not have performed.
+        let newton = LogisticRegression::fit(
+            &data.as_view(),
+            &BinaryTargets::new(vec![0, 1, 0, 1]).unwrap(),
+            LogisticRegressionParams::default()
+                .with_solver(LogisticSolver::Newton)
+                .with_fit_intercept(false),
+        )
+        .unwrap();
+        let mut forged = newton.to_artifact(schema).unwrap();
+        assert_eq!(artifact_payload_version(&forged).unwrap(), 1);
+        // The payload starts after the 24-byte fixed header and one 36-byte
+        // schema record, then one component header; `iterations` is word six.
+        let iterations_at = 60 + 8 + 5 * 4;
+        forged[iterations_at..iterations_at + 4].copy_from_slice(&0_u32.to_le_bytes());
+        let checksummed = forged.len() - 32;
+        let digest = Sha256::digest(&forged[..checksummed]);
+        forged[checksummed..].copy_from_slice(&digest);
+        assert_eq!(
+            LogisticRegression::from_artifact(&forged, schema),
+            Err(ArtifactError::InvalidPayload)
+        );
     }
 
     /// Both older schemas still decode, byte-for-byte, with Newton provenance.
