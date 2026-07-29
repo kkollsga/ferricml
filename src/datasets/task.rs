@@ -1650,6 +1650,15 @@ fn bracket_the_crossing(scores: &[f64], prevalence: f64) -> (f64, f64) {
             break;
         }
         let step = (mean - prevalence) / slope;
+        // Settled is tested before the step is taken, not after. The guard
+        // below is a half-open interval whose upper end is this very iterate
+        // once the mean has reached the prevalence, so a step of zero would be
+        // rejected by it and replaced by the middle of the guard — throwing the
+        // located crossing away at the exact moment it was found, and leaving
+        // the pair below anchored nowhere near it.
+        if step.abs() <= 1e-14 * point.abs().max(1.0) {
+            break;
+        }
         let next = point - step;
         let next = if next > guard_low && next < guard_high {
             next
@@ -1659,11 +1668,7 @@ fn bracket_the_crossing(scores: &[f64], prevalence: f64) -> (f64, f64) {
         if next == point {
             break;
         }
-        let settled = step.abs() <= 1e-14 * point.abs().max(1.0);
         point = next;
-        if settled {
-            break;
-        }
     }
 
     // Newton's own iterates prove something only where they happened to land, so
