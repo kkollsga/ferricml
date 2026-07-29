@@ -2213,3 +2213,111 @@ fn the_frozen_presets_and_benchmark_fixtures_carry_no_task() {
         );
     }
 }
+
+/// Every knob a caller can get wrong, as a roster the sweep below reads.
+///
+/// A list rather than a derived set, because [`Parameter`] is
+/// `#[non_exhaustive]` and offers no iterator;
+/// [`the_parameter_roster_is_every_variant`] is the closure that makes the list
+/// fail to compile when a knob is added rather than letting the new one escape
+/// the sweep silently.
+const EVERY_PARAMETER: [Parameter; 21] = [
+    Parameter::CoefficientScale,
+    Parameter::Intercept,
+    Parameter::NoiseScale,
+    Parameter::ConditionNumber,
+    Parameter::Dispersion,
+    Parameter::Separation,
+    Parameter::Prevalence,
+    Parameter::BalanceRatio,
+    Parameter::Spread,
+    Parameter::Drift,
+    Parameter::GroupSizeRatio,
+    Parameter::LabelNoise,
+    Parameter::OutlierFraction,
+    Parameter::HeavyTail,
+    Parameter::Heteroscedastic,
+    Parameter::DuplicateRows,
+    Parameter::FeatureScaleSpread,
+    Parameter::WeightLow,
+    Parameter::WeightHigh,
+    Parameter::WeightFirst,
+    Parameter::WeightSecond,
+];
+
+#[test]
+fn the_parameter_roster_is_every_variant() {
+    // Exhaustive inside the defining crate — `#[non_exhaustive]` binds only
+    // downstream — so a knob added to the enum stops compiling here.
+    for parameter in EVERY_PARAMETER {
+        match parameter {
+            Parameter::CoefficientScale
+            | Parameter::Intercept
+            | Parameter::NoiseScale
+            | Parameter::ConditionNumber
+            | Parameter::Dispersion
+            | Parameter::Separation
+            | Parameter::Prevalence
+            | Parameter::BalanceRatio
+            | Parameter::Spread
+            | Parameter::Drift
+            | Parameter::GroupSizeRatio
+            | Parameter::LabelNoise
+            | Parameter::OutlierFraction
+            | Parameter::HeavyTail
+            | Parameter::Heteroscedastic
+            | Parameter::DuplicateRows
+            | Parameter::FeatureScaleSpread
+            | Parameter::WeightLow
+            | Parameter::WeightHigh
+            | Parameter::WeightFirst
+            | Parameter::WeightSecond => {}
+        }
+    }
+    for (index, parameter) in EVERY_PARAMETER.iter().enumerate() {
+        assert!(
+            !EVERY_PARAMETER[index + 1..].contains(parameter),
+            "{parameter:?} is listed twice"
+        );
+    }
+}
+
+/// A range complaint names the knob a caller wrote and the range it wanted.
+///
+/// The second half is the part nothing else asserted. A message that named the
+/// knob and then said nothing useful — or said the same thing about every knob —
+/// is still non-empty, and is still distinct from its siblings because the
+/// *names* differ, so every check that existed passed while a caller was left
+/// with no idea what to write instead. The range clause is therefore read on
+/// its own.
+#[test]
+fn a_range_complaint_names_its_knob_and_the_range_it_wanted() {
+    let mut names: Vec<String> = Vec::new();
+    let mut ranges: Vec<String> = Vec::new();
+    for parameter in EVERY_PARAMETER {
+        let message = DatasetError::ParameterOutOfRange { parameter }.to_string();
+        let (name, range) = message.split_once(" must be ").unwrap_or_else(|| {
+            panic!("{parameter:?} does not read as `<knob> must be <range>`: {message}")
+        });
+        assert!(!name.is_empty(), "{parameter:?} names no knob");
+        assert!(!range.is_empty(), "{parameter:?} states no range");
+        assert!(
+            !names.contains(&name.to_owned()),
+            "two knobs both render as {name:?}"
+        );
+        names.push(name.to_owned());
+        ranges.push(range.to_owned());
+    }
+    ranges.sort();
+    ranges.dedup();
+    // A floor rather than an exact count, because knobs deliberately share a
+    // range — `coefficient_scale` and `separation` are both "a finite value
+    // above 0" — so what has to hold is that the ranges tell the knobs apart at
+    // all. A constant answer collapses this to one. Raise it when a range is
+    // added; lower it only alongside ranges being merged on purpose.
+    assert!(
+        ranges.len() >= 8,
+        "the admissible ranges collapsed to {} distinct clauses: {ranges:?}",
+        ranges.len()
+    );
+}

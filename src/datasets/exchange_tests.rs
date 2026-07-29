@@ -861,3 +861,141 @@ fn the_word_spelled_vocabularies_survive_the_text() {
         );
     }
 }
+
+/// Each typed accessor answers for its own type and refuses the other two.
+///
+/// `f32_values` was the only one any test reached, because the design is the
+/// array every round trip compares. The other two were unasserted outright: a
+/// mutation run replaced `u8_values` with `None`, with an empty slice, and with
+/// a leaked one-element slice, and every test in this file still passed. That
+/// is the accessor a consumer reads a *label* through.
+///
+/// The refusal half is the part that makes them typed at all. An accessor that
+/// answered for every array would hand a caller a reinterpretation of bytes it
+/// did not ask for, which is the failure the `dtype` tag exists to prevent, so
+/// each array is asked all three questions rather than only its own.
+#[test]
+fn each_typed_array_accessor_answers_only_for_its_own_type() {
+    let recipe = Recipe::seeded(24, 4, 5)
+        .and_then(|recipe| {
+            recipe.with_task(Task::LinearBinary {
+                informative: 2,
+                separation: 1.0,
+                prevalence: 0.5,
+            })
+        })
+        .and_then(|recipe| recipe.with_groups(GroupPattern::Contiguous { groups: 3 }))
+        .expect("a valid recipe");
+    let container = MaterializedDataset::new(&recipe);
+
+    let mut seen: Vec<ArrayDtype> = Vec::new();
+    for array in container.arrays() {
+        let answers = (
+            array.f32_values().map(<[f32]>::len),
+            array.u8_values().map(<[u8]>::len),
+            array.u64_values().map(<[u64]>::len),
+        );
+        let expected = match array.dtype() {
+            ArrayDtype::F32 => (Some(array.len()), None, None),
+            ArrayDtype::U8 => (None, Some(array.len()), None),
+            ArrayDtype::U64 => (None, None, Some(array.len())),
+        };
+        assert_eq!(
+            answers,
+            expected,
+            "{} is {:?} and answered {answers:?}",
+            array.name(),
+            array.dtype()
+        );
+        // A materialized array holds values, and `is_empty` has to say so:
+        // returning a constant would make the emptiness question decorative.
+        assert!(!array.is_empty(), "{} decoded as empty", array.name());
+        assert_eq!(array.len(), array.rows() * array.columns());
+        if !seen.contains(&array.dtype()) {
+            seen.push(array.dtype());
+        }
+    }
+    // All three types really are present, so the two arms that used to be
+    // unreachable in this file are reached.
+    assert_eq!(seen.len(), 3, "the probe container carries {seen:?}");
+}
+
+/// Every container refusal says what was wrong, and carries its cause when it
+/// has one.
+///
+/// Neither half was asserted anywhere: `Display` could have rendered the whole
+/// enum as the empty string, and `source` could have returned `None` for all of
+/// it, with every test in this file still passing. Both matter to a caller —
+/// `ferricml-datagen` prints the chain, and an `Io` refusal's own message names
+/// the path while its source names what the filesystem said, so a caller
+/// diagnosing a run needs both rather than whichever one the outer type
+/// happened to render.
+///
+/// The sibling claim for [`DatasetError`] is
+/// `every_error_variant_is_reachable_from_a_constructor` in `tests.rs`; this is
+/// the same three properties — non-empty, a sentence fragment, and no two
+/// alike — over the type that reads files rather than the one that builds
+/// recipes.
+#[test]
+fn every_container_refusal_says_what_was_wrong_and_carries_its_cause() {
+    let refusals = [
+        ExchangeError::InvalidName,
+        ExchangeError::Io {
+            path: std::path::PathBuf::from("/nowhere/probe.bin"),
+            source: std::io::Error::new(std::io::ErrorKind::NotFound, "no such file"),
+        },
+        ExchangeError::SizeLimitExceeded {
+            limit: 8,
+            actual: 9,
+        },
+        ExchangeError::MalformedManifest { offset: 17 },
+        ExchangeError::UnsupportedFormat { found: 1 },
+        ExchangeError::SpecDigestMismatch,
+        ExchangeError::DataChecksumMismatch,
+        ExchangeError::InvalidArrayTable,
+        ExchangeError::InvalidRecipe(DatasetError::ZeroRows),
+        ExchangeError::NotRegenerable {
+            derivation: Derivation::ReferenceSplit {
+                lane: ReferenceLane::Regression,
+                seed: 11,
+                split: Split::Train,
+            },
+        },
+    ];
+
+    let mut messages: Vec<String> = Vec::new();
+    for refusal in &refusals {
+        let message = refusal.to_string();
+        assert!(!message.is_empty(), "{refusal:?} renders as nothing");
+        // A sentence fragment rather than a capitalized sentence, so a caller
+        // can embed it in one. Written as "not upper-case" rather than as
+        // "lower-case", which is what the sibling claim over `DatasetError`
+        // says: an `Io` refusal opens with the path it names, and a path is
+        // neither.
+        assert!(
+            !message.chars().next().is_some_and(char::is_uppercase),
+            "refusals read as sentence fragments: {message}"
+        );
+        assert!(
+            !messages.contains(&message),
+            "two refusals share the message {message:?}"
+        );
+        messages.push(message);
+    }
+
+    // The chain, where there is one. Both carrying variants are checked against
+    // the text their own cause renders, so returning some *other* error would
+    // fail as loudly as returning none.
+    for refusal in &refusals {
+        let cause = std::error::Error::source(refusal).map(ToString::to_string);
+        match refusal {
+            ExchangeError::Io { source, .. } => {
+                assert_eq!(cause.as_deref(), Some(source.to_string().as_str()));
+            }
+            ExchangeError::InvalidRecipe(error) => {
+                assert_eq!(cause.as_deref(), Some(error.to_string().as_str()));
+            }
+            other => assert!(cause.is_none(), "{other:?} invented a cause: {cause:?}"),
+        }
+    }
+}
