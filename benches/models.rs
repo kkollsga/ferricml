@@ -111,6 +111,20 @@ fn multiclass_targets(targets: &RegressionTargets) -> ClassTargets {
 /// drift independently: the fit, whose cost is the multiclass solver or the
 /// multiclass split search, and inference, whose cost is the softmax or the
 /// per-tree probability averaging.
+///
+/// # Discontinuity: `logistic` fit, 2026-07-29
+///
+/// The `logistic` lanes here fit through `LogisticRegressionParams::default()`,
+/// and that default moved from the exact Newton step to the matrix-free path.
+/// **`ferricml_multiclass_v1_fit_2048x48_4c/logistic` is therefore not
+/// comparable across that commit**: it measured a `classes * parameters` square
+/// factorization per iteration before it and does not after. Paired on this
+/// shape, same process, same bytes: 61.6 ms against 4.4 ms, a 13.9x drop, which
+/// is a change of solver rather than a change of speed in one. Read a
+/// before/after step of that magnitude in `bench-history` as this, not as a
+/// regression or a win in the multiclass solver itself. The inference lanes are
+/// unaffected — a fitted model's softmax does not know which solver reached its
+/// coefficients.
 fn multiclass(c: &mut Criterion) {
     let (training, training_targets) = fixture(ROWS, COLUMNS);
     let (inference, _) = fixture(INFERENCE_ROWS, COLUMNS);
@@ -455,6 +469,15 @@ fn logistic_and_scaler(c: &mut Criterion) {
             .collect(),
     )
     .unwrap();
+    // # Discontinuity: 2026-07-29
+    //
+    // As on the multiclass suite above, this lane follows the default solver and
+    // the default moved. `ferricml_models_v2_logistic_fit_2048x48/ferricml` is
+    // not comparable across that commit: paired on this shape, 4.13 ms against
+    // 1.25 ms, a 3.3x drop that is a change of solver. `max_iter` stays at 25
+    // and still does not bind — the matrix-free path converges inside it here,
+    // so the lane measures convergence rather than an exhausted budget, which
+    // is the property this cap exists to hold.
     let logistic_params = LogisticRegressionParams::default().with_max_iter(25);
     let logistic =
         LogisticRegression::fit(&training.as_view(), &labels, logistic_params.clone()).unwrap();
