@@ -2321,3 +2321,31 @@ fn a_range_complaint_names_its_knob_and_the_range_it_wanted() {
         ranges.len()
     );
 }
+
+/// The forest fixture's separating score is *strictly* greater than zero, so a
+/// row scoring exactly zero is a negative.
+///
+/// The recorded digests were claimed to settle this and do not: a mutation run
+/// on 2026-07-29 flipped `>` to `>=` and every pinned byte stayed identical,
+/// because no row at any recorded shape scores exactly zero. A digest settles a
+/// boundary only when a pinned row sits on it.
+///
+/// An all-zero row does, exactly and without rounding — the score is a weighted
+/// sum of zeros — so it separates the two comparisons where the lattice cannot.
+/// A second row scores positive, so the test fails if the labeller is stuck at
+/// either answer rather than reading the score.
+#[test]
+fn the_forest_boundary_counts_an_exactly_zero_score_as_negative() {
+    let mut values = vec![0.0_f32; 8];
+    values[4] = 1.0;
+    let design = crate::data::DenseMatrix::new(values, 2, 4).unwrap();
+
+    let labels = super::benchmarks::forest_labels_of(&design);
+
+    assert_eq!(
+        labels.as_slice(),
+        [0, 1],
+        "an exactly-zero score must be negative and a positive score positive; \
+         `>=` would report [1, 1]"
+    );
+}

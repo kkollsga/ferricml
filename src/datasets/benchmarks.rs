@@ -88,6 +88,16 @@ pub(super) const fn recorded_shapes() -> [(BenchmarkLane, usize, usize); 10] {
     RECORDED_SHAPES
 }
 
+/// [`forest_labels`], for the test module that pins its boundary.
+///
+/// The recorded digests cannot reach that boundary — no pinned row scores
+/// exactly zero — so the comparison needs a design chosen for it rather than
+/// one the lattice happened to produce.
+#[cfg(test)]
+pub(super) fn forest_labels_of(design: &DenseMatrix) -> BinaryTargets {
+    forest_labels(design)
+}
+
 /// Columns the forest fixture's separating score reads.
 const FOREST_SCORE_COLUMNS: usize = 4;
 
@@ -297,8 +307,17 @@ impl BenchmarkFixture {
 /// The weights ascend with the column index and the accumulation runs left to
 /// right, both transcribed. Strictly greater than zero, so a row scoring exactly
 /// zero is a negative — a transcription rather than a preference, and exactly the
-/// kind of difference a prevalence check averages away, which is why the pinned
-/// digests rather than the pinned positive counts are what settle it.
+/// kind of difference a prevalence check averages away.
+///
+/// The pinned digests do **not** settle that comparison, which this comment
+/// claimed until a mutation run over `src/datasets/**` on 2026-07-29 showed
+/// otherwise: no pinned row scores exactly zero, so `>` and `>=` produce
+/// identical bytes at every recorded shape and the survivor lived. A digest can
+/// only settle a boundary a pinned row actually sits on. What settles it is
+/// `tests::the_forest_boundary_counts_an_exactly_zero_score_as_negative`, which
+/// constructs that row rather than hoping the lattice supplies one. Named rather
+/// than linked: it is a `cfg(test)` item, so a link to it cannot resolve in the
+/// doc build `gate-full` denies warnings on.
 fn forest_labels(design: &DenseMatrix) -> BinaryTargets {
     let labels = design
         .iter_rows()
