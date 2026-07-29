@@ -389,6 +389,17 @@ and releases use [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   1%. The mechanism is the exact step's factorization scaling with the class
   count, which the old table's binary-only shape could not show.
 
+  **Re-measured before shipping, paired.** Both solvers timed in one process on
+  the same bytes, interleaved, on the registered runner with three CPU-idle
+  samples above the 90% floor at both ends of the window, and run twice: 2.4x to
+  44.3x, same ordering by shape, run-to-run spread at most 5.9% and under 3% on
+  eight of the ten lanes. The worst shape is `1024 x 128` multiclass at 255.5 ms
+  against 5.8 ms. This harness generates its own design, so it is a
+  re-derivation rather than a replay of the numbers above; it lands in the same
+  place, including the cubic-in-class-count mechanism — at `4096 x 128`, binary
+  is 43.0 ms and four-class is 891.2 ms under the exact step, against 3.8x for
+  the same widening under the matrix-free one.
+
   **The meaning of the default `tol` changed with it.** The two solvers have
   genuinely different convergence tests: under `Newton`, `tol` is the largest
   absolute coefficient update; under `Lbfgs` it is the infinity norm of the
