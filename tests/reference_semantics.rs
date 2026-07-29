@@ -12,7 +12,7 @@ use ferricml::ensemble::{
 };
 use ferricml::linear_model::{
     ElasticNet, ElasticNetParams, Lasso, LassoParams, LinearRegression, LinearRegressionParams,
-    LogisticRegression, LogisticRegressionParams, Ridge, RidgeParams,
+    LogisticRegression, LogisticRegressionParams, LogisticSolver, Ridge, RidgeParams,
 };
 use ferricml::metrics::{
     MetricError, accuracy_score, binary_confusion_matrix, brier_score, f1_score, log_loss,
@@ -771,6 +771,100 @@ fn a_multiclass_fit_never_changes_the_binary_one() {
         reference::LOGISTIC_NO_INTERCEPT_COEFFICIENTS,
         LOGISTIC_TOLERANCE,
     );
+}
+
+/// Parity with the frozen reference is a property of the *model*, not of the
+/// solver that reached it.
+///
+/// The lanes above fit with `LogisticRegressionParams::default()`, so each of
+/// them measures whichever solver is the default on the day it runs — and the
+/// default moved. That is exactly the situation in which a passing suite says
+/// less than it appears to: it would keep passing if one solver drifted, as
+/// long as the *other* one were not the default any more.
+///
+/// So both are checked against the same frozen values, at the same tolerance.
+/// The frozen file did not move when the default did, and could not have: it
+/// records the external reference's outputs, and the reference's own default is
+/// already the matrix-free path. What the flip could have moved is FerricML's
+/// distance from those values, which this pins from both sides.
+///
+/// Measured when this was written: every worst-case residual below is identical
+/// between the two solvers to four significant figures — `1.192e-7` on the
+/// no-intercept coefficients, `1.812e-5` on the weighted intercept, `5.960e-8`
+/// on the multinomial coefficients. Parity held exactly; it neither tightened
+/// nor loosened.
+#[test]
+fn both_logistic_solvers_match_the_frozen_reference_outputs() {
+    let train = matrix(reference::LOGISTIC_NO_INTERCEPT_TRAIN_X, 6, 2);
+    let test = matrix(reference::LOGISTIC_NO_INTERCEPT_TEST_X, 5, 2);
+    let binary = BinaryTargets::new(reference::LOGISTIC_NO_INTERCEPT_Y.to_vec()).unwrap();
+    let weights = SampleWeights::new(reference::LOGISTIC_WEIGHTS.to_vec()).unwrap();
+    let multiclass_train = matrix(reference::MULTICLASS_TRAIN_X, 12, 2);
+    let multiclass_test = matrix(reference::MULTICLASS_TEST_X, 4, 2);
+    let classes = ClassTargets::new(reference::MULTICLASS_Y.to_vec()).unwrap();
+
+    for solver in [LogisticSolver::Newton, LogisticSolver::Lbfgs] {
+        let no_intercept = LogisticRegression::fit(
+            &train.as_view(),
+            &binary,
+            LogisticRegressionParams::default()
+                .with_solver(solver)
+                .with_fit_intercept(false)
+                .with_tol(1.0e-8),
+        )
+        .unwrap_or_else(|error| panic!("{solver:?} no-intercept lane: {error:?}"));
+        assert_close_with_tolerance(
+            no_intercept.coefficients(),
+            reference::LOGISTIC_NO_INTERCEPT_COEFFICIENTS,
+            LOGISTIC_TOLERANCE,
+        );
+        assert_close_with_tolerance(
+            &no_intercept.predict_proba(&test.as_view()).unwrap(),
+            reference::LOGISTIC_NO_INTERCEPT_PROBABILITIES,
+            LOGISTIC_TOLERANCE,
+        );
+
+        let weighted = LogisticRegression::fit_weighted(
+            &train.as_view(),
+            &binary,
+            &weights,
+            LogisticRegressionParams::default()
+                .with_solver(solver)
+                .with_c(0.75)
+                .with_tol(1.0e-8),
+        )
+        .unwrap_or_else(|error| panic!("{solver:?} weighted lane: {error:?}"));
+        assert_close_with_tolerance(
+            weighted.coefficients(),
+            reference::LOGISTIC_WEIGHTED_COEFFICIENTS,
+            LOGISTIC_TOLERANCE,
+        );
+        assert_close_with_tolerance(
+            &[weighted.intercept()],
+            reference::LOGISTIC_WEIGHTED_INTERCEPT,
+            LOGISTIC_TOLERANCE,
+        );
+
+        let joint = LogisticRegression::fit_multiclass(
+            &multiclass_train.as_view(),
+            &classes,
+            LogisticRegressionParams::default()
+                .with_solver(solver)
+                .with_max_iter(1000)
+                .with_tol(1.0e-9),
+        )
+        .unwrap_or_else(|error| panic!("{solver:?} multinomial lane: {error:?}"));
+        assert_close_with_tolerance(
+            joint.coefficients(),
+            reference::MULTINOMIAL_COEFFICIENTS,
+            LOGISTIC_TOLERANCE,
+        );
+        assert_close_with_tolerance(
+            &joint.predict_proba(&multiclass_test.as_view()).unwrap(),
+            reference::MULTINOMIAL_PROBABILITIES,
+            LOGISTIC_TOLERANCE,
+        );
+    }
 }
 
 #[test]

@@ -995,7 +995,9 @@ mod tests {
             LogisticRegression::fit_multiclass(
                 &data.as_view(),
                 &targets,
-                LogisticRegressionParams::default(),
+                // The refusal belongs to the exact path, which is no longer the
+                // default: the matrix-free path fits this shape.
+                LogisticRegressionParams::default().with_solver(LogisticSolver::Newton),
             )
             .unwrap_err(),
             ModelError::MulticlassSystemTooLarge {
@@ -1014,7 +1016,7 @@ mod tests {
         let data = DenseMatrix::new(vec![0.5; rows * columns], rows, columns).unwrap();
         let targets =
             ClassTargets::new((0..rows).map(|row| (row % classes) as u8).collect()).unwrap();
-        let params = LogisticRegressionParams::default();
+        let params = LogisticRegressionParams::default().with_solver(LogisticSolver::Newton);
         assert_eq!(
             validate_fit(&data.as_view(), &targets, None, &params).unwrap_err(),
             ModelError::MulticlassSystemTooLarge {
@@ -1060,7 +1062,7 @@ mod tests {
             LogisticRegression::fit_multiclass(
                 &data.as_view(),
                 &targets,
-                LogisticRegressionParams::default(),
+                LogisticRegressionParams::default().with_solver(LogisticSolver::Newton),
             )
             .unwrap_err(),
             ModelError::MulticlassSystemTooLarge {
@@ -1291,7 +1293,14 @@ mod tests {
                                     cases.push((
                                         data.clone(),
                                         targets.clone(),
-                                        LogisticRegressionParams::default().with_c(c),
+                                        // As on the binary side: this region is
+                                        // about the exact step's damping and
+                                        // its acceptance certificate, so it
+                                        // names that solver rather than
+                                        // following the default.
+                                        LogisticRegressionParams::default()
+                                            .with_c(c)
+                                            .with_solver(LogisticSolver::Newton),
                                     ));
                                 }
                             }

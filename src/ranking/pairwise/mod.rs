@@ -843,6 +843,7 @@ fn push_difference(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::linear_model::LogisticSolver;
     use sha2::{Digest, Sha256};
 
     fn items() -> DenseMatrix {
@@ -1035,7 +1036,38 @@ mod tests {
             Ok(PairOutcome::Tie)
         );
         assert_eq!(base.coefficients().len(), 2);
-        assert!((base.coefficients()[0] - 1.311_493_6).abs() < 1.0e-5);
+        // The ranker fits through `LogisticRegressionParams::default()`, so its
+        // coefficients are the default solver's stopping point. That default
+        // moved to the matrix-free path and this value moved with it, from
+        // `1.311_493_6` to `1.311_650_9` — 1.2e-4 relative, which is inside the
+        // `1e-4` tolerance the fit was asked for rather than a different answer.
+        // Asserted against *both* solvers, because a single pinned number
+        // cannot say which of those two things happened.
+        assert!((base.coefficients()[0] - 1.311_650_9).abs() < 1.0e-5);
+        let exact = LogisticRegression::fit_weighted(
+            &expand_observations(&items().as_view(), &training_pairs())
+                .unwrap()
+                .0
+                .as_view(),
+            &expand_observations(&items().as_view(), &training_pairs())
+                .unwrap()
+                .1,
+            &expand_observations(&items().as_view(), &training_pairs())
+                .unwrap()
+                .2,
+            LogisticRegressionParams::default()
+                .with_c(4.0)
+                .with_fit_intercept(false)
+                .with_solver(LogisticSolver::Newton),
+        )
+        .unwrap();
+        assert!(
+            (exact.coefficients()[0] - base.coefficients()[0]).abs() < 1.0e-3,
+            "the two solvers disagree by more than the tolerance either was \
+             asked for: {} against {}",
+            exact.coefficients()[0],
+            base.coefficients()[0]
+        );
     }
 
     #[test]

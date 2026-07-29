@@ -30,12 +30,56 @@ const LOGISTIC_PAYLOAD_VERSION: u16 = 1;
 /// kind rather than a widening of version 1, so every binary artifact ever
 /// written keeps its exact bytes and its exact reader.
 const LOGISTIC_MULTICLASS_PAYLOAD_VERSION: u16 = 2;
+/// The binary schema with one extra word naming the solver that produced it.
+///
+/// A version-1 payload carries no solver word, and the writer that produced it
+/// refused anything but [`LogisticSolver::Newton`], so version 1 *is* the name
+/// of a Newton-fitted binary model. This version is therefore the one that
+/// exists to carry a solver version 1 cannot name, and the Newton code is
+/// refused inside it — otherwise one model would have two encodings and a
+/// rewritten artifact could decode equal to the one it replaced. The same
+/// shape [`MinMaxScaler`](crate::preprocessing::MinMaxScaler) uses for its
+/// output range.
+const LOGISTIC_SOLVER_PAYLOAD_VERSION: u16 = 3;
+/// The joint multinomial schema with the same extra word, under the same rule.
+const LOGISTIC_MULTICLASS_SOLVER_PAYLOAD_VERSION: u16 = 4;
 const LOGISTIC_STATE_COMPONENT_KIND: u16 = 1;
 const LOGISTIC_STATE_COMPONENT_VERSION: u16 = 1;
 const LOGISTIC_MULTICLASS_STATE_COMPONENT_VERSION: u16 = 2;
+const LOGISTIC_SOLVER_STATE_COMPONENT_VERSION: u16 = 3;
+const LOGISTIC_MULTICLASS_SOLVER_STATE_COMPONENT_VERSION: u16 = 4;
 /// `n_features`, `fit_intercept`, `C`, `max_iter`, `tol`, `iterations`,
 /// `class_count`, and `coefficient_count`.
 const LOGISTIC_MULTICLASS_FIXED_PAYLOAD_BYTES: usize = 8 * 4;
+/// Either fixed block plus the solver word the newer schemas append to it.
+const LOGISTIC_SOLVER_FIXED_PAYLOAD_BYTES: usize = 9 * 4;
+
+/// The solver a version-3 or version-4 payload records.
+///
+/// Written as a word rather than as an index so that a zeroed field names no
+/// solver at all: the codes start at one, and a decoder that read a hole would
+/// reject rather than silently claim Newton provenance.
+const NEWTON_SOLVER_CODE: u32 = 1;
+const LBFGS_SOLVER_CODE: u32 = 2;
+
+const fn solver_code(solver: LogisticSolver) -> u32 {
+    match solver {
+        LogisticSolver::Newton => NEWTON_SOLVER_CODE,
+        LogisticSolver::Lbfgs => LBFGS_SOLVER_CODE,
+    }
+}
+
+/// Reads a solver word from a schema whose whole purpose is to carry one.
+///
+/// The Newton code is rejected rather than accepted: the older schema under
+/// this kind already names a Newton fit, and accepting it here would give one
+/// model two valid encodings.
+fn solver_from_code(code: u32) -> Result<LogisticSolver, ArtifactError> {
+    match code {
+        LBFGS_SOLVER_CODE => Ok(LogisticSolver::Lbfgs),
+        _ => Err(ArtifactError::InvalidPayload),
+    }
+}
 
 /// The update rule a logistic fit uses to reach its coefficients.
 ///
@@ -48,50 +92,47 @@ const LOGISTIC_MULTICLASS_FIXED_PAYLOAD_BYTES: usize = 8 * 4;
 ///
 /// # Choosing
 ///
-/// [`Newton`](Self::Newton) is the default and stays the default. It takes the
-/// exact second-order step, which converges in single-digit iterations, and it
-/// is what every fitted artifact FerricML has ever written was produced by.
-/// Its cost is one `parameters x parameters` factorization per iteration, so a
-/// joint multinomial fit — whose system is `classes * parameters` square —
-/// refuses rather than allocate one it cannot hold.
+/// [`Lbfgs`](Self::Lbfgs) is the default. It never forms a second-order system:
+/// its storage is linear in the parameter count, so it accepts sixty-four times
+/// as many multiclass parameters within the same storage budget, and it is the
+/// only path that answers when the exact one reports
+/// [`ModelError::MulticlassSystemTooLarge`]. It needs more iterations to reach
+/// the same answer and pays far less for each of them.
 ///
-/// The step is **damped**, and the full step is tried first. An exact Newton
-/// step minimizes a local quadratic model of the objective; where that model is
-/// trustworthy the full step is what gives the method its quadratic tail, and
-/// where it is not the full step overshoots and the next model is built
-/// somewhere worse. On a badly scaled near-separable design with a weak penalty
-/// that failure compounds, and iterates reaching `1e63` were measured before the
-/// step was globalized. So the full step is accepted whenever it decreases the
-/// penalized objective sufficiently, and halved until it does otherwise. A fit
-/// whose exact steps all descend keeps exactly the iterate sequence it always
-/// had; over 1,600 generated well-conditioned binary fits, all of which take
-/// more than one step, 1,573 are bit-identical to the undamped path and none
-/// changes its iteration count.
+/// [`Newton`](Self::Newton) takes the exact second-order step, which converges
+/// in single-digit iterations. Its cost is one `parameters x parameters`
+/// factorization per iteration *plus* accumulating that system over every row,
+/// so a joint multinomial fit — whose system is `classes * parameters` square —
+/// refuses rather than allocate one it cannot hold. Select it on a small
+/// problem, where the single-digit iteration count wins outright, and when
+/// `tol` is below the floor described below.
 ///
-/// [`Lbfgs`](Self::Lbfgs) never forms that system. Its storage is linear in the
-/// parameter count, so it accepts sixty-four times as many multiclass
-/// parameters within the same storage budget, and it is the path to select when
-/// the exact one reports [`ModelError::MulticlassSystemTooLarge`]. The bound is
-/// a property of the selected solver rather than of the model: a shape the
-/// exact path accepts still takes the exact path and produces the identical
-/// fit. It needs more iterations to reach the same answer, and it additionally
-/// reports [`ModelError::SolverDidNotConverge`] when the requested `tol` is
-/// below what the objective's own numerical resolution can certify, which is
-/// around `1e-9` for a log-loss of order one — its line search compares
-/// objective values and cannot bracket a decrease below that. The exact path
-/// has no such floor, because the quantity it certifies an exhausted budget
-/// with is not an objective difference.
+/// The exact step is **damped**, and the full step is tried first. An exact
+/// Newton step minimizes a local quadratic model of the objective; where that
+/// model is trustworthy the full step is what gives the method its quadratic
+/// tail, and where it is not the full step overshoots and the next model is
+/// built somewhere worse. On a badly scaled near-separable design with a weak
+/// penalty that failure compounds, and iterates reaching `1e63` were measured
+/// before the step was globalized. So the full step is accepted whenever it
+/// decreases the penalized objective sufficiently, and halved until it does
+/// otherwise. A fit whose exact steps all descend keeps exactly the iterate
+/// sequence it always had; over 1,600 generated well-conditioned binary fits,
+/// all of which take more than one step, 1,573 are bit-identical to the
+/// undamped path and none changes its iteration count.
 ///
-/// # Cost, which is the other reason to select it
+/// The bound on the multinomial system is a property of the selected solver
+/// rather than of the model: a shape the exact path accepts still takes the
+/// exact path and produces the identical fit.
 ///
-/// The default is the expensive one on a large or strongly penalized problem,
-/// and that is worth stating in numbers rather than as "slower". Newton's
-/// per-iteration cost is one `p x p` factorization *plus* accumulating a
-/// `p x p` system over every row, so it grows as `n * p^2` where the
-/// matrix-free path grows as `n * p`; a stronger penalty (a smaller `c`) also
-/// buys more iterations to pay that on. Fitting 50,000 rows by 50 columns,
-/// same data, same `tol`, same `max_iter`, both arms this crate (Apple M4,
-/// release, median of five after one warmup):
+/// # Why the default moved, and what it means for `tol`
+///
+/// Newton was the default, and this section used to argue it should stay. That
+/// argument is kept below rather than deleted, because the measurements that
+/// overturned it are the same *kind* of measurement, taken on a wider grid.
+///
+/// The original case rested on 50,000 rows by 50 columns, same data, same
+/// `tol`, same `max_iter`, both arms this crate (Apple M4, release, median of
+/// five after one warmup):
 ///
 /// | `c` | `tol` | `Newton` | `Lbfgs` |
 /// |---|---|---|---|
@@ -102,20 +143,64 @@ const LOGISTIC_MULTICLASS_FIXED_PAYLOAD_BYTES: usize = 8 * 4;
 ///
 /// Three to fifteen times, widening as the penalty strengthens and the
 /// tolerance tightens, for coefficients that agree to six decimals at `1e-8`.
-/// The advantage is a property of the shape rather than a constant: at
-/// 5,000 x 20 the same comparison is 2.8 ms against 1.8 ms, and on a small
-/// problem the exact step's single-digit iteration count wins outright. So
-/// this is a reason to *select* [`Lbfgs`](Self::Lbfgs) at scale, not a reason
-/// to move the default — a `tol` below the L-BFGS floor still leaves the exact
-/// path as the only one that answers, and every artifact FerricML writes still
-/// has `Newton` provenance.
+/// That was read as a reason to *select* the matrix-free path at scale rather
+/// than to move the default: the advantage looked like a property of one large
+/// shape, and at 5,000 x 20 the same comparison is 2.8 ms against 1.8 ms.
+///
+/// **That table understated it, and it understated it worst where the exact
+/// step is most expensive.** Measured across four shapes, three seeds and two
+/// task families, twice, on identically generated bytes:
+///
+/// | Family | Shape | `Newton` | `Lbfgs` | Ratio |
+/// |---|---|---|---|---|
+/// | multiclass | 1024 x 128 | 182.1 ms | 3.60 ms | **50.6x** |
+/// | multiclass | 4096 x 128 | 344.7 ms | 7.32 ms | **47.1x** |
+/// | multiclass | 4096 x 32 | 28.0 ms | 2.21 ms | 12.7x |
+/// | multiclass | 1024 x 32 | 5.30 ms | 0.64 ms | 8.2x |
+/// | binary | 4096 x 128 | 27.1 ms | 3.62 ms | 7.5x |
+/// | binary | 1024 x 32 | 0.73 ms | 0.30 ms | 2.4x |
+///
+/// The full range over 24 measurements is **2.4x to 50.6x, always in the
+/// matrix-free path's favour**, and the distance from the recorded truth is
+/// identical to five decimal places in **23 of the 24** — in the remaining one
+/// it differs in the fifth decimal. Both FerricML solvers and the external
+/// reference land on the same truth-distance to five decimals at every point on
+/// the grid: the solver choice is not visible in the answer.
+///
+/// Two things the older argument assumed are also measured false.
+/// `max_iter` is **not** the binding constraint — raising it from 200 to 1000
+/// changed the exact fit's time by under 1%, so it converges well inside the
+/// budget and the cost is per-iteration. And the advantage is not a property of
+/// one large shape: the mechanism is the exact step's factorization scaling with
+/// the class count, which is why multiclass is so much worse than binary. At
+/// `4096 x 128`, binary is 25.2 ms and four-class is 344.7 ms — a 13.7x jump for
+/// a system four times wider, which is what a cubic factorization does.
+///
+/// ## `tol` therefore means something different by default
+///
+/// The two solvers have genuinely different convergence tests, and moving the
+/// default moves which one a caller gets without asking. Under
+/// [`Newton`](Self::Newton), [`with_tol`](LogisticRegressionParams::with_tol) is
+/// the largest absolute coefficient update; under [`Lbfgs`](Self::Lbfgs) it is
+/// the infinity norm of the gradient of the mean penalized objective. **The
+/// default value of `tol` did not change; the quantity it bounds did.**
+///
+/// The practical consequence is a floor. [`Lbfgs`](Self::Lbfgs) reports
+/// [`ModelError::SolverDidNotConverge`] when the requested `tol` is below what
+/// the objective's own numerical resolution can certify — around `1e-9` for a
+/// log-loss of order one, because its line search compares objective values and
+/// cannot bracket a decrease below that. The exact path has no such floor,
+/// because the quantity it certifies an exhausted budget with is not an
+/// objective difference. A caller who needs a tolerance under that floor should
+/// select [`Newton`](Self::Newton) explicitly.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
 #[non_exhaustive]
 pub enum LogisticSolver {
-    /// Exact Newton steps over the full second-order system. The default.
-    #[default]
+    /// Exact Newton steps over the full second-order system.
     Newton,
-    /// Matrix-free limited-memory BFGS with a strong-Wolfe line search.
+    /// Matrix-free limited-memory BFGS with a strong-Wolfe line search. The
+    /// default.
+    #[default]
     Lbfgs,
 }
 
@@ -136,7 +221,7 @@ impl Default for LogisticRegressionParams {
             fit_intercept: true,
             max_iter: 100,
             tol: 1.0e-4,
-            solver: LogisticSolver::Newton,
+            solver: LogisticSolver::Lbfgs,
         }
     }
 }
@@ -184,9 +269,9 @@ impl LogisticRegressionParams {
     /// Selects the update rule used to reach the coefficients.
     ///
     /// The default is [`LogisticSolver::Newton`] and changing it changes the
-    /// fitted coefficients in their last digits, so a model fitted under a
-    /// non-default solver has no artifact representation — see
-    /// [`LogisticRegression::to_artifact`].
+    /// fitted coefficients in their last digits. Both solvers persist: the
+    /// payload records which one produced the fit, so a decoded model compares
+    /// equal to the one encoded — see [`LogisticRegression::to_artifact`].
     ///
     /// The default is also the *expensive* rule on a large or strongly
     /// penalized problem: at 50,000 x 50 it is 3x to 15x
@@ -916,6 +1001,11 @@ impl LogisticRegression {
         <Self as ProbabilisticClassifier>::predict_class_proba_into(self, data, class, output)
     }
 
+    /// Encodes a binary fit under payload version 1, or version 3 when the
+    /// solver that produced it is not the one version 1 names.
+    ///
+    /// The version is a function of the model, never of when it was written, so
+    /// one model still has exactly one encoding.
     fn to_binary_artifact(
         &self,
         feature_schema_sha256: [u8; 32],
@@ -929,9 +1019,13 @@ impl LogisticRegression {
             u32::try_from(self.params.max_iter).map_err(|_| ArtifactError::InvalidPayload)?;
         let iterations =
             u32::try_from(self.iterations).map_err(|_| ArtifactError::InvalidPayload)?;
-        let mut state = ArtifactPayloadWriter::with_capacity(
-            LOGISTIC_FIXED_PAYLOAD_BYTES + self.coefficients.len() * 4,
-        );
+        let records_solver = self.params.solver != LogisticSolver::Newton;
+        let fixed = if records_solver {
+            LOGISTIC_SOLVER_FIXED_PAYLOAD_BYTES
+        } else {
+            LOGISTIC_FIXED_PAYLOAD_BYTES
+        };
+        let mut state = ArtifactPayloadWriter::with_capacity(fixed + self.coefficients.len() * 4);
         state.u32(n_features);
         state.u32(u32::from(self.params.fit_intercept));
         state.f32(self.params.c);
@@ -940,23 +1034,35 @@ impl LogisticRegression {
         state.u32(iterations);
         state.f32(self.intercepts[0]);
         state.u32(n_features);
+        if records_solver {
+            state.u32(solver_code(self.params.solver));
+        }
         for &coefficient in &self.coefficients {
             state.f32(coefficient);
         }
+        let (payload_version, component_version) = if records_solver {
+            (
+                LOGISTIC_SOLVER_PAYLOAD_VERSION,
+                LOGISTIC_SOLVER_STATE_COMPONENT_VERSION,
+            )
+        } else {
+            (LOGISTIC_PAYLOAD_VERSION, LOGISTIC_STATE_COMPONENT_VERSION)
+        };
         let component = encode_component(
             LOGISTIC_STATE_COMPONENT_KIND,
-            LOGISTIC_STATE_COMPONENT_VERSION,
+            component_version,
             &state.finish(),
         )?;
         encode_v2_envelope(
             LOGISTIC_ARTIFACT_KIND,
-            LOGISTIC_PAYLOAD_VERSION,
+            payload_version,
             &[(SchemaRole::Input, feature_schema_sha256)],
             &component,
         )
     }
 
-    /// Encodes a joint multinomial fit under payload version 2.
+    /// Encodes a joint multinomial fit under payload version 2, or version 4
+    /// when the solver that produced it is not the one version 2 names.
     ///
     /// The class list is stored explicitly: probability columns follow it, and
     /// a decoded model that guessed its labels would silently relabel every
@@ -986,10 +1092,14 @@ impl LogisticRegression {
         {
             return Err(ArtifactError::UnsupportedModelState);
         }
-        let mut state = ArtifactPayloadWriter::with_capacity(
+        let records_solver = self.params.solver != LogisticSolver::Newton;
+        let fixed = if records_solver {
+            LOGISTIC_SOLVER_FIXED_PAYLOAD_BYTES
+        } else {
             LOGISTIC_MULTICLASS_FIXED_PAYLOAD_BYTES
-                + self.classes.len() * 8
-                + self.coefficients.len() * 4,
+        };
+        let mut state = ArtifactPayloadWriter::with_capacity(
+            fixed + self.classes.len() * 8 + self.coefficients.len() * 4,
         );
         state.u32(n_features);
         state.u32(u32::from(self.params.fit_intercept));
@@ -999,6 +1109,9 @@ impl LogisticRegression {
         state.u32(iterations);
         state.u32(class_count);
         state.u32(coefficient_count);
+        if records_solver {
+            state.u32(solver_code(self.params.solver));
+        }
         for &class in &self.classes {
             state.u32(u32::from(class));
         }
@@ -1008,33 +1121,63 @@ impl LogisticRegression {
         for &coefficient in &self.coefficients {
             state.f32(coefficient);
         }
+        let (payload_version, component_version) = if records_solver {
+            (
+                LOGISTIC_MULTICLASS_SOLVER_PAYLOAD_VERSION,
+                LOGISTIC_MULTICLASS_SOLVER_STATE_COMPONENT_VERSION,
+            )
+        } else {
+            (
+                LOGISTIC_MULTICLASS_PAYLOAD_VERSION,
+                LOGISTIC_MULTICLASS_STATE_COMPONENT_VERSION,
+            )
+        };
         let component = encode_component(
             LOGISTIC_STATE_COMPONENT_KIND,
-            LOGISTIC_MULTICLASS_STATE_COMPONENT_VERSION,
+            component_version,
             &state.finish(),
         )?;
         encode_v2_envelope(
             LOGISTIC_ARTIFACT_KIND,
-            LOGISTIC_MULTICLASS_PAYLOAD_VERSION,
+            payload_version,
             &[(SchemaRole::Input, feature_schema_sha256)],
             &component,
         )
     }
 
+    /// Decodes a joint multinomial payload at whichever of its two schemas the
+    /// envelope named.
+    ///
+    /// `records_solver` is the only difference between them, and it is passed
+    /// in rather than re-derived: the caller read the version to choose this
+    /// reader, and one reader that re-read it would be free to disagree with
+    /// the selection that got it here.
     fn from_multiclass_artifact(
         bytes: &[u8],
         expected_feature_schema_sha256: [u8; 32],
+        records_solver: bool,
     ) -> Result<Self, ArtifactError> {
+        let (payload_version, component_version) = if records_solver {
+            (
+                LOGISTIC_MULTICLASS_SOLVER_PAYLOAD_VERSION,
+                LOGISTIC_MULTICLASS_SOLVER_STATE_COMPONENT_VERSION,
+            )
+        } else {
+            (
+                LOGISTIC_MULTICLASS_PAYLOAD_VERSION,
+                LOGISTIC_MULTICLASS_STATE_COMPONENT_VERSION,
+            )
+        };
         let mut envelope = decode_v2_envelope(
             bytes,
             LOGISTIC_ARTIFACT_KIND,
-            LOGISTIC_MULTICLASS_PAYLOAD_VERSION,
+            payload_version,
             &[(SchemaRole::Input, expected_feature_schema_sha256)],
         )?;
         let mut cursor = decode_component(
             &mut envelope,
             LOGISTIC_STATE_COMPONENT_KIND,
-            LOGISTIC_MULTICLASS_STATE_COMPONENT_VERSION,
+            component_version,
         )?;
         if !envelope.is_empty() {
             return Err(ArtifactError::TrailingBytes);
@@ -1064,11 +1207,28 @@ impl LogisticRegression {
             || max_iter == 0
             || !tol.is_finite()
             || tol <= 0.0
-            || iterations == 0
+            // A zero iteration count is a model no *Newton* fit can produce —
+            // its convergence test is on an update, so the loop always takes
+            // one step — but it is exactly what the matrix-free path reports
+            // for a starting point that already satisfies the gradient
+            // tolerance, which `optimize::minimize` documents. So the floor
+            // rides on the schema: versions 1 and 2 name a Newton fit and keep
+            // it, versions 3 and 4 do not.
+            || (iterations == 0 && !records_solver)
             || iterations > max_iter
         {
             return Err(ArtifactError::InvalidPayload);
         }
+        // Read before any element is, so a payload that names no solver this
+        // schema can carry is refused before it can size a single reservation.
+        let solver = if records_solver {
+            solver_from_code(cursor.u32()?)?
+        } else {
+            // Version 2 predates `LogisticSolver` and the writer that produced
+            // it refused every other solver, so its provenance is Newton by
+            // construction rather than by assumption.
+            LogisticSolver::Newton
+        };
 
         let mut classes: Vec<u8> = Vec::with_capacity(cursor.bounded_capacity(class_count, 4));
         for _ in 0..class_count {
@@ -1107,11 +1267,7 @@ impl LogisticRegression {
                 fit_intercept,
                 max_iter,
                 tol,
-                // No payload schema carries a solver, and `to_artifact`
-                // refuses to write a model fitted under a non-default one, so
-                // every decodable artifact has Newton provenance by
-                // construction rather than by assumption.
-                solver: LogisticSolver::Newton,
+                solver,
             },
             classes,
             coefficients,
@@ -1120,8 +1276,11 @@ impl LogisticRegression {
         })
     }
 
+    /// Decodes a binary payload at whichever of its two schemas the envelope
+    /// named, on the same terms as the multinomial reader above.
     fn decode_payload(
         mut cursor: crate::artifact::ArtifactCursor<'_>,
+        records_solver: bool,
     ) -> Result<Self, ArtifactError> {
         let n_features_in = cursor.u32()? as usize;
         let fit_intercept = match cursor.u32()? {
@@ -1143,12 +1302,26 @@ impl LogisticRegression {
             || max_iter == 0
             || !tol.is_finite()
             || tol <= 0.0
-            || iterations == 0
+            // A zero iteration count is a model no *Newton* fit can produce —
+            // its convergence test is on an update, so the loop always takes
+            // one step — but it is exactly what the matrix-free path reports
+            // for a starting point that already satisfies the gradient
+            // tolerance, which `optimize::minimize` documents. So the floor
+            // rides on the schema: versions 1 and 2 name a Newton fit and keep
+            // it, versions 3 and 4 do not.
+            || (iterations == 0 && !records_solver)
             || iterations > max_iter
             || !intercept.is_finite()
         {
             return Err(ArtifactError::InvalidPayload);
         }
+        // Read before any element is, for the reason the multinomial reader
+        // states.
+        let solver = if records_solver {
+            solver_from_code(cursor.u32()?)?
+        } else {
+            LogisticSolver::Newton
+        };
         let mut coefficients = Vec::with_capacity(cursor.bounded_capacity(coefficient_count, 4));
         for _ in 0..coefficient_count {
             let value = cursor.f32()?;
@@ -1167,11 +1340,7 @@ impl LogisticRegression {
                 fit_intercept,
                 max_iter,
                 tol,
-                // No payload schema carries a solver, and `to_artifact`
-                // refuses to write a model fitted under a non-default one, so
-                // every decodable artifact has Newton provenance by
-                // construction rather than by assumption.
-                solver: LogisticSolver::Newton,
+                solver,
             },
             classes: BINARY_CLASSES.to_vec(),
             coefficients,
@@ -1196,17 +1365,15 @@ impl ModelArtifact for LogisticRegression {
     ///
     /// # Solver provenance
     ///
-    /// Both payload schemas predate [`LogisticSolver`] and store no solver
-    /// field, so widening either to carry one would change the bytes of every
-    /// artifact ever written. A model fitted under a non-default solver
-    /// therefore reports [`ArtifactError::UnsupportedModelState`] instead:
-    /// writing it would produce bytes that decode as a model claiming Newton
-    /// provenance it does not have, and a decoded model that compares unequal
-    /// to the one encoded is worse than a refusal.
+    /// Every fit persists, under either solver. Versions 1 and 2 predate
+    /// [`LogisticSolver`] and store no solver field, and the writer that
+    /// produced them refused anything but [`LogisticSolver::Newton`] — so they
+    /// name a Newton fit by construction, and every artifact ever written keeps
+    /// its exact bytes. Versions 3 and 4 are the same two payloads with one
+    /// extra word naming the solver, and they are written exactly when that
+    /// word would say something versions 1 and 2 cannot. The Newton code is
+    /// refused inside them for the same reason: one model, one encoding.
     fn to_artifact(&self, feature_schema_sha256: [u8; 32]) -> Result<Vec<u8>, ArtifactError> {
-        if self.params.solver != LogisticSolver::Newton {
-            return Err(ArtifactError::UnsupportedModelState);
-        }
         if self.is_binary() {
             self.to_binary_artifact(feature_schema_sha256)
         } else {
@@ -1224,22 +1391,48 @@ impl ModelArtifact for LogisticRegression {
         bytes: &[u8],
         expected_feature_schema_sha256: [u8; 32],
     ) -> Result<Self, ArtifactError> {
-        if artifact_version(bytes)? == MODEL_ARTIFACT_VERSION
-            && artifact_payload_version(bytes)? == LOGISTIC_MULTICLASS_PAYLOAD_VERSION
-        {
-            return Self::from_multiclass_artifact(bytes, expected_feature_schema_sha256);
+        let mut records_solver = false;
+        if artifact_version(bytes)? == MODEL_ARTIFACT_VERSION {
+            match artifact_payload_version(bytes)? {
+                LOGISTIC_MULTICLASS_PAYLOAD_VERSION => {
+                    return Self::from_multiclass_artifact(
+                        bytes,
+                        expected_feature_schema_sha256,
+                        false,
+                    );
+                }
+                LOGISTIC_MULTICLASS_SOLVER_PAYLOAD_VERSION => {
+                    return Self::from_multiclass_artifact(
+                        bytes,
+                        expected_feature_schema_sha256,
+                        true,
+                    );
+                }
+                LOGISTIC_SOLVER_PAYLOAD_VERSION => records_solver = true,
+                // Anything else is handed to the version-1 reader, which is
+                // what turns an unknown version into the error naming it.
+                _ => {}
+            }
         }
         let cursor = if artifact_version(bytes)? == MODEL_ARTIFACT_VERSION {
+            let (payload_version, component_version) = if records_solver {
+                (
+                    LOGISTIC_SOLVER_PAYLOAD_VERSION,
+                    LOGISTIC_SOLVER_STATE_COMPONENT_VERSION,
+                )
+            } else {
+                (LOGISTIC_PAYLOAD_VERSION, LOGISTIC_STATE_COMPONENT_VERSION)
+            };
             let mut envelope = decode_v2_envelope(
                 bytes,
                 Self::ARTIFACT_KIND,
-                LOGISTIC_PAYLOAD_VERSION,
+                payload_version,
                 &[(SchemaRole::Input, expected_feature_schema_sha256)],
             )?;
             let component = decode_component(
                 &mut envelope,
                 LOGISTIC_STATE_COMPONENT_KIND,
-                LOGISTIC_STATE_COMPONENT_VERSION,
+                component_version,
             )?;
             if !envelope.is_empty() {
                 return Err(ArtifactError::TrailingBytes);
@@ -1253,7 +1446,7 @@ impl ModelArtifact for LogisticRegression {
                 LOGISTIC_FIXED_PAYLOAD_BYTES,
             )?
         };
-        Self::decode_payload(cursor)
+        Self::decode_payload(cursor, records_solver)
     }
 }
 
@@ -1669,9 +1862,13 @@ mod tests {
         for (weighted, fit_intercept, expected_coefficients, expected_intercept, expected_iter) in
             cases
         {
+            // The frozen words are the exact path's iterate sequence — the
+            // iteration counts below are single-digit, which is what pins them
+            // to that solver rather than to the default.
             let params = LogisticRegressionParams::default()
                 .with_fit_intercept(fit_intercept)
-                .with_max_iter(25);
+                .with_max_iter(25)
+                .with_solver(LogisticSolver::Newton);
             let model = if weighted {
                 LogisticRegression::fit_weighted(&data.as_view(), &targets, &weights, params)
                     .unwrap()
@@ -2034,10 +2231,108 @@ mod tests {
     fn legacy_artifact_fixture_decodes_exactly() {
         let (model, schema, expected) = phase_zero_artifact();
         assert_eq!(expected.len(), 116);
+        let decoded = LogisticRegression::from_artifact(&expected, schema).unwrap();
+        assert_eq!(decoded, model);
+        // Every schema older than the solver word names a Newton fit, because
+        // the writer that produced it refused every other solver. Asserted
+        // rather than left inside the equality above: this is the whole reason
+        // a payload written before `LogisticSolver` existed still decodes.
+        assert_eq!(decoded.get_params().solver(), LogisticSolver::Newton);
+    }
+
+    /// A fit that needed no step at all still round-trips.
+    ///
+    /// `optimize::minimize` tests the gradient *before* each step, so a
+    /// starting point already inside `tol` costs one objective evaluation and
+    /// no iterations — and the design below, whose only column is constant, is
+    /// at its minimum before the first step. The decoders refused a zero
+    /// iteration count, which was right while the only persistable fit came
+    /// from the exact path (whose loop always takes a step) and became a
+    /// writer FerricML could not read the moment the matrix-free path started
+    /// persisting. Asserted through `to_artifact` rather than on hand-built
+    /// bytes, because the defect is precisely the two halves disagreeing.
+    #[test]
+    fn a_fit_that_took_no_step_round_trips_and_the_older_schemas_still_refuse_one() {
+        let data = DenseMatrix::new(vec![1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0], 4, 2).unwrap();
+        let schema = [4; 32];
+        let model = LogisticRegression::fit(
+            &data.as_view(),
+            &BinaryTargets::new(vec![0, 1, 0, 1]).unwrap(),
+            LogisticRegressionParams::default()
+                .with_solver(LogisticSolver::Lbfgs)
+                .with_fit_intercept(false),
+        )
+        .unwrap();
+        assert_eq!(model.n_iter(), 0, "this fixture no longer takes no step");
+        let bytes = model.to_artifact(schema).unwrap();
+        assert_eq!(artifact_payload_version(&bytes).unwrap(), 3);
         assert_eq!(
-            LogisticRegression::from_artifact(&expected, schema).unwrap(),
+            LogisticRegression::from_artifact(&bytes, schema).unwrap(),
             model
         );
+
+        // The floor is still there where it belongs. A version-1 payload
+        // claiming zero iterations describes a fit the writer that produced
+        // that version could not have performed.
+        let newton = LogisticRegression::fit(
+            &data.as_view(),
+            &BinaryTargets::new(vec![0, 1, 0, 1]).unwrap(),
+            LogisticRegressionParams::default()
+                .with_solver(LogisticSolver::Newton)
+                .with_fit_intercept(false),
+        )
+        .unwrap();
+        let mut forged = newton.to_artifact(schema).unwrap();
+        assert_eq!(artifact_payload_version(&forged).unwrap(), 1);
+        // The payload starts after the 24-byte fixed header and one 36-byte
+        // schema record, then one component header; `iterations` is word six.
+        let iterations_at = 60 + 8 + 5 * 4;
+        forged[iterations_at..iterations_at + 4].copy_from_slice(&0_u32.to_le_bytes());
+        let checksummed = forged.len() - 32;
+        let digest = Sha256::digest(&forged[..checksummed]);
+        forged[checksummed..].copy_from_slice(&digest);
+        assert_eq!(
+            LogisticRegression::from_artifact(&forged, schema),
+            Err(ArtifactError::InvalidPayload)
+        );
+    }
+
+    /// Both older schemas still decode, byte-for-byte, with Newton provenance.
+    ///
+    /// The multiclass half has no frozen hex fixture of its own, so the bytes
+    /// are built here at version 2 and checked to be exactly what a Newton fit
+    /// writes today — which is what says the newer schemas were added beside
+    /// the older ones rather than over them.
+    #[test]
+    fn the_schemas_that_predate_the_solver_word_still_decode_as_newton_fits() {
+        let data = DenseMatrix::new(vec![0.0, 1.0, 1.0, 2.0, 2.0, 4.0, 3.0, 8.0], 4, 2).unwrap();
+        let schema = [9; 32];
+        let binary = LogisticRegression::fit(
+            &data.as_view(),
+            &BinaryTargets::new(vec![0, 0, 1, 1]).unwrap(),
+            LogisticRegressionParams::default().with_solver(LogisticSolver::Newton),
+        )
+        .unwrap();
+        let multiclass = LogisticRegression::fit_multiclass(
+            &data.as_view(),
+            &ClassTargets::new(vec![3, 7, 10, 7]).unwrap(),
+            LogisticRegressionParams::default().with_solver(LogisticSolver::Newton),
+        )
+        .unwrap();
+        for (model, expected_version) in [(&binary, 1_u16), (&multiclass, 2)] {
+            let bytes = model.to_artifact(schema).unwrap();
+            assert_eq!(
+                artifact_payload_version(&bytes).unwrap(),
+                expected_version,
+                "a Newton fit left the schema that names it"
+            );
+            let decoded = LogisticRegression::from_artifact(&bytes, schema).unwrap();
+            assert_eq!(&decoded, model);
+            assert_eq!(decoded.get_params().solver(), LogisticSolver::Newton);
+            // Canonicity: the decoded model re-encodes to the bytes it came
+            // from rather than being lifted onto the newer schema.
+            assert_eq!(decoded.to_artifact(schema).unwrap(), bytes);
+        }
     }
 
     #[test]
@@ -2277,7 +2572,15 @@ mod tests {
                                 cases.push((
                                     data.clone(),
                                     targets.clone(),
-                                    LogisticRegressionParams::default().with_c(c),
+                                    // The exact step is what this region is
+                                    // about: the damping, the refusals it
+                                    // removed, and the certificate that accepts
+                                    // an exhausted budget are all properties of
+                                    // that path, not of whichever solver
+                                    // happens to be the default.
+                                    LogisticRegressionParams::default()
+                                        .with_c(c)
+                                        .with_solver(LogisticSolver::Newton),
                                 ));
                             }
                         }

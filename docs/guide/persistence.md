@@ -99,11 +99,14 @@ Some deliberately do not:
   but a feature width the pipeline already validates.
 - **The dummy estimators** carry no artifact kind. They are a quality floor, not
   something to ship.
-- **A logistic model fitted with a non-default solver** has no artifact
-  representation at all. Neither logistic payload schema records which solver
-  ran, so rather than write bytes that would decode as a `Newton`-provenance
-  model, FerricML refuses. That is the general pattern: where the format cannot
-  express something faithfully, the answer is an error, not an approximation.
+That is the general pattern: where the format cannot express something
+faithfully, the answer is an error, not an approximation — and where the state
+matters enough to keep, the answer is a new payload version rather than a
+reinterpretation of the current one. Logistic regression is the worked example
+of the second half: its two original schemas record no solver and therefore name
+a `Newton` fit, and a fit under the other solver is written at a *new* payload
+version carrying one extra word. Every artifact written before that version
+existed keeps its exact bytes and its exact reader.
 
 Whether a given estimator persists is declared in its `Capabilities`, which is
 public, semver-relevant surface with its own change-detecting snapshot.

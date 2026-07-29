@@ -70,18 +70,20 @@ default tolerances. Exhausting `max_iter` is
 `ModelError::SolverDidNotConverge`, never a fit that stopped part way and looks
 like one that arrived.
 
-**A logistic solver is selectable, and the default is unchanged.**
-`LogisticSolver::Newton` is the default and produced every fitted artifact
-FerricML has ever written. `LogisticSolver::Lbfgs` minimizes the same objective
-without forming a second-order system, which is what lets a joint multinomial
-fit exceed the exact path's parameter ceiling. The ceiling is a property of the
-selected solver's storage rather than of the model, so a shape the exact path
-accepts still takes the exact path and produces the identical fit. `tol` is the
-largest coefficient update under `Newton` and the mean objective's gradient norm
-under `Lbfgs` — different quantities, documented rather than conflated. Neither
-logistic payload schema records a solver, so a model fitted under a non-default
-one has no artifact representation rather than bytes that would decode as a
-`Newton`-provenance model.
+**A logistic solver is selectable, and the default is the matrix-free one.**
+`LogisticSolver::Lbfgs` minimizes the same objective without forming a
+second-order system, which is what lets a joint multinomial fit exceed the exact
+path's parameter ceiling. The ceiling is a property of the selected solver's
+storage rather than of the model, so a shape the exact path accepts still takes
+the exact path and produces the identical fit. `LogisticSolver::Newton` was the
+default until a cross-library sweep measured 2.4x to 50.6x against it over 24
+measurements for a truth-distance identical to five decimal places in 23 of
+them. `tol` is the largest coefficient update under `Newton` and the mean
+objective's gradient norm under `Lbfgs` — different quantities, documented
+rather than conflated, so the default meaning of `tol` moved with the default
+solver even though its value did not. Both solvers persist: payload versions 1
+and 2 record no solver and therefore name a `Newton` fit, and versions 3 and 4
+carry one extra word naming it.
 
 **Class weighting is a caller-side transformation, not a parameter.** No
 FerricML estimator takes a `class_weight`. A per-class weight is a function of

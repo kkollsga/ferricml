@@ -70,8 +70,9 @@ estimator meaning follow the reference contract.
   now holds two solver families rather than one. The closed-form fits — ordinary
   least squares and ridge — stay closed form. `LogisticRegression` selects
   between exact Newton steps and a matrix-free limited-memory quasi-Newton path
-  through `LogisticSolver`, defaulting to Newton and keeping every fitted
-  artifact it has ever produced; the matrix-free path exists because a joint
+  through `LogisticSolver`, defaulting to the matrix-free path on measured cost
+  and keeping every fitted artifact it has ever produced readable; the
+  matrix-free path exists because a joint
   multinomial system is `classes * parameters` square, so the exact one refuses
   shapes it cannot allocate. `Lasso` and `ElasticNet` are fitted by cyclic
   coordinate descent, which is the solver an L1 penalty requires: the penalty is
