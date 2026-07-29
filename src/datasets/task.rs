@@ -533,7 +533,7 @@ pub enum GlmLink {
 /// version, and `make semver-check` fails it offered as anything less. The
 /// architecture keeps that rare by channelling growth elsewhere. A new shape is
 /// a new variant, kind or link; a cross-cutting knob is a
-/// [`Contamination`](super::Contamination) setting, on an already-opaque
+/// [`Contamination`] setting, on an already-opaque
 /// builder; and any future knob has to default to reproducing today's bytes
 /// regardless, because [`Recipe::spec_digest`](super::Recipe::spec_digest) is an
 /// identity. The two family-design questions open when this was written both

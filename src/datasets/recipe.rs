@@ -20,7 +20,7 @@ use sha2::{Digest, Sha256};
 /// that one identifier must never mean two things, and the earliest bumps served
 /// it by moving whenever the *encoding* moved. `v4` served it from the other
 /// side, when the task dials left [`Recipe::stream_digest`]; `v5` serves it
-/// again, twice over. [`BinaryKind::Sinusoid`](super::BinaryKind::Sinusoid)
+/// again, twice over. [`BinaryKind::Sinusoid`]
 /// evaluates a different expression than the boundary it replaced, and
 /// `informative` and `rank` became dials, so every recipe carrying any of the
 /// three draws different data under a byte layout that did not move — the two
